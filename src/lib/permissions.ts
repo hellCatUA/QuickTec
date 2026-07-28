@@ -173,13 +173,15 @@ export const PERMISSIONS = {
   // --- Mileage --------------------------------------------------------------
   "mileage.submit": {
     group: "Mileage",
-    label: "Submit mileage",
-    description: "Log trips with odometer readings and photos.",
+    label: "Log mileage",
+    description:
+      "Record a leg of driving with start and end odometer readings and photos.",
   },
-  "mileage.approve": {
+  "mileage.view": {
     group: "Mileage",
-    label: "Approve mileage",
-    description: "Approve or reject submitted trips.",
+    label: "View mileage",
+    description:
+      "See other people's trips. Mileage is a write-off record, not a payment, so there is nothing to approve — but a supervisor can tell from it when a tech actually set off.",
   },
 
   // --- Administration -------------------------------------------------------
@@ -317,7 +319,7 @@ export const DEFAULT_ROLE_GRANTS: Record<
     "payroll.approve": "REPORTS",
     "payroll.mark_received": "REPORTS",
     "mileage.submit": "OWN",
-    "mileage.approve": "REPORTS",
+    "mileage.view": "REPORTS",
     "project.manage": "PROJECT",
     "audit.view": "PROJECT",
   },
@@ -353,7 +355,7 @@ export const DEFAULT_ROLE_GRANTS: Record<
     "payroll.approve": "ALL",
     "payroll.mark_received": "ALL",
     "mileage.submit": "OWN",
-    "mileage.approve": "ALL",
+    "mileage.view": "ALL",
     "project.manage": "ALL",
     "client.manage": "ALL",
     "users.manage": "ALL",

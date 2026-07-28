@@ -87,7 +87,6 @@ model User {
   approvedJobs          Job[]                @relation("JobApprovedBy")
   payRates              PayRate[]
   mileageEntries        MileageEntry[]       @relation("MileageOwner")
-  approvedMileage       MileageEntry[]       @relation("MileageApprover")
   payrollPeriods        PayrollPeriod[]      @relation("PayrollTech")
   payrollAsSupervisor   PayrollPeriod[]      @relation("PayrollSupervisor")
   approvedPayrolls      PayrollPeriod[]      @relation("PayrollApprover")
@@ -353,8 +352,16 @@ model Job {
 
   /// YYYY-MM-PRJID-NNNN, plus -R<n> for revisits. Month is the revisit's month.
   intWoId String @unique
+  /// The NNNN part on its own. A revisit reuses its parent's sequence, so
+  /// generating one never has to parse the string back apart.
+  intWoSequence Int
 
   title String
+
+  /// External ID from the client. One per work order — two techs on the same
+  /// job share it. A revisit that reuses the original ID is stored prefixed:
+  /// "R-887766"; a revisit issued a genuinely new ID stores that verbatim.
+  externalAssignmentId String?
 
   clientId   String
   client     Client   @relation(fields: [clientId], references: [id])
@@ -436,12 +443,9 @@ model JobAssignment {
   userId String
   user   User   @relation(fields: [userId], references: [id])
 
-  /// External ID from the client. Usually shared by everyone on the job, but
-  /// occasionally issued per tech, so it lives here. Revisits reusing the
-  /// original ID are stored prefixed: "R-887766".
-  externalAssignmentId String?
-
-  /// Exactly one lead per job. Owns the merged Work Performed.
+  /// Exactly one lead per job. Owns the merged Work Performed. Defaults to the
+  /// supervisor on site; whoever assigns the job, or the tech's direct
+  /// supervisor, can move it to someone else.
   isLead Boolean @default(false)
 
   /// Effective approver for this job: project manager when the direct
@@ -721,6 +725,7 @@ model Reimbursement {
 enum MileageCategory {
   /// Driving to a specific job; reference is that job's Assignment ID.
   IN_ROUTE_TO_WO
+  /// Always available, and needs no reference.
   RETURNING_HOME
   /// Only selectable while clocked out.
   OFFCLOCK_TOOLS_SUPPLIES
@@ -736,6 +741,11 @@ enum ApprovalStatus {
   REJECTED
 }
 
+/// One leg of driving, logged separately for each event: out to the job, a
+/// detour for supplies, the drive home. Deliberately NOT part of payroll —
+/// mileage is a write-off record for the tech's own 1099 deductions, and a
+/// signal for supervisors that a tech has actually set off. Money the customer
+/// puts towards travel is a separate field on the job/project.
 model MileageEntry {
   id     String @id @default(cuid())
   userId String
@@ -767,14 +777,6 @@ model MileageEntry {
   startPhoto   Attachment? @relation("MileageStartPhoto", fields: [startPhotoId], references: [id], onDelete: SetNull)
   endPhotoId   String?     @unique
   endPhoto     Attachment? @relation("MileageEndPhoto", fields: [endPhotoId], references: [id], onDelete: SetNull)
-
-  status       ApprovalStatus @default(PENDING)
-  approvedById String?
-  approvedBy   User?          @relation("MileageApprover", fields: [approvedById], references: [id], onDelete: SetNull)
-  approvedAt   DateTime?
-
-  payrollLineId String?
-  payrollLine   PayrollLine? @relation(fields: [payrollLineId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -895,8 +897,6 @@ model PayrollLine {
   payStatus      PayrollStatus @default(DRAFT)
   receivedDate   DateTime?
   payNote        String?
-
-  mileageEntries MileageEntry[]
 
   @@unique([payrollPeriodId, assignmentId])
 }

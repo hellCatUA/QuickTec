@@ -12,7 +12,8 @@
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio",
-    "db:seed": "tsx prisma/seed.ts"
+    "db:seed": "tsx prisma/seed.ts",
+    "verify": "tsx --tsconfig tsconfig.json scripts/verify-domain.ts"
   },
   "repository": {
     "type": "git",

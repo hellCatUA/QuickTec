@@ -1,13 +1,14 @@
 import { LogOut } from "lucide-react";
 import { redirect } from "next/navigation";
 import { signOut } from "@/auth";
-import { BottomNav, SideNav, type NavItem } from "@/components/app-nav";
+import { BottomNav, SideNav } from "@/components/app-nav";
 import { ConnectionStatus } from "@/components/connection-status";
 import { ServiceWorkerRegistrar } from "@/components/service-worker";
 import { ThemeToggle } from "@/components/theme";
 import { Button } from "@/components/ui/button";
 import { db } from "@/lib/db";
-import { can, getSessionUser } from "@/lib/session";
+import { buildNavItems } from "@/lib/nav";
+import { getSessionUser } from "@/lib/session";
 
 const ROLE_LABEL: Record<string, string> = {
   ADMINISTRATOR: "Administrator",
@@ -30,26 +31,7 @@ export default async function AppLayout({
     select: { name: true, logoUrl: true },
   });
 
-  const items: NavItem[] = [
-    { href: "/dashboard", label: "Dashboard", icon: "dashboard" },
-  ];
-  if (can(user, "job.view")) {
-    items.push({ href: "/jobs", label: "Jobs", icon: "jobs" });
-  }
-  if (can(user, "mileage.submit")) {
-    items.push({ href: "/mileage", label: "Mileage", icon: "mileage" });
-  }
-  if (can(user, "payroll.view")) {
-    items.push({ href: "/pay", label: "Pay", icon: "pay" });
-  }
-  if (
-    can(user, "settings.company") ||
-    can(user, "users.manage") ||
-    can(user, "roles.manage") ||
-    can(user, "settings.integrations")
-  ) {
-    items.push({ href: "/settings", label: "Settings", icon: "settings" });
-  }
+  const items = buildNavItems(user);
 
   return (
     <div className="flex min-h-dvh flex-col">

@@ -12,19 +12,24 @@ the client-facing report, the full job archive, and the weekly pay journal.
 
 ## Status
 
-**Phase 1 of 7 is complete.** What works today:
+**Phases 1–2 of 7 are complete.** What works today:
 
 - NextCloud OpenID Connect sign-in, with roles read from NextCloud groups
 - Three-layer permission model (base role, relationships, permission + scope)
 - Editable permission matrix
 - Company settings, user management, direct-supervisor assignment
+- Clients, customers and sites, with tappable addresses
+- Projects: client project ID, general scope, membership, deliverable defaults,
+  dispatch contacts, and their own work order counter
+- Job creation with automatic internal work order numbering, tech assignment,
+  automatic pay rate resolution and revisit scheduling
+- Scope-filtered job list and job page
 - Dark/light theme (dark by default), responsive phone/tablet/desktop shell
 - Installable PWA with an offline notice and a connection indicator
-- Postgres schema for the whole domain, applied by migration
 - Docker Compose deployment
 
-Everything the app can currently do is reachable from the UI. Jobs, time
-tracking, deliverables, exports and payroll land in later phases — see
+Everything the app can currently do is reachable from the UI. Time tracking,
+deliverables, exports and payroll land in later phases — see
 [Roadmap](#roadmap).
 
 ---
@@ -220,10 +225,15 @@ npm run dev
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run db:migrate` | Create and apply a migration |
 | `npm run db:seed` | Seed role grants and company row (idempotent) |
+| `npm run verify` | Integration check for numbering, dates and scope rules |
 | `npm run db:studio` | Prisma Studio |
 
-The seed only writes role grants when the table is empty, so it never overwrites
-a matrix a manager has tuned.
+The seed never rewrites a permission the database already knows about, so a
+manager's tuning survives every deploy. It does seed defaults for permissions a
+release has newly added, and deletes grants for ones it has retired.
+
+`npm run verify` is destructive — it wipes jobs and counters to test numbering —
+so it refuses to start without `QUICKTEC_ALLOW_DESTRUCTIVE_VERIFY=1`.
 
 ---
 
@@ -232,14 +242,14 @@ a matrix a manager has tuned.
 | Phase | Scope | Status |
 | --- | --- | --- |
 | 1 | Auth, roles & permissions, company settings, theme, PWA shell, deployment | **Done** |
-| 2 | Clients, customers, sites, projects; job creation and INT WO numbering | Next |
-| 3 | Job page, read-only fields with change requests, time clock, breaks, live earnings | |
+| 2 | Clients, customers, sites, projects; job creation and INT WO numbering | **Done** |
+| 3 | Job page, read-only fields with change requests, time clock, breaks, live earnings | Next |
 | 4 | Deliverables, photo pipeline, signatures, guided checkout, autosave | |
 | 5 | Text report, ZIP archive, internal PDF work order | |
 | 6 | Pay rates, mileage, reimbursements, pay journal, payroll | |
 | 7 | Timelines, approvals inbox, statistics, CalDAV calendar sync | |
 
-### Domain rules already fixed in the schema
+### Domain rules
 
 **Internal work order ID** — `YYYY-MM-PRJID-NNNN`
 
@@ -258,10 +268,24 @@ Revisit 2  INT WO 2026-09-PRJ12-0042-R2 Assignment ID R-887766
 new Assignment ID is stored as-is and does not change our internal number.
 
 **Time** — stored in UTC, displayed in the site's time zone (default
-`America/Los_Angeles`). Clock in/out snaps to 5 minutes once, at the press; pay
-is then computed from the snapped time with no second rounding. Totals are
-reported as `2.00 hrs`, always two decimals.
+`America/Los_Angeles`). Totals are reported as `2.00 hrs`, always two decimals.
+
+Clock in/out snaps to the rounding interval once, at the press; pay is then
+computed from the snapped time with no second rounding. The snap is **not**
+"nearest" — the window is `[target − 3 min, target + 2 min)` at five-minute
+steps, which rounds 09:57 up to 10:00 where nearest would give 09:55. The half
+minute of bias is deliberate and favours the tech.
 
 **Money** — USD. Rate lookup runs job override → tech + project → tech + client →
-tech default. Travel reimbursement is set per job or project only, never as a
-tech default. Unpaid breaks reduce pay but not the client-facing onsite time.
+tech default → non-billable. Unpaid breaks reduce pay but not the client-facing
+onsite time.
+
+Two separate things fund travel:
+
+- **Travel reimbursement** is money the customer allocates for a particular job
+  or project. It is paid, appears in the pay journal, and has no tech-level
+  default because it never belongs to a person.
+- **Mileage** is a write-off record for the tech's own 1099 deductions, and a
+  signal to supervisors that a tech has actually set off. It is logged per leg
+  of driving with odometer readings and photos, needs no approval, and does not
+  enter payroll.
