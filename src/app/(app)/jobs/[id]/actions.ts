@@ -6,11 +6,12 @@ import { recordAudit } from "@/lib/audit";
 import { getCompanySettings } from "@/lib/company";
 import { roundToInterval } from "@/lib/datetime";
 import { db } from "@/lib/db";
+import { deliverableLabel, resolveDeliverableRules } from "@/lib/deliverables";
 import { isJobField, JOB_FIELDS, type JobFieldName } from "@/lib/job-fields";
 import { canOnJob } from "@/lib/scope";
 import { getSessionUser, permissionScope, type SessionUser } from "@/lib/session";
 import { adjustmentMinutes } from "@/lib/time-tracking";
-import { ContactType, type Prisma } from "@prisma-client";
+import { ContactType, JobOutcome, type Prisma } from "@prisma-client";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -167,7 +168,20 @@ export async function clockIn(formData: FormData): Promise<ActionResult> {
 }
 
 export async function clockOut(formData: FormData): Promise<ActionResult> {
-  const jobId = String(formData.get("jobId") ?? "");
+  return performClockOut(
+    String(formData.get("jobId") ?? ""),
+    (formData.get("at") as string) || null,
+  );
+}
+
+/**
+ * Shared by the plain Clock out button and by the last step of the guided
+ * checkout, so both end up writing the visit the same way.
+ */
+async function performClockOut(
+  jobId: string,
+  requestedIso: string | null,
+): Promise<ActionResult> {
   const context = await loadContext(jobId);
   if (!context) return fail("Job not found.");
 
@@ -189,10 +203,7 @@ export async function clockOut(formData: FormData): Promise<ActionResult> {
   });
   if (!visit) return fail("You are not clocked in.");
 
-  const resolved = await resolveClockTime(
-    user,
-    (formData.get("at") as string) || null,
-  );
+  const resolved = await resolveClockTime(user, requestedIso);
   if ("error" in resolved) return fail(resolved.error);
 
   if (resolved.at.getTime() <= visit.clockInAt.getTime()) {
@@ -241,6 +252,137 @@ export async function clockOut(formData: FormData): Promise<ActionResult> {
 
   touch(jobId);
   return ok;
+}
+
+const checkoutSchema = z.object({
+  jobId: z.string().min(1),
+  outcome: z.enum(JobOutcome),
+  releaseCode: z.string().trim().max(120).optional(),
+  noReleaseCode: z.string().optional(),
+  at: z.string().optional(),
+});
+
+/**
+ * Final step of the guided checkout.
+ *
+ * Everything the wizard collected along the way — signatures, contacts,
+ * deliverables — was already saved as it was captured, so a tech who loses
+ * signal halfway does not have to start again. This commits only the outcome,
+ * the release code and the clock-out itself, and refuses to close a job that
+ * is still missing a required sign-off unless someone with the override says
+ * so.
+ */
+export async function completeCheckout(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  const parsed = checkoutSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return fail(z.prettifyError(parsed.error));
+
+  const { jobId, outcome, releaseCode, at } = parsed.data;
+  const noReleaseCode = parsed.data.noReleaseCode === "true";
+
+  const context = await loadContext(jobId);
+  if (!context) return fail("Job not found.");
+  const { user, job } = context;
+
+  if (!(await canOnJob(user, "job.set_outcome_status", job))) {
+    return fail("You cannot set the outcome on this job.");
+  }
+
+  if (!noReleaseCode && !releaseCode) {
+    return fail(
+      "Enter the release code, or confirm there isn't one with No release code.",
+    );
+  }
+
+  const missing = await missingRequiredDeliverables(jobId);
+  if (missing.length > 0) {
+    const canOverride = await canOnJob(user, "job.override_missing_signoff", job);
+    if (!canOverride) {
+      return fail(
+        `Still missing: ${missing.join(", ")}. A manager has to approve closing without these.`,
+      );
+    }
+  }
+
+  await db.job.update({
+    where: { id: jobId },
+    data: {
+      outcome,
+      releaseCode: noReleaseCode ? null : (releaseCode ?? null),
+      noReleaseCode,
+    },
+  });
+
+  await recordAudit({
+    actorId: user.id,
+    entityType: "Job",
+    entityId: jobId,
+    jobId,
+    action: "checkout_completed",
+    detail: {
+      outcome,
+      noReleaseCode,
+      overrodeMissing: missing.length > 0 ? missing.join(", ") : null,
+    },
+  });
+
+  return performClockOut(jobId, at || null);
+}
+
+/**
+ * Required deliverable sections with nothing in them. Job-level rules win over
+ * the project's, matching what the job page shows.
+ */
+export async function missingRequiredDeliverables(
+  jobId: string,
+): Promise<string[]> {
+  const job = await db.job.findUnique({
+    where: { id: jobId },
+    select: {
+      deliverableRules: {
+        where: { projectId: null },
+        select: {
+          category: true,
+          customLabel: true,
+          enabled: true,
+          required: true,
+          requiresPhoto: true,
+          requiresText: true,
+          order: true,
+        },
+      },
+      project: {
+        select: {
+          deliverableRules: {
+            where: { jobId: null },
+            select: {
+              category: true,
+              customLabel: true,
+              enabled: true,
+              required: true,
+              requiresPhoto: true,
+              requiresText: true,
+              order: true,
+            },
+          },
+        },
+      },
+      deliverables: { select: { category: true } },
+    },
+  });
+  if (!job) return [];
+
+  const rules = resolveDeliverableRules(
+    job.deliverableRules,
+    job.project?.deliverableRules ?? [],
+  );
+  const present = new Set(job.deliverables.map((item) => item.category));
+
+  return rules
+    .filter((rule) => rule.required && !present.has(rule.category))
+    .map((rule) => deliverableLabel(rule.category, rule.customLabel));
 }
 
 export async function toggleBreak(formData: FormData): Promise<ActionResult> {

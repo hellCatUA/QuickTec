@@ -12,7 +12,7 @@ the client-facing report, the full job archive, and the weekly pay journal.
 
 ## Status
 
-**Phases 1–3 of 7 are complete.** What works today:
+**Phases 1–4 of 7 are complete.** What works today:
 
 - NextCloud OpenID Connect sign-in, with roles read from NextCloud groups
 - Three-layer permission model (base role, relationships, permission + scope)
@@ -30,13 +30,19 @@ the client-facing report, the full job archive, and the weekly pay journal.
   Suggest change flow for the rest
 - Scope of work in Markdown with tickable checklists, points of contact,
   dispatch numbers, and per-tech Work Performed that autosaves
+- Deliverables: photo upload with HEIC conversion, EXIF capture and a
+  bottom-right stamp, kept against whoever uploaded them
+- Reimbursements for materials, parking, tolls and hotels with receipts
+- Signature capture for the MOD and the tech
+- Guided checkout: missing-work review, outcome, release code, signatures,
+  final review and the clock-out picker — plus a prepare mode that collects
+  everything while the manager is still on site
 - Dark/light theme (dark by default), responsive phone/tablet/desktop shell
 - Installable PWA with an offline notice and a connection indicator
 - Docker Compose deployment
 
-Everything the app can currently do is reachable from the UI. Deliverables,
-the guided checkout, exports and payroll land in later phases — see
-[Roadmap](#roadmap).
+Everything the app can currently do is reachable from the UI. Exports and
+payroll land in later phases — see [Roadmap](#roadmap).
 
 ---
 
@@ -203,6 +209,11 @@ The dashboard shows these as a checklist until they are done.
 | `./data/postgres` | Database |
 | `./data/uploads` | Photos, signatures, generated exports |
 
+Uploads are **not** served straight from the volume. Every read goes through
+`/api/files/<id>`, which applies the same job-scope check as the page linking
+to it — mapping the directory into Nginx would let anyone with a URL read
+another crew's site photos.
+
 Both are bind mounts, so OMV's own snapshot and backup jobs cover them. Stop the
 stack or use `pg_dump` for a consistent database copy:
 
@@ -255,8 +266,8 @@ expects it.
 | 1 | Auth, roles & permissions, company settings, theme, PWA shell, deployment | **Done** |
 | 2 | Clients, customers, sites, projects; job creation and INT WO numbering | **Done** |
 | 3 | Job page, read-only fields with change requests, time clock, breaks, live earnings | **Done** |
-| 4 | Deliverables, photo pipeline, signatures, guided checkout | Next |
-| 5 | Text report, ZIP archive, internal PDF work order | |
+| 4 | Deliverables, photo pipeline, signatures, guided checkout | **Done** |
+| 5 | Text report, ZIP archive, internal PDF work order | Next |
 | 6 | Pay rates, mileage, reimbursements, pay journal, payroll | |
 | 7 | Timelines, approvals inbox, statistics, CalDAV calendar sync | |
 
@@ -292,6 +303,29 @@ is billed for the span the crew was on site — earliest clock-in to latest
 clock-out across everyone, breaks included. A **tech** is paid for their own
 visits minus their own unpaid breaks. A tech who leaves early is still covered
 by the supervisor who stayed on.
+
+Because the snap rounds up, a fresh clock-in is often a minute or two in the
+future. The card says "Clock starts 10:05" for that stretch rather than showing
+a counter frozen at zero, which reads as a failed tap.
+
+**Photos** — everything becomes JPEG, capped at 2400px on the long edge. HEIC
+from an iPhone is decoded by libvips where the build supports it and by a
+pure-JS libheif otherwise, because that format is the entire input path and
+cannot be allowed to fail on a platform quirk. EXIF is read before conversion
+strips it: the timestamp and GPS fix are the only evidence a photo was taken on
+site. The stamp goes bottom-right:
+
+```
+2026-07-28-887766-SBUX-#24541
+```
+
+**Checkout** is a run-through, not a button. Each step commits as it is
+completed, so a tech who loses signal after capturing the MOD's signature does
+not have to find that person again. The same wizard in *prepare* mode stops
+short of the clock-out, which is what you want when the manager is available
+now but the work runs on for another hour. A job missing a required deliverable
+cannot be closed without someone holding the override, and the override is
+recorded.
 
 **Money** — USD. Rate lookup runs job override → tech + project → tech + client →
 tech default → non-billable. Unpaid breaks reduce pay but not the client-facing

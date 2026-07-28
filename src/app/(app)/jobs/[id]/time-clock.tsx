@@ -32,6 +32,7 @@ export function TimeClock({
   customerName,
   canClock,
   serverNow,
+  onRequestCheckout,
 }: {
   jobId: string;
   timeZone: string;
@@ -45,6 +46,8 @@ export function TimeClock({
   customerName: string;
   canClock: boolean;
   serverNow: string;
+  /** Present when the job should go through the guided checkout on the way out. */
+  onRequestCheckout?: () => void;
 }) {
   // Starts on the server's clock so the first client render matches the HTML
   // that arrived; the interval takes over from there.
@@ -66,6 +69,12 @@ export function TimeClock({
 
   const totals = assignmentTotals(visits, now);
   const money = earnings(payType, payRate, totals.paidMinutes);
+
+  // Snapping rounds up by as much as three minutes, so a fresh clock-in is
+  // often a minute or two in the future and the counter would otherwise sit
+  // frozen at zero looking broken. Say what is actually happening instead.
+  const startsAt = openVisit ? new Date(openVisit.clockInAt) : null;
+  const notStartedYet = Boolean(startsAt && startsAt.getTime() > now.getTime());
 
   function run(action: () => Promise<{ ok: boolean; error?: string }>) {
     setError(null);
@@ -107,10 +116,12 @@ export function TimeClock({
             <div className="flex flex-wrap items-end justify-between gap-4">
               <div>
                 <div className="text-xs uppercase tracking-wide text-muted-foreground">
-                  Elapsed
+                  {notStartedYet ? "Clock starts" : "Elapsed"}
                 </div>
                 <div className="tabular text-3xl font-semibold">
-                  {formatElapsedPrecise(totals.onsiteMinutes * 60)}
+                  {notStartedYet
+                    ? usTimeInZone(startsAt as Date, timeZone)
+                    : formatElapsedPrecise(totals.onsiteMinutes * 60)}
                 </div>
               </div>
 
@@ -125,6 +136,13 @@ export function TimeClock({
                 </div>
               ) : null}
             </div>
+
+            {notStartedYet ? (
+              <p className="text-xs text-muted-foreground">
+                Your time was rounded up to the next five minutes, so the count
+                begins shortly. You are clocked in.
+              </p>
+            ) : null}
 
             {totals.unpaidBreakMinutes > 0 ? (
               <p className="text-xs text-muted-foreground">
@@ -185,21 +203,25 @@ export function TimeClock({
                 size="lg"
                 className="flex-1"
                 disabled={pending}
-                onClick={() => submit("out")}
+                onClick={() =>
+                  onRequestCheckout ? onRequestCheckout() : submit("out")
+                }
               >
                 <LogOut /> Clock out
               </Button>
             </div>
 
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              disabled={pending}
-              onClick={() => setPicker("out")}
-            >
-              Clock out early or later
-            </Button>
+            {!onRequestCheckout ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={pending}
+                onClick={() => setPicker("out")}
+              >
+                Clock out early or later
+              </Button>
+            ) : null}
           </div>
         ) : (
           <div className="flex flex-col gap-2">

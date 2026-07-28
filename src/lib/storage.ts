@@ -1,0 +1,96 @@
+import { createHash, randomUUID } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { mkdir, rm, stat, writeFile } from "node:fs/promises";
+import path from "node:path";
+
+/**
+ * File storage on the uploads volume.
+ *
+ * Paths are always built here from ids we generated — a filename that came
+ * from a phone never reaches the filesystem. Everything still goes through
+ * assertInside() before a write or delete, so a bug upstream cannot turn into
+ * a write outside the volume.
+ */
+
+export function uploadsRoot(): string {
+  return process.env.UPLOADS_DIR || path.join(process.cwd(), "data", "uploads");
+}
+
+function assertInside(absolute: string): void {
+  const root = path.resolve(uploadsRoot());
+  const resolved = path.resolve(absolute);
+  if (resolved !== root && !resolved.startsWith(root + path.sep)) {
+    throw new Error("Refusing to touch a path outside the uploads volume");
+  }
+}
+
+export function absolutePath(storagePath: string): string {
+  const absolute = path.join(uploadsRoot(), storagePath);
+  assertInside(absolute);
+  return absolute;
+}
+
+/** Extensions we are willing to write. Anything else is stored as .bin. */
+const EXTENSIONS: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "application/pdf": "pdf",
+};
+
+export function extensionFor(mimeType: string): string {
+  return EXTENSIONS[mimeType] ?? "bin";
+}
+
+export type StoredFile = {
+  storagePath: string;
+  sizeBytes: number;
+  sha256: string;
+};
+
+/**
+ * Writes a file under jobs/<jobId>/. The name is a fresh uuid, so two techs
+ * uploading IMG_0001.HEIC within a second of each other cannot collide.
+ */
+export async function storeFile(
+  jobId: string,
+  data: Buffer,
+  mimeType: string,
+): Promise<StoredFile> {
+  const directory = path.join("jobs", jobId);
+  const name = `${randomUUID()}.${extensionFor(mimeType)}`;
+  const storagePath = path.join(directory, name);
+
+  const absolute = absolutePath(storagePath);
+  await mkdir(path.dirname(absolute), { recursive: true });
+  await writeFile(absolute, data);
+
+  return {
+    storagePath,
+    sizeBytes: data.byteLength,
+    sha256: createHash("sha256").update(data).digest("hex"),
+  };
+}
+
+export async function deleteFile(storagePath: string): Promise<void> {
+  // A missing file is not an error: the row is what matters, and a half-failed
+  // upload should still be removable.
+  await rm(absolutePath(storagePath), { force: true });
+}
+
+export async function fileExists(storagePath: string): Promise<boolean> {
+  try {
+    await stat(absolutePath(storagePath));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function readFileStream(storagePath: string) {
+  return createReadStream(absolutePath(storagePath));
+}
+
+export async function fileSize(storagePath: string): Promise<number> {
+  return (await stat(absolutePath(storagePath))).size;
+}

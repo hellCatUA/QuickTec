@@ -428,6 +428,116 @@ async function main() {
   );
   check("refused links stay as plain text", linkHtml.includes("[bad]("), true);
 
+  // --- photo pipeline -----------------------------------------------------
+  const sharpLib = (await import("sharp")).default;
+  const { processImage, isHeic, isPdf, watermarkText } = await import(
+    "@/lib/images"
+  );
+
+  const bigJpeg = await sharpLib({
+    create: { width: 4032, height: 3024, channels: 3, background: "#224466" },
+  })
+    .jpeg()
+    .toBuffer();
+
+  const plain = await processImage(bigJpeg, "image/jpeg", null);
+  check("output is always JPEG", plain.mimeType, "image/jpeg");
+  check("oversized photo is scaled to the long edge", plain.width, 2400);
+  check("aspect ratio is kept", plain.height, 1800);
+  check("no stamp when none is asked for", plain.watermarked, false);
+
+  const stamp = watermarkText({
+    date: "2026-07-28",
+    assignmentId: "887766",
+    customerCode: "SBUX",
+    siteNumber: "24541",
+  });
+  check("stamp text", stamp, "2026-07-28-887766-SBUX-#24541");
+
+  const stamped = await processImage(bigJpeg, "image/jpeg", stamp);
+  check("stamp is recorded", stamped.watermarked, true);
+
+  // The stamp sits bottom-right, so that corner must differ from the flat
+  // original while the top-left is untouched.
+  const corner = async (image: Buffer, left: number, top: number) =>
+    (
+      await sharpLib(image)
+        .extract({ left, top, width: 60, height: 30 })
+        .raw()
+        .toBuffer()
+    ).toString("hex");
+
+  check(
+    "bottom-right corner changed",
+    (await corner(stamped.data, 2400 - 200, 1800 - 60)) !==
+      (await corner(plain.data, 2400 - 200, 1800 - 60)),
+    true,
+  );
+  check(
+    "top-left corner untouched",
+    (await corner(stamped.data, 10, 10)) === (await corner(plain.data, 10, 10)),
+    true,
+  );
+
+  // HEIF container: what an iPhone sends, minus the HEVC codec this build
+  // cannot encode. Exercises detection and the sharp decode path.
+  const heif = await sharpLib(bigJpeg).heif({ compression: "av1" }).toBuffer();
+  check("HEIF is detected from its magic bytes", isHeic("application/octet-stream", heif), true);
+  check("JPEG is not mistaken for HEIF", isHeic("image/jpeg", bigJpeg), false);
+
+  const fromHeif = await processImage(heif, "image/heic", null);
+  check("HEIF converts to JPEG", fromHeif.mimeType, "image/jpeg");
+  check("converted image keeps its size", fromHeif.width, 2400);
+
+  const pdf = Buffer.from("%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n%%EOF\n");
+  check("PDF is recognised", isPdf("application/pdf", pdf), true);
+  const passthrough = await processImage(pdf, "application/pdf", stamp);
+  check("PDF passes through untouched", passthrough.data.equals(pdf), true);
+  check("PDF is never stamped", passthrough.watermarked, false);
+
+  // EXIF is read before conversion strips it — the timestamp and fix are the
+  // only evidence a photo was taken on site. sharp cannot write a GPS IFD, so
+  // the conversion is tested directly and the pipeline is checked for not
+  // inventing coordinates.
+  const { gpsToDecimal } = await import("@/lib/images");
+
+  check(
+    "north latitude is positive",
+    gpsToDecimal([47, 36, 55.8], "N")?.toFixed(4),
+    "47.6155",
+  );
+  check(
+    "west longitude is negative",
+    gpsToDecimal([122, 20, 15.6], "W")?.toFixed(4),
+    "-122.3377",
+  );
+  check("south latitude is negative", gpsToDecimal([33, 51, 54], "S")?.toFixed(2), "-33.87");
+  check("missing GPS gives null", gpsToDecimal(undefined, "N"), null);
+  check("malformed GPS gives null", gpsToDecimal([47], "N"), null);
+
+  check("a photo with no GPS reports none", plain.gpsLat, null);
+  check("a photo with no timestamp reports none", plain.capturedAt, null);
+
+  // --- storage ------------------------------------------------------------
+  const { storeFile, deleteFile, fileExists, absolutePath } = await import(
+    "@/lib/storage"
+  );
+
+  const stored = await storeFile("test-job", Buffer.from("hello"), "image/jpeg");
+  check("stored under the job", stored.storagePath.startsWith("jobs/test-job/"), true);
+  check("stored with a jpg extension", stored.storagePath.endsWith(".jpg"), true);
+  check("file is on disk", await fileExists(stored.storagePath), true);
+  await deleteFile(stored.storagePath);
+  check("file is gone", await fileExists(stored.storagePath), false);
+
+  let escaped = false;
+  try {
+    absolutePath("../../etc/passwd");
+  } catch {
+    escaped = true;
+  }
+  check("path traversal is refused", escaped, true);
+
   console.log(`\n${failures === 0 ? "ALL CHECKS PASSED" : `${failures} CHECK(S) FAILED`}`);
   await db.$disconnect();
   process.exit(failures === 0 ? 0 : 1);

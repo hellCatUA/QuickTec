@@ -36,7 +36,9 @@ import { EditableField } from "./editable-field";
 import { PointsOfContact } from "./points-of-contact";
 import { RevisitPanel } from "./revisit-panel";
 import { ScopeOfWork } from "./scope-of-work";
-import { TimeClock } from "./time-clock";
+import { Deliverables } from "./deliverables";
+import { Reimbursements } from "./reimbursements";
+import { TimePanel } from "./time-panel";
 import { WorkPerformed } from "./work-performed";
 
 export async function generateMetadata({
@@ -76,6 +78,7 @@ export default async function JobPage({
       techsRequired: true,
       scopeOfWork: true,
       releaseCode: true,
+      noReleaseCode: true,
       returnTrackingNumber: true,
       workPerformedMerged: true,
       breakPaid: true,
@@ -174,6 +177,41 @@ export default async function JobPage({
         where: { checked: true },
         select: { lineKey: true },
       },
+      deliverables: {
+        orderBy: { createdAt: "asc" },
+        select: {
+          id: true,
+          category: true,
+          customLabel: true,
+          textValue: true,
+          assignment: { select: { userId: true, user: { select: { name: true } } } },
+          attachments: {
+            select: { id: true, mimeType: true, originalName: true },
+          },
+        },
+      },
+      reimbursements: {
+        orderBy: { createdAt: "asc" },
+        select: {
+          id: true,
+          type: true,
+          label: true,
+          amount: true,
+          note: true,
+          assignment: { select: { userId: true } },
+          attachments: { select: { id: true, mimeType: true } },
+        },
+      },
+      signatures: {
+        select: {
+          id: true,
+          kind: true,
+          signerName: true,
+          skipped: true,
+          pointOfContactId: true,
+          assignment: { select: { userId: true } },
+        },
+      },
       changeRequests: {
         where: { status: "PENDING" },
         orderBy: { createdAt: "asc" },
@@ -257,6 +295,12 @@ export default async function JobPage({
     canOnJob(user, "job.approve_report", jobRef),
   ]);
 
+  const [canUpload, canOverrideMissing, canSetOutcome] = await Promise.all([
+    canOnJob(user, "deliverable.upload", jobRef),
+    canOnJob(user, "job.override_missing_signoff", jobRef),
+    canOnJob(user, "job.set_outcome_status", jobRef),
+  ]);
+
   const mine = job.assignments.find(
     (assignment) => assignment.user.id === user.id,
   );
@@ -267,6 +311,18 @@ export default async function JobPage({
   const rules = resolveDeliverableRules(
     job.deliverableRules,
     job.project?.deliverableRules ?? [],
+  );
+
+  const presentCategories = new Set(
+    job.deliverables.map((item) => item.category),
+  );
+  const missingRequired = rules
+    .filter((rule) => rule.required && !presentCategories.has(rule.category))
+    .map((rule) => deliverableLabel(rule.category, rule.customLabel));
+
+  const photoCount = job.deliverables.reduce(
+    (total, item) => total + item.attachments.length,
+    0,
   );
 
   /** Read-only, editable, fill-in or suggest — decided per field. */
@@ -370,7 +426,7 @@ export default async function JobPage({
       </div>
 
       {mine ? (
-        <TimeClock
+        <TimePanel
           jobId={job.id}
           timeZone={zone}
           intervalMinutes={company.timeRoundingMinutes}
@@ -391,6 +447,31 @@ export default async function JobPage({
           customerName={job.customer.name}
           canClock={canClockHere}
           serverNow={now.toISOString()}
+          checkout={{
+            missingRequired,
+            mods: job.pointsOfContact
+              .filter((contact) => contact.type === "MOD")
+              .map((contact) => ({
+                id: contact.id,
+                name: contact.name,
+                signed: job.signatures.some(
+                  (signature) =>
+                    signature.kind === "MOD" &&
+                    signature.pointOfContactId === contact.id,
+                ),
+              })),
+            techName: user.name,
+            techSigned: job.signatures.some(
+              (signature) =>
+                signature.kind === "TECH" &&
+                signature.assignment?.userId === user.id,
+            ),
+            releaseCode: job.releaseCode,
+            noReleaseCode: job.noReleaseCode,
+            outcome: job.outcome,
+            canOverrideMissing,
+            canSetOutcome,
+          }}
         />
       ) : null}
 
@@ -681,27 +762,74 @@ export default async function JobPage({
 
       <Card>
         <CardHeader>
-          <CardTitle>Deliverables required</CardTitle>
+          <CardTitle>Deliverables</CardTitle>
           <CardDescription>
-            Uploading arrives with the photo pipeline.
+            Photos are converted to JPEG, stamped bottom-right with the date,
+            Assignment ID and site, and kept against whoever uploaded them.
           </CardDescription>
         </CardHeader>
-        <CardContent className="flex flex-wrap gap-1.5">
-          {rules.length === 0 ? (
-            <p className="text-sm text-muted-foreground">None configured.</p>
-          ) : (
-            rules.map((rule) => (
-              <Badge
-                key={rule.category}
-                variant={rule.required ? "warning" : "neutral"}
-              >
-                {deliverableLabel(rule.category, rule.customLabel)}
-                {rule.required ? " · required" : ""}
-              </Badge>
-            ))
-          )}
+        <CardContent>
+          <Deliverables
+            jobId={job.id}
+            rules={rules}
+            canUpload={canUpload}
+            photoCount={photoCount}
+            photoLimit={company.maxPhotosPerJob}
+            items={job.deliverables.map((item) => ({
+              id: item.id,
+              category: item.category,
+              customLabel: item.customLabel,
+              textValue: item.textValue,
+              uploadedBy: item.assignment?.user.name ?? null,
+              isOwn: item.assignment?.userId === user.id,
+              attachments: item.attachments,
+            }))}
+          />
         </CardContent>
       </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Reimbursements</CardTitle>
+          <CardDescription>
+            Materials and parking reach the client report; hotels stay internal.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Reimbursements
+            jobId={job.id}
+            canEdit={canUpload}
+            entries={job.reimbursements.map((entry) => ({
+              id: entry.id,
+              type: entry.type,
+              label: entry.label,
+              amount: entry.amount.toString(),
+              note: entry.note,
+              isOwn: entry.assignment?.userId === user.id,
+              attachments: entry.attachments,
+            }))}
+          />
+        </CardContent>
+      </Card>
+
+      {job.signatures.length > 0 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Signatures</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-wrap gap-1.5">
+            {job.signatures.map((signature) => (
+              <Badge
+                key={signature.id}
+                variant={signature.skipped ? "warning" : "success"}
+              >
+                {signature.kind} · {signature.signerName}
+                {signature.skipped ? " · not signed" : ""}
+              </Badge>
+            ))}
+          </CardContent>
+        </Card>
+      ) : null}
 
       {job.parentJob || job.revisits.length > 0 ? (
         <Card>
