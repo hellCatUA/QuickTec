@@ -29,6 +29,8 @@ import {
 import { formatRate } from "@/lib/money";
 import { canOnJob } from "@/lib/scope";
 import { can, getSessionUser } from "@/lib/session";
+import { loadJobForExport } from "@/lib/exports/job-data";
+import { buildTextReport } from "@/lib/exports/text-report";
 import { jobSpan } from "@/lib/time-tracking";
 import { approveJob } from "../actions";
 import { ChangeRequests } from "./change-requests";
@@ -37,6 +39,7 @@ import { PointsOfContact } from "./points-of-contact";
 import { RevisitPanel } from "./revisit-panel";
 import { ScopeOfWork } from "./scope-of-work";
 import { Deliverables } from "./deliverables";
+import { ExportsPanel } from "./exports-panel";
 import { Reimbursements } from "./reimbursements";
 import { TimePanel } from "./time-panel";
 import { WorkPerformed } from "./work-performed";
@@ -295,11 +298,26 @@ export default async function JobPage({
     canOnJob(user, "job.approve_report", jobRef),
   ]);
 
-  const [canUpload, canOverrideMissing, canSetOutcome] = await Promise.all([
+  const [
+    canUpload,
+    canOverrideMissing,
+    canSetOutcome,
+    canExportText,
+    canExportZip,
+    canExportPdf,
+  ] = await Promise.all([
     canOnJob(user, "deliverable.upload", jobRef),
     canOnJob(user, "job.override_missing_signoff", jobRef),
     canOnJob(user, "job.set_outcome_status", jobRef),
+    canOnJob(user, "export.text", jobRef),
+    canOnJob(user, "export.zip", jobRef),
+    canOnJob(user, "export.internal_wo", jobRef),
   ]);
+
+  // Rendered with the page rather than fetched, so the report is there to copy
+  // even if the connection has dropped by the time someone wants it.
+  const exportData = canExportText ? await loadJobForExport(job.id) : null;
+  const textReport = exportData ? buildTextReport(exportData) : null;
 
   const mine = job.assignments.find(
     (assignment) => assignment.user.id === user.id,
@@ -811,6 +829,27 @@ export default async function JobPage({
           />
         </CardContent>
       </Card>
+
+      {canExportText || canExportZip || canExportPdf ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Exports</CardTitle>
+            <CardDescription>
+              The report is the client-facing form — nothing internal appears in
+              it. The ZIP carries the photos foldered by section and tech.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ExportsPanel
+              jobId={job.id}
+              report={textReport}
+              canText={canExportText}
+              canZip={canExportZip}
+              canPdf={canExportPdf}
+            />
+          </CardContent>
+        </Card>
+      ) : null}
 
       {job.signatures.length > 0 ? (
         <Card>

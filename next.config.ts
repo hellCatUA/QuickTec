@@ -8,7 +8,9 @@ const nextConfig: NextConfig = {
   // Next needs to know which proxy headers to trust for absolute URL generation.
   poweredByHeader: false,
 
-  serverExternalPackages: ["@prisma/client"],
+  // These three read files from their own package directories at runtime —
+  // bundling them breaks pdfkit's built-in fonts and sharp's native binding.
+  serverExternalPackages: ["@prisma/client", "pdfkit", "sharp", "archiver"],
 
   experimental: {
     // Server Actions carry photo uploads; the default 1 MB cap is far too small.

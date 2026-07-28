@@ -321,6 +321,74 @@ async function main() {
     check(`timeline records ${action}`, actions.has(action), true);
   }
 
+  // --- exports ------------------------------------------------------------
+  await page.reload({ waitUntil: "domcontentloaded" });
+
+  check(
+    "the report is on the page ready to copy",
+    await page.locator("#text-report").isVisible(),
+    true,
+  );
+
+  const reportText = await page.locator("#text-report").inputValue();
+  check(
+    "the on-page report carries the release code just captured",
+    reportText.includes("Release code: RLS-4417"),
+    true,
+  );
+  check(
+    "the on-page report names the MOD who signed",
+    reportText.includes("MOD name: Dana Reyes"),
+    true,
+  );
+
+  const textDownload = await page.request.get(
+    `${BASE}/api/jobs/${assignment.jobId}/export/text`,
+  );
+  check("text export downloads", textDownload.status(), 200);
+  check(
+    "text export is offered as a file",
+    textDownload.headers()["content-disposition"]?.includes("-Report.txt"),
+    true,
+  );
+
+  const zipDownload = await page.request.get(
+    `${BASE}/api/jobs/${assignment.jobId}/export/zip`,
+  );
+  check("zip export downloads", zipDownload.status(), 200);
+  const zipBody = await zipDownload.body();
+  check("zip export is a real archive", zipBody.subarray(0, 2).toString(), "PK");
+  check("zip export is not empty", zipBody.byteLength > 1000, true);
+
+  // The internal work order is a supervisor-and-above document; a tech asking
+  // for it should be told the route does not exist, not that it is forbidden.
+  const pdfAsTech = await page.request.get(
+    `${BASE}/api/jobs/${assignment.jobId}/export/pdf`,
+  );
+  check("a tech cannot pull the internal work order", pdfAsTech.status(), 404);
+
+  const boss = await db.user.findUniqueOrThrow({
+    where: { email: "boss@417group.org" },
+  });
+  const bossToken = await encode({
+    token: { sub: boss.nextcloudSub!, userId: boss.id },
+    secret: process.env.AUTH_SECRET!,
+    salt: "authjs.session-token",
+    maxAge: 3600,
+  });
+  const bossContext = await browser.newContext();
+  await bossContext.addCookies([
+    { name: "authjs.session-token", value: bossToken, url: BASE },
+  ]);
+
+  const pdfAsManager = await bossContext.request.get(
+    `${BASE}/api/jobs/${assignment.jobId}/export/pdf`,
+  );
+  check("a manager can pull the internal work order", pdfAsManager.status(), 200);
+  const pdfBody = await pdfAsManager.body();
+  check("work order is a PDF", pdfBody.subarray(0, 5).toString(), "%PDF-");
+  await bossContext.close();
+
   await browser.close();
   await db.$disconnect();
 

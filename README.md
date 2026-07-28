@@ -12,7 +12,7 @@ the client-facing report, the full job archive, and the weekly pay journal.
 
 ## Status
 
-**Phases 1–4 of 7 are complete.** What works today:
+**Phases 1–5 of 7 are complete.** What works today:
 
 - NextCloud OpenID Connect sign-in, with roles read from NextCloud groups
 - Three-layer permission model (base role, relationships, permission + scope)
@@ -37,12 +37,14 @@ the client-facing report, the full job archive, and the weekly pay journal.
 - Guided checkout: missing-work review, outcome, release code, signatures,
   final review and the clock-out picker — plus a prepare mode that collects
   everything while the manager is still on site
+- Exports: the client-facing text report, a ZIP of the whole job, and the
+  company's own PDF work order
 - Dark/light theme (dark by default), responsive phone/tablet/desktop shell
 - Installable PWA with an offline notice and a connection indicator
 - Docker Compose deployment
 
-Everything the app can currently do is reachable from the UI. Exports and
-payroll land in later phases — see [Roadmap](#roadmap).
+Everything the app can currently do is reachable from the UI. Pay, mileage
+and calendar sync land in later phases — see [Roadmap](#roadmap).
 
 ---
 
@@ -267,8 +269,8 @@ expects it.
 | 2 | Clients, customers, sites, projects; job creation and INT WO numbering | **Done** |
 | 3 | Job page, read-only fields with change requests, time clock, breaks, live earnings | **Done** |
 | 4 | Deliverables, photo pipeline, signatures, guided checkout | **Done** |
-| 5 | Text report, ZIP archive, internal PDF work order | Next |
-| 6 | Pay rates, mileage, reimbursements, pay journal, payroll | |
+| 5 | Text report, ZIP archive, internal PDF work order | **Done** |
+| 6 | Pay rates, mileage, pay journal, payroll | Next |
 | 7 | Timelines, approvals inbox, statistics, CalDAV calendar sync | |
 
 ### Domain rules
@@ -318,6 +320,36 @@ site. The stamp goes bottom-right:
 ```
 2026-07-28-887766-SBUX-#24541
 ```
+
+**Exports** — three, with different audiences.
+
+The **text report** follows a fixed template that gets pasted into an email to
+the subcontractor, so its labels and their order are not ours to change. Two
+conventions for an absent value: `-` for a required field that was deliberately
+bypassed or never obtained, `N/a` for one that was optional. A site with no
+manager on duty reads `No MOD`, which is a fact rather than a gap. Nothing
+internal appears — no hotel claims, no INC number, no internal status, no pay.
+
+The **ZIP** is named `YYYY-MM-DD-AssignmentID.zip` for the date the crew
+arrived, and lays out as:
+
+```
+Pre-Install/<tech>/IMG_0001.jpg
+Post Install/<tech>/…
+Signatures/MOD-Dana Reyes-Signature.png
+Receipts/…
+<Company> INT WO/2026-07-PRJ12-0042.pdf
+887766-Report.txt
+```
+
+Photos sit under their section and then under whoever took them, so a two-tech
+job is not an unsorted pile. It streams rather than buffering — thirty full-size
+photos should not sit in memory while a phone pulls them over Tailscale.
+
+The **internal PDF work order** is rendered on demand, never stored. Generated
+at scheduling it shows the plan; pulled after checkout it carries the times, the
+narrative and the signatures. There is no stale copy to wonder about, and being
+internal it may show the INC number, hotel claims and internal status.
 
 **Checkout** is a run-through, not a button. Each step commits as it is
 completed, so a tech who loses signal after capturing the MOD's signature does

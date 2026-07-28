@@ -538,6 +538,211 @@ async function main() {
   }
   check("path traversal is refused", escaped, true);
 
+  // --- exports ------------------------------------------------------------
+  const { loadJobForExport } = await import("@/lib/exports/job-data");
+  const { buildTextReport } = await import("@/lib/exports/text-report");
+  const { buildJobZip, zipFileName, reportFileName } = await import(
+    "@/lib/exports/job-zip"
+  );
+  const { buildWorkOrderPdf } = await import("@/lib/exports/work-order-pdf");
+
+  // A job with everything the template can carry, so the golden output below
+  // exercises every branch rather than a happy path.
+  const exportJob = await db.job.create({
+    data: {
+      ...base,
+      intWoId: "2026-07-PRJ12-9001",
+      intWoSequence: 9001,
+      title: "Register Refresh",
+      projectId: project.id,
+      externalAssignmentId: "887766",
+      ticketNumber: "INC0099123",
+      incNumber: "SECRET-INTERNAL",
+      releaseCode: "RLS-4417",
+      outcome: "COMPLETED",
+      internalStatus: "REVISIT_REQUIRED",
+      scopeOfWork: "- [ ] Swap the switch",
+    },
+  });
+
+  const leadAssignment = await db.jobAssignment.create({
+    data: {
+      jobId: exportJob.id,
+      userId: sup.id,
+      isLead: true,
+      payType: "HOURLY",
+      payRate: "65",
+      workPerformed: "Ran the crew, verified uplinks.",
+    },
+  });
+  const techAssignment = await db.jobAssignment.create({
+    data: {
+      jobId: exportJob.id,
+      userId: tech.id,
+      payType: "HOURLY",
+      payRate: "45",
+      workPerformed: "Swapped the switch and relabelled the leads.",
+    },
+  });
+
+  // Supervisor 08:00-16:00, tech 09:00-12:00: the client is billed the outer
+  // span, 08:00 to 16:00.
+  await db.visit.create({
+    data: {
+      assignmentId: leadAssignment.id,
+      clockInAt: new Date("2026-07-28T15:00:00Z"),
+      clockOutAt: new Date("2026-07-28T23:00:00Z"),
+    },
+  });
+  await db.visit.create({
+    data: {
+      assignmentId: techAssignment.id,
+      clockInAt: new Date("2026-07-28T16:00:00Z"),
+      clockOutAt: new Date("2026-07-28T19:00:00Z"),
+    },
+  });
+
+  await db.pointOfContact.createMany({
+    data: [
+      { jobId: exportJob.id, type: "MOD", name: "Dana Reyes", order: 0 },
+      { jobId: exportJob.id, type: "MOD", name: "Chris Vale", order: 1 },
+      { jobId: exportJob.id, type: "NOC", name: "Priya Anand" },
+    ],
+  });
+
+  await db.reimbursement.createMany({
+    data: [
+      { jobId: exportJob.id, type: "MATERIAL", label: "Cat 6A 3Ft", amount: "3.00" },
+      { jobId: exportJob.id, type: "MATERIAL", label: "Wall Plate", amount: "8.99" },
+      { jobId: exportJob.id, type: "PARKING", amount: "12.00" },
+      { jobId: exportJob.id, type: "TOLL", amount: "6.50" },
+      // Internal only: this must not reach the client-facing report.
+      { jobId: exportJob.id, type: "HOTEL", label: "Holiday Inn", amount: "154.00" },
+    ],
+  });
+
+  await db.deliverableItem.create({
+    data: {
+      jobId: exportJob.id,
+      assignmentId: techAssignment.id,
+      category: "RETURN_LABELS",
+      textValue: "1Z999AA10123456784",
+    },
+  });
+
+  const exportData = (await loadJobForExport(exportJob.id))!;
+  const report = buildTextReport(exportData);
+
+  const expected = [
+    "Tech name: Sam Super, Terry Tech",
+    "Assignment ID: 887766",
+    "Site name & ID: SBUX #24541",
+    "Address: 1912 Pike Pl, Seattle, WA 98101",
+    "Buyer/Representing company: NetCom Sub",
+    "Onsite (Check in): 8:00 AM",
+    "Offsite (Check out): 4:00 PM",
+    "Total time: 8.00 hrs",
+    "Parking/Tolls: ",
+    "- Parking $12.00",
+    "- Toll $6.50",
+    "PM/PC name: N/a",
+    "MOD name: Dana Reyes, Chris Vale",
+    "NOC name: Priya Anand",
+    "Ticket #: INC0099123",
+    "Release code: RLS-4417",
+    "Return track #: 1Z999AA10123456784",
+    "Materials used: ",
+    "- Cat 6A 3Ft $3.00",
+    "- Wall Plate $8.99",
+    "Work summary: Sam Super: Ran the crew, verified uplinks.",
+    "",
+    "Terry Tech: Swapped the switch and relabelled the leads.",
+    "",
+  ].join("\n");
+
+  check("text report matches the template exactly", report, expected);
+  check("hotel claims stay out of the client report", report.includes("Holiday Inn"), false);
+  check("INC number stays internal", report.includes("SECRET-INTERNAL"), false);
+  check(
+    "internal status stays internal",
+    report.includes("REVISIT") || report.includes("Revisit"),
+    false,
+  );
+
+  // "No release code" is a decision, not a gap, and reads as a dash.
+  await db.job.update({
+    where: { id: exportJob.id },
+    data: { noReleaseCode: true, releaseCode: null },
+  });
+  const bypassed = buildTextReport((await loadJobForExport(exportJob.id))!);
+  check(
+    "a bypassed release code reads as a dash",
+    bypassed.includes("Release code: -"),
+    true,
+  );
+
+  await db.pointOfContact.deleteMany({ where: { jobId: exportJob.id, type: "MOD" } });
+  const noMod = buildTextReport((await loadJobForExport(exportJob.id))!);
+  check("a site with no MOD says so", noMod.includes("MOD name: No MOD"), true);
+
+  // A merged summary replaces the per-tech entries wholesale.
+  await db.job.update({
+    where: { id: exportJob.id },
+    data: { workPerformedMerged: "Switch replaced, uplinks verified." },
+  });
+  const merged = buildTextReport((await loadJobForExport(exportJob.id))!);
+  check(
+    "the merged summary wins once written",
+    merged.includes("Work summary: Switch replaced, uplinks verified."),
+    true,
+  );
+  check("merged output drops the per-tech prefixes", merged.includes("Terry Tech:"), false);
+
+  // --- ZIP ----------------------------------------------------------------
+  check("zip is named for the work date and assignment", zipFileName(exportData), "2026-07-28-887766.zip");
+  check("report file is named for the assignment", reportFileName(exportData), "887766-Report.txt");
+
+  const zipData = (await loadJobForExport(exportJob.id))!;
+  const archive = await buildJobZip(zipData);
+  const zipChunks: Buffer[] = [];
+  for await (const chunk of archive) zipChunks.push(Buffer.from(chunk));
+  const zip = Buffer.concat(zipChunks);
+
+  // Read the names straight out of the central directory rather than pulling
+  // in an unzip dependency for a handful of assertions.
+  const names: string[] = [];
+  for (let i = 0; i < zip.length - 46; i++) {
+    if (zip.readUInt32LE(i) !== 0x02014b50) continue;
+    const nameLength = zip.readUInt16LE(i + 28);
+    names.push(zip.subarray(i + 46, i + 46 + nameLength).toString("utf8"));
+  }
+
+  check("zip is a real archive", zip.subarray(0, 2).toString(), "PK");
+  check("zip contains the report", names.includes("887766-Report.txt"), true);
+  check(
+    "zip contains the internal work order",
+    names.some(
+      (name) => name.startsWith("QuickTec INT WO/") && name.endsWith(".pdf"),
+    ),
+    true,
+  );
+  check(
+    "the work order folder is named for the document, not the field label",
+    names.some((name) => name.includes("INT WO ID/")),
+    false,
+  );
+  check(
+    "return label text is preserved as a file",
+    names.some((name) => name === "Return Labels/Terry Tech/notes.txt"),
+    true,
+  );
+
+  const workOrder = await buildWorkOrderPdf(zipData);
+  check("work order is a PDF", workOrder.subarray(0, 5).toString(), "%PDF-");
+  check("work order has real content", workOrder.byteLength > 2000, true);
+
+  await db.job.delete({ where: { id: exportJob.id } });
+
   console.log(`\n${failures === 0 ? "ALL CHECKS PASSED" : `${failures} CHECK(S) FAILED`}`);
   await db.$disconnect();
   process.exit(failures === 0 ? 0 : 1);
