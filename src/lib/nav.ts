@@ -16,6 +16,13 @@ export function buildNavItems(user: SessionUser): NavItem[] {
   if (can(user, "job.view")) {
     items.push({ href: "/jobs", label: "Jobs", icon: "jobs" });
   }
+  if (
+    can(user, "job.approve_change") ||
+    can(user, "job.approve_report") ||
+    can(user, "payroll.approve")
+  ) {
+    items.push({ href: "/approvals", label: "Approvals", icon: "approvals" });
+  }
   if (can(user, "mileage.submit")) {
     items.push({ href: "/mileage", label: "Mileage", icon: "mileage" });
   }

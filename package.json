@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "prisma generate && next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
@@ -15,7 +15,8 @@
     "db:seed": "tsx prisma/seed.ts",
     "verify": "tsx --tsconfig tsconfig.json scripts/verify-domain.ts",
     "verify:ui": "tsx --tsconfig tsconfig.json scripts/verify-job-page.ts",
-    "verify:pay": "tsx --tsconfig tsconfig.json scripts/verify-pay-page.ts"
+    "verify:pay": "tsx --tsconfig tsconfig.json scripts/verify-pay-page.ts",
+    "verify:approvals": "tsx --tsconfig tsconfig.json scripts/verify-approvals-page.ts"
   },
   "repository": {
     "type": "git",

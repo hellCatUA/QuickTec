@@ -39,6 +39,10 @@ export async function jobScopeWhere(
     const ids = await reportIds(user.id);
     if (ids.length > 0) {
       clauses.push({ assignments: { some: { userId: { in: ids } } } });
+      // A tech cannot assign anyone, so the ad-hoc job they just raised has no
+      // crew yet. Without this their supervisor never sees the thing they are
+      // meant to approve.
+      clauses.push({ createdById: { in: ids } });
     }
   }
 
@@ -70,6 +74,7 @@ export async function canOnJob(
   if (scope === "REPORTS" || scope === "PROJECT") {
     const ids = await reportIds(user.id);
     if (job.assigneeIds.some((assignee) => ids.includes(assignee))) return true;
+    if (ids.includes(job.createdById)) return true;
   }
 
   if (

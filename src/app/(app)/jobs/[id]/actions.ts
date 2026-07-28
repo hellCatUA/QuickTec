@@ -3,12 +3,14 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { recordAudit } from "@/lib/audit";
+import { syncJobInBackground } from "@/lib/calendar/sync";
 import { getCompanySettings } from "@/lib/company";
 import { roundToInterval } from "@/lib/datetime";
 import { db } from "@/lib/db";
 import { deliverableLabel, resolveDeliverableRules } from "@/lib/deliverables";
 import { isJobField, JOB_FIELDS, type JobFieldName } from "@/lib/job-fields";
-import { canOnJob } from "@/lib/scope";
+import { resolvePayRate } from "@/lib/pay-rates";
+import { canOnJob, resolveJobSupervisor } from "@/lib/scope";
 import { getSessionUser, permissionScope, type SessionUser } from "@/lib/session";
 import { adjustmentMinutes } from "@/lib/time-tracking";
 import { ContactType, JobOutcome, type Prisma } from "@prisma-client";
@@ -250,6 +252,9 @@ async function performClockOut(
     detail: { at: resolved.at.toISOString(), source: resolved.source },
   });
 
+  // The event has been running on the estimate until now; this is the moment
+  // it can tell the truth about the day.
+  syncJobInBackground(jobId);
   touch(jobId);
   return ok;
 }
@@ -523,6 +528,183 @@ export async function saveJobField(formData: FormData): Promise<ActionResult> {
       from: previous === null ? null : String(previous),
       to: coerced.value === null ? null : String(coerced.value),
     },
+  });
+
+  // When the job moves, the crew's calendars have to move with it.
+  if (field === "scheduledStart" || field === "estimateMinutes") {
+    syncJobInBackground(jobId);
+  }
+
+  touch(jobId);
+  return ok;
+}
+
+// ---------------------------------------------------------------------------
+// Crew
+// ---------------------------------------------------------------------------
+
+/**
+ * Adds a tech to a job that is already running.
+ *
+ * The rate is resolved the same way it is at creation, so a tech pulled in
+ * halfway through is paid by the same rules as the one who was planned in —
+ * and the rate is a copy, so re-rating a project later cannot rewrite work
+ * that has already happened.
+ */
+export async function assignTech(formData: FormData): Promise<ActionResult> {
+  const jobId = String(formData.get("jobId") ?? "");
+  const userId = String(formData.get("userId") ?? "");
+
+  const context = await loadContext(jobId);
+  if (!context) return fail("Job not found.");
+  const { user, job } = context;
+
+  if (!(await canOnJob(user, "job.assign", job))) {
+    return fail("You cannot assign techs to this job.");
+  }
+  if (job.assigneeIds.includes(userId)) return fail("Already on this job.");
+
+  const person = await db.user.findUnique({
+    where: { id: userId },
+    select: { id: true, name: true, active: true },
+  });
+  if (!person || !person.active) return fail("That person is not available.");
+
+  const details = await db.job.findUniqueOrThrow({
+    where: { id: jobId },
+    select: { clientId: true, projectId: true, project: { select: { travelReimbursement: true } } },
+  });
+
+  const rate = await resolvePayRate(userId, details.projectId, details.clientId);
+  const supervisorId = await resolveJobSupervisor(userId, details.projectId);
+
+  await db.jobAssignment.create({
+    data: {
+      jobId,
+      userId,
+      supervisorId,
+      // The lead is set deliberately, never by arriving second.
+      isLead: job.assigneeIds.length === 0,
+      payType: rate.payType,
+      payRate: rate.rate,
+      payRateNote:
+        rate.source === "none"
+          ? "No rate configured — defaulted to non-billable"
+          : null,
+      travelReimbursement:
+        rate.travelReimbursement ??
+        details.project?.travelReimbursement?.toString() ??
+        null,
+    },
+  });
+
+  await recordAudit({
+    actorId: user.id,
+    entityType: "Job",
+    entityId: jobId,
+    jobId,
+    action: "tech_assigned",
+    detail: { who: person.name, payType: rate.payType, rate: rate.rate },
+  });
+
+  syncJobInBackground(jobId);
+  touch(jobId);
+  return ok;
+}
+
+/**
+ * Takes a tech off a job.
+ *
+ * Refused once they have clocked in: their hours are the payroll record, and
+ * dropping the assignment would take the time with it. Reassigning after that
+ * point means adding the new tech, not erasing the old one.
+ */
+export async function unassignTech(formData: FormData): Promise<ActionResult> {
+  const jobId = String(formData.get("jobId") ?? "");
+  const userId = String(formData.get("userId") ?? "");
+
+  const context = await loadContext(jobId);
+  if (!context) return fail("Job not found.");
+  const { user, job } = context;
+
+  if (!(await canOnJob(user, "job.reassign", job))) {
+    return fail("You cannot change the crew on this job.");
+  }
+
+  const assignment = await db.jobAssignment.findUnique({
+    where: { jobId_userId: { jobId, userId } },
+    select: {
+      id: true,
+      user: { select: { name: true } },
+      _count: { select: { visits: true, deliverables: true } },
+    },
+  });
+  if (!assignment) return fail("They are not on this job.");
+
+  if (assignment._count.visits > 0) {
+    return fail(
+      `${assignment.user.name} has already clocked in on this job. Their time stays on the record — add the replacement instead.`,
+    );
+  }
+  if (assignment._count.deliverables > 0) {
+    return fail(
+      `${assignment.user.name} has already uploaded work here. Their deliverables stay on the record — add the replacement instead.`,
+    );
+  }
+
+  await db.jobAssignment.delete({ where: { id: assignment.id } });
+
+  await recordAudit({
+    actorId: user.id,
+    entityType: "Job",
+    entityId: jobId,
+    jobId,
+    action: "tech_unassigned",
+    detail: { who: assignment.user.name },
+  });
+
+  // Removes their copy of the event, so nobody drives to a job they are no
+  // longer on.
+  syncJobInBackground(jobId);
+  touch(jobId);
+  return ok;
+}
+
+/** Moves the lead. Exactly one per job, so the old one is cleared first. */
+export async function setLeadTech(formData: FormData): Promise<ActionResult> {
+  const jobId = String(formData.get("jobId") ?? "");
+  const userId = String(formData.get("userId") ?? "");
+
+  const context = await loadContext(jobId);
+  if (!context) return fail("Job not found.");
+  const { user, job } = context;
+
+  if (!(await canOnJob(user, "job.assign", job))) {
+    return fail("You cannot change the lead on this job.");
+  }
+
+  const assignment = await db.jobAssignment.findUnique({
+    where: { jobId_userId: { jobId, userId } },
+    select: { id: true, isLead: true, user: { select: { name: true } } },
+  });
+  if (!assignment) return fail("They are not on this job.");
+  if (assignment.isLead) return ok;
+
+  await db.$transaction([
+    db.jobAssignment.updateMany({ where: { jobId }, data: { isLead: false } }),
+    db.jobAssignment.update({
+      where: { id: assignment.id },
+      data: { isLead: true },
+    }),
+  ]);
+
+  await recordAudit({
+    actorId: user.id,
+    entityType: "Job",
+    entityId: jobId,
+    jobId,
+    action: "lead_changed",
+    detail: { who: assignment.user.name },
   });
 
   touch(jobId);

@@ -282,6 +282,11 @@ export function SiteList({
 
               <div className="ml-auto flex items-center gap-2">
                 {!site.active ? <Badge variant="warning">Inactive</Badge> : null}
+                <a href={`/sites/${site.id}`}>
+                  <Button type="button" variant="secondary" size="sm">
+                    History
+                  </Button>
+                </a>
                 <Button
                   type="button"
                   variant="ghost"

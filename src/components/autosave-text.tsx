@@ -48,6 +48,10 @@ export function AutosaveText({
   // flush can skip work that is already saved.
   const savedValue = React.useRef(initialValue);
   const inFlight = React.useRef(false);
+  // The retry inside flush has to call flush again. Going through a ref keeps
+  // it pointed at the current one rather than capturing the version that
+  // existed when the failing attempt started.
+  const flushRef = React.useRef<(next: string) => Promise<void>>(async () => {});
 
   const flush = React.useCallback(
     async (next: string) => {
@@ -74,7 +78,7 @@ export function AutosaveText({
         setError("No connection — will retry");
         setStatus("error");
         timer.current = setTimeout(
-          () => void flush(next),
+          () => void flushRef.current(next),
           1000 * 2 ** retries.current,
         );
       } finally {
@@ -83,6 +87,10 @@ export function AutosaveText({
     },
     [save],
   );
+
+  React.useEffect(() => {
+    flushRef.current = flush;
+  }, [flush]);
 
   function onChange(next: string) {
     setValue(next);

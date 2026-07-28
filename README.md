@@ -12,7 +12,7 @@ the client-facing report, the full job archive, and the weekly pay journal.
 
 ## Status
 
-**Phases 1–6 of 7 are complete.** What works today:
+**All seven phases are complete.** What works today:
 
 - NextCloud OpenID Connect sign-in, with roles read from NextCloud groups
 - Three-layer permission model (base role, relationships, permission + scope)
@@ -44,12 +44,19 @@ the client-facing report, the full job archive, and the weekly pay journal.
 - Weekly payroll approved by the direct supervisor, with per-job overrides and
   Received/REDUCED recorded for both the week and each job
 - Pay journal spreadsheet, weekly or monthly, and per-tech statistics
+- Crew management on a live job: add a tech, move the lead, take somebody off
+  before they have started, all on the job's timeline
+- Approvals inbox: change requests, ad-hoc jobs, reports to review and payroll
+  weeks, each scoped to what the person can actually decide
+- Per-site history: every job at a location, who went, when, and whether it
+  took a second trip
+- One-way NextCloud calendar sync: one calendar per tech, owned by a system
+  account and shared with them and their supervisor
 - Dark/light theme (dark by default), responsive phone/tablet/desktop shell
 - Installable PWA with an offline notice and a connection indicator
 - Docker Compose deployment
 
-Everything the app can currently do is reachable from the UI. Timelines,
-approvals and calendar sync land in the last phase — see [Roadmap](#roadmap).
+Everything the app can do is reachable from the UI.
 
 ---
 
@@ -170,6 +177,7 @@ $EDITOR .env
 | `NEXTCLOUD_ISSUER` | Your NextCloud base URL |
 | `NEXTCLOUD_WELL_KNOWN` | Only if discovery is not at `<issuer>/index.php/apps/oidc/openid-configuration` |
 | `NEXTCLOUD_CLIENT_ID` / `_SECRET` | From step 1 |
+| `CALDAV_USERNAME` / `_PASSWORD` | Optional. The system account that owns the tech calendars — use an **app password**, not the login password. Leave blank to turn sync off |
 | `APP_BIND` | Defaults to `127.0.0.1`. Set to the LAN IP if NPM runs on another host |
 | `TZ` | `America/Los_Angeles` |
 
@@ -252,6 +260,7 @@ npm run dev
 | `npm run verify` | Integration check for numbering, dates, time, money and scope |
 | `npm run verify:ui` | Drives the time clock and checkout in a real browser |
 | `npm run verify:pay` | Drives payroll approval and payment in a real browser |
+| `npm run verify:approvals` | Drives the approvals inbox, site history and crew changes in a real browser |
 | `npm run db:studio` | Prisma Studio |
 
 The seed never rewrites a permission the database already knows about, so a
@@ -261,9 +270,14 @@ release has newly added, and deletes grants for ones it has retired.
 `npm run verify` is destructive — it wipes jobs and counters to test numbering —
 so it refuses to start without `QUICKTEC_ALLOW_DESTRUCTIVE_VERIFY=1`.
 
-`npm run verify:ui` needs the app already running and a Chromium that matches
-the installed Playwright; set `CHROMIUM_PATH` if it is not where Playwright
-expects it.
+The browser suites need the app already running and a Chromium that matches the
+installed Playwright; set `CHROMIUM_PATH` if it is not where Playwright expects
+it. `verify:approvals` also parks unrelated jobs that are mid-flow so the inbox
+count is deterministic, so it belongs on a development database too.
+
+CalDAV is exercised against a throwaway HTTP server started inside
+`npm run verify`, which records the `MKCALENDAR`, `PUT` and `DELETE` traffic —
+so the client is tested without a NextCloud to point at.
 
 ---
 
@@ -277,7 +291,7 @@ expects it.
 | 4 | Deliverables, photo pipeline, signatures, guided checkout | **Done** |
 | 5 | Text report, ZIP archive, internal PDF work order | **Done** |
 | 6 | Pay rates, mileage, pay journal, payroll | **Done** |
-| 7 | Timelines, approvals inbox, CalDAV calendar sync | Next |
+| 7 | Timelines, site history, approvals inbox, CalDAV calendar sync | **Done** |
 
 ### Domain rules
 
@@ -396,3 +410,36 @@ Two separate things fund travel:
   signal to supervisors that a tech has actually set off. It is logged per leg
   of driving with odometer readings and photos, needs no approval, and does not
   enter payroll.
+
+**Crew** — a job's crew can change while it is running, which is how a revisit
+and a tech's ad-hoc job get anybody on them at all: both are created empty. A
+tech raising an ad-hoc job is put on it automatically, since they cannot assign
+anyone and are standing in front of the work.
+
+Adding someone resolves their rate the same way creation does and copies it onto
+the assignment, so re-rating a project later cannot rewrite work that already
+happened. Somebody who has clocked in or uploaded anything cannot be taken off —
+their hours are the payroll record. Reassigning past that point means adding the
+replacement, not erasing the original. Every change lands on the job's timeline.
+
+**Calendar sync** — one calendar per tech, named
+`417-SYS: QuickTec (name@417group.org)`, all owned by a single system account
+that shares each one read-only with the tech and their direct supervisor. One
+account holding everything is what makes provisioning possible without asking
+five people for credentials.
+
+Sync is **one-way, app → NextCloud**. An event edited or deleted over there is
+restored on the next push, so nobody is misled into thinking a change in their
+phone's calendar meant anything. It runs in the background after a change that
+matters — crew, schedule, estimate, clock-out — and there is a button on
+`/settings/integrations` for a manual sweep.
+
+An event runs for the job's **estimate** until the tech clocks out, then for the
+real time; a job scheduled without an estimate gets two hours, because a
+zero-length event is invisible in most clients. Each event is fingerprinted, so
+a sweep that changes nothing uploads nothing. Taking a tech off a job deletes
+their copy.
+
+Use a NextCloud **app password** for `CALDAV_PASSWORD`. The whole feature is
+optional: leave the credentials blank and the app behaves exactly as before,
+with the settings page saying so.

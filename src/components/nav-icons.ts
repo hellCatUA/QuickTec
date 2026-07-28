@@ -2,6 +2,7 @@ import {
   Car,
   ClipboardList,
   FolderKanban,
+  Inbox,
   LayoutDashboard,
   Settings,
   Wallet,
@@ -16,6 +17,7 @@ import {
 export const NAV_ICONS = {
   dashboard: LayoutDashboard,
   jobs: ClipboardList,
+  approvals: Inbox,
   directory: FolderKanban,
   mileage: Car,
   pay: Wallet,

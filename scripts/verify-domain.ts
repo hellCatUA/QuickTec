@@ -981,6 +981,502 @@ async function main() {
 
   await db.job.delete({ where: { id: payJob.id } });
 
+  // --- iCalendar ----------------------------------------------------------
+  const { buildVEvent, eventFileName, eventUid } = await import(
+    "@/lib/calendar/ical"
+  );
+
+  check(
+    "an event id is stable for a job and a tech",
+    eventUid("job1", "user1"),
+    "job-job1-user1@quicktec",
+  );
+  check(
+    "the file name is the id with an extension",
+    eventFileName("job1", "user1"),
+    "job-job1-user1@quicktec.ics",
+  );
+
+  // DTSTAMP is "now" by definition, so it is masked rather than pinned.
+  const golden = buildVEvent({
+    uid: "job-abc-def@quicktec",
+    start: new Date("2026-07-28T17:00:00Z"),
+    end: new Date("2026-07-28T19:30:00Z"),
+    summary: "Register swap; lane 3",
+    location: "1912 Pike Pl, Seattle, WA 98101",
+    description: "Line one\nLine two",
+    url: "https://quicktec.417group.org/jobs/abc",
+    sequence: 2,
+    createdAt: new Date("2026-07-20T08:00:00Z"),
+    updatedAt: new Date("2026-07-27T22:15:00Z"),
+  }).replace(/^DTSTAMP:.*$/m, "DTSTAMP:*");
+
+  const goldenExpected = [
+    "BEGIN:VEVENT",
+    "UID:job-abc-def@quicktec",
+    "DTSTAMP:*",
+    "DTSTART:20260728T170000Z",
+    "DTEND:20260728T193000Z",
+    "SUMMARY:Register swap\\; lane 3",
+    "SEQUENCE:2",
+    "CREATED:20260720T080000Z",
+    "LAST-MODIFIED:20260727T221500Z",
+    "TRANSP:OPAQUE",
+    "LOCATION:1912 Pike Pl\\, Seattle\\, WA 98101",
+    "DESCRIPTION:Line one\\nLine two",
+    "URL:https://quicktec.417group.org/jobs/abc",
+    "END:VEVENT",
+  ].join("\r\n");
+
+  if (golden !== goldenExpected) console.log(`\n${golden}\n`);
+  check("VEVENT matches the golden output", golden === goldenExpected, true);
+
+  // A backslash in the source must survive as one escaped backslash, not as
+  // an escape of whatever followed it.
+  const escapedText = buildVEvent({
+    uid: "u",
+    start: new Date("2026-07-28T17:00:00Z"),
+    end: new Date("2026-07-28T18:00:00Z"),
+    summary: "A\\B;C,D",
+    sequence: 1,
+    createdAt: new Date("2026-07-28T00:00:00Z"),
+    updatedAt: new Date("2026-07-28T00:00:00Z"),
+  });
+  check(
+    "TEXT escaping does backslash first",
+    /^SUMMARY:.*$/m.exec(escapedText)?.[0],
+    "SUMMARY:A\\\\B\\;C\\,D",
+  );
+
+  // Cyrillic measures short in JavaScript and long on the wire; NextCloud
+  // rejects the over-long line, so folding counts octets.
+  const longSummary = "Заміна касового обладнання та перевірка мережі на об'єкті";
+  const folded = buildVEvent({
+    uid: "u",
+    start: new Date("2026-07-28T17:00:00Z"),
+    end: new Date("2026-07-28T18:00:00Z"),
+    summary: longSummary,
+    sequence: 1,
+    createdAt: new Date("2026-07-28T00:00:00Z"),
+    updatedAt: new Date("2026-07-28T00:00:00Z"),
+  });
+  const encoder = new TextEncoder();
+  const overLong = folded
+    .split("\r\n")
+    .filter((row) => encoder.encode(row).length > 75);
+  check("no line exceeds 75 octets", overLong.length, 0);
+  check(
+    "the summary folded at all",
+    folded.split("\r\n").some((row) => row.startsWith(" ")),
+    true,
+  );
+  check(
+    "unfolding restores the summary",
+    /^SUMMARY:(.*)$/m.exec(folded.replace(/\r\n /g, ""))?.[1],
+    longSummary,
+  );
+
+  // --- CalDAV against a local server --------------------------------------
+  const { createServer } = await import("node:http");
+  const { calendarSlug, deleteEvent, ensureCalendar, putEvent } = await import(
+    "@/lib/calendar/caldav"
+  );
+
+  type Recorded = {
+    method: string;
+    url: string;
+    body: string;
+    authorized: boolean;
+  };
+  const recorded: Recorded[] = [];
+  let mkcalendarCalls = 0;
+
+  const CALDAV_USER = "417-sys";
+  const CALDAV_PASS = "app-password";
+  const expectedAuth = `Basic ${Buffer.from(`${CALDAV_USER}:${CALDAV_PASS}`).toString("base64")}`;
+
+  const server = createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    req.on("end", () => {
+      const authorized = req.headers.authorization === expectedAuth;
+      recorded.push({
+        method: req.method ?? "",
+        url: req.url ?? "",
+        body: Buffer.concat(chunks).toString("utf8"),
+        authorized,
+      });
+
+      if (!authorized) {
+        res.writeHead(401).end();
+        return;
+      }
+      if (req.method === "MKCALENDAR") {
+        mkcalendarCalls += 1;
+        // NextCloud answers 405 for a collection that already exists.
+        res.writeHead(mkcalendarCalls === 1 ? 201 : 405).end();
+        return;
+      }
+      if (req.method === "DELETE") {
+        res.writeHead(req.url?.includes("missing") ? 404 : 204).end();
+        return;
+      }
+      res.writeHead(204).end();
+    });
+  });
+
+  const port = await new Promise<number>((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      resolve(typeof address === "object" && address ? address.port : 0);
+    });
+  });
+
+  const previousIssuer = process.env.NEXTCLOUD_ISSUER;
+  const previousAuthUrl = process.env.AUTH_URL;
+  process.env.NEXTCLOUD_ISSUER = `http://127.0.0.1:${port}`;
+  process.env.CALDAV_USERNAME = CALDAV_USER;
+  process.env.CALDAV_PASSWORD = CALDAV_PASS;
+  process.env.AUTH_URL = "https://quicktec.417group.org";
+
+  const config = {
+    baseUrl: `http://127.0.0.1:${port}`,
+    username: CALDAV_USER,
+    password: CALDAV_PASS,
+  };
+
+  const first = await ensureCalendar(config, "quicktec-probe", "Probe");
+  check("MKCALENDAR creates the calendar", `${first.ok} ${first.status}`, "true 201");
+  const second = await ensureCalendar(config, "quicktec-probe", "Probe");
+  check(
+    "a calendar that already exists is success",
+    `${second.ok} ${second.status}`,
+    "true 405",
+  );
+  check(
+    "the system account authenticates with basic auth",
+    recorded.every((entry) => entry.authorized),
+    true,
+  );
+  check(
+    "MKCALENDAR targets the system account's calendar home",
+    recorded[0].url,
+    "/remote.php/dav/calendars/417-sys/quicktec-probe",
+  );
+
+  const missing = await deleteEvent(config, "quicktec-probe", "missing.ics");
+  check("deleting an event that is already gone is success", missing.ok, true);
+
+  const wrongPassword = await putEvent(
+    { ...config, password: "wrong" },
+    "quicktec-probe",
+    "x.ics",
+    "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n",
+  );
+  check("a bad app password is reported, not thrown", wrongPassword.status, 401);
+
+  check(
+    "the calendar id is derived from the email",
+    calendarSlug("A.Rubayko@417group.org"),
+    "quicktec-a-rubayko-417group-org",
+  );
+
+  // --- job sync -----------------------------------------------------------
+  const { calendarDisplayName, describeJob, syncAll, syncJob } = await import(
+    "@/lib/calendar/sync"
+  );
+
+  check(
+    "the calendar is named for the system account and the tech",
+    calendarDisplayName("a.rubayko@417group.org"),
+    "417-SYS: QuickTec (a.rubayko@417group.org)",
+  );
+
+  // syncAll sweeps everything scheduled from a week ago onwards, so the slate
+  // is cleared to keep its counts about this fixture alone.
+  await db.job.deleteMany({});
+
+  const calStart = new Date(Date.now() + 24 * 60 * 60_000);
+  const calJob = await db.job.create({
+    data: {
+      ...base,
+      title: "Register swap",
+      intWoId: "2026-07-0000-9001",
+      intWoSequence: 9001,
+      projectId: project.id,
+      scheduledStart: calStart,
+      estimateMinutes: 90,
+      scopeOfWork: "Swap register 3; test the lane.",
+      dispatchContacts: {
+        create: {
+          label: "NOC",
+          name: "Dana",
+          phone: "555-0100",
+          order: 0,
+        },
+      },
+    },
+  });
+  const calAssignment = await db.jobAssignment.create({
+    data: { jobId: calJob.id, userId: tech.id, payType: "HOURLY", payRate: "45" },
+  });
+
+  // Only the traffic this job causes, not the probes above.
+  recorded.length = 0;
+
+  const puts = () => recorded.filter((entry) => entry.method === "PUT");
+  const lastPutBody = () => puts()[puts().length - 1]?.body ?? "";
+  const icsProp = (body: string, name: string) =>
+    new RegExp(`^${name}:(.*)$`, "m")
+      .exec(body.replace(/\r\n /g, ""))?.[1]
+      ?.trim() ?? "";
+  const icalStamp = (date: Date) =>
+    `${date.toISOString().replace(/[-:]/g, "").split(".")[0]}Z`;
+
+  const firstSync = await syncJob(calJob.id);
+  check(
+    "a scheduled job is pushed to the assigned tech",
+    `${firstSync.pushed}/${firstSync.removed}/${firstSync.skipped}/${firstSync.failures.length}`,
+    "1/0/0/0",
+  );
+  check("one event was uploaded", puts().length, 1);
+  check(
+    "the event lands in the tech's calendar",
+    puts()[0].url,
+    `/remote.php/dav/calendars/417-sys/quicktec-tech-417group-org/${encodeURIComponent(eventFileName(calJob.id, tech.id))}`,
+  );
+  check(
+    "the event starts when the job is scheduled",
+    icsProp(lastPutBody(), "DTSTART"),
+    icalStamp(calStart),
+  );
+  check(
+    "the event runs for the estimate until the tech clocks out",
+    icsProp(lastPutBody(), "DTEND"),
+    icalStamp(new Date(calStart.getTime() + 90 * 60_000)),
+  );
+  check(
+    "the event links back to the job",
+    icsProp(lastPutBody(), "URL"),
+    `https://quicktec.417group.org/jobs/${calJob.id}`,
+  );
+
+  const storedEvent = await db.calendarEvent.findUniqueOrThrow({
+    where: { jobId_userId: { jobId: calJob.id, userId: tech.id } },
+  });
+  check("the push is recorded", storedEvent.sequence, 1);
+  check(
+    "the recorded path is where the event was written",
+    storedEvent.calendarPath.endsWith(eventFileName(calJob.id, tech.id)),
+    true,
+  );
+  check(
+    "the tech's calendar is remembered on their account",
+    (await db.user.findUniqueOrThrow({ where: { id: tech.id } })).calendarName,
+    calendarDisplayName(tech.email),
+  );
+  check(
+    "the calendar is shared with the tech and their supervisor",
+    recorded.filter(
+      (entry) => entry.method === "POST" && entry.body.includes("<O:read/>"),
+    ).length,
+    2,
+  );
+
+  const unchanged = await syncJob(calJob.id);
+  check(
+    "an unchanged job is not re-uploaded",
+    `${unchanged.pushed}/${unchanged.skipped}`,
+    "0/1",
+  );
+  check("still only one upload", puts().length, 1);
+
+  // Once the tech has clocked out the event tells the truth about the day.
+  const realIn = new Date(calStart.getTime() + 15 * 60_000);
+  const realOut = new Date(calStart.getTime() + 5 * 60 * 60_000);
+  await db.visit.create({
+    data: {
+      assignmentId: calAssignment.id,
+      clockInAt: realIn,
+      clockOutAt: realOut,
+    },
+  });
+
+  const afterClockOut = await syncJob(calJob.id);
+  check("clocking out re-pushes the event", afterClockOut.pushed, 1);
+  check(
+    "the event now runs for the real time",
+    `${icsProp(lastPutBody(), "DTSTART")} ${icsProp(lastPutBody(), "DTEND")}`,
+    `${icalStamp(realIn)} ${icalStamp(realOut)}`,
+  );
+  check(
+    "the sequence is bumped so clients see an update",
+    (
+      await db.calendarEvent.findUniqueOrThrow({
+        where: { jobId_userId: { jobId: calJob.id, userId: tech.id } },
+      })
+    ).sequence,
+    2,
+  );
+
+  const describedJob = await db.job.findUniqueOrThrow({
+    where: { id: calJob.id },
+    select: {
+      id: true,
+      title: true,
+      scheduledStart: true,
+      estimateMinutes: true,
+      scopeOfWork: true,
+      createdAt: true,
+      updatedAt: true,
+      client: { select: { name: true } },
+      customer: { select: { name: true, code: true } },
+      site: {
+        select: {
+          siteNumber: true,
+          addressLine1: true,
+          addressLine2: true,
+          city: true,
+          state: true,
+          postalCode: true,
+          country: true,
+        },
+      },
+      project: { select: { name: true, generalScopeOfWork: true } },
+      dispatchContacts: {
+        orderBy: { order: "asc" },
+        select: { label: true, name: true, phone: true, email: true, note: true },
+      },
+    },
+  });
+  const description = describeJob(describedJob);
+  check(
+    "the description opens with the customer",
+    description.split("\n")[0],
+    "Customer: Starbucks",
+  );
+  check(
+    "the site is written the way it is everywhere else",
+    description.includes("Site: SBUX #24541"),
+    true,
+  );
+  check(
+    "dispatch numbers travel with the event",
+    description.includes("NOC · Dana · 555-0100"),
+    true,
+  );
+  check(
+    "the scope is in the description",
+    description.includes("Swap register 3; test the lane."),
+    true,
+  );
+
+  // A job nobody has scheduled has nothing to put in a calendar.
+  const unscheduled = await db.job.create({
+    data: {
+      ...base,
+      title: "Unscheduled",
+      intWoId: "2026-07-0000-9002",
+      intWoSequence: 9002,
+    },
+  });
+  await db.jobAssignment.create({
+    data: { jobId: unscheduled.id, userId: tech.id, payType: "HOURLY" },
+  });
+  const noDate = await syncJob(unscheduled.id);
+  check(
+    "a job with no date is skipped rather than guessed at",
+    `${noDate.pushed}/${noDate.skipped}`,
+    "0/1",
+  );
+
+  // No estimate falls back to two hours: a zero-length event is invisible in
+  // most clients, which is worse than a rough one.
+  await db.visit.deleteMany({ where: { assignmentId: calAssignment.id } });
+  await db.job.update({
+    where: { id: calJob.id },
+    data: { estimateMinutes: null },
+  });
+  await syncJob(calJob.id);
+  check(
+    "no estimate falls back to two hours",
+    icsProp(lastPutBody(), "DTEND"),
+    icalStamp(new Date(calStart.getTime() + 120 * 60_000)),
+  );
+
+  // Taking someone off a job must take it out of their calendar.
+  await db.jobAssignment.delete({ where: { id: calAssignment.id } });
+  const afterUnassign = await syncJob(calJob.id);
+  check("unassigning removes the event", afterUnassign.removed, 1);
+  check(
+    "a DELETE was issued for that tech's copy",
+    recorded.some(
+      (entry) =>
+        entry.method === "DELETE" &&
+        entry.url.includes(encodeURIComponent(eventFileName(calJob.id, tech.id))),
+    ),
+    true,
+  );
+  check(
+    "the record goes with it",
+    await db.calendarEvent.count({ where: { jobId: calJob.id } }),
+    0,
+  );
+
+  // --- the whole sweep ----------------------------------------------------
+  await db.jobAssignment.create({
+    data: { jobId: calJob.id, userId: tech.id, payType: "HOURLY", payRate: "45" },
+  });
+  await db.auditEvent.deleteMany({ where: { action: "calendar_synced" } });
+
+  const sweep = await syncAll(sup.id);
+  check(
+    "the sweep pushes the scheduled job and skips the undated one",
+    `${sweep.pushed}/${sweep.skipped}/${sweep.failures.length}`,
+    "1/1/0",
+  );
+  check(
+    "the sweep is audited",
+    await db.auditEvent.count({ where: { action: "calendar_synced" } }),
+    1,
+  );
+
+  // An unreachable server is a failed sync, not a crash — the events are
+  // simply a few minutes behind until it comes back.
+  server.close();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const offline = await syncJob(calJob.id);
+  check(
+    "a CalDAV server that is down is reported per tech",
+    offline.failures.length > 0 && offline.pushed === 0,
+    true,
+  );
+
+  process.env.NEXTCLOUD_ISSUER = previousIssuer;
+  process.env.AUTH_URL = previousAuthUrl;
+  delete process.env.CALDAV_USERNAME;
+  delete process.env.CALDAV_PASSWORD;
+
+  const unconfigured = await syncJob(calJob.id);
+  check(
+    "sync refuses to run unconfigured",
+    unconfigured.failures[0]?.reason,
+    "CalDAV is not configured",
+  );
+
+  // calJob is left behind on purpose: it is a scheduled job with the tech
+  // assigned to it, which is the fixture the browser suites pick up.
+  await db.job.delete({ where: { id: unscheduled.id } });
+  await db.calendarEvent.deleteMany({ where: { jobId: calJob.id } });
+  await db.job.update({
+    where: { id: calJob.id },
+    data: { estimateMinutes: 90, calendarSyncedAt: null },
+  });
+  await db.user.update({
+    where: { id: tech.id },
+    data: { calendarUrl: null, calendarName: null },
+  });
+
   console.log(`\n${failures === 0 ? "ALL CHECKS PASSED" : `${failures} CHECK(S) FAILED`}`);
   await db.$disconnect();
   process.exit(failures === 0 ? 0 : 1);

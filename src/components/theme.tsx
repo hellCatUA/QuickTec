@@ -38,16 +38,41 @@ function applyTheme(preference: ThemePreference) {
   document.documentElement.classList.toggle("dark", !prefersLight);
 }
 
-export function ThemeToggle({ className }: { className?: string }) {
-  // Dark is the product default, not the OS default.
-  const [preference, setPreference] = React.useState<ThemePreference>("dark");
+/**
+ * The stored preference read as an external store rather than copied into
+ * state: localStorage is written by the inline head script before React exists
+ * and by any other tab, so React is the subscriber here, not the owner.
+ */
+const themeListeners = new Set<() => void>();
 
-  React.useEffect(() => {
-    const stored = localStorage.getItem(
-      THEME_STORAGE_KEY,
-    ) as ThemePreference | null;
-    if (stored) setPreference(stored);
-  }, []);
+function subscribeTheme(listener: () => void) {
+  themeListeners.add(listener);
+  window.addEventListener("storage", listener);
+  return () => {
+    themeListeners.delete(listener);
+    window.removeEventListener("storage", listener);
+  };
+}
+
+function readTheme(): ThemePreference {
+  try {
+    return (
+      (localStorage.getItem(THEME_STORAGE_KEY) as ThemePreference | null) ??
+      "dark"
+    );
+  } catch {
+    return "dark";
+  }
+}
+
+export function ThemeToggle({ className }: { className?: string }) {
+  // Dark is the product default, not the OS default, so it is also what the
+  // server renders.
+  const preference = React.useSyncExternalStore(
+    subscribeTheme,
+    readTheme,
+    () => "dark" as ThemePreference,
+  );
 
   React.useEffect(() => {
     if (preference !== "system") return;
@@ -58,9 +83,10 @@ export function ThemeToggle({ className }: { className?: string }) {
   }, [preference]);
 
   function choose(next: ThemePreference) {
-    setPreference(next);
     localStorage.setItem(THEME_STORAGE_KEY, next);
     applyTheme(next);
+    // localStorage fires no event in the tab that wrote it.
+    for (const listener of themeListeners) listener();
   }
 
   const options: { value: ThemePreference; icon: typeof Sun; label: string }[] =

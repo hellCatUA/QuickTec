@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { recordAudit } from "@/lib/audit";
+import { syncJobInBackground } from "@/lib/calendar/sync";
 import { getCompanySettings } from "@/lib/company";
 import { db } from "@/lib/db";
 import {
@@ -114,6 +115,17 @@ export async function createJob(
     return { ok: false, error: "You cannot assign techs to a job." };
   }
 
+  // A tech cannot assign anybody, so an ad-hoc job would be raised with no
+  // crew at all and they could not clock in on the work they are standing in
+  // front of. Raising it is what puts them on it.
+  if (
+    assigneeIds.length === 0 &&
+    !can(actor, "job.assign") &&
+    can(actor, "job.clock_in")
+  ) {
+    assigneeIds.push(actor.id);
+  }
+
   const rates = await Promise.all(
     assigneeIds.map(async (userId) => ({
       userId,
@@ -216,6 +228,7 @@ export async function createJob(
     },
   });
 
+  syncJobInBackground(job.id);
   revalidatePath("/jobs");
   return { ok: true, id: job.id };
 }

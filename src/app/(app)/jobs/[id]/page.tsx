@@ -34,6 +34,7 @@ import { buildTextReport } from "@/lib/exports/text-report";
 import { jobSpan } from "@/lib/time-tracking";
 import { approveJob } from "../actions";
 import { ChangeRequests } from "./change-requests";
+import { CrewPanel } from "./crew-panel";
 import { EditableField } from "./editable-field";
 import { PointsOfContact } from "./points-of-contact";
 import { RevisitPanel } from "./revisit-panel";
@@ -73,6 +74,7 @@ export default async function JobPage({
       id: true,
       intWoId: true,
       title: true,
+      siteId: true,
       externalAssignmentId: true,
       ticketNumber: true,
       incNumber: true,
@@ -238,6 +240,9 @@ export default async function JobPage({
           payRateNote: true,
           travelReimbursement: true,
           workPerformed: true,
+          // Anyone who has left a trace on the job cannot be unassigned, so
+          // the button is not offered for them.
+          _count: { select: { deliverables: true } },
           user: {
             select: {
               id: true,
@@ -297,6 +302,21 @@ export default async function JobPage({
     canOnJob(user, "job.clock_in", jobRef),
     canOnJob(user, "job.approve_report", jobRef),
   ]);
+
+  const [canAssign, canReassign] = await Promise.all([
+    canOnJob(user, "job.assign", jobRef),
+    canOnJob(user, "job.reassign", jobRef),
+  ]);
+
+  // Only fetched for someone who can actually act on it, so a tech's job page
+  // never carries the staff list.
+  const crewCandidates = canAssign
+    ? await db.user.findMany({
+        where: { active: true },
+        orderBy: { name: "asc" },
+        select: { id: true, name: true, baseRole: true },
+      })
+    : [];
 
   const [
     canUpload,
@@ -529,10 +549,17 @@ export default async function JobPage({
         <CardContent className="grid gap-4 text-sm sm:grid-cols-2">
           <Static label="Company" value={job.client.name} />
           <Static label="Customer" value={job.customer.name} />
-          <Static
-            label="Site ID"
-            value={siteLabel(job.customer.code, job.site.siteNumber)}
-          />
+          <div>
+            <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Site ID
+            </div>
+            <Link
+              href={`/sites/${job.siteId}`}
+              className="text-primary underline-offset-4 hover:underline"
+            >
+              {siteLabel(job.customer.code, job.site.siteNumber)}
+            </Link>
+          </div>
           <Static label={intWoFieldLabel(company)} value={job.intWoId} mono />
 
           {editable("externalAssignmentId", job.externalAssignmentId ?? "")}
@@ -738,43 +765,42 @@ export default async function JobPage({
       <Card>
         <CardHeader>
           <CardTitle>Crew</CardTitle>
+          {canAssign ? (
+            <CardDescription>
+              A revisit and an ad-hoc job both start empty. Adding someone
+              copies their rate onto the job and puts it in their calendar.
+            </CardDescription>
+          ) : null}
         </CardHeader>
-        <CardContent className="flex flex-col gap-2">
-          {job.assignments.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Nobody assigned yet.</p>
-          ) : (
-            job.assignments.map((assignment) => {
-              const totals = jobSpan(assignment.visits, now);
-              return (
-                <div
-                  key={assignment.id}
-                  className="flex flex-wrap items-center gap-2 rounded-lg border border-border p-2 text-sm"
-                >
-                  <span className="font-medium">{assignment.user.name}</span>
-                  {assignment.isLead ? (
-                    <Badge variant="primary">Lead</Badge>
-                  ) : null}
-                  {totals.open ? (
-                    <Badge variant="success">On site</Badge>
-                  ) : null}
-                  <span className="text-xs text-muted-foreground">
-                    Approver: {assignment.supervisor?.name ?? "not set"}
-                  </span>
-                  {showPay ? (
-                    <span className="ml-auto text-xs">
-                      {formatRate(
-                        assignment.payType,
-                        assignment.payRate.toString(),
-                      )}
-                      {assignment.travelReimbursement
-                        ? ` · travel $${Number(assignment.travelReimbursement).toFixed(2)}`
-                        : ""}
-                    </span>
-                  ) : null}
-                </div>
-              );
-            })
-          )}
+        <CardContent>
+          <CrewPanel
+            jobId={job.id}
+            canAssign={canAssign}
+            canReassign={canReassign}
+            candidates={crewCandidates.map((person) => ({
+              id: person.id,
+              name: person.name,
+              role: person.baseRole,
+            }))}
+            crew={job.assignments.map((assignment) => ({
+              id: assignment.id,
+              userId: assignment.user.id,
+              name: assignment.user.name,
+              isLead: assignment.isLead,
+              onSite: jobSpan(assignment.visits, now).open,
+              hasWorked:
+                assignment.visits.length > 0 ||
+                assignment._count.deliverables > 0,
+              supervisorName: assignment.supervisor?.name ?? null,
+              rate: showPay
+                ? `${formatRate(assignment.payType, assignment.payRate.toString())}${
+                    assignment.travelReimbursement
+                      ? ` · travel $${Number(assignment.travelReimbursement).toFixed(2)}`
+                      : ""
+                  }`
+                : null,
+            }))}
+          />
         </CardContent>
       </Card>
 
@@ -916,7 +942,14 @@ export default async function JobPage({
         </CardHeader>
         <CardContent className="flex flex-col gap-2 text-sm">
           {timeline.map((event) => {
-            const detail = event.detail as { field?: string } | null;
+            const detail = event.detail as {
+              field?: string;
+              who?: string;
+            } | null;
+            // "who" is the person the event was about, "actor" the person who
+            // did it — the two differ on exactly the entries that matter here,
+            // like one supervisor taking another's tech off a job.
+            const subject = detail?.field ?? detail?.who;
             return (
               <div key={event.id} className="flex flex-wrap items-baseline gap-2">
                 <span className="tabular text-xs text-muted-foreground">
@@ -924,7 +957,7 @@ export default async function JobPage({
                 </span>
                 <span>
                   {event.action.replace(/_/g, " ")}
-                  {detail?.field ? ` · ${detail.field}` : ""}
+                  {subject ? ` · ${subject}` : ""}
                 </span>
                 <span className="text-xs text-muted-foreground">
                   {event.actor?.name ?? "system"}

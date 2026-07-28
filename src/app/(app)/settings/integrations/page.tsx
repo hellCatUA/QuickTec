@@ -8,8 +8,11 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { calendarDisplayName } from "@/lib/calendar/sync";
+import { db } from "@/lib/db";
 import { GROUP_TO_ROLE } from "@/lib/nextcloud-groups";
 import { can, getSessionUser } from "@/lib/session";
+import { CalendarPanel } from "./calendar-panel";
 
 export const metadata = { title: "Integrations" };
 
@@ -37,6 +40,15 @@ export default async function IntegrationsPage() {
   const clientId = process.env.NEXTCLOUD_CLIENT_ID;
   const hasSecret = Boolean(process.env.NEXTCLOUD_CLIENT_SECRET);
   const authUrl = process.env.AUTH_URL ?? process.env.NEXTAUTH_URL;
+  const hasCalDav = Boolean(
+    process.env.CALDAV_USERNAME && process.env.CALDAV_PASSWORD,
+  );
+
+  const [activeUsers, provisioned, syncedJobs] = await Promise.all([
+    db.user.count({ where: { active: true } }),
+    db.user.count({ where: { active: true, calendarUrl: { not: null } } }),
+    db.job.count({ where: { calendarSyncedAt: { not: null } } }),
+  ]);
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4">
@@ -110,21 +122,38 @@ export default async function IntegrationsPage() {
       <Card>
         <CardHeader>
           <CardTitle>Calendar sync</CardTitle>
-          <CardDescription>Arrives in a later phase.</CardDescription>
+          <CardDescription>
+            The system account owns one calendar per tech and shares it
+            read-only with them and their supervisor.
+          </CardDescription>
         </CardHeader>
-        <CardContent className="flex flex-col gap-2 text-sm text-muted-foreground">
-          <p>
-            A system NextCloud account will provision one CalDAV calendar per
-            tech, named{" "}
+        <CardContent className="flex flex-col gap-3">
+          <Status ok={hasCalDav}>
+            System account:{" "}
             <code className="text-xs">
-              417-SYS: QuickTec (name@417group.org)
+              {process.env.CALDAV_USERNAME ?? "CALDAV_USERNAME not set"}
             </code>
-            , and share it with that tech&rsquo;s supervisor.
+          </Status>
+          <Status ok={provisioned > 0}>
+            {provisioned} of {activeUsers} active users have a calendar
+          </Status>
+          <Status ok={syncedJobs > 0}>
+            {syncedJobs} job{syncedJobs === 1 ? "" : "s"} pushed so far
+          </Status>
+
+          <p className="text-xs text-muted-foreground">
+            Calendars are named{" "}
+            <code className="text-xs">{calendarDisplayName("name@417group.org")}</code>
+            . Sync is one-way: an event edited or deleted in NextCloud is
+            restored on the next run, so nobody is misled into thinking a change
+            there meant anything.
           </p>
-          <p>
-            Sync is one-way, app to NextCloud: events deleted or edited in
-            NextCloud are restored on the next sync.
+          <p className="text-xs text-muted-foreground">
+            An event runs for the job&rsquo;s estimate until the tech clocks
+            out, then for the real time.
           </p>
+
+          <CalendarPanel configured={hasCalDav} />
         </CardContent>
       </Card>
     </div>

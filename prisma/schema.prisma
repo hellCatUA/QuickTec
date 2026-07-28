@@ -96,6 +96,7 @@ model User {
   uploads               Attachment[]
   auditEvents           AuditEvent[]
   notifications         Notification[]
+  calendarEvents        CalendarEvent[]
 
   @@index([baseRole, active])
   @@index([directSupervisorId])
@@ -428,6 +429,7 @@ model Job {
   scopeChecks      JobScopeCheck[]
   changeRequests   ChangeRequest[]
   auditEvents      AuditEvent[]
+  calendarEvents   CalendarEvent[]
 
   @@index([lifecycle])
   @@index([siteId])
@@ -1004,6 +1006,32 @@ model Notification {
   createdAt DateTime @default(now())
 
   @@index([userId, readAt])
+}
+
+/// What has been pushed to a tech's NextCloud calendar.
+///
+/// Sync is one-way, so this is the only record of what is out there: without
+/// it an unassignment could not be turned into a DELETE, and every save would
+/// re-upload an unchanged event. The hash is what makes a no-op push free.
+model CalendarEvent {
+  id String @id @default(cuid())
+
+  jobId  String
+  job    Job    @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Absolute URL of the .ics on the CalDAV server.
+  calendarPath String
+  /// Incremented on every change so clients notice the update.
+  sequence     Int    @default(0)
+  /// Digest of the last body written; an identical rebuild is skipped.
+  contentHash  String
+
+  syncedAt DateTime @default(now())
+
+  @@unique([jobId, userId])
+  @@index([userId])
 }
 
 /// Yearly global counter for jobs with no project. Project-scoped counters live
