@@ -324,6 +324,110 @@ async function main() {
   );
   check("manager ALL sees everything", await countFor(boss.id, "ALL"), total);
 
+  // --- time and earnings --------------------------------------------------
+  const {
+    assignmentTotals,
+    earnings,
+    jobSpan,
+    visitTotals,
+    clockOptions,
+  } = await import("@/lib/time-tracking");
+
+  const at = (hhmm: string) => `2026-07-28T${hhmm}:00Z`;
+
+  const withUnpaidBreak = visitTotals({
+    clockInAt: at("09:00"),
+    clockOutAt: at("17:00"),
+    breaks: [{ startAt: at("12:00"), endAt: at("12:30"), paid: false }],
+  });
+  check("8h visit is 480 onsite minutes", withUnpaidBreak.onsiteMinutes, 480);
+  check("unpaid break comes off pay", withUnpaidBreak.paidMinutes, 450);
+
+  const withPaidBreak = visitTotals({
+    clockInAt: at("09:00"),
+    clockOutAt: at("17:00"),
+    breaks: [{ startAt: at("12:00"), endAt: at("12:30"), paid: true }],
+  });
+  check("paid break does not reduce pay", withPaidBreak.paidMinutes, 480);
+
+  // A break left running is clipped at the clock-out, not left to grow.
+  const openBreak = visitTotals(
+    {
+      clockInAt: at("09:00"),
+      clockOutAt: at("10:00"),
+      breaks: [{ startAt: at("09:30"), endAt: null, paid: false }],
+    },
+    new Date(at("23:00")),
+  );
+  check("open break is clipped to the visit", openBreak.paidMinutes, 30);
+
+  const twoVisits = assignmentTotals([
+    { clockInAt: at("08:00"), clockOutAt: at("10:00"), breaks: [] },
+    { clockInAt: at("13:00"), clockOutAt: at("15:30"), breaks: [] },
+  ]);
+  check("visits add up", twoVisits.paidMinutes, 270);
+
+  // The client is billed earliest-in to latest-out across the whole crew, even
+  // though each tech is paid only for their own hours.
+  const crew = jobSpan([
+    { clockInAt: at("08:00"), clockOutAt: at("12:00"), breaks: [] },
+    { clockInAt: at("09:00"), clockOutAt: at("16:00"), breaks: [] },
+  ]);
+  check("job span starts at the earliest arrival", crew.onsiteAt?.toISOString(), at("08:00").replace("Z", ".000Z"));
+  check("job span ends at the latest departure", crew.offsiteAt?.toISOString(), at("16:00").replace("Z", ".000Z"));
+  check("job span is 8.00 hrs", (crew.totalMinutes / 60).toFixed(2), "8.00");
+
+  check("hourly earnings", earnings("HOURLY", 45, 450).toFixed(2), "337.50");
+  check("flat pays once", earnings("FLAT", 250, 450).toFixed(2), "250.00");
+  check("non-billable pays nothing", earnings("NON_BILLABLE", 45, 450), 0);
+
+  // Offsets hang off the snapped time, not the raw clock.
+  const options = clockOptions(new Date(at("09:57")), 5);
+  check(
+    "clock options are snapped",
+    options.map((option) => option.at.toISOString().slice(11, 16)).join(" "),
+    "09:50 09:55 10:00 10:05 10:10",
+  );
+
+  // --- scope of work ------------------------------------------------------
+  const { parseMarkdown, checklistKeys } = await import("@/lib/markdown");
+
+  const scope = "- [ ] Swap the switch\n- [x] Label the leads\n- Plain item";
+  const keys = checklistKeys(scope);
+  check("only checklist lines get keys", keys.length, 2);
+  check(
+    "keys survive an edit elsewhere in the document",
+    checklistKeys(`## Heading\n\n${scope}\n\nSome trailing note.`).join(","),
+    keys.join(","),
+  );
+
+  const blocks = parseMarkdown(
+    '<script>alert(1)</script> **bold** <b>ok</b> <span style="color:red">red</span> <span style="color:url(x)">bad</span>',
+  );
+  const rendered = blocks.map((block) => ("html" in block ? block.html : "")).join("");
+  check("script tags are inert", rendered.includes("<script"), false);
+  check("escaped script is visible as text", rendered.includes("&lt;script&gt;"), true);
+  check("markdown emphasis works", rendered.includes("<strong>bold</strong>"), true);
+  check("allowlisted tags survive", rendered.includes("<b>ok</b>"), true);
+  check("safe colour survives", rendered.includes('<span style="color:red">'), true);
+  check("unsafe colour is refused", rendered.includes("url(x)") && !rendered.includes('style="color:url'), true);
+
+  const link = parseMarkdown(
+    "[ok](https://example.com) [bad](javascript:alert(1)) [worse](data:text/html,x)",
+  );
+  const linkHtml = link.map((block) => ("html" in block ? block.html : "")).join("");
+  check("http links render", linkHtml.includes('href="https://example.com"'), true);
+
+  // A refused scheme must not become an href at all. The bracket syntax is
+  // left as visible text, which is inert.
+  const hrefs = [...linkHtml.matchAll(/href="([^"]*)"/g)].map((match) => match[1]);
+  check(
+    "every href uses an allowed scheme",
+    hrefs.every((href) => /^(https?:\/\/|mailto:|tel:)/i.test(href)),
+    true,
+  );
+  check("refused links stay as plain text", linkHtml.includes("[bad]("), true);
+
   console.log(`\n${failures === 0 ? "ALL CHECKS PASSED" : `${failures} CHECK(S) FAILED`}`);
   await db.$disconnect();
   process.exit(failures === 0 ? 0 : 1);

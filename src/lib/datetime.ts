@@ -85,6 +85,16 @@ export function pad(value: number, width = 2): string {
 }
 
 /**
+ * "2026-07-28T09:30" for a `datetime-local` input, expressed in the given zone
+ * rather than the browser's — a planner in another state must still see the
+ * site's local schedule.
+ */
+export function toDatetimeLocalInZone(date: Date, timeZone: string): string {
+  const { year, month, day, hour, minute } = zonedParts(date, timeZone);
+  return `${year}-${pad(month)}-${pad(day)}T${pad(hour)}:${pad(minute)}`;
+}
+
+/**
  * The UTC instant of local midnight on the Monday that starts this date's week.
  * Pay weeks run Monday to Sunday.
  */

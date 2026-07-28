@@ -1,4 +1,4 @@
-import { CircleCheck, MapPin } from "lucide-react";
+import { CircleCheck, Mail, MapPin, Phone } from "lucide-react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
@@ -13,19 +13,31 @@ import {
 import { PageHeader } from "@/components/ui/page-header";
 import { formatAddress, mapsUrl, siteLabel } from "@/lib/address";
 import { getCompanySettings, intWoFieldLabel } from "@/lib/company";
-import { usDateTimeInZone } from "@/lib/datetime";
+import {
+  toDatetimeLocalInZone,
+  usDateTimeInZone,
+  usTimeInZone,
+} from "@/lib/datetime";
 import { db } from "@/lib/db";
 import { deliverableLabel, resolveDeliverableRules } from "@/lib/deliverables";
+import { fieldAction, JOB_FIELDS, type JobFieldName } from "@/lib/job-fields";
 import {
   INTERNAL_STATUS_META,
   LIFECYCLE_META,
   OUTCOME_META,
 } from "@/lib/job-status";
-import { formatRate } from "@/lib/pay-rates";
+import { formatRate } from "@/lib/money";
 import { canOnJob } from "@/lib/scope";
 import { can, getSessionUser } from "@/lib/session";
+import { jobSpan } from "@/lib/time-tracking";
 import { approveJob } from "../actions";
+import { ChangeRequests } from "./change-requests";
+import { EditableField } from "./editable-field";
+import { PointsOfContact } from "./points-of-contact";
 import { RevisitPanel } from "./revisit-panel";
+import { ScopeOfWork } from "./scope-of-work";
+import { TimeClock } from "./time-clock";
+import { WorkPerformed } from "./work-performed";
 
 export async function generateMetadata({
   params,
@@ -63,6 +75,9 @@ export default async function JobPage({
       estimateMinutes: true,
       techsRequired: true,
       scopeOfWork: true,
+      releaseCode: true,
+      returnTrackingNumber: true,
+      workPerformedMerged: true,
       breakPaid: true,
       lifecycle: true,
       outcome: true,
@@ -81,7 +96,6 @@ export default async function JobPage({
       site: {
         select: {
           siteNumber: true,
-          name: true,
           addressLine1: true,
           addressLine2: true,
           city: true,
@@ -98,6 +112,17 @@ export default async function JobPage({
           name: true,
           externalProjectId: true,
           generalScopeOfWork: true,
+          dispatchContacts: {
+            orderBy: { order: "asc" },
+            select: {
+              id: true,
+              label: true,
+              name: true,
+              phone: true,
+              email: true,
+              note: true,
+            },
+          },
           deliverableRules: {
             where: { jobId: null },
             select: {
@@ -112,6 +137,17 @@ export default async function JobPage({
           },
         },
       },
+      dispatchContacts: {
+        orderBy: { order: "asc" },
+        select: {
+          id: true,
+          label: true,
+          name: true,
+          phone: true,
+          email: true,
+          note: true,
+        },
+      },
       deliverableRules: {
         where: { projectId: null },
         select: {
@@ -124,6 +160,33 @@ export default async function JobPage({
           order: true,
         },
       },
+      pointsOfContact: {
+        orderBy: [{ type: "asc" }, { order: "asc" }],
+        select: {
+          id: true,
+          type: true,
+          name: true,
+          phone: true,
+          email: true,
+        },
+      },
+      scopeChecks: {
+        where: { checked: true },
+        select: { lineKey: true },
+      },
+      changeRequests: {
+        where: { status: "PENDING" },
+        orderBy: { createdAt: "asc" },
+        select: {
+          id: true,
+          fieldPath: true,
+          oldValue: true,
+          newValue: true,
+          reason: true,
+          createdAt: true,
+          requestedBy: { select: { name: true } },
+        },
+      },
       assignments: {
         orderBy: { isLead: "desc" },
         select: {
@@ -133,8 +196,29 @@ export default async function JobPage({
           payRate: true,
           payRateNote: true,
           travelReimbursement: true,
-          user: { select: { id: true, name: true, baseRole: true } },
+          workPerformed: true,
+          user: {
+            select: {
+              id: true,
+              name: true,
+              baseRole: true,
+              directSupervisor: {
+                select: { name: true, phone: true, email: true },
+              },
+            },
+          },
           supervisor: { select: { name: true } },
+          visits: {
+            orderBy: { clockInAt: "asc" },
+            select: {
+              id: true,
+              clockInAt: true,
+              clockOutAt: true,
+              breaks: {
+                select: { startAt: true, endAt: true, paid: true },
+              },
+            },
+          },
         },
       },
     },
@@ -142,7 +226,7 @@ export default async function JobPage({
 
   if (!job) notFound();
 
-  const assigneeIds = job.assignments.map((a) => a.user.id);
+  const assigneeIds = job.assignments.map((assignment) => assignment.user.id);
   const jobRef = {
     projectId: job.project?.id ?? null,
     assigneeIds,
@@ -153,24 +237,91 @@ export default async function JobPage({
 
   const company = await getCompanySettings();
   const zone = job.site.timeZone ?? company.defaultTimeZone;
+  const now = new Date();
 
-  const showPay = await canOnJob(user, "pay.view_rates", jobRef);
-  const canApprove =
-    job.lifecycle === "PENDING_APPROVAL" &&
-    (await canOnJob(user, "job.approve_report", jobRef));
+  const [
+    showPay,
+    canEditPlanned,
+    canFillMissing,
+    canSuggest,
+    canApproveChange,
+    canClockHere,
+    canApproveJob,
+  ] = await Promise.all([
+    canOnJob(user, "pay.view_rates", jobRef),
+    canOnJob(user, "job.edit_planned_fields", jobRef),
+    canOnJob(user, "job.fill_missing_field", jobRef),
+    canOnJob(user, "job.suggest_change", jobRef),
+    canOnJob(user, "job.approve_change", jobRef),
+    canOnJob(user, "job.clock_in", jobRef),
+    canOnJob(user, "job.approve_report", jobRef),
+  ]);
+
+  const mine = job.assignments.find(
+    (assignment) => assignment.user.id === user.id,
+  );
+
+  const allVisits = job.assignments.flatMap((assignment) => assignment.visits);
+  const span = jobSpan(allVisits, now);
 
   const rules = resolveDeliverableRules(
     job.deliverableRules,
     job.project?.deliverableRules ?? [],
   );
 
+  /** Read-only, editable, fill-in or suggest — decided per field. */
+  function actionFor(field: JobFieldName, value: string) {
+    return fieldAction({
+      planned: JOB_FIELDS[field].planned,
+      isEmpty: value.trim() === "",
+      canEditPlanned,
+      canFillMissing,
+      canSuggest,
+    });
+  }
+
+  function editable(field: JobFieldName, rawValue: string, display?: string) {
+    return (
+      <EditableField
+        jobId={job!.id}
+        field={field}
+        label={JOB_FIELDS[field].label}
+        value={rawValue}
+        displayValue={display}
+        action={actionFor(field, rawValue)}
+        kind={JOB_FIELDS[field].kind}
+      />
+    );
+  }
+
+  // The tech's own supervisor always heads the dispatch block — the one number
+  // they are most likely to need and least likely to have to hand.
+  const supervisor = mine?.user.directSupervisor;
+  const dispatch = [
+    ...(supervisor
+      ? [
+          {
+            id: "supervisor",
+            label: "Your supervisor",
+            name: supervisor.name,
+            phone: supervisor.phone,
+            email: supervisor.email,
+            note: null as string | null,
+          },
+        ]
+      : []),
+    ...job.dispatchContacts,
+    ...(job.project?.dispatchContacts ?? []),
+  ];
+
   const timeline = await db.auditEvent.findMany({
     where: { jobId: job.id },
     orderBy: { createdAt: "desc" },
-    take: 30,
+    take: 40,
     select: {
       id: true,
       action: true,
+      detail: true,
       createdAt: true,
       actor: { select: { name: true } },
     },
@@ -183,7 +334,7 @@ export default async function JobPage({
         backHref="/jobs"
         description={`${intWoFieldLabel(company)}: ${job.intWoId}`}
         actions={
-          canApprove ? (
+          job.lifecycle === "PENDING_APPROVAL" && canApproveJob ? (
             <form
               action={async (formData: FormData) => {
                 "use server";
@@ -218,31 +369,82 @@ export default async function JobPage({
         ) : null}
       </div>
 
+      {mine ? (
+        <TimeClock
+          jobId={job.id}
+          timeZone={zone}
+          intervalMinutes={company.timeRoundingMinutes}
+          visits={mine.visits.map((visit) => ({
+            clockInAt: visit.clockInAt.toISOString(),
+            clockOutAt: visit.clockOutAt?.toISOString() ?? null,
+            breaks: visit.breaks.map((entry) => ({
+              startAt: entry.startAt.toISOString(),
+              endAt: entry.endAt?.toISOString() ?? null,
+              paid: entry.paid,
+            })),
+          }))}
+          payType={mine.payType}
+          payRate={Number(mine.payRate)}
+          showPay={showPay}
+          breakPaid={job.breakPaid}
+          clientName={job.client.name}
+          customerName={job.customer.name}
+          canClock={canClockHere}
+          serverNow={now.toISOString()}
+        />
+      ) : null}
+
+      {job.changeRequests.length > 0 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Suggested changes</CardTitle>
+            <CardDescription>
+              Raised by someone who cannot edit a planned field directly.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ChangeRequests
+              canReview={canApproveChange}
+              requests={job.changeRequests.map((request) => ({
+                id: request.id,
+                fieldPath: request.fieldPath,
+                oldValue: request.oldValue,
+                newValue: request.newValue,
+                reason: request.reason,
+                requestedBy: request.requestedBy.name,
+                createdAt: usDateTimeInZone(request.createdAt, zone),
+              }))}
+            />
+          </CardContent>
+        </Card>
+      ) : null}
+
       <Card>
         <CardHeader>
           <CardTitle>Assignment details</CardTitle>
+          <CardDescription>
+            Planned fields are read-only. Blank ones can be completed by anyone
+            on the job; changing a filled one goes to a supervisor.
+          </CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-3 text-sm sm:grid-cols-2">
-          <Detail label="Company" value={job.client.name} />
-          <Detail label="Customer" value={job.customer.name} />
-          <Detail
+        <CardContent className="grid gap-4 text-sm sm:grid-cols-2">
+          <Static label="Company" value={job.client.name} />
+          <Static label="Customer" value={job.customer.name} />
+          <Static
             label="Site ID"
             value={siteLabel(job.customer.code, job.site.siteNumber)}
           />
-          <Detail
-            label={intWoFieldLabel(company)}
-            value={job.intWoId}
-            mono
-          />
-          <Detail label="Assignment ID" value={job.externalAssignmentId} />
-          <Detail label="Ticket #" value={job.ticketNumber} />
-          <Detail label="INC #" value={job.incNumber} />
-          <Detail
+          <Static label={intWoFieldLabel(company)} value={job.intWoId} mono />
+
+          {editable("externalAssignmentId", job.externalAssignmentId ?? "")}
+          {editable("ticketNumber", job.ticketNumber ?? "")}
+          {editable("incNumber", job.incNumber ?? "")}
+          <Static
             label="Project"
             value={
               job.project
                 ? `${job.project.name}${job.project.externalProjectId ? ` (${job.project.externalProjectId})` : ""}`
-                : null
+                : "No project"
             }
           />
 
@@ -268,105 +470,211 @@ export default async function JobPage({
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Schedule</CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-3 text-sm sm:grid-cols-3">
-          <Detail
-            label="Scheduled"
-            value={
-              job.scheduledStart
-                ? usDateTimeInZone(job.scheduledStart, zone)
-                : null
-            }
-          />
-          <Detail
-            label="Estimate"
-            value={
-              job.estimateMinutes
-                ? `${(job.estimateMinutes / 60).toFixed(2)} hrs`
-                : null
-            }
-          />
-          <Detail
-            label="Techs"
-            value={`${job.assignments.length} of ${job.techsRequired}`}
-          />
-          <Detail label="Time zone" value={zone} />
-          <Detail label="Breaks" value={job.breakPaid ? "Paid" : "Unpaid"} />
-        </CardContent>
-      </Card>
-
-      {job.project?.generalScopeOfWork || job.scopeOfWork ? (
+      {dispatch.length > 0 ? (
         <Card>
           <CardHeader>
-            <CardTitle>Scope of work</CardTitle>
+            <CardTitle>Dispatch info</CardTitle>
             <CardDescription>
-              Rich formatting and tickable checklists arrive with the job working
-              page.
+              Numbers to reach mid-job. Tap to dial.
             </CardDescription>
           </CardHeader>
-          <CardContent className="flex flex-col gap-4 text-sm">
-            {job.project?.generalScopeOfWork ? (
-              <div>
-                <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  Project general scope
-                </div>
-                <pre className="whitespace-pre-wrap font-sans">
-                  {job.project.generalScopeOfWork}
-                </pre>
+          <CardContent className="flex flex-col gap-2">
+            {dispatch.map((contact) => (
+              <div
+                key={contact.id}
+                className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-border p-2"
+              >
+                <span className="text-sm font-medium">{contact.label}</span>
+                {contact.name ? (
+                  <span className="text-xs text-muted-foreground">
+                    {contact.name}
+                  </span>
+                ) : null}
+                {contact.phone ? (
+                  <a
+                    href={`tel:${contact.phone}`}
+                    className="flex items-center gap-1 text-xs text-primary underline-offset-4 hover:underline"
+                  >
+                    <Phone className="size-3" />
+                    {contact.phone}
+                  </a>
+                ) : null}
+                {contact.email ? (
+                  <a
+                    href={`mailto:${contact.email}`}
+                    className="flex items-center gap-1 text-xs text-primary underline-offset-4 hover:underline"
+                  >
+                    <Mail className="size-3" />
+                    {contact.email}
+                  </a>
+                ) : null}
+                {contact.note ? (
+                  <span className="w-full text-xs text-muted-foreground">
+                    {contact.note}
+                  </span>
+                ) : null}
               </div>
-            ) : null}
-            {job.scopeOfWork ? (
-              <div>
-                <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  This job
-                </div>
-                <pre className="whitespace-pre-wrap font-sans">
-                  {job.scopeOfWork}
-                </pre>
-              </div>
-            ) : null}
+            ))}
           </CardContent>
         </Card>
       ) : null}
 
       <Card>
         <CardHeader>
-          <CardTitle>Assigned techs</CardTitle>
+          <CardTitle>Points of contact</CardTitle>
+          <CardDescription>
+            Recorded on site as you go. MOD is required to close the job.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <PointsOfContact
+            jobId={job.id}
+            contacts={job.pointsOfContact}
+            canEdit={canFillMissing}
+          />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Scope of work</CardTitle>
+          {actionFor("scopeOfWork", job.scopeOfWork ?? "") !== "none" ? (
+            <CardDescription>
+              <EditableField
+                jobId={job.id}
+                field="scopeOfWork"
+                label="Edit scope"
+                value={job.scopeOfWork ?? ""}
+                action={actionFor("scopeOfWork", job.scopeOfWork ?? "")}
+                kind="markdown"
+              />
+            </CardDescription>
+          ) : null}
+        </CardHeader>
+        <CardContent>
+          <ScopeOfWork
+            jobId={job.id}
+            generalScope={job.project?.generalScopeOfWork ?? null}
+            jobScope={job.scopeOfWork}
+            checkedKeys={job.scopeChecks.map((check) => check.lineKey)}
+            canCheck={canClockHere}
+          />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Work performed</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <WorkPerformed
+            jobId={job.id}
+            own={mine?.workPerformed ?? null}
+            others={job.assignments
+              .filter(
+                (assignment) =>
+                  assignment.user.id !== user.id && assignment.workPerformed,
+              )
+              .map((assignment) => ({
+                name: assignment.user.name,
+                text: assignment.workPerformed as string,
+              }))}
+            merged={job.workPerformedMerged}
+            canWrite={Boolean(mine) && canClockHere}
+            canMerge={Boolean(mine?.isLead) || canApproveJob}
+          />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Time &amp; schedule</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-4 text-sm sm:grid-cols-3">
+          {editable(
+            "scheduledStart",
+            job.scheduledStart ? toDatetimeLocalInZone(job.scheduledStart, zone) : "",
+            job.scheduledStart
+              ? usDateTimeInZone(job.scheduledStart, zone)
+              : undefined,
+          )}
+          {editable(
+            "estimateMinutes",
+            job.estimateMinutes ? String(job.estimateMinutes) : "",
+            job.estimateMinutes
+              ? `${(job.estimateMinutes / 60).toFixed(2)} hrs`
+              : undefined,
+          )}
+          {editable("techsRequired", String(job.techsRequired))}
+
+          <Static
+            label="Onsite (check in)"
+            value={span.onsiteAt ? usTimeInZone(span.onsiteAt, zone) : null}
+          />
+          <Static
+            label="Offsite (check out)"
+            value={
+              span.offsiteAt
+                ? usTimeInZone(span.offsiteAt, zone)
+                : span.open
+                  ? "Still on site"
+                  : null
+            }
+          />
+          <Static
+            label="Total time"
+            value={
+              span.totalMinutes > 0
+                ? `${(span.totalMinutes / 60).toFixed(2)} hrs`
+                : null
+            }
+          />
+
+          {editable("releaseCode", job.releaseCode ?? "")}
+          {editable("returnTrackingNumber", job.returnTrackingNumber ?? "")}
+          <Static label="Breaks" value={job.breakPaid ? "Paid" : "Unpaid"} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Crew</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-2">
           {job.assignments.length === 0 ? (
             <p className="text-sm text-muted-foreground">Nobody assigned yet.</p>
           ) : (
-            job.assignments.map((assignment) => (
-              <div
-                key={assignment.id}
-                className="flex flex-wrap items-center gap-2 rounded-lg border border-border p-2 text-sm"
-              >
-                <span className="font-medium">{assignment.user.name}</span>
-                {assignment.isLead ? (
-                  <Badge variant="primary">Lead</Badge>
-                ) : null}
-                <span className="text-xs text-muted-foreground">
-                  Approver: {assignment.supervisor?.name ?? "not set"}
-                </span>
-                {showPay ? (
-                  <span className="ml-auto text-xs">
-                    {formatRate(assignment.payType, assignment.payRate.toString())}
-                    {assignment.travelReimbursement
-                      ? ` · travel $${Number(assignment.travelReimbursement).toFixed(2)}`
-                      : ""}
-                    {assignment.payRateNote ? (
-                      <span className="ml-1 text-warning">
-                        {assignment.payRateNote}
-                      </span>
-                    ) : null}
+            job.assignments.map((assignment) => {
+              const totals = jobSpan(assignment.visits, now);
+              return (
+                <div
+                  key={assignment.id}
+                  className="flex flex-wrap items-center gap-2 rounded-lg border border-border p-2 text-sm"
+                >
+                  <span className="font-medium">{assignment.user.name}</span>
+                  {assignment.isLead ? (
+                    <Badge variant="primary">Lead</Badge>
+                  ) : null}
+                  {totals.open ? (
+                    <Badge variant="success">On site</Badge>
+                  ) : null}
+                  <span className="text-xs text-muted-foreground">
+                    Approver: {assignment.supervisor?.name ?? "not set"}
                   </span>
-                ) : null}
-              </div>
-            ))
+                  {showPay ? (
+                    <span className="ml-auto text-xs">
+                      {formatRate(
+                        assignment.payType,
+                        assignment.payRate.toString(),
+                      )}
+                      {assignment.travelReimbursement
+                        ? ` · travel $${Number(assignment.travelReimbursement).toFixed(2)}`
+                        : ""}
+                    </span>
+                  ) : null}
+                </div>
+              );
+            })
           )}
         </CardContent>
       </Card>
@@ -375,7 +683,7 @@ export default async function JobPage({
         <CardHeader>
           <CardTitle>Deliverables required</CardTitle>
           <CardDescription>
-            Uploading arrives with the job working page.
+            Uploading arrives with the photo pipeline.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-1.5">
@@ -440,24 +748,30 @@ export default async function JobPage({
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-2 text-sm">
-          {timeline.map((event) => (
-            <div key={event.id} className="flex flex-wrap gap-2">
-              <span className="tabular text-xs text-muted-foreground">
-                {usDateTimeInZone(event.createdAt, zone)}
-              </span>
-              <span>{event.action.replace(/_/g, " ")}</span>
-              <span className="text-xs text-muted-foreground">
-                {event.actor?.name ?? "system"}
-              </span>
-            </div>
-          ))}
+          {timeline.map((event) => {
+            const detail = event.detail as { field?: string } | null;
+            return (
+              <div key={event.id} className="flex flex-wrap items-baseline gap-2">
+                <span className="tabular text-xs text-muted-foreground">
+                  {usDateTimeInZone(event.createdAt, zone)}
+                </span>
+                <span>
+                  {event.action.replace(/_/g, " ")}
+                  {detail?.field ? ` · ${detail.field}` : ""}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {event.actor?.name ?? "system"}
+                </span>
+              </div>
+            );
+          })}
         </CardContent>
       </Card>
     </div>
   );
 }
 
-function Detail({
+function Static({
   label,
   value,
   mono,
@@ -471,8 +785,8 @@ function Detail({
       <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
         {label}
       </div>
-      <div className={value ? (mono ? "tabular" : "") : "text-warning"}>
-        {value ?? "Missing"}
+      <div className={value ? (mono ? "tabular" : "") : "text-muted-foreground"}>
+        {value ?? "—"}
       </div>
     </div>
   );

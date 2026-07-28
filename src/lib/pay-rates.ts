@@ -90,18 +90,4 @@ export async function resolvePayRate(
   };
 }
 
-export const PAY_TYPE_LABEL: Record<PayType, string> = {
-  HOURLY: "Hourly",
-  FLAT: "Flat rate",
-  NON_BILLABLE: "Non-billable",
-};
-
-export function formatMoney(value: string | number): string {
-  return `$${Number(value).toFixed(2)}`;
-}
-
-export function formatRate(payType: PayType, rate: string | number): string {
-  if (payType === "NON_BILLABLE") return "Non-billable";
-  if (payType === "HOURLY") return `${formatMoney(rate)}/hr`;
-  return `${formatMoney(rate)} flat`;
-}
+export { PAY_TYPE_LABEL, formatMoney, formatRate } from "@/lib/money";

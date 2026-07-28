@@ -12,7 +12,7 @@ the client-facing report, the full job archive, and the weekly pay journal.
 
 ## Status
 
-**Phases 1–2 of 7 are complete.** What works today:
+**Phases 1–3 of 7 are complete.** What works today:
 
 - NextCloud OpenID Connect sign-in, with roles read from NextCloud groups
 - Three-layer permission model (base role, relationships, permission + scope)
@@ -23,13 +23,19 @@ the client-facing report, the full job archive, and the weekly pay journal.
   dispatch contacts, and their own work order counter
 - Job creation with automatic internal work order numbering, tech assignment,
   automatic pay rate resolution and revisit scheduling
-- Scope-filtered job list and job page
+- Scope-filtered job list and the job working page
+- Time clock: clock in/out with five-minute snapping, an early/later picker,
+  multiple breaks per visit, and earnings ticking in real time
+- Planned fields read-only by default, with fill-in for blanks and a
+  Suggest change flow for the rest
+- Scope of work in Markdown with tickable checklists, points of contact,
+  dispatch numbers, and per-tech Work Performed that autosaves
 - Dark/light theme (dark by default), responsive phone/tablet/desktop shell
 - Installable PWA with an offline notice and a connection indicator
 - Docker Compose deployment
 
-Everything the app can currently do is reachable from the UI. Time tracking,
-deliverables, exports and payroll land in later phases — see
+Everything the app can currently do is reachable from the UI. Deliverables,
+the guided checkout, exports and payroll land in later phases — see
 [Roadmap](#roadmap).
 
 ---
@@ -225,7 +231,8 @@ npm run dev
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run db:migrate` | Create and apply a migration |
 | `npm run db:seed` | Seed role grants and company row (idempotent) |
-| `npm run verify` | Integration check for numbering, dates and scope rules |
+| `npm run verify` | Integration check for numbering, dates, time, money and scope |
+| `npm run verify:ui` | Drives the time clock in a real browser (app must be running) |
 | `npm run db:studio` | Prisma Studio |
 
 The seed never rewrites a permission the database already knows about, so a
@@ -235,6 +242,10 @@ release has newly added, and deletes grants for ones it has retired.
 `npm run verify` is destructive — it wipes jobs and counters to test numbering —
 so it refuses to start without `QUICKTEC_ALLOW_DESTRUCTIVE_VERIFY=1`.
 
+`npm run verify:ui` needs the app already running and a Chromium that matches
+the installed Playwright; set `CHROMIUM_PATH` if it is not where Playwright
+expects it.
+
 ---
 
 ## Roadmap
@@ -243,8 +254,8 @@ so it refuses to start without `QUICKTEC_ALLOW_DESTRUCTIVE_VERIFY=1`.
 | --- | --- | --- |
 | 1 | Auth, roles & permissions, company settings, theme, PWA shell, deployment | **Done** |
 | 2 | Clients, customers, sites, projects; job creation and INT WO numbering | **Done** |
-| 3 | Job page, read-only fields with change requests, time clock, breaks, live earnings | Next |
-| 4 | Deliverables, photo pipeline, signatures, guided checkout, autosave | |
+| 3 | Job page, read-only fields with change requests, time clock, breaks, live earnings | **Done** |
+| 4 | Deliverables, photo pipeline, signatures, guided checkout | Next |
 | 5 | Text report, ZIP archive, internal PDF work order | |
 | 6 | Pay rates, mileage, reimbursements, pay journal, payroll | |
 | 7 | Timelines, approvals inbox, statistics, CalDAV calendar sync | |
@@ -275,6 +286,12 @@ computed from the snapped time with no second rounding. The snap is **not**
 "nearest" — the window is `[target − 3 min, target + 2 min)` at five-minute
 steps, which rounds 09:57 up to 10:00 where nearest would give 09:55. The half
 minute of bias is deliberate and favours the tech.
+
+Two totals come out of the same visits and must not be confused. The **client**
+is billed for the span the crew was on site — earliest clock-in to latest
+clock-out across everyone, breaks included. A **tech** is paid for their own
+visits minus their own unpaid breaks. A tech who leaves early is still covered
+by the supervisor who stayed on.
 
 **Money** — USD. Rate lookup runs job override → tech + project → tech + client →
 tech default → non-billable. Unpaid breaks reduce pay but not the client-facing

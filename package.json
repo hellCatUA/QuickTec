@@ -13,7 +13,8 @@
     "db:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio",
     "db:seed": "tsx prisma/seed.ts",
-    "verify": "tsx --tsconfig tsconfig.json scripts/verify-domain.ts"
+    "verify": "tsx --tsconfig tsconfig.json scripts/verify-domain.ts",
+    "verify:ui": "tsx --tsconfig tsconfig.json scripts/verify-job-page.ts"
   },
   "repository": {
     "type": "git",
@@ -47,6 +48,7 @@
     "@types/react-dom": "^19.2.3",
     "eslint": "^9.39.5",
     "eslint-config-next": "^16.2.12",
+    "playwright": "^1.62.0",
     "prisma": "^7.9.1",
     "tailwindcss": "^4.3.3",
     "tsx": "^4.23.1",
