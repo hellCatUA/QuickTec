@@ -12,7 +12,7 @@ the client-facing report, the full job archive, and the weekly pay journal.
 
 ## Status
 
-**Phases 1–5 of 7 are complete.** What works today:
+**Phases 1–6 of 7 are complete.** What works today:
 
 - NextCloud OpenID Connect sign-in, with roles read from NextCloud groups
 - Three-layer permission model (base role, relationships, permission + scope)
@@ -39,12 +39,17 @@ the client-facing report, the full job archive, and the weekly pay journal.
   everything while the manager is still on site
 - Exports: the client-facing text report, a ZIP of the whole job, and the
   company's own PDF work order
+- Pay rates by tech, project and client, with per-job overrides
+- Mileage tracker with trip categories and odometer photos
+- Weekly payroll approved by the direct supervisor, with per-job overrides and
+  Received/REDUCED recorded for both the week and each job
+- Pay journal spreadsheet, weekly or monthly, and per-tech statistics
 - Dark/light theme (dark by default), responsive phone/tablet/desktop shell
 - Installable PWA with an offline notice and a connection indicator
 - Docker Compose deployment
 
-Everything the app can currently do is reachable from the UI. Pay, mileage
-and calendar sync land in later phases — see [Roadmap](#roadmap).
+Everything the app can currently do is reachable from the UI. Timelines,
+approvals and calendar sync land in the last phase — see [Roadmap](#roadmap).
 
 ---
 
@@ -245,7 +250,8 @@ npm run dev
 | `npm run db:migrate` | Create and apply a migration |
 | `npm run db:seed` | Seed role grants and company row (idempotent) |
 | `npm run verify` | Integration check for numbering, dates, time, money and scope |
-| `npm run verify:ui` | Drives the time clock in a real browser (app must be running) |
+| `npm run verify:ui` | Drives the time clock and checkout in a real browser |
+| `npm run verify:pay` | Drives payroll approval and payment in a real browser |
 | `npm run db:studio` | Prisma Studio |
 
 The seed never rewrites a permission the database already knows about, so a
@@ -270,8 +276,8 @@ expects it.
 | 3 | Job page, read-only fields with change requests, time clock, breaks, live earnings | **Done** |
 | 4 | Deliverables, photo pipeline, signatures, guided checkout | **Done** |
 | 5 | Text report, ZIP archive, internal PDF work order | **Done** |
-| 6 | Pay rates, mileage, pay journal, payroll | Next |
-| 7 | Timelines, approvals inbox, statistics, CalDAV calendar sync | |
+| 6 | Pay rates, mileage, pay journal, payroll | **Done** |
+| 7 | Timelines, approvals inbox, CalDAV calendar sync | Next |
 
 ### Domain rules
 
@@ -362,6 +368,24 @@ recorded.
 **Money** — USD. Rate lookup runs job override → tech + project → tech + client →
 tech default → non-billable. Unpaid breaks reduce pay but not the client-facing
 onsite time.
+
+Pay weeks run Monday to Sunday and are approved by the tech's **direct
+supervisor** — the person who actually pays them — whatever projects the week's
+work fell under. A manager may step in, which is recorded and notified rather
+than hidden. A week is filed under the month its Monday falls in, so a week
+straddling September and October is counted once, in September.
+
+Received pay is recorded twice on purpose: once for the week and once for each
+job. A short week is only actionable if you can see which job was cut. Both drop
+to **REDUCED** automatically when the amount is under what was expected.
+
+Rebuilding a week recomputes hours and reimbursements from the time records but
+leaves overrides, received amounts and notes alone — those are decisions someone
+made, not figures to recalculate. Money is handled in integer cents throughout.
+
+Dates in URLs (`?week=2026-06-15`) are calendar dates in the company zone, not
+UTC instants. Read with the plain `Date` constructor they land a day early on
+the west coast, which puts the whole week off by one.
 
 Two separate things fund travel:
 

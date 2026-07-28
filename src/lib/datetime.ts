@@ -85,6 +85,29 @@ export function pad(value: number, width = 2): string {
 }
 
 /**
+ * Reads a "YYYY-MM-DD" back as local midnight in the given zone.
+ *
+ * `new Date("2026-06-15")` is UTC midnight, which in Los Angeles is the
+ * afternoon of the 14th — a Sunday. Feeding that to startOfWeekMonday lands a
+ * whole week early, so any date that came out of isoDateInZone has to come back
+ * in through here rather than through the Date constructor.
+ */
+export function parseZonedDate(iso: string, timeZone: string): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso.trim());
+  if (!match) {
+    const fallback = new Date(iso);
+    return Number.isNaN(fallback.getTime()) ? null : fallback;
+  }
+
+  return zonedMidnight(
+    Number(match[1]),
+    Number(match[2]),
+    Number(match[3]),
+    timeZone,
+  );
+}
+
+/**
  * "2026-07-28T09:30" for a `datetime-local` input, expressed in the given zone
  * rather than the browser's — a planner in another state must still see the
  * site's local schedule.

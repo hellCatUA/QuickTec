@@ -5,7 +5,12 @@ import {
   allocateRevisitIntWo,
   revisitAssignmentId,
 } from "@/lib/int-wo";
-import { startOfWeekMonday, roundToInterval, decimalHours } from "@/lib/datetime";
+import {
+  startOfWeekMonday,
+  roundToInterval,
+  decimalHours,
+  isoDateInZone,
+} from "@/lib/datetime";
 
 /**
  * Integration check for the numbering, date and scope rules.
@@ -742,6 +747,239 @@ async function main() {
   check("work order has real content", workOrder.byteLength > 2000, true);
 
   await db.job.delete({ where: { id: exportJob.id } });
+
+  // --- pay ----------------------------------------------------------------
+  const {
+    labourCents,
+    fromCents,
+    toCents,
+    weekRange,
+    weekMonth,
+    weeksInMonth,
+    expectedPayDate,
+    buildPayrollPeriod,
+  } = await import("@/lib/payroll");
+
+  check("hourly pay to the cent", labourCents("HOURLY", "45.00", 450), 33750);
+  check("flat pays once, whatever the hours", labourCents("FLAT", "250", 450), 25000);
+  check("non-billable pays nothing", labourCents("NON_BILLABLE", "45", 450), 0);
+  // Cents throughout: a third of an hour at $45 must not drift.
+  check("odd minutes round to the cent", labourCents("HOURLY", "45", 20), 1500);
+  check("cents render back cleanly", fromCents(33750), "337.50");
+  check("decimal strings convert to cents", toCents("12.34"), 1234);
+
+  // A week is filed under the month its Monday falls in, so a straddling week
+  // is counted once and by its start.
+  const straddling = weekRange(new Date("2026-10-01T12:00:00Z"), TZ);
+  const filed = weekMonth(straddling.start, TZ);
+  check("a week starting 28 Sep files under September", `${filed.year}-${filed.month}`, "2026-9");
+
+  const septemberWeeks = weeksInMonth(2026, 9, TZ);
+  const octoberWeeks = weeksInMonth(2026, 10, TZ);
+  const overlap = septemberWeeks.filter((week) =>
+    octoberWeeks.some((other) => other.start.getTime() === week.start.getTime()),
+  );
+  check("no week is counted in two months", overlap.length, 0);
+  check("September has its weeks", septemberWeeks.length > 0, true);
+
+  // The bug this guards: new Date("2026-06-15") is UTC midnight, which is the
+  // afternoon of the 14th in Los Angeles, so the selector landed a week early.
+  const { parseZonedDate } = await import("@/lib/datetime");
+  const reparsed = weekRange(parseZonedDate("2026-06-15", TZ)!, TZ);
+  check(
+    "a date string round-trips to the same week",
+    isoDateInZone(reparsed.start, TZ),
+    "2026-06-15",
+  );
+  check(
+    "the naive parse would have been a week early",
+    isoDateInZone(weekRange(new Date("2026-06-15"), TZ).start, TZ),
+    "2026-06-08",
+  );
+
+  check(
+    "expected pay date is the lag after the week ends",
+    expectedPayDate(new Date("2026-08-03T07:00:00Z"), 3).toISOString().slice(0, 10),
+    "2026-08-24",
+  );
+
+  // --- a real week --------------------------------------------------------
+  await db.payrollPeriod.deleteMany({ where: { userId: tech.id } });
+
+  const payWeek = weekRange(new Date("2026-07-29T12:00:00Z"), TZ);
+
+  const payJob = await db.job.create({
+    data: {
+      ...base,
+      intWoId: "2026-07-PRJ12-9500",
+      intWoSequence: 9500,
+      title: "Pay week job",
+      projectId: project.id,
+    },
+  });
+  const payAssignment = await db.jobAssignment.create({
+    data: {
+      jobId: payJob.id,
+      userId: tech.id,
+      payType: "HOURLY",
+      payRate: "45",
+      travelReimbursement: "40",
+    },
+  });
+  await db.visit.create({
+    data: {
+      assignmentId: payAssignment.id,
+      // Wednesday 08:00-16:00 local, with a 30 minute unpaid break.
+      clockInAt: new Date("2026-07-29T15:00:00Z"),
+      clockOutAt: new Date("2026-07-29T23:00:00Z"),
+      breaks: {
+        create: {
+          startAt: new Date("2026-07-29T19:00:00Z"),
+          endAt: new Date("2026-07-29T19:30:00Z"),
+          paid: false,
+        },
+      },
+    },
+  });
+  await db.reimbursement.createMany({
+    data: [
+      { jobId: payJob.id, assignmentId: payAssignment.id, type: "PARKING", amount: "12.00" },
+      { jobId: payJob.id, assignmentId: payAssignment.id, type: "MATERIAL", amount: "3.00" },
+      { jobId: payJob.id, assignmentId: payAssignment.id, type: "HOTEL", amount: "154.00" },
+    ],
+  });
+
+  const periodId = await buildPayrollPeriod({
+    userId: tech.id,
+    week: payWeek,
+    timeZone: TZ,
+    payLagWeeks: 3,
+  });
+
+  const built = await db.payrollPeriod.findUniqueOrThrow({
+    where: { id: periodId },
+    include: { lines: true },
+  });
+
+  check("the week has one line", built.lines.length, 1);
+  // 7.5 paid hours at $45 = 337.50, plus 40 travel + 12 parking + 3 materials
+  // + 154 hotel = 546.50.
+  check("unpaid break comes off the labour", built.lines[0].laborAmount.toString(), "337.5");
+  check("travel is carried per job", built.lines[0].travelReimb.toString(), "40");
+  check("hotel is carried too", built.lines[0].hotelReimb.toString(), "154");
+  check("line total adds up", built.lines[0].totalExpected.toString(), "546.5");
+  check("week total matches the line", built.expectedAmount.toString(), "546.5");
+  check(
+    "the week routes to the tech's direct supervisor",
+    built.supervisorId,
+    sup.id,
+  );
+
+  // An override is a decision; rebuilding recomputes hours but leaves it alone.
+  await db.payrollLine.update({
+    where: { id: built.lines[0].id },
+    data: { overrideAmount: "500.00", overrideNote: "Client short-paid travel" },
+  });
+  await buildPayrollPeriod({
+    userId: tech.id,
+    week: payWeek,
+    timeZone: TZ,
+    payLagWeeks: 3,
+  });
+  const afterRebuild = await db.payrollLine.findUniqueOrThrow({
+    where: { id: built.lines[0].id },
+  });
+  check(
+    "rebuilding preserves an override",
+    afterRebuild.overrideAmount?.toString(),
+    "500",
+  );
+  check(
+    "rebuilding still refreshes the computed total",
+    afterRebuild.totalExpected.toString(),
+    "546.5",
+  );
+
+  // Work that moves out of the week must not leave a line claiming money.
+  await db.visit.updateMany({
+    where: { assignmentId: payAssignment.id },
+    data: { clockInAt: new Date("2026-08-05T15:00:00Z"), clockOutAt: new Date("2026-08-05T23:00:00Z") },
+  });
+  await buildPayrollPeriod({
+    userId: tech.id,
+    week: payWeek,
+    timeZone: TZ,
+    payLagWeeks: 3,
+  });
+  check(
+    "a job moved out of the week drops its line",
+    await db.payrollLine.count({ where: { payrollPeriodId: periodId } }),
+    0,
+  );
+
+  // --- mileage ------------------------------------------------------------
+  const { availableCategories, milesBetween, mileageAmount, MILEAGE_META } =
+    await import("@/lib/mileage");
+
+  check(
+    "off-clock supply runs are hidden while clocked in",
+    availableCategories(true).includes("OFFCLOCK_TOOLS_SUPPLIES"),
+    false,
+  );
+  check(
+    "on-clock supply runs are hidden while clocked out",
+    availableCategories(false).includes("ONCLOCK_TOOLS_SUPPLIES"),
+    false,
+  );
+  check(
+    "the drive home is always available",
+    availableCategories(false).includes("RETURNING_HOME") &&
+      availableCategories(true).includes("RETURNING_HOME"),
+    true,
+  );
+  check("returning home needs no reference", MILEAGE_META.RETURNING_HOME.requiresJob, false);
+  check("other demands a note", MILEAGE_META.OTHER.requiresNote, true);
+  check("miles to one decimal", milesBetween(10432.4, 10467.9), 35.5);
+  check("mileage value at the stored rate", mileageAmount(35.5, "0.70"), "24.85");
+
+  // --- pay journal --------------------------------------------------------
+  const { buildPayWorkbook, payExportFileName } = await import(
+    "@/lib/exports/pay-export"
+  );
+
+  check(
+    "weekly export is named for the week",
+    payExportFileName({ kind: "week", week: payWeek }, TZ),
+    "Pay-07272026.xlsx",
+  );
+  check(
+    "monthly export is named for the month",
+    payExportFileName({ kind: "month", year: 2026, month: 7 }, TZ),
+    "Pay-2026-07.xlsx",
+  );
+
+  const workbookBuffer = await buildPayWorkbook({
+    userIds: [tech.id, sup.id],
+    range: { kind: "week", week: payWeek },
+    timeZone: TZ,
+  });
+  check("workbook is a real xlsx", workbookBuffer.subarray(0, 2).toString(), "PK");
+
+  const ExcelJS = (await import("exceljs")).default;
+  const readBack = new ExcelJS.Workbook();
+  await readBack.xlsx.load(workbookBuffer as unknown as ArrayBuffer);
+
+  check("one sheet per tech", readBack.worksheets.length, 2);
+  const headers = readBack.worksheets[0].getRow(1).values as string[];
+  check(
+    "received pay is carried for both the job and the week",
+    headers.includes("Received (job)") && headers.includes("Received (week)"),
+    true,
+  );
+  check("column order starts with the date", headers[1], "Date");
+  check("column order ends with the note", headers[headers.length - 1], "Pay Note");
+
+  await db.job.delete({ where: { id: payJob.id } });
 
   console.log(`\n${failures === 0 ? "ALL CHECKS PASSED" : `${failures} CHECK(S) FAILED`}`);
   await db.$disconnect();
