@@ -148,25 +148,21 @@ Manager wins, then Administrator, Supervisor, Accountant, Tech.
 
 ## Deployment
 
-### 1. NextCloud
+Full walkthrough — DNS, directories, compose, Nginx Proxy Manager, the
+NextCloud OIDC client and calendar sync — in
+**[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**. It is written against a host
+running Tailscale, Nginx Proxy Manager and NextCloud in the host network
+namespace, which is the arrangement QuickTec was built for.
 
-Install the **OpenID Connect provider** app (`oidc`), then add a client:
-
-- **Name:** QuickTec
-- **Redirect URI:** `https://quicktec.417group.org/api/auth/callback/nextcloud`
-- **Signing algorithm:** RS256
-- **Scopes:** `openid`, `profile`, `email`, `roles`
-
-The `roles` scope is what carries group membership. Copy the generated client ID
-and secret. Create the five `quicktec-*` groups and put your users in them.
-
-### 2. Configure
+The short version:
 
 ```bash
 git clone <this repo> quicktec && cd quicktec
 cp .env.example .env
-openssl rand -base64 32   # paste into AUTH_SECRET
+openssl rand -base64 32          # paste into AUTH_SECRET
 $EDITOR .env
+chown -R 1001:1001 <uploads dir> # the app runs as uid 1001
+docker compose up -d --build
 ```
 
 | Variable | Notes |
@@ -176,44 +172,20 @@ $EDITOR .env
 | `AUTH_SECRET` | 32+ random bytes |
 | `NEXTCLOUD_ISSUER` | Your NextCloud base URL |
 | `NEXTCLOUD_WELL_KNOWN` | Only if discovery is not at `<issuer>/index.php/apps/oidc/openid-configuration` |
-| `NEXTCLOUD_CLIENT_ID` / `_SECRET` | From step 1 |
-| `CALDAV_USERNAME` / `_PASSWORD` | Optional. The system account that owns the tech calendars — use an **app password**, not the login password. Leave blank to turn sync off |
+| `NEXTCLOUD_CLIENT_ID` / `_SECRET` | From the OIDC provider app |
+| `CALDAV_USERNAME` / `_PASSWORD` | Optional. The system account that owns the tech calendars — use an **app password**. Leave blank to turn sync off |
+| `POSTGRES_DIR` / `UPLOADS_HOST_DIR` | Where the two data directories live on the host |
 | `APP_BIND` | Defaults to `127.0.0.1`. Set to the LAN IP if NPM runs on another host |
 | `TZ` | `America/Los_Angeles` |
 
-If any of these are missing, the sign-in page says so instead of showing a
-button that quietly does nothing.
+If any of the auth variables are missing, the sign-in page says so instead of
+showing a button that quietly does nothing.
 
-### 3. Start
-
-```bash
-docker compose up -d --build
-docker compose logs -f app
-```
-
-`db` starts, `migrate` applies migrations and the idempotent seed and exits,
-then `app` comes up on port 3000.
-
-### 4. Nginx Proxy Manager
-
-Add a proxy host for `quicktec.417group.org` → `http://<omv-ip>:3000`, with
-**Websockets support** and **Block common exploits** on, and a Let's Encrypt
-certificate. NPM's default `X-Forwarded-*` headers are what the app expects;
-`AUTH_TRUST_HOST` is already set in compose.
-
-Because the subdomain resolves only inside Tailscale, use a DNS challenge for
-the certificate.
-
-### 5. First sign-in
-
-The first person to sign in gets an account with the role from their NextCloud
-group. Sign in as a member of `quicktec-manager`, then:
-
-1. `/settings/company` — company name, logo, mileage rate, pay lag
-2. `/settings/users` — give every tech a direct supervisor
-3. `/settings/roles` — adjust the permission matrix if the defaults do not fit
-
-The dashboard shows these as a checklist until they are done.
+In NextCloud, install the **OpenID Connect provider** app (`oidc`) and add a
+client with the redirect URI
+`https://quicktec.417group.org/api/auth/callback/nextcloud`, RS256, confidential.
+QuickTec asks for `openid profile email roles`; the `roles` scope is what
+carries group membership, and without it every sign-in is refused.
 
 ---
 
@@ -221,8 +193,8 @@ The dashboard shows these as a checklist until they are done.
 
 | Path | Contents |
 | --- | --- |
-| `./data/postgres` | Database |
-| `./data/uploads` | Photos, signatures, generated exports |
+| `$POSTGRES_DIR` (default `./data/postgres`) | Database |
+| `$UPLOADS_HOST_DIR` (default `./data/uploads`) | Photos, signatures, generated exports |
 
 Uploads are **not** served straight from the volume. Every read goes through
 `/api/files/<id>`, which applies the same job-scope check as the page linking

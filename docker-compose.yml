@@ -16,7 +16,9 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-quicktec}
       TZ: ${TZ:-America/Los_Angeles}
     volumes:
-      - ./data/postgres:/var/lib/postgresql/data
+      # Defaults sit beside this file; point them at a pool dataset on OMV by
+      # setting the variables in .env.
+      - ${POSTGRES_DIR:-./data/postgres}:/var/lib/postgresql/data
     healthcheck:
       test:
         ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-quicktec} -d ${POSTGRES_DB:-quicktec}"]
@@ -62,7 +64,9 @@ services:
       UPLOADS_DIR: ${UPLOADS_DIR:-/data/uploads}
       TZ: ${TZ:-America/Los_Angeles}
     volumes:
-      - ./data/uploads:/data/uploads
+      # Photos and generated exports. The container runs as uid 1001, so this
+      # directory has to be owned by 1001:1001 on the host.
+      - ${UPLOADS_HOST_DIR:-./data/uploads}:/data/uploads
     ports:
       - "${APP_BIND:-127.0.0.1}:${APP_PORT:-3000}:3000"
     depends_on:
