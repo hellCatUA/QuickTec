@@ -1,0 +1,1015 @@
+// QuickTec — field service time tracking & reporting
+//
+// Modelling notes that are easy to get wrong later:
+//   * Job is shared by everyone on site. JobAssignment is per tech (own external
+//     Assignment ID, own pay rate, own signature, own Work Performed).
+//   * Visit is a single clock-in/clock-out pair. A job can have several, either
+//     because it spans days or because the tech left and came back.
+//   * Client-facing totals come from the whole job (earliest in, latest out);
+//     pay comes from each tech's own visits minus their unpaid breaks.
+//   * All timestamps are UTC. Display uses Site.timeZone, falling back to
+//     CompanySettings.defaultTimeZone (America/Los_Angeles).
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// People, roles, permissions
+// ---------------------------------------------------------------------------
+
+/// Mapped hard from NextCloud groups on every login (quicktec-admin,
+/// quicktec-manager, quicktec-supervisor, quicktec-tech, quicktec-accountant).
+/// A user in none of those groups is refused entry.
+enum BaseRole {
+  ADMINISTRATOR
+  MANAGER
+  SUPERVISOR
+  TECH
+  ACCOUNTANT
+}
+
+/// How far a permission reaches. Checked per permission, not per role.
+enum PermissionScope {
+  /// Only rows the user owns.
+  OWN
+  /// OWN plus every tech whose directSupervisor is this user.
+  REPORTS
+  /// Everything inside projects where the user is PM or supervisor.
+  PROJECT
+  /// Everything.
+  ALL
+}
+
+model User {
+  id String @id @default(cuid())
+
+  /// OIDC `sub` from NextCloud. Stable across email changes.
+  nextcloudSub String? @unique
+  email        String  @unique
+  name         String
+  phone        String?
+  avatarUrl    String?
+
+  baseRole BaseRole
+  active   Boolean  @default(true)
+  timeZone String   @default("America/Los_Angeles")
+
+  /// Always the person who pays this tech, regardless of project membership.
+  /// Payroll approval follows this link and nothing else.
+  directSupervisorId String?
+  directSupervisor   User?   @relation("DirectReports", fields: [directSupervisorId], references: [id], onDelete: SetNull)
+  directReports      User[]  @relation("DirectReports")
+
+  /// CalDAV calendar provisioned by the 417-SYS system account.
+  calendarUrl  String?
+  calendarName String?
+
+  /// Fallback pay rate when no job/project/client rate applies.
+  defaultPayType PayType?
+  defaultPayRate Decimal? @db.Decimal(10, 2)
+
+  lastLoginAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  permissionOverrides   PermissionOverride[]
+  projectMemberships    ProjectMember[]
+  managedProjects       Project[]            @relation("ProjectManager")
+  assignments           JobAssignment[]
+  supervisedAssignments JobAssignment[]      @relation("AssignmentSupervisor")
+  createdJobs           Job[]                @relation("JobCreatedBy")
+  approvedJobs          Job[]                @relation("JobApprovedBy")
+  payRates              PayRate[]
+  mileageEntries        MileageEntry[]       @relation("MileageOwner")
+  approvedMileage       MileageEntry[]       @relation("MileageApprover")
+  payrollPeriods        PayrollPeriod[]      @relation("PayrollTech")
+  payrollAsSupervisor   PayrollPeriod[]      @relation("PayrollSupervisor")
+  approvedPayrolls      PayrollPeriod[]      @relation("PayrollApprover")
+  changeRequests        ChangeRequest[]      @relation("ChangeRequester")
+  reviewedChanges       ChangeRequest[]      @relation("ChangeReviewer")
+  scopeChecks           JobScopeCheck[]
+  uploads               Attachment[]
+  auditEvents           AuditEvent[]
+  notifications         Notification[]
+
+  @@index([baseRole, active])
+  @@index([directSupervisorId])
+}
+
+/// Editable permission matrix. Seeded with defaults, then owned by Managers.
+model RoleGrant {
+  id         String          @id @default(cuid())
+  role       BaseRole
+  permission String
+  scope      PermissionScope
+
+  @@unique([role, permission])
+}
+
+/// Point grant/revoke on top of the base role, optionally narrowed to a project.
+model PermissionOverride {
+  id         String  @id @default(cuid())
+  userId     String
+  user       User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permission String
+  /// false = explicit revoke, which beats the role grant.
+  granted    Boolean @default(true)
+  /// Ignored when granted = false.
+  scope      PermissionScope?
+  projectId  String?
+  project    Project?         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  note       String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, permission, projectId])
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Company
+// ---------------------------------------------------------------------------
+
+/// Single row (id = "singleton"). "Our" company — not the buyer on a job.
+model CompanySettings {
+  id String @id @default("singleton")
+
+  name    String  @default("QuickTec")
+  logoUrl String?
+
+  addressLine1 String?
+  addressLine2 String?
+  city         String?
+  state        String?
+  postalCode   String?
+  country      String? @default("USA")
+  phone        String?
+  email        String?
+  website      String?
+
+  /// Drives the "<Company> INT WO ID" field label.
+  intWoLabel String @default("INT WO ID")
+
+  defaultTimeZone String @default("America/Los_Angeles")
+  currency        String @default("USD")
+
+  /// Clock in/out snaps to this many minutes. Pay is computed from the snapped
+  /// time with no further rounding.
+  timeRoundingMinutes Int     @default(5)
+  /// How far the tech may nudge their own clock time, in minutes.
+  techTimeAdjustLimit Int     @default(30)
+  breakPaidByDefault  Boolean @default(true)
+
+  mileageRate Decimal @default("0.70") @db.Decimal(10, 4)
+  /// Weeks between the end of a pay week and the expected payment date.
+  payLagWeeks Int     @default(3)
+
+  maxPhotosPerJob Int @default(30)
+  /// Bottom-right stamp: YYYY-MM-DD-AssignmentID-Customer-#SiteID
+  watermarkEnabled Boolean @default(true)
+
+  updatedAt DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Clients, customers, sites
+// ---------------------------------------------------------------------------
+
+/// The buyer / representing company that dispatches work to us — normally a
+/// subcontractor. Exported as "Buyer/Representing company:".
+model Client {
+  id     String  @id @default(cuid())
+  name   String  @unique
+  code   String?
+  notes  String?
+  active Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  projects Project[]
+  jobs     Job[]
+  payRates PayRate[]
+}
+
+/// The end brand, e.g. SBUX. Independent of Client because the same customer
+/// can arrive through different subcontractors.
+model Customer {
+  id     String  @id @default(cuid())
+  name   String
+  /// Short code used in "Site name & ID", e.g. SBUX.
+  code   String  @unique
+  active Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sites    Site[]
+  jobs     Job[]
+  projects Project[]
+}
+
+model Site {
+  id         String   @id @default(cuid())
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  /// External store number, e.g. "24541". Combined with customer code as
+  /// "SBUX #24541" in exports.
+  siteNumber String
+  name       String?
+
+  addressLine1 String
+  addressLine2 String?
+  city         String
+  state        String
+  postalCode   String
+  country      String  @default("USA")
+  timeZone     String?
+
+  notes  String?
+  active Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  jobs Job[]
+
+  @@unique([customerId, siteNumber])
+  @@index([siteNumber])
+}
+
+// ---------------------------------------------------------------------------
+// Projects
+// ---------------------------------------------------------------------------
+
+enum ProjectStatus {
+  ACTIVE
+  ON_HOLD
+  CLOSED
+}
+
+enum ProjectRole {
+  PROJECT_MANAGER
+  SUPERVISOR
+  TECH
+}
+
+model Project {
+  id   String @id @default(cuid())
+  name String
+
+  /// Project ID as given by the client. Used verbatim in the INT WO ID.
+  /// Null renders as "0000".
+  externalProjectId String?
+
+  clientId   String
+  client     Client    @relation(fields: [clientId], references: [id])
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id])
+
+  managerId String?
+  manager   User?   @relation("ProjectManager", fields: [managerId], references: [id], onDelete: SetNull)
+
+  /// Markdown/HTML, prepended to each job's own scope.
+  generalScopeOfWork String?
+
+  /// Default travel reimbursement for jobs in this project. There is
+  /// deliberately no per-tech default for travel.
+  travelReimbursement Decimal? @db.Decimal(10, 2)
+  breakPaid           Boolean  @default(true)
+
+  /// Lifetime counter for INT WO IDs inside this project — never reset.
+  intWoCounter Int @default(0)
+
+  status    ProjectStatus @default(ACTIVE)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  members             ProjectMember[]
+  jobs                Job[]
+  deliverableRules    DeliverableRequirement[]
+  dispatchContacts    DispatchContact[]
+  payRates            PayRate[]
+  permissionOverrides PermissionOverride[]
+
+  @@index([clientId])
+}
+
+model ProjectMember {
+  id        String      @id @default(cuid())
+  projectId String
+  project   Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      ProjectRole @default(TECH)
+
+  createdAt DateTime @default(now())
+
+  @@unique([projectId, userId])
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Jobs
+// ---------------------------------------------------------------------------
+
+/// Where the job is in our internal workflow.
+enum JobLifecycle {
+  DRAFT
+  /// Created ad-hoc by a tech; work may proceed, approval is retroactive.
+  PENDING_APPROVAL
+  SCHEDULED
+  IN_PROGRESS
+  /// Clocked out, waiting on supervisor review.
+  PENDING_REVIEW
+  APPROVED
+}
+
+/// What the tech reported at checkout. Appears on client-facing exports.
+enum JobOutcome {
+  COMPLETED
+  INCOMPLETE
+  FAIL
+  CANCEL
+}
+
+/// Set afterwards by Direct Supervisor / Project Manager / Manager.
+/// Internal only — never exported to the client.
+enum JobInternalStatus {
+  REVISIT_REQUIRED
+  RESCHEDULED
+  RESCHEDULE_CANCELLED
+}
+
+model Job {
+  id String @id @default(cuid())
+
+  /// YYYY-MM-PRJID-NNNN, plus -R<n> for revisits. Month is the revisit's month.
+  intWoId String @unique
+
+  title String
+
+  clientId   String
+  client     Client   @relation(fields: [clientId], references: [id])
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id])
+  siteId     String
+  site       Site     @relation(fields: [siteId], references: [id])
+
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  ticketNumber String?
+  incNumber    String?
+
+  scheduledStart DateTime?
+  /// Drives the calendar event length until the real clock-out lands.
+  estimateMinutes Int?
+  techsRequired   Int       @default(1)
+
+  /// Markdown/HTML. Checkbox state lives in JobScopeCheck.
+  scopeOfWork String?
+
+  breakPaid Boolean @default(true)
+
+  lifecycle      JobLifecycle       @default(DRAFT)
+  outcome        JobOutcome?
+  internalStatus JobInternalStatus?
+
+  /// Filled at checkout. noReleaseCode records an explicit "there isn't one".
+  releaseCode          String?
+  noReleaseCode        Boolean @default(false)
+  returnTrackingNumber String?
+
+  /// Merged narrative assembled by the Lead Tech or Direct Supervisor from the
+  /// per-assignment Work Performed entries. Falls back to concatenation.
+  workPerformedMerged String?
+
+  /// Revisit chain. A revisit is its own Job pointing back at the original.
+  parentJobId   String?
+  parentJob     Job?    @relation("JobRevisits", fields: [parentJobId], references: [id], onDelete: SetNull)
+  revisits      Job[]   @relation("JobRevisits")
+  revisitNumber Int?
+
+  createdById String
+  createdBy   User   @relation("JobCreatedBy", fields: [createdById], references: [id])
+
+  approvedById String?
+  approvedBy   User?     @relation("JobApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+  approvedAt   DateTime?
+
+  calendarSyncedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  assignments      JobAssignment[]
+  dispatchContacts DispatchContact[]
+  pointsOfContact  PointOfContact[]
+  signatures       Signature[]
+  deliverableRules DeliverableRequirement[]
+  deliverables     DeliverableItem[]
+  reimbursements   Reimbursement[]
+  mileageEntries   MileageEntry[]
+  scopeChecks      JobScopeCheck[]
+  changeRequests   ChangeRequest[]
+  auditEvents      AuditEvent[]
+
+  @@index([lifecycle])
+  @@index([siteId])
+  @@index([projectId])
+  @@index([scheduledStart])
+}
+
+/// One tech on one job.
+model JobAssignment {
+  id     String @id @default(cuid())
+  jobId  String
+  job    Job    @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  /// External ID from the client. Usually shared by everyone on the job, but
+  /// occasionally issued per tech, so it lives here. Revisits reusing the
+  /// original ID are stored prefixed: "R-887766".
+  externalAssignmentId String?
+
+  /// Exactly one lead per job. Owns the merged Work Performed.
+  isLead Boolean @default(false)
+
+  /// Effective approver for this job: project manager when the direct
+  /// supervisor is not on the project, otherwise the direct supervisor.
+  supervisorId String?
+  supervisor   User?   @relation("AssignmentSupervisor", fields: [supervisorId], references: [id], onDelete: SetNull)
+
+  payType             PayType
+  payRate             Decimal  @default("0") @db.Decimal(10, 2)
+  payRateNote         String?
+  travelReimbursement Decimal? @db.Decimal(10, 2)
+
+  workPerformed String?
+
+  /// Pre-filled checkout data, captured before the tech actually leaves.
+  checkoutPrefilledAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  visits         Visit[]
+  deliverables   DeliverableItem[]
+  reimbursements Reimbursement[]
+  signatures     Signature[]
+  payrollLines   PayrollLine[]
+
+  @@unique([jobId, userId])
+  @@index([userId])
+}
+
+enum ClockSource {
+  NOW
+  ADJUSTED
+  MANUAL
+}
+
+model Visit {
+  id           String        @id @default(cuid())
+  assignmentId String
+  assignment   JobAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+
+  clockInAt     DateTime
+  clockInSource ClockSource @default(NOW)
+  /// Unrounded device clock at the moment the button was pressed, kept for audit.
+  clockInRawAt  DateTime?
+
+  clockOutAt     DateTime?
+  clockOutSource ClockSource?
+  clockOutRawAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  breaks BreakPeriod[]
+
+  @@index([assignmentId])
+  @@index([clockInAt])
+}
+
+model BreakPeriod {
+  id      String @id @default(cuid())
+  visitId String
+  visit   Visit  @relation(fields: [visitId], references: [id], onDelete: Cascade)
+
+  startAt DateTime
+  endAt   DateTime?
+  /// Unpaid breaks are subtracted from pay only. The client is still billed
+  /// for the full onsite span.
+  paid    Boolean
+
+  createdAt DateTime @default(now())
+
+  @@index([visitId])
+}
+
+/// Checkbox state for a "- [ ]" line inside Scope of Work.
+model JobScopeCheck {
+  id      String @id @default(cuid())
+  jobId   String
+  job     Job    @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  /// Line index in the rendered scope, stable per revision.
+  lineKey String
+
+  checked     Boolean   @default(false)
+  checkedById String?
+  checkedBy   User?     @relation(fields: [checkedById], references: [id], onDelete: SetNull)
+  checkedAt   DateTime?
+
+  @@unique([jobId, lineKey])
+}
+
+// ---------------------------------------------------------------------------
+// Contacts & signatures
+// ---------------------------------------------------------------------------
+
+/// Quick-dial block. A tech's own supervisor is always injected first at render
+/// time, so it is not stored here.
+model DispatchContact {
+  id        String   @id @default(cuid())
+  jobId     String?
+  job       Job?     @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  label String
+  name  String?
+  phone String?
+  email String?
+  note  String?
+  order Int     @default(0)
+
+  @@index([jobId])
+  @@index([projectId])
+}
+
+enum ContactType {
+  /// Manager On Duty — required, may be several.
+  MOD
+  /// Engineer, optional.
+  NOC
+  /// Project coordinator on the subcontractor side. Not our Project Manager.
+  PM_PC
+}
+
+model PointOfContact {
+  id    String      @id @default(cuid())
+  jobId String
+  job   Job         @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  type  ContactType
+  name  String
+  phone String?
+  email String?
+  order Int         @default(0)
+
+  signatures Signature[]
+
+  @@index([jobId, type])
+}
+
+enum SignatureKind {
+  MOD
+  TECH
+}
+
+model Signature {
+  id    String        @id @default(cuid())
+  jobId String
+  job   Job           @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  kind  SignatureKind
+
+  /// Set for MOD signatures so we know which of several MODs signed.
+  pointOfContactId String?
+  pointOfContact   PointOfContact? @relation(fields: [pointOfContactId], references: [id], onDelete: SetNull)
+
+  /// Set for TECH signatures.
+  assignmentId String?
+  assignment   JobAssignment? @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+
+  /// Denormalised for the export filename: "MOD-<Name>-Signature".
+  signerName String
+
+  attachmentId String?     @unique
+  attachment   Attachment? @relation(fields: [attachmentId], references: [id], onDelete: SetNull)
+
+  /// "No Signature" was pressed.
+  skipped       Boolean @default(false)
+  skippedReason String?
+
+  signedAt  DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([jobId])
+}
+
+// ---------------------------------------------------------------------------
+// Deliverables
+// ---------------------------------------------------------------------------
+
+enum DeliverableCategory {
+  PRE_INSTALL
+  POST_INSTALL
+  SIGN_OFF
+  ISSUES
+  ADDITIONAL_INFO
+  OLD_SERIALS
+  NEW_SERIALS
+  RETURN_LABELS
+  EQUIPMENT_LEFT_ON_SITE
+  CUSTOM
+}
+
+/// Which deliverable sections exist and whether they are mandatory.
+/// Project-level rows are defaults; job-level rows override them.
+/// Ad-hoc jobs get PRE_INSTALL + POST_INSTALL required and nothing else.
+model DeliverableRequirement {
+  id        String   @id @default(cuid())
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  jobId     String?
+  job       Job?     @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  category    DeliverableCategory
+  customLabel String?
+
+  enabled       Boolean @default(true)
+  required      Boolean @default(false)
+  requiresPhoto Boolean @default(true)
+  requiresText  Boolean @default(false)
+
+  order Int @default(0)
+
+  @@index([projectId])
+  @@index([jobId])
+}
+
+/// A tech's contribution to one deliverable section. Kept per assignment so the
+/// ZIP can be foldered by category and then by tech.
+model DeliverableItem {
+  id    String @id @default(cuid())
+  jobId String
+  job   Job    @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  assignmentId String?
+  assignment   JobAssignment? @relation(fields: [assignmentId], references: [id], onDelete: SetNull)
+
+  category    DeliverableCategory
+  customLabel String?
+  /// Serial numbers, return label numbers, free notes.
+  textValue   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  attachments Attachment[]
+
+  @@index([jobId, category])
+}
+
+// ---------------------------------------------------------------------------
+// Reimbursements
+// ---------------------------------------------------------------------------
+
+enum ReimbursementType {
+  MATERIAL
+  PARKING
+  TOLL
+  HOTEL
+}
+
+model Reimbursement {
+  id    String @id @default(cuid())
+  jobId String
+  job   Job    @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  assignmentId String?
+  assignment   JobAssignment? @relation(fields: [assignmentId], references: [id], onDelete: SetNull)
+
+  type ReimbursementType
+  /// Material name, or the hotel name. Unused for PARKING/TOLL, whose export
+  /// label is the type itself.
+  label  String?
+  amount Decimal @db.Decimal(10, 2)
+  note   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  attachments Attachment[]
+
+  @@index([jobId, type])
+}
+
+// ---------------------------------------------------------------------------
+// Mileage
+// ---------------------------------------------------------------------------
+
+enum MileageCategory {
+  /// Driving to a specific job; reference is that job's Assignment ID.
+  IN_ROUTE_TO_WO
+  RETURNING_HOME
+  /// Only selectable while clocked out.
+  OFFCLOCK_TOOLS_SUPPLIES
+  /// Only selectable while clocked in.
+  ONCLOCK_TOOLS_SUPPLIES
+  /// Always available; note is mandatory.
+  OTHER
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model MileageEntry {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation("MileageOwner", fields: [userId], references: [id], onDelete: Cascade)
+
+  category MileageCategory
+
+  jobId String?
+  job   Job?    @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  /// Denormalised Assignment ID so the entry survives job edits and reads
+  /// correctly in exports.
+  reference String?
+
+  startOdometer Decimal @db.Decimal(10, 1)
+  endOdometer   Decimal @db.Decimal(10, 1)
+  /// endOdometer - startOdometer, stored so historical rows stay stable.
+  miles         Decimal @db.Decimal(10, 1)
+  /// Company mileage rate at the time of entry.
+  rate          Decimal @db.Decimal(10, 4)
+  amount        Decimal @db.Decimal(10, 2)
+
+  startedAt DateTime
+  endedAt   DateTime
+
+  /// Required for OTHER.
+  note String?
+
+  startPhotoId String?     @unique
+  startPhoto   Attachment? @relation("MileageStartPhoto", fields: [startPhotoId], references: [id], onDelete: SetNull)
+  endPhotoId   String?     @unique
+  endPhoto     Attachment? @relation("MileageEndPhoto", fields: [endPhotoId], references: [id], onDelete: SetNull)
+
+  status       ApprovalStatus @default(PENDING)
+  approvedById String?
+  approvedBy   User?          @relation("MileageApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  approvedAt   DateTime?
+
+  payrollLineId String?
+  payrollLine   PayrollLine? @relation(fields: [payrollLineId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, startedAt])
+  @@index([jobId])
+}
+
+// ---------------------------------------------------------------------------
+// Pay & payroll
+// ---------------------------------------------------------------------------
+
+enum PayType {
+  HOURLY
+  FLAT
+  NON_BILLABLE
+}
+
+/// Rate lookup, most specific wins:
+///   job override -> tech+project -> tech+client -> User.defaultPayType/Rate
+model PayRate {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  clientId  String?
+  client    Client?  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  payType PayType
+  rate    Decimal @db.Decimal(10, 2)
+  /// Travel reimbursement is set per job/project, never as a tech default;
+  /// this column only exists so a project-scoped rate row can carry it.
+  travelReimbursement Decimal? @db.Decimal(10, 2)
+
+  note      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, projectId, clientId])
+  @@index([userId])
+}
+
+enum PayrollStatus {
+  DRAFT
+  APPROVED
+  RECEIVED
+  REDUCED
+}
+
+/// One Monday-start week for one tech, approved by that tech's Direct
+/// Supervisor. A Manager may approve as fallback, which is recorded so the
+/// supervisor can see someone else paid their tech.
+model PayrollPeriod {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation("PayrollTech", fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Monday 00:00 in company time zone, stored UTC.
+  weekStart DateTime
+  weekEnd   DateTime
+
+  supervisorId String?
+  supervisor   User?   @relation("PayrollSupervisor", fields: [supervisorId], references: [id], onDelete: SetNull)
+
+  status PayrollStatus @default(DRAFT)
+
+  expectedAmount Decimal   @default("0") @db.Decimal(12, 2)
+  receivedAmount Decimal?  @db.Decimal(12, 2)
+  receivedDate   DateTime?
+  /// weekEnd + CompanySettings.payLagWeeks.
+  expectedPayDate DateTime?
+
+  approvedById String?
+  approvedBy   User?     @relation("PayrollApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  approvedAt   DateTime?
+  /// True when a Manager approved instead of the Direct Supervisor.
+  approvedAsFallback Boolean @default(false)
+
+  note String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lines PayrollLine[]
+
+  @@unique([userId, weekStart])
+  @@index([supervisorId, weekStart])
+}
+
+model PayrollLine {
+  id              String        @id @default(cuid())
+  payrollPeriodId String
+  payrollPeriod   PayrollPeriod @relation(fields: [payrollPeriodId], references: [id], onDelete: Cascade)
+
+  assignmentId String
+  assignment   JobAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+
+  /// Snapshots so a later rate edit cannot rewrite history.
+  payType     PayType
+  payRate     Decimal @db.Decimal(10, 2)
+  paidMinutes Int     @default(0)
+  laborAmount Decimal @default("0") @db.Decimal(10, 2)
+
+  travelReimb       Decimal @default("0") @db.Decimal(10, 2)
+  parkingTollsReimb Decimal @default("0") @db.Decimal(10, 2)
+  hotelReimb        Decimal @default("0") @db.Decimal(10, 2)
+  materialsReimb    Decimal @default("0") @db.Decimal(10, 2)
+
+  totalExpected Decimal @default("0") @db.Decimal(10, 2)
+
+  /// Per-job override with a mandatory note.
+  overrideAmount Decimal? @db.Decimal(10, 2)
+  overrideNote   String?
+
+  receivedAmount Decimal?      @db.Decimal(10, 2)
+  payStatus      PayrollStatus @default(DRAFT)
+  receivedDate   DateTime?
+  payNote        String?
+
+  mileageEntries MileageEntry[]
+
+  @@unique([payrollPeriodId, assignmentId])
+}
+
+// ---------------------------------------------------------------------------
+// Change requests, files, audit, notifications
+// ---------------------------------------------------------------------------
+
+/// Raised when someone without job.edit_planned_fields wants to change a
+/// populated planned field. Empty planned fields are filled directly instead.
+model ChangeRequest {
+  id    String @id @default(cuid())
+  jobId String
+  job   Job    @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  requestedById String
+  requestedBy   User   @relation("ChangeRequester", fields: [requestedById], references: [id])
+
+  fieldPath String
+  oldValue  String?
+  newValue  String?
+  reason    String?
+
+  status       ApprovalStatus @default(PENDING)
+  reviewedById String?
+  reviewedBy   User?          @relation("ChangeReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt   DateTime?
+  reviewNote   String?
+
+  createdAt DateTime @default(now())
+
+  @@index([jobId, status])
+  @@index([status])
+}
+
+model Attachment {
+  id String @id @default(cuid())
+
+  /// Path relative to the uploads volume.
+  storagePath  String
+  originalName String
+  mimeType     String
+  sizeBytes    Int
+  width        Int?
+  height       Int?
+
+  /// EXIF, kept for "was the tech actually on site" checks.
+  capturedAt DateTime?
+  gpsLat     Float?
+  gpsLng     Float?
+
+  watermarked Boolean @default(false)
+
+  uploadedById String
+  uploadedBy   User     @relation(fields: [uploadedById], references: [id])
+  createdAt    DateTime @default(now())
+
+  deliverableItemId String?
+  deliverableItem   DeliverableItem? @relation(fields: [deliverableItemId], references: [id], onDelete: Cascade)
+
+  reimbursementId String?
+  reimbursement   Reimbursement? @relation(fields: [reimbursementId], references: [id], onDelete: Cascade)
+
+  signature         Signature?
+  mileageStartEntry MileageEntry? @relation("MileageStartPhoto")
+  mileageEndEntry   MileageEntry? @relation("MileageEndPhoto")
+
+  @@index([deliverableItemId])
+  @@index([reimbursementId])
+}
+
+model AuditEvent {
+  id      String  @id @default(cuid())
+  actorId String?
+  actor   User?   @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  jobId String?
+  job   Job?    @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  entityType String
+  entityId   String
+  action     String
+  /// { field, from, to } or action-specific payload.
+  detail     Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([jobId, createdAt])
+  @@index([entityType, entityId])
+  @@index([actorId, createdAt])
+}
+
+model Notification {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  kind   String
+  title  String
+  body   String?
+  /// In-app deep link.
+  href   String?
+  readAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, readAt])
+}
+
+/// Yearly global counter for jobs with no project. Project-scoped counters live
+/// on Project.intWoCounter.
+model IntWoCounter {
+  /// "global:2026"
+  scope String @id
+  value Int    @default(0)
+}

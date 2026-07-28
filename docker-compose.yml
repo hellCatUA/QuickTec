@@ -1,0 +1,75 @@
+# QuickTec on OpenMediaVault.
+#
+# The app is not exposed to the internet: Nginx Proxy Manager terminates TLS for
+# quicktec.417group.org and the whole subnet sits behind Tailscale. Only NPM
+# needs to reach port 3000, so nothing here publishes to 0.0.0.0 by default —
+# adjust APP_BIND if NPM runs on another host.
+
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: quicktec-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-quicktec}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-quicktec}
+      TZ: ${TZ:-America/Los_Angeles}
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-quicktec} -d ${POSTGRES_DB:-quicktec}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks: [quicktec]
+
+  # Runs migrations and the idempotent seed, then exits. The app waits for it to
+  # finish so it never serves traffic against an out-of-date schema.
+  migrate:
+    build:
+      context: .
+      target: migrator
+    container_name: quicktec-migrate
+    restart: "no"
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      TZ: ${TZ:-America/Los_Angeles}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [quicktec]
+
+  app:
+    build:
+      context: .
+      target: runner
+    container_name: quicktec-app
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      AUTH_URL: ${AUTH_URL}
+      AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET in .env}
+      AUTH_TRUST_HOST: "true"
+      NEXTCLOUD_ISSUER: ${NEXTCLOUD_ISSUER}
+      NEXTCLOUD_WELL_KNOWN: ${NEXTCLOUD_WELL_KNOWN:-}
+      NEXTCLOUD_CLIENT_ID: ${NEXTCLOUD_CLIENT_ID}
+      NEXTCLOUD_CLIENT_SECRET: ${NEXTCLOUD_CLIENT_SECRET}
+      UPLOADS_DIR: ${UPLOADS_DIR:-/data/uploads}
+      TZ: ${TZ:-America/Los_Angeles}
+    volumes:
+      - ./data/uploads:/data/uploads
+    ports:
+      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-3000}:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks: [quicktec]
+
+networks:
+  quicktec:
+    driver: bridge

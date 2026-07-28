@@ -1,0 +1,16 @@
+node_modules
+.next
+generated
+data
+uploads
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+*.log
+README.md
+docs
+.claude
+.agents
+.windsurf
