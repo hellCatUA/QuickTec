@@ -167,7 +167,8 @@ docker compose up -d --build
 
 | Variable | Notes |
 | --- | --- |
-| `DATABASE_URL` | Host is `db`, the compose service name |
+| `POSTGRES_PASSWORD` | Use `openssl rand -hex 24` — it ends up in a connection string, where `/` breaks parsing |
+| `DATABASE_URL` | Derived from the `POSTGRES_*` variables by compose. Set it only for a database compose does not run |
 | `AUTH_URL` | Public URL, e.g. `https://quicktec.417group.org` |
 | `AUTH_SECRET` | 32+ random bytes |
 | `NEXTCLOUD_ISSUER` | Your NextCloud base URL |
@@ -216,7 +217,7 @@ Requires Node 22 and a PostgreSQL instance.
 
 ```bash
 npm install
-cp .env.example .env        # point DATABASE_URL at your local Postgres
+cp .env.example .env        # uncomment DATABASE_URL, point it at your Postgres
 npx prisma migrate dev
 npx prisma db seed
 npm run dev

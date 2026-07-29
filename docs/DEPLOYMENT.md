@@ -107,11 +107,11 @@ into NPM in step 5.
 Fill in what you can now and come back for the NextCloud values in step 7:
 
 ```ini
-# Database — the password is only ever used between the two containers.
+# Database. Only ever used between the two containers, and written down once —
+# compose builds the connection string from these three.
 POSTGRES_USER=quicktec
-POSTGRES_PASSWORD=<long random string>
+POSTGRES_PASSWORD=<openssl rand -hex 24>
 POSTGRES_DB=quicktec
-DATABASE_URL=postgresql://quicktec:<same password>@db:5432/quicktec?schema=public
 
 # Auth
 AUTH_URL=https://quicktec.417group.org
@@ -138,9 +138,10 @@ NODE_ENV=production
 APP_PORT=3100
 ```
 
-`DATABASE_URL` uses the host `db` — the compose service name — and must carry
-the same password as `POSTGRES_PASSWORD`. The two are separate variables
-because Postgres reads one and Prisma reads the other.
+**Leave `DATABASE_URL` commented out.** `docker-compose.yml` derives it from
+the three variables above, so the password exists in exactly one place. Set it
+only to reach a Postgres that compose does not run — an external server, or a
+local one in development — in which case it wins over the derived value.
 
 **Do not use `openssl rand -base64` for the database password.** Base64 output
 contains `/`, and a `/` inside a connection string ends the host part, so
@@ -155,6 +156,21 @@ invalid port number in database URL.
 `openssl rand -hex 24` gives 96 bits of entropy using only `0-9a-f`, which
 needs no escaping anywhere. (`AUTH_SECRET` is never parsed as a URL, so base64
 is fine there.)
+
+To see what compose actually resolved, with the secrets masked:
+
+```bash
+docker compose config | grep -m1 DATABASE_URL | sed -E 's/[A-Za-z0-9]/x/g'
+```
+
+Every letter and digit becomes `x`, so only the punctuation shows — which is
+exactly where the problem always is. A healthy line looks like
+
+```
+      xxxxxxxx_xxx: xxxxxxxxxx://xxxxxxxx:xxxxxxxx@xx:xxxx/xxxxxxxx?xxxxxx=xxxxxx
+```
+
+An extra `/`, a quote, or a trailing space stands out immediately.
 
 Leave `APP_BIND` unset. It defaults to `127.0.0.1`, which is what NPM needs and
 nothing else can reach.
@@ -464,15 +480,22 @@ anyone with a URL read another crew's site photos.
 ## Troubleshooting
 
 **`P1013: invalid port number in database URL`**
-A `/` in the password inside `DATABASE_URL` — the classic result of generating
-it with `openssl rand -base64`. Either percent-encode it (`/` → `%2F`, `+` →
-`%2B`) or, while the database is still empty, give it a hex password and start
-over:
+Something in the connection string is not URL-safe — almost always a `/` in the
+password, from `openssl rand -base64`. Look at the resolved value with the
+masking command above before changing anything: if `DATABASE_URL` is still set
+explicitly in `.env`, that is what is being used, not the derived one.
+
+```bash
+grep -n '^DATABASE_URL' .env      # comment it out to use the derived value
+printenv DATABASE_URL             # a shell export beats .env — unset it
+```
+
+Then, while the database is still empty:
 
 ```bash
 docker compose down
-rm -rf "$POSTGRES_DIR"/*        # check the path first: docker compose config
-openssl rand -hex 24            # into POSTGRES_PASSWORD *and* DATABASE_URL
+rm -rf "$POSTGRES_DIR"/*          # confirm the path: docker compose config
+openssl rand -hex 24              # into POSTGRES_PASSWORD
 docker compose up -d --build
 ```
 

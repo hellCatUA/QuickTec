@@ -5,6 +5,11 @@
 # needs to reach port 3000, so nothing here publishes to 0.0.0.0 by default —
 # adjust APP_BIND if NPM runs on another host.
 
+# Built from POSTGRES_* so the password is written down exactly once. Setting
+# DATABASE_URL in .env still wins, which is how you point at a Postgres that is
+# not this compose file's.
+x-database-url: &database-url ${DATABASE_URL:-postgresql://${POSTGRES_USER:-quicktec}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-quicktec}?schema=public}
+
 services:
   db:
     image: postgres:17-alpine
@@ -37,7 +42,7 @@ services:
     container_name: quicktec-migrate
     restart: "no"
     environment:
-      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_URL: *database-url
       TZ: ${TZ:-America/Los_Angeles}
     depends_on:
       db:
@@ -51,7 +56,7 @@ services:
     container_name: quicktec-app
     restart: unless-stopped
     environment:
-      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_URL: *database-url
       AUTH_URL: ${AUTH_URL}
       AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET in .env}
       AUTH_TRUST_HOST: "true"
