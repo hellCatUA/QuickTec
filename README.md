@@ -234,6 +234,7 @@ npm run dev
 | `npm run verify:ui` | Drives the time clock and checkout in a real browser |
 | `npm run verify:pay` | Drives payroll approval and payment in a real browser |
 | `npm run verify:approvals` | Drives the approvals inbox, site history and crew changes in a real browser |
+| `npm run verify:auth` | Runs the OIDC handshake against a stand-in NextCloud |
 | `npm run db:studio` | Prisma Studio |
 
 The seed never rewrites a permission the database already knows about, so a
@@ -250,7 +251,10 @@ count is deterministic, so it belongs on a development database too.
 
 CalDAV is exercised against a throwaway HTTP server started inside
 `npm run verify`, which records the `MKCALENDAR`, `PUT` and `DELETE` traffic —
-so the client is tested without a NextCloud to point at.
+so the client is tested without a NextCloud to point at. `verify:auth` does the
+same for sign-in, standing in for NextCloud closely enough to reproduce the
+redirect its discovery URL answers with; it needs its own app instance, started
+with the public `AUTH_URL` and `NEXTCLOUD_ISSUER=http://127.0.0.1:9999`.
 
 ---
 

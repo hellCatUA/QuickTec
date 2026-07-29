@@ -510,6 +510,14 @@ NPM's admin API. Move `APP_PORT` (step 3) and update the proxy host.
 Same cause: that is NPM's API, not QuickTec. `ss -ltnp | grep :3000` shows who
 actually holds the port.
 
+**Sign-in fails immediately with `error=Configuration`**
+The server could not complete its own half of the exchange. The page now runs
+the discovery request itself and says which part failed; `docker compose logs
+app | grep '\[auth\]'` prints the cause underneath. Discovery is fetched from
+the OIDC app's own path rather than `/.well-known/openid-configuration`, which
+NextCloud answers with a redirect that a metadata request may not follow — set
+`NEXTCLOUD_WELL_KNOWN` if your install publishes it somewhere else again.
+
 **The sign-in page says "Not configured yet"**
 One of `NEXTCLOUD_ISSUER`, `NEXTCLOUD_CLIENT_ID`, `NEXTCLOUD_CLIENT_SECRET` is
 empty in the app's environment. `docker compose config` shows what compose

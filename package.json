@@ -16,7 +16,8 @@
     "verify": "tsx --tsconfig tsconfig.json scripts/verify-domain.ts",
     "verify:ui": "tsx --tsconfig tsconfig.json scripts/verify-job-page.ts",
     "verify:pay": "tsx --tsconfig tsconfig.json scripts/verify-pay-page.ts",
-    "verify:approvals": "tsx --tsconfig tsconfig.json scripts/verify-approvals-page.ts"
+    "verify:approvals": "tsx --tsconfig tsconfig.json scripts/verify-approvals-page.ts",
+    "verify:auth": "tsx --tsconfig tsconfig.json scripts/verify-auth.ts"
   },
   "repository": {
     "type": "git",

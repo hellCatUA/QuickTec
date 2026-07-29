@@ -1,4 +1,4 @@
-import NextAuth, { type NextAuthConfig } from "next-auth";
+import NextAuth, { customFetch, type NextAuthConfig } from "next-auth";
 import { db } from "@/lib/db";
 import { extractGroups, resolveBaseRole } from "@/lib/nextcloud-groups";
 
@@ -33,6 +33,38 @@ export function discoveryUrl(): string {
 export function callbackUri(): string {
   const base = (process.env.AUTH_URL ?? "").trim().replace(/\/+$/, "");
   return `${base}/api/auth/callback/nextcloud`;
+}
+
+const SPEC_WELL_KNOWN = "/.well-known/openid-configuration";
+
+/**
+ * Sends the discovery request where NextCloud actually keeps the document.
+ *
+ * Auth.js builds that URL itself, as `<issuer>/.well-known/openid-configuration`,
+ * and ignores the provider's `wellKnown` — it is normalised and then never
+ * read. NextCloud answers that address with a 301 to its `/index.php/` form,
+ * and the OIDC client fetches metadata with `redirect: "manual"` and demands a
+ * 200, so the redirect is a hard failure rather than a detour. It surfaces as
+ * `error=Configuration` with nothing on screen to say a URL was involved.
+ *
+ * `customFetch` is the supported way in: Auth.js passes it to both the sign-in
+ * and callback discovery calls, so one rewrite covers the whole flow.
+ */
+async function discoveryFetch(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  const requested =
+    typeof input === "string"
+      ? input
+      : input instanceof URL
+        ? input.href
+        : input.url;
+
+  if (requested.endsWith(SPEC_WELL_KNOWN)) {
+    return fetch(discoveryUrl(), init);
+  }
+  return fetch(input, init);
 }
 
 export const authConfig: NextAuthConfig = {
@@ -75,9 +107,11 @@ export const authConfig: NextAuthConfig = {
       name: "NextCloud",
       type: "oidc",
       issuer,
-      // The NextCloud OIDC provider app serves discovery from its own path
-      // rather than the server root on most installs.
+      // Kept for the day Auth.js honours it again, but discoveryFetch is what
+      // actually gets the request to the right place today. Both read the same
+      // value, so they cannot disagree.
       wellKnown: discoveryUrl(),
+      [customFetch]: discoveryFetch,
       clientId: process.env.NEXTCLOUD_CLIENT_ID,
       clientSecret: process.env.NEXTCLOUD_CLIENT_SECRET,
       // `roles` is what carries group membership.
