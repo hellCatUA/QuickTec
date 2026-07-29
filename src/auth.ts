@@ -25,6 +25,16 @@ export function discoveryUrl(): string {
   );
 }
 
+/**
+ * The redirect URI this server will send, which is the string that has to be
+ * registered in NextCloud character for character. Derived rather than written
+ * down twice, so it cannot drift from what Auth.js actually uses.
+ */
+export function callbackUri(): string {
+  const base = (process.env.AUTH_URL ?? "").trim().replace(/\/+$/, "");
+  return `${base}/api/auth/callback/nextcloud`;
+}
+
 export const authConfig: NextAuthConfig = {
   // Behind Nginx Proxy Manager on a Tailscale-only subdomain, so the host
   // header has to be trusted for callback URLs to come out right.

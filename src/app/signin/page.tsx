@@ -1,6 +1,6 @@
 import { AlertCircle } from "lucide-react";
 import { redirect } from "next/navigation";
-import { discoveryUrl, signIn, SIGNIN_ERRORS } from "@/auth";
+import { callbackUri, discoveryUrl, signIn, SIGNIN_ERRORS } from "@/auth";
 import { ThemeToggle } from "@/components/theme";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -97,20 +97,35 @@ export default async function SignInPage({
           ) : null}
 
           {probe ? (
-            <div className="flex flex-col gap-1 rounded-lg bg-warning/15 p-3 text-xs text-warning ring-1 ring-inset ring-warning/30">
+            <div className="flex flex-col gap-1.5 rounded-lg bg-warning/15 p-3 text-xs text-warning ring-1 ring-inset ring-warning/30">
               <span className="font-medium">
-                {probe.ok
-                  ? "Discovery works — the failure is later in the exchange"
-                  : "Could not read NextCloud's discovery document"}
+                {!probe.ok
+                  ? "Could not use NextCloud's discovery document"
+                  : probe.notes.length > 0
+                    ? "NextCloud answers, but its document has problems"
+                    : "NextCloud answers correctly — the problem is on this side"}
               </span>
               <code className="break-all">{probe.url}</code>
               <span>{probe.detail}</span>
-              {probe.ok ? (
+
+              {probe.notes.length > 0 ? (
+                <ul className="list-inside list-disc">
+                  {probe.notes.map((note) => (
+                    <li key={note}>{note}</li>
+                  ))}
+                </ul>
+              ) : null}
+
+              {probe.ok && probe.notes.length === 0 ? (
                 <span>
-                  Check the client ID and secret, and that the redirect URI
-                  registered in NextCloud matches this server exactly.
+                  So it is the client credentials or the redirect URI. Compare
+                  NEXTCLOUD_CLIENT_ID and NEXTCLOUD_CLIENT_SECRET against the
+                  client registered in NextCloud, and check that its redirect
+                  URI is exactly{" "}
+                  <code className="break-all">{callbackUri()}</code>.
                 </span>
               ) : null}
+
               <span className="text-muted-foreground">
                 Full cause in <code>docker compose logs app</code>.
               </span>

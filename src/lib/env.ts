@@ -49,66 +49,156 @@ export function findConfigProblems(): ConfigProblem[] {
 
 export type DiscoveryProbe = {
   url: string;
+  /** False when this alone explains why sign-in cannot start. */
   ok: boolean;
-  /** Short, human-readable. "HTTP 404", "server unreachable". */
+  /** Headline: the one thing to fix, or "reachable". */
   detail: string;
-  /** The issuer the document claims, when it returned one. */
-  issuer?: string;
+  /** Everything else worth knowing, fatal or not. */
+  notes: string[];
 };
 
+type DiscoveryDocument = {
+  issuer?: string;
+  authorization_endpoint?: string;
+  token_endpoint?: string;
+  jwks_uri?: string;
+  scopes_supported?: string[];
+  id_token_signing_alg_values_supported?: string[];
+  code_challenge_methods_supported?: string[];
+};
+
+/** The scopes QuickTec asks for. `roles` is the one that carries groups. */
+const WANTED_SCOPES = ["openid", "profile", "email", "roles"];
+
 /**
- * Asks NextCloud for its discovery document, the way Auth.js does.
+ * Asks NextCloud for its discovery document and checks it the way the OIDC
+ * client does.
  *
- * Run only when sign-in has already failed with a configuration error. Auth.js
- * reports that failure as an opaque `error=Configuration`, and the difference
- * between "the container cannot resolve the name", "the app is not installed"
- * and "the issuer has a trailing slash" is otherwise invisible from the screen.
+ * Run only when sign-in has already failed. Auth.js collapses every one of
+ * these into `error=Configuration`, so the screen cannot otherwise tell apart
+ * "the container cannot resolve the name", "the app is not installed", "the
+ * issuer has a trailing slash" and "the document is missing the endpoint the
+ * sign-in URL is built from".
  */
 export async function probeDiscovery(
   url: string,
   expectedIssuer: string,
 ): Promise<DiscoveryProbe> {
+  const notes: string[] = [];
+
+  let response: Response;
   try {
-    const response = await fetch(url, {
+    response = await fetch(url, {
       signal: AbortSignal.timeout(5000),
       headers: { Accept: "application/json" },
     });
-
-    if (!response.ok) {
-      return {
-        url,
-        ok: false,
-        detail: `HTTP ${response.status} — is the OpenID Connect provider app installed?`,
-      };
-    }
-
-    const document = (await response.json()) as { issuer?: string };
-    const issuer = document.issuer;
-
-    if (!issuer) {
-      return { url, ok: false, detail: "the response is not a discovery document" };
-    }
-    if (expectedIssuer && issuer.replace(/\/+$/, "") !== expectedIssuer) {
-      return {
-        url,
-        ok: false,
-        issuer,
-        detail: `it identifies as ${issuer}, but NEXTCLOUD_ISSUER is ${expectedIssuer}`,
-      };
-    }
-
-    return { url, ok: true, issuer, detail: "reachable" };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return {
       url,
       ok: false,
-      detail:
-        /timed out|abort/i.test(message)
-          ? "no answer within 5 seconds"
-          : `not reachable from the app container (${message})`,
+      notes,
+      detail: /timed out|abort/i.test(message)
+        ? "no answer within 5 seconds"
+        : `not reachable from the app container (${message})`,
     };
   }
+
+  if (!response.ok) {
+    return {
+      url,
+      ok: false,
+      notes,
+      detail: `HTTP ${response.status} — is the OpenID Connect provider app installed?`,
+    };
+  }
+
+  // The OIDC client rejects a discovery document that is not served as JSON,
+  // even when the body itself is perfectly valid — so this is fatal, not a
+  // remark.
+  const contentType = response.headers.get("content-type") ?? "";
+  const wrongContentType = !/\bapplication\/json\b/i.test(contentType);
+  if (wrongContentType) {
+    notes.push(
+      `served as "${contentType || "no content-type"}" — the client requires application/json`,
+    );
+  }
+
+  let document: DiscoveryDocument;
+  try {
+    document = (await response.json()) as DiscoveryDocument;
+  } catch {
+    return {
+      url,
+      ok: false,
+      notes,
+      detail: "the response is not JSON — something else is answering this URL",
+    };
+  }
+
+  if (!document.issuer) {
+    return {
+      url,
+      ok: false,
+      notes,
+      detail: "no issuer in the response — this is not a discovery document",
+    };
+  }
+
+  if (expectedIssuer && document.issuer.replace(/\/+$/, "") !== expectedIssuer) {
+    return {
+      url,
+      ok: false,
+      notes,
+      detail: `it identifies as ${document.issuer}, but NEXTCLOUD_ISSUER is ${expectedIssuer}`,
+    };
+  }
+
+  // Without these there is nothing to redirect to and nothing to exchange the
+  // code against, which is exactly what fails before the browser ever leaves.
+  const missing = (
+    ["authorization_endpoint", "token_endpoint", "jwks_uri"] as const
+  ).filter((key) => !document[key]);
+
+  if (missing.length > 0) {
+    return {
+      url,
+      ok: false,
+      notes,
+      detail: `the document has no ${missing.join(" and no ")}`,
+    };
+  }
+
+  // Not fatal on their own, but each one breaks a later step, and each is
+  // cheaper to notice here than after three more sign-in attempts.
+  const scopes = document.scopes_supported;
+  if (scopes) {
+    const unsupported = WANTED_SCOPES.filter((scope) => !scopes.includes(scope));
+    if (unsupported.length > 0) {
+      notes.push(
+        `does not advertise the ${unsupported.join(", ")} scope${unsupported.length === 1 ? "" : "s"}` +
+          (unsupported.includes("roles")
+            ? " — without roles, no NextCloud group reaches QuickTec and every sign-in is refused"
+            : ""),
+      );
+    }
+  }
+
+  const algs = document.id_token_signing_alg_values_supported;
+  if (algs && !algs.includes("RS256")) {
+    notes.push(
+      `signs ID tokens with ${algs.join(", ")} rather than RS256 — set the client to RS256 in NextCloud`,
+    );
+  }
+
+  return {
+    url,
+    ok: !wrongContentType,
+    notes,
+    detail: wrongContentType
+      ? "the document itself is fine, but it is not served as JSON"
+      : "reachable, and the document checks out",
+  };
 }
 
 let reported = false;
