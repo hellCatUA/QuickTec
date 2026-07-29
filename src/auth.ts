@@ -9,6 +9,10 @@ import { extractGroups, resolveBaseRole } from "@/lib/nextcloud-groups";
 export const SIGNIN_ERRORS = {
   NoGroup:
     "Your NextCloud account is not in any quicktec-* group, or NextCloud is not sharing group membership with QuickTec. An administrator can tell which from the server log.",
+  NoEmail:
+    "Your NextCloud account has no email address, so QuickTec cannot identify you. Add one in NextCloud and sign in again.",
+  NoSubject:
+    "NextCloud did not identify the account in the token it returned. This is a configuration problem, not something you can fix by retrying.",
   Inactive: "This account has been deactivated in QuickTec.",
 } as const;
 
@@ -69,26 +73,29 @@ async function discoveryFetch(
 }
 
 /**
- * Reads group membership from the userinfo endpoint.
+ * Fetches the userinfo document.
  *
  * Auth.js treats the ID token as the whole profile for an OIDC provider and
  * never calls userinfo, but NextCloud installs differ in which of the two
- * carries the groups. Rather than making the operator work out which one they
- * have, this is tried when the ID token came back without any — one extra
- * request, and only on the path that would otherwise refuse the sign-in.
+ * carries the email address and the group membership. Rather than making the
+ * operator work out which one they have, this is tried when the ID token came
+ * back short — one extra request, and only on the path that would otherwise
+ * refuse the sign-in.
  */
-async function groupsFromUserInfo(accessToken: string): Promise<string[]> {
+async function fetchUserInfo(
+  accessToken: string,
+): Promise<Record<string, unknown> | null> {
   try {
     const discovery = await fetch(discoveryUrl(), {
       headers: { Accept: "application/json" },
       signal: AbortSignal.timeout(5000),
     });
-    if (!discovery.ok) return [];
+    if (!discovery.ok) return null;
 
     const { userinfo_endpoint: endpoint } = (await discovery.json()) as {
       userinfo_endpoint?: string;
     };
-    if (!endpoint) return [];
+    if (!endpoint) return null;
 
     const response = await fetch(endpoint, {
       headers: {
@@ -99,13 +106,13 @@ async function groupsFromUserInfo(accessToken: string): Promise<string[]> {
     });
     if (!response.ok) {
       console.error(`[auth] userinfo returned HTTP ${response.status}`);
-      return [];
+      return null;
     }
 
-    return extractGroups((await response.json()) as Record<string, unknown>);
+    return (await response.json()) as Record<string, unknown>;
   } catch (error) {
-    console.error("[auth] could not read groups from userinfo:", error);
-    return [];
+    console.error("[auth] could not read userinfo:", error);
+    return null;
   }
 }
 
@@ -180,37 +187,66 @@ export const authConfig: NextAuthConfig = {
      * all", which depends on their NextCloud groups.
      */
     async signIn({ profile, account }) {
-      if (!profile?.sub || !profile.email) return false;
+      const claims: Record<string, unknown> = { ...profile };
+      const fromIdToken = Object.keys(claims);
 
-      const claims = profile as Record<string, unknown>;
-      let groups = extractGroups(claims);
-      let source = "the ID token";
+      // One request, not two: the same document answers both questions, and
+      // asking for it is only worth it when something is actually missing.
+      const incomplete = !claims.email || extractGroups(claims).length === 0;
+      let userInfoClaims: string[] = [];
 
-      if (groups.length === 0 && typeof account?.access_token === "string") {
-        groups = await groupsFromUserInfo(account.access_token);
-        source = "userinfo";
+      if (incomplete && typeof account?.access_token === "string") {
+        const extra = await fetchUserInfo(account.access_token);
+        if (extra) {
+          userInfoClaims = Object.keys(extra);
+          for (const [claim, value] of Object.entries(extra)) {
+            claims[claim] ??= value;
+          }
+        }
       }
 
+      /** Everything a refusal needs to be actionable, in one place. */
+      function explain(problem: string) {
+        console.error(
+          `[auth] refused ${claims.email ?? claims.sub ?? "unknown user"}: ${problem}\n` +
+            `[auth]   ID token claims: ${fromIdToken.join(", ") || "none"}\n` +
+            `[auth]   userinfo claims: ${userInfoClaims.join(", ") || "not consulted or empty"}`,
+        );
+      }
+
+      const sub = typeof claims.sub === "string" ? claims.sub : null;
+      if (!sub) {
+        explain("the token carries no subject");
+        return `/signin?error=NoSubject`;
+      }
+
+      // Email is the identity everything else hangs off: the calendar name,
+      // the pay journal, matching an account provisioned earlier. A NextCloud
+      // account without one cannot be let in, but it is worth saying so
+      // exactly rather than blaming their group membership.
+      const rawEmail = typeof claims.email === "string" ? claims.email : "";
+      if (!rawEmail) {
+        explain("no email address in the token or in userinfo");
+        return `/signin?error=NoEmail`;
+      }
+
+      const groups = extractGroups(claims);
       const role = resolveBaseRole(groups);
       if (!role) {
-        // The one line that turns "not in any group" into something an admin
-        // can act on: whether the groups arrived at all, and under what name.
-        console.error(
-          `[auth] refused ${profile.email}: no quicktec-* group.\n` +
-            `[auth]   claims in the ID token: ${Object.keys(claims).join(", ")}\n` +
-            `[auth]   groups found in ${source}: ${groups.length > 0 ? groups.join(", ") : "none"}`,
+        explain(
+          `no quicktec-* group among: ${groups.length > 0 ? groups.join(", ") : "none"}`,
         );
         return `/signin?error=NoGroup`;
       }
 
-      const email = String(profile.email).toLowerCase();
+      const email = rawEmail.toLowerCase();
       const name =
-        (profile.name as string) ||
-        (profile.preferred_username as string) ||
+        (claims.name as string) ||
+        (claims.preferred_username as string) ||
         email;
 
       const existing = await db.user.findFirst({
-        where: { OR: [{ nextcloudSub: profile.sub }, { email }] },
+        where: { OR: [{ nextcloudSub: sub }, { email }] },
         select: { id: true, active: true },
       });
 
@@ -220,10 +256,10 @@ export const authConfig: NextAuthConfig = {
         await db.user.update({
           where: { id: existing.id },
           data: {
-            nextcloudSub: profile.sub,
+            nextcloudSub: sub,
             email,
             name,
-            avatarUrl: (profile.picture as string) ?? undefined,
+            avatarUrl: (claims.picture as string) ?? undefined,
             baseRole: role,
             lastLoginAt: new Date(),
           },
@@ -231,10 +267,10 @@ export const authConfig: NextAuthConfig = {
       } else {
         await db.user.create({
           data: {
-            nextcloudSub: profile.sub,
+            nextcloudSub: sub,
             email,
             name,
-            avatarUrl: (profile.picture as string) ?? undefined,
+            avatarUrl: (claims.picture as string) ?? undefined,
             baseRole: role,
             lastLoginAt: new Date(),
           },

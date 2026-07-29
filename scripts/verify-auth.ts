@@ -1,20 +1,23 @@
 import "dotenv/config";
+import { createPublicKey, generateKeyPairSync, sign } from "node:crypto";
 import { createServer } from "node:http";
+import { db } from "@/lib/db";
 
 /**
- * Checks the OpenID Connect handshake against a stand-in NextCloud.
+ * Drives the whole OpenID Connect handshake against a stand-in NextCloud.
  *
- * This exists because of a failure that could not be caught any other way: the
- * installed Auth.js builds the discovery URL itself, as
- * `<issuer>/.well-known/openid-configuration`, and silently ignores the
- * provider's `wellKnown`. NextCloud serves the document from the OIDC app's own
- * path and answers that address with a 301, which the OIDC client refuses to
- * follow. Sign-in failed with `error=Configuration` and nothing else — no
- * unit test touches this path, and the browser suites sign in with a cookie
- * rather than through the provider.
+ * This exists because sign-in failed three times in a row in production, in
+ * three different places, and nothing covered any of them: the browser suites
+ * sign in with a cookie, and no unit test can reach a redirect, a discovery
+ * document or an ID token. So the stand-in behaves like the real thing —
+ * including the redirect NextCloud answers its spec-suggested discovery URL
+ * with — and this signs real RS256 tokens and walks the full round trip.
  *
- * So the stand-in reproduces the redirect exactly, and this asserts that the
- * request lands on the right URL and the sign-in redirect comes out correct.
+ * The four cases are the four ways it went wrong, or could:
+ *   - everything in the ID token, which is the happy path
+ *   - email and groups only in userinfo, which Auth.js never reads by itself
+ *   - groups nowhere
+ *   - no email anywhere
  *
  * Needs the app running on BASE_URL, with NEXTCLOUD_ISSUER pointing here and
  * AUTH_URL set to the public address — a real hostname, because `next start`
@@ -35,6 +38,9 @@ import { createServer } from "node:http";
 const BASE = process.env.BASE_URL ?? "http://127.0.0.1:3000";
 const NC_PORT = Number(process.env.FAKE_NEXTCLOUD_PORT ?? 9999);
 const NC = `http://127.0.0.1:${NC_PORT}`;
+const CLIENT_ID = process.env.NEXTCLOUD_CLIENT_ID ?? "dev-client";
+/** Where the app sends the browser afterwards: its own public origin. */
+const PUBLIC = (process.env.AUTH_URL ?? BASE).replace(/\/+$/, "");
 let failures = 0;
 
 function check(label: string, actual: unknown, expected: unknown) {
@@ -45,6 +51,45 @@ function check(label: string, actual: unknown, expected: unknown) {
   );
 }
 
+// --- the stand-in -----------------------------------------------------------
+
+const { privateKey, publicKey } = generateKeyPairSync("rsa", {
+  modulusLength: 2048,
+  privateKeyEncoding: { type: "pkcs8", format: "pem" },
+  publicKeyEncoding: { type: "spki", format: "pem" },
+});
+const jwk = createPublicKey(publicKey).export({ format: "jwk" });
+const KID = "quicktec-test-key";
+
+function base64url(input: Buffer | string): string {
+  return Buffer.from(input)
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
+function signIdToken(claims: Record<string, unknown>): string {
+  const header = base64url(
+    JSON.stringify({ alg: "RS256", typ: "JWT", kid: KID }),
+  );
+  const now = Math.floor(Date.now() / 1000);
+  const payload = base64url(
+    JSON.stringify({
+      iss: NC,
+      aud: CLIENT_ID,
+      iat: now,
+      exp: now + 300,
+      ...claims,
+    }),
+  );
+  const signature = sign("RSA-SHA256", Buffer.from(`${header}.${payload}`), privateKey);
+  return `${header}.${payload}.${base64url(signature)}`;
+}
+
+/** What the stand-in will answer with, swapped per case. */
+let idTokenClaims: Record<string, unknown> = {};
+let userInfoClaims: Record<string, unknown> | null = null;
 const requested: string[] = [];
 
 function startFakeNextCloud() {
@@ -80,6 +125,35 @@ function startFakeNextCloud() {
       return;
     }
 
+    if (url.endsWith("/jwks")) {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ keys: [{ ...jwk, kid: KID, alg: "RS256", use: "sig" }] }));
+      return;
+    }
+
+    if (url.endsWith("/token")) {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          access_token: "test-access-token",
+          token_type: "Bearer",
+          expires_in: 3600,
+          id_token: signIdToken(idTokenClaims),
+        }),
+      );
+      return;
+    }
+
+    if (url.endsWith("/userinfo")) {
+      if (!userInfoClaims) {
+        res.writeHead(404).end();
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(userInfoClaims));
+      return;
+    }
+
     res.writeHead(404).end();
   });
 
@@ -88,30 +162,72 @@ function startFakeNextCloud() {
   });
 }
 
-async function main() {
-  const stop = await startFakeNextCloud();
+// --- driving the flow -------------------------------------------------------
+
+function mergeCookies(jar: Map<string, string>, response: Response) {
+  for (const raw of response.headers.getSetCookie()) {
+    const [pair] = raw.split(";");
+    const index = pair.indexOf("=");
+    if (index > 0) jar.set(pair.slice(0, index).trim(), pair.slice(index + 1));
+  }
+}
+
+function cookieHeader(jar: Map<string, string>): string {
+  return [...jar.entries()].map(([name, value]) => `${name}=${value}`).join("; ");
+}
+
+/** Runs a full sign-in and returns where the app finally sent the browser. */
+async function signInRoundTrip(): Promise<{ location: string; authorize: URL }> {
+  const jar = new Map<string, string>();
 
   const csrfResponse = await fetch(`${BASE}/api/auth/csrf`);
+  mergeCookies(jar, csrfResponse);
   const { csrfToken } = (await csrfResponse.json()) as { csrfToken: string };
-  const cookies = csrfResponse.headers.getSetCookie().join("; ");
 
-  const signIn = await fetch(`${BASE}/api/auth/signin/nextcloud`, {
+  const start = await fetch(`${BASE}/api/auth/signin/nextcloud`, {
     method: "POST",
     redirect: "manual",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
-      Cookie: cookies,
+      Cookie: cookieHeader(jar),
     },
     body: new URLSearchParams({ csrfToken, callbackUrl: "/dashboard" }),
   });
+  mergeCookies(jar, start);
 
-  check("sign-in redirects rather than erroring", signIn.status, 302);
+  const authorize = new URL(start.headers.get("location") ?? "");
 
-  const location = signIn.headers.get("location") ?? "";
-  if (location.includes("/signin")) {
-    console.log(`      the app bounced back to ${location}`);
-  }
-  const target = new URL(location.startsWith("http") ? location : `${BASE}${location}`);
+  // Stand in for the user approving at NextCloud: come back with a code and
+  // the state the app just issued.
+  const callback = await fetch(
+    `${BASE}/api/auth/callback/nextcloud?code=test-code&state=${encodeURIComponent(
+      authorize.searchParams.get("state") ?? "",
+    )}`,
+    { redirect: "manual", headers: { Cookie: cookieHeader(jar) } },
+  );
+
+  return { location: callback.headers.get("location") ?? "", authorize };
+}
+
+async function main() {
+  const stop = await startFakeNextCloud();
+  const emails = [
+    "oidc-idtoken@417group.org",
+    "oidc-userinfo@417group.org",
+    "oidc-nogroup@417group.org",
+  ];
+  await db.user.deleteMany({ where: { email: { in: emails } } });
+
+  // --- the authorization request ------------------------------------------
+  idTokenClaims = {
+    sub: "u-idtoken",
+    email: emails[0],
+    name: "Ivy IdToken",
+    roles: ["quicktec-manager"],
+  };
+  userInfoClaims = null;
+
+  const first = await signInRoundTrip();
 
   check(
     "discovery is fetched from the OIDC app's own path",
@@ -125,38 +241,95 @@ async function main() {
   );
   check(
     "the browser is sent to the advertised authorization endpoint",
-    `${target.origin}${target.pathname}`,
+    `${first.authorize.origin}${first.authorize.pathname}`,
     `${NC}/index.php/apps/oidc/authorize`,
   );
-
-  const params = target.searchParams;
-  check("an authorization code is asked for", params.get("response_type"), "code");
   check(
     "the redirect URI is the one to register in NextCloud",
-    params.get("redirect_uri"),
-    `${(process.env.AUTH_URL ?? BASE).replace(/\/+$/, "")}/api/auth/callback/nextcloud`,
+    first.authorize.searchParams.get("redirect_uri"),
+    `${PUBLIC}/api/auth/callback/nextcloud`,
   );
   check(
     "groups are requested — without the roles scope every sign-in is refused",
-    params.get("scope"),
+    first.authorize.searchParams.get("scope"),
     "openid profile email roles",
   );
-  check("PKCE is used", params.get("code_challenge_method"), "S256");
+  check("PKCE is used", first.authorize.searchParams.get("code_challenge_method"), "S256");
   check(
-    "a code challenge is actually present",
-    (params.get("code_challenge") ?? "").length > 20,
+    "state is carried",
+    (first.authorize.searchParams.get("state") ?? "").length > 20,
     true,
   );
-  check("state is carried", (params.get("state") ?? "").length > 20, true);
+
+  // --- claims in the ID token, the straightforward case --------------------
+  check("a complete ID token signs the user in", first.location, `${PUBLIC}/dashboard`);
+
+  const fromIdToken = await db.user.findUnique({ where: { email: emails[0] } });
+  check("the account is provisioned", fromIdToken?.name, "Ivy IdToken");
+  check("with the role from their group", fromIdToken?.baseRole, "MANAGER");
+
+  // --- claims only in userinfo ---------------------------------------------
+  // Auth.js treats the ID token as the whole profile and never asks userinfo,
+  // so this is the case that refused entry on a real install.
+  idTokenClaims = { sub: "u-userinfo" };
+  userInfoClaims = {
+    sub: "u-userinfo",
+    email: emails[1],
+    name: "Uma UserInfo",
+    groups: ["quicktec-supervisor"],
+  };
+
+  const second = await signInRoundTrip();
+  check(
+    "email and groups found in userinfo sign the user in",
+    second.location,
+    `${PUBLIC}/dashboard`,
+  );
+
+  const fromUserInfo = await db.user.findUnique({ where: { email: emails[1] } });
+  check("that account is provisioned too", fromUserInfo?.name, "Uma UserInfo");
+  check("with its own role", fromUserInfo?.baseRole, "SUPERVISOR");
+
+  // --- no group anywhere ----------------------------------------------------
+  idTokenClaims = { sub: "u-nogroup", email: emails[2], name: "Nora NoGroup" };
+  userInfoClaims = { sub: "u-nogroup", email: emails[2], groups: ["users"] };
+
+  const third = await signInRoundTrip();
+  check(
+    "somebody in no quicktec-* group is turned away",
+    new URL(third.location).searchParams.get("error"),
+    "NoGroup",
+  );
+  check(
+    "and no account is created for them",
+    await db.user.count({ where: { email: emails[2] } }),
+    0,
+  );
+
+  // --- no email anywhere ----------------------------------------------------
+  // Distinguished from the group refusal on purpose: they are fixed in
+  // different places, and one used to be reported as the other.
+  idTokenClaims = { sub: "u-noemail", name: "Ned NoEmail", roles: ["quicktec-tech"] };
+  userInfoClaims = { sub: "u-noemail", roles: ["quicktec-tech"] };
+
+  const fourth = await signInRoundTrip();
+  check(
+    "an account with no email is told exactly that",
+    new URL(fourth.location).searchParams.get("error"),
+    "NoEmail",
+  );
 
   stop();
+  await db.user.deleteMany({ where: { email: { in: emails } } });
+  await db.$disconnect();
+
   console.log(
     `\n${failures === 0 ? "ALL AUTH CHECKS PASSED" : `${failures} CHECK(S) FAILED`}`,
   );
   process.exit(failures === 0 ? 0 : 1);
 }
 
-main().catch((error) => {
+main().catch(async (error) => {
   console.error(error);
   process.exit(1);
 });

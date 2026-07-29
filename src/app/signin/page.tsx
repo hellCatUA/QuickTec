@@ -16,7 +16,11 @@ function errorMessage(code: string | undefined): string | null {
     return SIGNIN_ERRORS[code as keyof typeof SIGNIN_ERRORS];
   }
   if (code === "AccessDenied") {
-    return SIGNIN_ERRORS.NoGroup;
+    // Deliberately not reported as a group problem. Every reason QuickTec
+    // turns somebody away has its own code above; AccessDenied left over
+    // means something refused the sign-in without saying why, and the log is
+    // the only place that knows.
+    return "NextCloud refused the sign-in. The server log says why — ask an administrator to look.";
   }
   if (code === "Configuration") {
     // Not the person's fault and not worth retrying: the server could not
