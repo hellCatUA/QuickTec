@@ -9,17 +9,21 @@ Written against this stack, because it is the one QuickTec was built for:
 | `tailscale` | `network_mode: host` | provides `tailscale0` on the host |
 | `npm` (Nginx Proxy Manager) | `network_mode: host` | listens on the host's `:80` and `:443` |
 | `nextcloud` | bridge, published to loopback | `127.0.0.1:4080` |
-| `quicktec-app` | bridge, published to loopback | `127.0.0.1:3000` |
+| `quicktec-app` | bridge, published to loopback | `127.0.0.1:3100` |
 
 Two consequences worth knowing before you start, because they explain most of
 what follows:
 
 - **NPM runs in the host network namespace.** Its `127.0.0.1` *is* the host's
-  loopback, so it proxies to QuickTec at `http://127.0.0.1:3000` with nothing
+  loopback, so it proxies to QuickTec at `http://127.0.0.1:3100` with nothing
   published to the LAN. This is why `APP_BIND` stays at its default.
 - **QuickTec runs on a bridge network.** Its `127.0.0.1` is its own. It has to
   reach NextCloud by name, over the proxy, for two things: the OIDC token
   exchange and the calendar push. Step 8 deals with that.
+
+And one thing to check before anything else: **NPM in host mode already holds
+port 3000.** Its admin API listens there, so the default `APP_PORT` collides
+with it. Step 3 picks a free port instead.
 
 ---
 
@@ -80,9 +84,25 @@ Postgres sorts its own ownership out on first start; you do not need to touch
 
 ```bash
 cp .env.example .env
-openssl rand -base64 32        # paste into AUTH_SECRET
+openssl rand -base64 32        # AUTH_SECRET  — any characters are fine here
+openssl rand -hex 24           # POSTGRES_PASSWORD — hex, for the reason below
 nano .env
 ```
+
+Pick the host port first. Nginx Proxy Manager in host mode runs its own admin
+API on **3000**, so the default collides with it:
+
+```bash
+ss -ltnp | grep -E ':(80|81|443|3000)\s'
+```
+
+If 3000 is taken — it will be — set `APP_PORT=3100` (or anything free). Only
+the host side moves; the container still listens on 3000, and 3100 is what goes
+into NPM in step 5.
+
+> The symptom of getting this wrong is confusing: `curl 127.0.0.1:3000/api/health`
+> answers `{"error":{"code":404,"message":"Not Found - /api/health"}}`. That is
+> NPM's API replying, not QuickTec. QuickTec's own 404 is an HTML page.
 
 Fill in what you can now and come back for the NextCloud values in step 7:
 
@@ -115,12 +135,26 @@ UPLOADS_HOST_DIR=/tank/data/quicktec/uploads
 # Runtime
 TZ=America/Los_Angeles
 NODE_ENV=production
-APP_PORT=3000
+APP_PORT=3100
 ```
 
 `DATABASE_URL` uses the host `db` — the compose service name — and must carry
 the same password as `POSTGRES_PASSWORD`. The two are separate variables
 because Postgres reads one and Prisma reads the other.
+
+**Do not use `openssl rand -base64` for the database password.** Base64 output
+contains `/`, and a `/` inside a connection string ends the host part, so
+`postgresql://quicktec:ab/cd@db:5432/quicktec` is read as host `quicktec`, port
+`ab` and fails with:
+
+```
+Error: P1013: The provided database string is invalid.
+invalid port number in database URL.
+```
+
+`openssl rand -hex 24` gives 96 bits of entropy using only `0-9a-f`, which
+needs no escaping anywhere. (`AUTH_SECRET` is never parsed as a URL, so base64
+is fine there.)
 
 Leave `APP_BIND` unset. It defaults to `127.0.0.1`, which is what NPM needs and
 nothing else can reach.
@@ -139,11 +173,12 @@ Three services, in this order:
 1. `quicktec-db` — Postgres 17, healthchecked
 2. `quicktec-migrate` — applies migrations and the idempotent seed, then
    **exits 0**. `Exited (0)` is success, not a crash
-3. `quicktec-app` — waits for the migrator to finish, then serves on port 3000
+3. `quicktec-app` — waits for the migrator to finish, then serves on
+   `APP_PORT`
 
 ```bash
 docker compose logs migrate      # should end with the seed summary
-curl -s http://127.0.0.1:3000/api/health
+curl -s http://127.0.0.1:3100/api/health
 # {"ok":true,"at":"2026-07-28T…"}
 ```
 
@@ -163,7 +198,7 @@ deliberate, so it never serves traffic against a schema it does not match.
 | Domain Names | `quicktec.417group.org` |
 | Scheme | `http` |
 | Forward Hostname / IP | `127.0.0.1` |
-| Forward Port | `3000` |
+| Forward Port | `3100` — your `APP_PORT` |
 | Cache Assets | off — Next.js sets its own cache headers |
 | Block Common Exploits | on |
 | Websockets Support | on |
@@ -427,6 +462,30 @@ anyone with a URL read another crew's site photos.
 ---
 
 ## Troubleshooting
+
+**`P1013: invalid port number in database URL`**
+A `/` in the password inside `DATABASE_URL` — the classic result of generating
+it with `openssl rand -base64`. Either percent-encode it (`/` → `%2F`, `+` →
+`%2B`) or, while the database is still empty, give it a hex password and start
+over:
+
+```bash
+docker compose down
+rm -rf "$POSTGRES_DIR"/*        # check the path first: docker compose config
+openssl rand -hex 24            # into POSTGRES_PASSWORD *and* DATABASE_URL
+docker compose up -d --build
+```
+
+Postgres only reads `POSTGRES_PASSWORD` when it initialises an empty data
+directory. Changing it later without clearing that directory leaves the old
+password in place and the app cannot connect.
+
+**`Bind for 127.0.0.1:3000 failed: port is already allocated`**
+NPM's admin API. Move `APP_PORT` (step 3) and update the proxy host.
+
+**`curl` on the app port answers `{"error":{"code":404,…}}`**
+Same cause: that is NPM's API, not QuickTec. `ss -ltnp | grep :3000` shows who
+actually holds the port.
 
 **The sign-in page says "Not configured yet"**
 One of `NEXTCLOUD_ISSUER`, `NEXTCLOUD_CLIENT_ID`, `NEXTCLOUD_CLIENT_SECRET` is
