@@ -41,19 +41,36 @@ export function resolveBaseRole(groups: string[]): BaseRole | null {
   return ROLE_PRECEDENCE.find((role) => roles.has(role)) ?? null;
 }
 
-/**
- * NextCloud's OIDC provider app puts group membership in `roles` when the
- * `roles` scope is requested, but deployments differ — some emit `groups`.
- * Accept either, and tolerate a space/comma separated string.
- */
-export function extractGroups(profile: Record<string, unknown>): string[] {
-  const raw = profile.roles ?? profile.groups ?? [];
-
+function toStringList(raw: unknown): string[] {
   if (Array.isArray(raw)) {
     return raw.filter((entry): entry is string => typeof entry === "string");
   }
   if (typeof raw === "string") {
     return raw.split(/[,\s]+/).filter(Boolean);
   }
+  return [];
+}
+
+/**
+ * NextCloud's OIDC provider app puts group membership in `roles` when the
+ * `roles` scope is requested, but deployments differ — some emit `groups`.
+ * Accept either, and tolerate a space/comma separated string.
+ *
+ * The last resort is a scan for any claim whose name mentions groups or roles
+ * and whose value is a list of strings. Installs and forks name this claim
+ * differently, sometimes with a namespace prefix, and a sign-in refused for
+ * having no groups when the groups are sitting right there under another name
+ * is a miserable thing to debug.
+ */
+export function extractGroups(profile: Record<string, unknown>): string[] {
+  const direct = toStringList(profile.roles ?? profile.groups);
+  if (direct.length > 0) return direct;
+
+  for (const [claim, value] of Object.entries(profile)) {
+    if (!/group|role/i.test(claim)) continue;
+    const found = toStringList(value);
+    if (found.length > 0) return found;
+  }
+
   return [];
 }

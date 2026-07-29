@@ -7,7 +7,8 @@ import { extractGroups, resolveBaseRole } from "@/lib/nextcloud-groups";
  * Auth.js only lets us pass a string back, so these are matched by name.
  */
 export const SIGNIN_ERRORS = {
-  NoGroup: "Your NextCloud account is not in any quicktec-* group.",
+  NoGroup:
+    "Your NextCloud account is not in any quicktec-* group, or NextCloud is not sharing group membership with QuickTec. An administrator can tell which from the server log.",
   Inactive: "This account has been deactivated in QuickTec.",
 } as const;
 
@@ -65,6 +66,47 @@ async function discoveryFetch(
     return fetch(discoveryUrl(), init);
   }
   return fetch(input, init);
+}
+
+/**
+ * Reads group membership from the userinfo endpoint.
+ *
+ * Auth.js treats the ID token as the whole profile for an OIDC provider and
+ * never calls userinfo, but NextCloud installs differ in which of the two
+ * carries the groups. Rather than making the operator work out which one they
+ * have, this is tried when the ID token came back without any — one extra
+ * request, and only on the path that would otherwise refuse the sign-in.
+ */
+async function groupsFromUserInfo(accessToken: string): Promise<string[]> {
+  try {
+    const discovery = await fetch(discoveryUrl(), {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!discovery.ok) return [];
+
+    const { userinfo_endpoint: endpoint } = (await discovery.json()) as {
+      userinfo_endpoint?: string;
+    };
+    if (!endpoint) return [];
+
+    const response = await fetch(endpoint, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/json",
+      },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) {
+      console.error(`[auth] userinfo returned HTTP ${response.status}`);
+      return [];
+    }
+
+    return extractGroups((await response.json()) as Record<string, unknown>);
+  } catch (error) {
+    console.error("[auth] could not read groups from userinfo:", error);
+    return [];
+  }
 }
 
 export const authConfig: NextAuthConfig = {
@@ -137,13 +179,29 @@ export const authConfig: NextAuthConfig = {
      * decision is not "does this user exist" but "is this user allowed in at
      * all", which depends on their NextCloud groups.
      */
-    async signIn({ profile }) {
+    async signIn({ profile, account }) {
       if (!profile?.sub || !profile.email) return false;
 
-      const role = resolveBaseRole(
-        extractGroups(profile as Record<string, unknown>),
-      );
-      if (!role) return `/signin?error=NoGroup`;
+      const claims = profile as Record<string, unknown>;
+      let groups = extractGroups(claims);
+      let source = "the ID token";
+
+      if (groups.length === 0 && typeof account?.access_token === "string") {
+        groups = await groupsFromUserInfo(account.access_token);
+        source = "userinfo";
+      }
+
+      const role = resolveBaseRole(groups);
+      if (!role) {
+        // The one line that turns "not in any group" into something an admin
+        // can act on: whether the groups arrived at all, and under what name.
+        console.error(
+          `[auth] refused ${profile.email}: no quicktec-* group.\n` +
+            `[auth]   claims in the ID token: ${Object.keys(claims).join(", ")}\n` +
+            `[auth]   groups found in ${source}: ${groups.length > 0 ? groups.join(", ") : "none"}`,
+        );
+        return `/signin?error=NoGroup`;
+      }
 
       const email = String(profile.email).toLowerCase();
       const name =

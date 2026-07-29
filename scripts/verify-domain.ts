@@ -981,6 +981,63 @@ async function main() {
 
   await db.job.delete({ where: { id: payJob.id } });
 
+  // --- NextCloud groups ---------------------------------------------------
+  const { extractGroups, resolveBaseRole } = await import(
+    "@/lib/nextcloud-groups"
+  );
+
+  check(
+    "groups arrive in the roles claim",
+    extractGroups({ roles: ["quicktec-tech", "other"] }).join(","),
+    "quicktec-tech,other",
+  );
+  check(
+    "or in a groups claim",
+    extractGroups({ groups: ["quicktec-manager"] }).join(","),
+    "quicktec-manager",
+  );
+  check(
+    "a space separated string is a list too",
+    extractGroups({ roles: "quicktec-tech admin" }).join(","),
+    "quicktec-tech,admin",
+  );
+  check(
+    "so is a comma separated one",
+    extractGroups({ groups: "quicktec-tech,admin" }).join(","),
+    "quicktec-tech,admin",
+  );
+  check(
+    "a namespaced claim is found rather than refused",
+    extractGroups({ "nextcloud.groups": ["quicktec-supervisor"] }).join(","),
+    "quicktec-supervisor",
+  );
+  check(
+    "nothing group-shaped means no groups",
+    extractGroups({ sub: "abc", email: "a@b.c", name: "A" }).length,
+    0,
+  );
+
+  check(
+    "the group maps to a role",
+    resolveBaseRole(["quicktec-supervisor"]),
+    "SUPERVISOR",
+  );
+  check(
+    "case does not matter — NextCloud keeps the id as typed",
+    resolveBaseRole(["QuickTec-Tech"]),
+    "TECH",
+  );
+  check(
+    "manager outranks the rest",
+    resolveBaseRole(["quicktec-tech", "quicktec-manager", "quicktec-admin"]),
+    "MANAGER",
+  );
+  check(
+    "an unrelated group grants nothing",
+    resolveBaseRole(["admin", "users"]),
+    null,
+  );
+
   // --- iCalendar ----------------------------------------------------------
   const { buildVEvent, eventFileName, eventUid } = await import(
     "@/lib/calendar/ical"
