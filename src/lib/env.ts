@@ -47,6 +47,70 @@ export function findConfigProblems(): ConfigProblem[] {
   return problems;
 }
 
+export type DiscoveryProbe = {
+  url: string;
+  ok: boolean;
+  /** Short, human-readable. "HTTP 404", "server unreachable". */
+  detail: string;
+  /** The issuer the document claims, when it returned one. */
+  issuer?: string;
+};
+
+/**
+ * Asks NextCloud for its discovery document, the way Auth.js does.
+ *
+ * Run only when sign-in has already failed with a configuration error. Auth.js
+ * reports that failure as an opaque `error=Configuration`, and the difference
+ * between "the container cannot resolve the name", "the app is not installed"
+ * and "the issuer has a trailing slash" is otherwise invisible from the screen.
+ */
+export async function probeDiscovery(
+  url: string,
+  expectedIssuer: string,
+): Promise<DiscoveryProbe> {
+  try {
+    const response = await fetch(url, {
+      signal: AbortSignal.timeout(5000),
+      headers: { Accept: "application/json" },
+    });
+
+    if (!response.ok) {
+      return {
+        url,
+        ok: false,
+        detail: `HTTP ${response.status} — is the OpenID Connect provider app installed?`,
+      };
+    }
+
+    const document = (await response.json()) as { issuer?: string };
+    const issuer = document.issuer;
+
+    if (!issuer) {
+      return { url, ok: false, detail: "the response is not a discovery document" };
+    }
+    if (expectedIssuer && issuer.replace(/\/+$/, "") !== expectedIssuer) {
+      return {
+        url,
+        ok: false,
+        issuer,
+        detail: `it identifies as ${issuer}, but NEXTCLOUD_ISSUER is ${expectedIssuer}`,
+      };
+    }
+
+    return { url, ok: true, issuer, detail: "reachable" };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      url,
+      ok: false,
+      detail:
+        /timed out|abort/i.test(message)
+          ? "no answer within 5 seconds"
+          : `not reachable from the app container (${message})`,
+    };
+  }
+}
+
 let reported = false;
 
 /** Logs once per process. Never throws — a half-configured app should still

@@ -1,11 +1,11 @@
 import { AlertCircle } from "lucide-react";
 import { redirect } from "next/navigation";
-import { signIn, SIGNIN_ERRORS } from "@/auth";
+import { discoveryUrl, signIn, SIGNIN_ERRORS } from "@/auth";
 import { ThemeToggle } from "@/components/theme";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { db } from "@/lib/db";
-import { reportConfigProblems } from "@/lib/env";
+import { probeDiscovery, reportConfigProblems } from "@/lib/env";
 import { getSessionUser } from "@/lib/session";
 
 export const metadata = { title: "Sign in" };
@@ -17,6 +17,11 @@ function errorMessage(code: string | undefined): string | null {
   }
   if (code === "AccessDenied") {
     return SIGNIN_ERRORS.NoGroup;
+  }
+  if (code === "Configuration") {
+    // Not the person's fault and not worth retrying: the server could not
+    // complete its own half of the exchange with NextCloud.
+    return "QuickTec could not reach NextCloud. This is a server-side problem — retrying will not help.";
   }
   return "Sign-in failed. Please try again, or contact your administrator.";
 }
@@ -35,6 +40,16 @@ export default async function SignInPage({
   // A missing NEXTCLOUD_* variable otherwise presents as a sign-in button that
   // silently does nothing, so say so plainly instead.
   const configProblems = reportConfigProblems();
+
+  // Only after a configuration failure, and only then: Auth.js gives no clue
+  // which of half a dozen causes it was, and the answer is one request away.
+  const probe =
+    error === "Configuration"
+      ? await probeDiscovery(
+          discoveryUrl(),
+          (process.env.NEXTCLOUD_ISSUER ?? "").trim().replace(/\/+$/, ""),
+        )
+      : null;
 
   const company = await db.companySettings
     .findUnique({
@@ -78,6 +93,27 @@ export default async function SignInPage({
             <div className="flex items-start gap-2 rounded-lg bg-danger/15 p-3 text-sm text-danger ring-1 ring-inset ring-danger/30">
               <AlertCircle className="mt-0.5 size-4 shrink-0" />
               <span>{message}</span>
+            </div>
+          ) : null}
+
+          {probe ? (
+            <div className="flex flex-col gap-1 rounded-lg bg-warning/15 p-3 text-xs text-warning ring-1 ring-inset ring-warning/30">
+              <span className="font-medium">
+                {probe.ok
+                  ? "Discovery works — the failure is later in the exchange"
+                  : "Could not read NextCloud's discovery document"}
+              </span>
+              <code className="break-all">{probe.url}</code>
+              <span>{probe.detail}</span>
+              {probe.ok ? (
+                <span>
+                  Check the client ID and secret, and that the redirect URI
+                  registered in NextCloud matches this server exactly.
+                </span>
+              ) : null}
+              <span className="text-muted-foreground">
+                Full cause in <code>docker compose logs app</code>.
+              </span>
             </div>
           ) : null}
 

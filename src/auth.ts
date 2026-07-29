@@ -11,7 +11,19 @@ export const SIGNIN_ERRORS = {
   Inactive: "This account has been deactivated in QuickTec.",
 } as const;
 
-const issuer = process.env.NEXTCLOUD_ISSUER ?? "";
+// The trailing slash matters: it is compared against the `issuer` in the
+// discovery document, and `https://cloud.example.org/` does not equal
+// `https://cloud.example.org`. A mismatch fails as error=Configuration with
+// nothing on screen to suggest a stray character is the cause.
+const issuer = (process.env.NEXTCLOUD_ISSUER ?? "").trim().replace(/\/+$/, "");
+
+/** Where the OIDC provider app publishes its discovery document. */
+export function discoveryUrl(): string {
+  return (
+    process.env.NEXTCLOUD_WELL_KNOWN?.trim() ||
+    `${issuer}/index.php/apps/oidc/openid-configuration`
+  );
+}
 
 export const authConfig: NextAuthConfig = {
   // Behind Nginx Proxy Manager on a Tailscale-only subdomain, so the host
@@ -29,6 +41,24 @@ export const authConfig: NextAuthConfig = {
     error: "/signin",
   },
 
+  logger: {
+    /**
+     * Auth.js logs a name, a one-line message and a documentation link. For a
+     * provider failure all of the useful information — which URL, which status
+     * — is in the cause, which the default logger does not unwrap.
+     */
+    error(error) {
+      console.error(`[auth] ${error.name}: ${error.message}`);
+      const cause = (error as { cause?: unknown }).cause;
+      if (cause instanceof Error) {
+        console.error(`[auth] cause: ${cause.name}: ${cause.message}`);
+        if (cause.cause) console.error("[auth] underlying:", cause.cause);
+      } else if (cause) {
+        console.error("[auth] cause:", cause);
+      }
+    },
+  },
+
   providers: [
     {
       id: "nextcloud",
@@ -37,9 +67,7 @@ export const authConfig: NextAuthConfig = {
       issuer,
       // The NextCloud OIDC provider app serves discovery from its own path
       // rather than the server root on most installs.
-      wellKnown:
-        process.env.NEXTCLOUD_WELL_KNOWN ||
-        `${issuer.replace(/\/$/, "")}/index.php/apps/oidc/openid-configuration`,
+      wellKnown: discoveryUrl(),
       clientId: process.env.NEXTCLOUD_CLIENT_ID,
       clientSecret: process.env.NEXTCLOUD_CLIENT_SECRET,
       // `roles` is what carries group membership.
