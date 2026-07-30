@@ -17,6 +17,7 @@ import { JOB_FIELDS, isJobField } from "@/lib/job-fields";
 import { formatMoney } from "@/lib/money";
 import { jobScopeWhere, reportIds } from "@/lib/scope";
 import { getSessionUser, permissionScope } from "@/lib/session";
+import { NotificationsPanel } from "./notifications-panel";
 
 export const metadata = { title: "Approvals" };
 
@@ -33,6 +34,21 @@ export default async function ApprovalsPage() {
 
   const company = await getCompanySettings();
   const zone = company.defaultTimeZone;
+
+  // Notifications are personal — no scope involved, they are addressed to you.
+  const notifications = await db.notification.findMany({
+    where: { userId: user.id, acknowledgedAt: null },
+    orderBy: { createdAt: "desc" },
+    take: 50,
+    select: {
+      id: true,
+      title: true,
+      body: true,
+      href: true,
+      createdAt: true,
+      actor: { select: { name: true } },
+    },
+  });
 
   const changeWhere = await jobScopeWhere(user, "job.approve_change");
   const reportWhere = await jobScopeWhere(user, "job.approve_report");
@@ -120,6 +136,8 @@ export default async function ApprovalsPage() {
       })(),
     ]);
 
+  // Notifications are counted apart: the headline is about decisions waiting,
+  // and folding "you were put on a job" into that number would overstate it.
   const total =
     changeRequests.length +
     adHocJobs.length +
@@ -137,10 +155,21 @@ export default async function ApprovalsPage() {
         }
       />
 
-      {total === 0 ? (
+      <NotificationsPanel
+        rows={notifications.map((notification) => ({
+          id: notification.id,
+          title: notification.title,
+          body: notification.body,
+          href: notification.href,
+          when: usDateTimeInZone(notification.createdAt, zone),
+          actor: notification.actor?.name ?? null,
+        }))}
+      />
+
+      {total === 0 && notifications.length === 0 ? (
         <EmptyState
           title="All clear"
-          description="Change requests, ad-hoc jobs, finished reports and payroll weeks appear here when they need your decision."
+          description="Change requests, ad-hoc jobs, finished reports and payroll weeks appear here when they need your decision — and so does anything you have been put on or taken off."
         />
       ) : null}
 

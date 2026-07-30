@@ -4,7 +4,7 @@ import { Star, UserPlus, X } from "lucide-react";
 import * as React from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Field, Select } from "@/components/ui/field";
+import { Field, Input, Select } from "@/components/ui/field";
 import { assignTech, setLeadTech, unassignTech } from "./actions";
 
 export type CrewMember = {
@@ -42,14 +42,23 @@ export function CrewPanel({
   const [error, setError] = React.useState<string | null>(null);
   const [adding, setAdding] = React.useState(false);
   const [picked, setPicked] = React.useState("");
+  const [removing, setRemoving] = React.useState<CrewMember | null>(null);
+  const [reason, setReason] = React.useState("");
   const [pending, startTransition] = React.useTransition();
 
-  function run(action: (formData: FormData) => Promise<{ ok: boolean; error?: string }>, userId: string) {
+  function run(
+    action: (formData: FormData) => Promise<{ ok: boolean; error?: string }>,
+    userId: string,
+    extra?: Record<string, string>,
+  ) {
     setError(null);
     startTransition(async () => {
       const formData = new FormData();
       formData.set("jobId", jobId);
       formData.set("userId", userId);
+      for (const [key, value] of Object.entries(extra ?? {})) {
+        formData.set(key, value);
+      }
       const result = await action(formData);
       if (!result.ok) setError(result.error ?? "That did not work.");
     });
@@ -101,7 +110,10 @@ export function CrewPanel({
                   size="icon"
                   aria-label={`Take ${member.name} off this job`}
                   disabled={pending}
-                  onClick={() => run(unassignTech, member.userId)}
+                  onClick={() => {
+                    setReason("");
+                    setRemoving(member);
+                  }}
                 >
                   <X />
                 </Button>
@@ -110,6 +122,50 @@ export function CrewPanel({
           </div>
         ))
       )}
+
+      {removing ? (
+        <div className="flex flex-col gap-3 rounded-lg border border-warning/40 bg-warning/10 p-3">
+          <p className="text-sm">
+            Take <span className="font-medium">{removing.name}</span> off this
+            job?
+          </p>
+          <Field label="Reason (optional)" htmlFor="crew-remove-reason">
+            <Input
+              id="crew-remove-reason"
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              placeholder="Sent to a closer job"
+              autoFocus
+            />
+          </Field>
+          <p className="text-xs text-muted-foreground">
+            It goes on the timeline and into the message they get, which saves
+            the phone call asking why.
+          </p>
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="danger"
+              disabled={pending}
+              onClick={() => {
+                run(unassignTech, removing.userId, { reason });
+                setRemoving(null);
+              }}
+            >
+              Take them off
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={() => setRemoving(null)}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : null}
 
       {canAssign && available.length > 0 ? (
         adding ? (

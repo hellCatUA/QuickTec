@@ -70,6 +70,7 @@ async function main() {
   // of everything.
   await db.job.deleteMany({ where: { siteId: site.id } });
   await db.payrollPeriod.deleteMany({ where: { userId: tech.user.id } });
+  await db.notification.deleteMany({ where: { userId: tech.user.id } });
 
   // Another suite's job left mid-flow lands in the same inbox and makes the
   // headline count meaningless, so everything outside this site is parked
@@ -221,10 +222,12 @@ async function main() {
     await techPage.locator("text=Swap registers 3 and 4").count(),
     0,
   );
+  // It is in everyone's navigation now: an approver finds their queue there, a
+  // tech finds out they were put on a job.
   check(
-    "approvals is not in a tech's navigation",
-    await techPage.getByRole("link", { name: "Approvals" }).count(),
-    0,
+    "a tech can still reach the page",
+    await techPage.getByRole("link", { name: "Approvals" }).count() > 0,
+    true,
   );
 
   // --- and full for their supervisor ---------------------------------------
@@ -382,11 +385,62 @@ async function main() {
     1,
   );
 
-  // Taking somebody off before they have started is fine.
+  // --- notifications --------------------------------------------------------
+  // Being put on a job is not an approval, but it is not something to discover
+  // by noticing your schedule changed either.
+  const assignedNote = await db.notification.findFirstOrThrow({
+    where: { userId: tech.user.id, kind: "job_assigned", jobId: revisit.id },
+  });
+  check("the tech was told they are on it", assignedNote.actorId, sup.user.id);
+  check("and it is waiting to be acknowledged", assignedNote.acknowledgedAt, null);
+
+  await techSitePage.goto(`${BASE}/approvals`, { waitUntil: "domcontentloaded" });
+  check(
+    "it shows up for them, separately from any decisions",
+    await techSitePage.getByText("For your information").isVisible(),
+    true,
+  );
+
+  await techSitePage
+    .getByRole("button", { name: /^Mark read:/ })
+    .first()
+    .click();
+  await techSitePage.waitForTimeout(2500);
+
+  check(
+    "acknowledging records that they saw it",
+    (await db.notification.findUniqueOrThrow({ where: { id: assignedNote.id } }))
+      .acknowledgedAt !== null,
+    true,
+  );
+
+  // Taking somebody off carries the reason into both the record and the message.
+  await supPage.goto(`${BASE}/jobs/${revisit.id}`, {
+    waitUntil: "domcontentloaded",
+  });
   await supPage
     .getByRole("button", { name: `Take ${tech.user.name} off this job` })
     .click();
+  await supPage.locator("#crew-remove-reason").fill("Sent to a closer job");
+  await supPage.getByRole("button", { name: "Take them off" }).click();
   await supPage.waitForSelector("text=Nobody assigned yet.", { timeout: 20_000 });
+
+  const removalNote = await db.notification.findFirstOrThrow({
+    where: { userId: tech.user.id, kind: "job_unassigned", jobId: revisit.id },
+  });
+  check(
+    "the reason reaches the person it is about",
+    removalNote.body,
+    "Sent to a closer job",
+  );
+  const removalAudit = await db.auditEvent.findFirstOrThrow({
+    where: { jobId: revisit.id, action: "tech_unassigned" },
+  });
+  check(
+    "and the timeline",
+    (removalAudit.detail as { reason?: string } | null)?.reason,
+    "Sent to a closer job",
+  );
   check(
     "unassigning removes them",
     await db.jobAssignment.count({ where: { jobId: revisit.id } }),

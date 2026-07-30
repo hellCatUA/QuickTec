@@ -10,6 +10,7 @@ import { db } from "@/lib/db";
 import { deliverableLabel, resolveDeliverableRules } from "@/lib/deliverables";
 import { isJobField, JOB_FIELDS, type JobFieldName } from "@/lib/job-fields";
 import { resolvePayRate } from "@/lib/pay-rates";
+import { notify } from "@/lib/notifications";
 import { canOnJob, resolveJobSupervisor } from "@/lib/scope";
 import { getSessionUser, permissionScope, type SessionUser } from "@/lib/session";
 import { adjustmentMinutes } from "@/lib/time-tracking";
@@ -607,6 +608,33 @@ export async function assignTech(formData: FormData): Promise<ActionResult> {
     detail: { who: person.name, payType: rate.payType, rate: rate.rate },
   });
 
+  const jobRef = await db.job.findUniqueOrThrow({
+    where: { id: jobId },
+    select: { title: true, intWoId: true },
+  });
+
+  await notify({
+    userId,
+    actorId: user.id,
+    kind: "job_assigned",
+    title: `You are on ${jobRef.title}`,
+    body: jobRef.intWoId,
+    href: `/jobs/${jobId}`,
+    jobId,
+  });
+  // Their supervisor pays for this time, so they hear about it too.
+  if (supervisorId) {
+    await notify({
+      userId: supervisorId,
+      actorId: user.id,
+      kind: "job_assigned",
+      title: `${person.name} was put on ${jobRef.title}`,
+      body: jobRef.intWoId,
+      href: `/jobs/${jobId}`,
+      jobId,
+    });
+  }
+
   syncJobInBackground(jobId);
   touch(jobId);
   return ok;
@@ -622,6 +650,9 @@ export async function assignTech(formData: FormData): Promise<ActionResult> {
 export async function unassignTech(formData: FormData): Promise<ActionResult> {
   const jobId = String(formData.get("jobId") ?? "");
   const userId = String(formData.get("userId") ?? "");
+  // Optional, and worth asking for: "why is somebody else going instead" is the
+  // question the timeline gets read for.
+  const reason = String(formData.get("reason") ?? "").trim() || null;
 
   const context = await loadContext(jobId);
   if (!context) return fail("Job not found.");
@@ -660,7 +691,22 @@ export async function unassignTech(formData: FormData): Promise<ActionResult> {
     entityId: jobId,
     jobId,
     action: "tech_unassigned",
-    detail: { who: assignment.user.name },
+    detail: { who: assignment.user.name, reason: reason ?? undefined },
+  });
+
+  const removedFrom = await db.job.findUniqueOrThrow({
+    where: { id: jobId },
+    select: { title: true, intWoId: true },
+  });
+
+  await notify({
+    userId,
+    actorId: user.id,
+    kind: "job_unassigned",
+    title: `You are no longer on ${removedFrom.title}`,
+    body: reason ?? removedFrom.intWoId,
+    href: `/jobs/${jobId}`,
+    jobId,
   });
 
   // Removes their copy of the event, so nobody drives to a job they are no
@@ -705,6 +751,20 @@ export async function setLeadTech(formData: FormData): Promise<ActionResult> {
     jobId,
     action: "lead_changed",
     detail: { who: assignment.user.name },
+  });
+
+  const leadOn = await db.job.findUniqueOrThrow({
+    where: { id: jobId },
+    select: { title: true, intWoId: true },
+  });
+  await notify({
+    userId,
+    actorId: user.id,
+    kind: "job_lead",
+    title: `You are lead on ${leadOn.title}`,
+    body: leadOn.intWoId,
+    href: `/jobs/${jobId}`,
+    jobId,
   });
 
   touch(jobId);
