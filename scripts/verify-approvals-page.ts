@@ -459,9 +459,105 @@ async function main() {
     0,
   );
 
+  // --- project manager handover ---------------------------------------------
+  // Being handed a project is exactly the kind of thing to find out about now
+  // rather than by noticing the project moved.
+  const project = await db.project.upsert({
+    where: { id: "verify-pm-project" },
+    update: { managerId: null, name: "PM handover project" },
+    create: {
+      id: "verify-pm-project",
+      name: "PM handover project",
+      clientId: client.id,
+      managerId: null,
+    },
+  });
+  await db.notification.deleteMany({ where: { projectId: project.id } });
+  await db.auditEvent.deleteMany({ where: { projectId: project.id } });
+
+  const bossPage = await pageFor(boss.token);
+  await bossPage.goto(`${BASE}/projects/${project.id}`, {
+    waitUntil: "domcontentloaded",
+  });
+  await bossPage
+    .locator(`select[name="managerId"]`)
+    .selectOption(sup.user.id);
+  await bossPage.getByRole("button", { name: "Save project" }).click();
+  await bossPage.waitForTimeout(2500);
+
+  check(
+    "the project manager was recorded",
+    (await db.project.findUniqueOrThrow({ where: { id: project.id } })).managerId,
+    sup.user.id,
+  );
+
+  const pmNote = await db.notification.findFirst({
+    where: { userId: sup.user.id, projectId: project.id },
+  });
+  check(
+    "and they were told they own it",
+    pmNote?.title,
+    "You are the project manager on PM handover project",
+  );
+  check("by the person who did it", pmNote?.actorId, boss.user.id);
+  check("waiting to be acknowledged", pmNote?.acknowledgedAt ?? null, null);
+
+  check(
+    "the handover is on the project's timeline",
+    (
+      await db.auditEvent.findFirst({
+        where: { projectId: project.id, action: "project_pm_assigned" },
+      })
+    ) !== null,
+    true,
+  );
+
+  // Handing it to somebody else tells both of them.
+  await bossPage.reload({ waitUntil: "domcontentloaded" });
+  await bossPage
+    .locator(`select[name="managerId"]`)
+    .selectOption(boss.user.id);
+  await bossPage.getByRole("button", { name: "Save project" }).click();
+  await bossPage.waitForTimeout(2500);
+
+  const handedOver = await db.notification.findFirst({
+    where: {
+      userId: sup.user.id,
+      projectId: project.id,
+      title: { contains: "no longer" },
+    },
+  });
+  check(
+    "the previous manager is told they no longer own it",
+    handedOver?.title,
+    "You are no longer the project manager on PM handover project",
+  );
+  check(
+    "a replacement reads as a change rather than a fresh assignment",
+    (
+      await db.auditEvent.findFirst({
+        where: { projectId: project.id, action: "project_pm_changed" },
+      })
+    ) !== null,
+    true,
+  );
+
+  // Re-saving without touching the manager must not nag anybody again.
+  const before = await db.notification.count({ where: { projectId: project.id } });
+  await bossPage.reload({ waitUntil: "domcontentloaded" });
+  await bossPage.getByRole("button", { name: "Save project" }).click();
+  await bossPage.waitForTimeout(2500);
+  check(
+    "saving without changing the manager notifies nobody",
+    await db.notification.count({ where: { projectId: project.id } }),
+    before,
+  );
+
   await browser.close();
   await db.job.deleteMany({ where: { siteId: site.id } });
   await db.payrollPeriod.deleteMany({ where: { userId: tech.user.id } });
+  await db.notification.deleteMany({ where: { projectId: "verify-pm-project" } });
+  await db.project.deleteMany({ where: { id: "verify-pm-project" } });
   await db.$disconnect();
 
   console.log(

@@ -5,6 +5,7 @@ import { z } from "zod";
 import { recordAudit } from "@/lib/audit";
 import { db } from "@/lib/db";
 import { PROJECT_DEFAULT_RULES } from "@/lib/deliverables";
+import { notify } from "@/lib/notifications";
 import { requirePermission } from "@/lib/session";
 import { DeliverableCategory, ProjectRole, ProjectStatus } from "@prisma-client";
 
@@ -23,6 +24,13 @@ const optionalMoney = z
     (value) => value === null || (!Number.isNaN(Number(value)) && Number(value) >= 0),
     { message: "Enter a positive amount, or leave it blank" },
   );
+
+/** How a membership role reads in a message. */
+const ROLE_WORDING: Record<ProjectRole, string> = {
+  PROJECT_MANAGER: "As the project manager",
+  SUPERVISOR: "As a supervisor",
+  TECH: "As a tech",
+};
 
 const projectSchema = z.object({
   name: z.string().trim().min(1, "Name is required"),
@@ -54,6 +62,11 @@ export async function saveProject(
   const data = parsed.data;
 
   if (id) {
+    const before = await db.project.findUnique({
+      where: { id },
+      select: { managerId: true, name: true },
+    });
+
     const project = await db.project.update({ where: { id }, data });
 
     // Handing the project to someone new must also make them a member,
@@ -80,6 +93,17 @@ export async function saveProject(
       action: "project_updated",
       detail: { name: project.name },
     });
+
+    if ((before?.managerId ?? null) !== (project.managerId ?? null)) {
+      await recordManagerChange({
+        actorId: actor.id,
+        projectId: project.id,
+        projectName: project.name,
+        fromId: before?.managerId ?? null,
+        toId: project.managerId ?? null,
+      });
+    }
+
     revalidatePath(`/projects/${id}`);
     revalidatePath("/projects");
     return { ok: true, id };
@@ -117,8 +141,87 @@ export async function saveProject(
     detail: { name: project.name },
   });
 
+  if (project.managerId) {
+    await recordManagerChange({
+      actorId: actor.id,
+      projectId: project.id,
+      projectName: project.name,
+      fromId: null,
+      toId: project.managerId,
+    });
+  }
+
   revalidatePath("/projects");
   return { ok: true, id: project.id };
+}
+
+/**
+ * Puts a change of project manager on the project's timeline and tells the
+ * people it is about.
+ *
+ * Both of them: the person picking it up needs to know they own it, and the
+ * person who had it needs to know they no longer do. Finding either out by
+ * noticing a project has moved is how work gets dropped.
+ */
+async function recordManagerChange(input: {
+  actorId: string;
+  projectId: string;
+  projectName: string;
+  fromId: string | null;
+  toId: string | null;
+}): Promise<void> {
+  const ids = [input.fromId, input.toId].filter(
+    (value): value is string => value !== null,
+  );
+  const people = await db.user.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, name: true },
+  });
+  const nameOf = (id: string | null) =>
+    id ? (people.find((person) => person.id === id)?.name ?? null) : null;
+
+  await recordAudit({
+    actorId: input.actorId,
+    entityType: "Project",
+    entityId: input.projectId,
+    projectId: input.projectId,
+    action: input.toId
+      ? input.fromId
+        ? "project_pm_changed"
+        : "project_pm_assigned"
+      : "project_pm_cleared",
+    detail: {
+      who: nameOf(input.toId) ?? nameOf(input.fromId) ?? undefined,
+      from: nameOf(input.fromId),
+      to: nameOf(input.toId),
+    },
+  });
+
+  if (input.toId) {
+    await notify({
+      userId: input.toId,
+      actorId: input.actorId,
+      kind: "project_manager",
+      title: `You are the project manager on ${input.projectName}`,
+      body: input.fromId
+        ? `Taken over from ${nameOf(input.fromId) ?? "somebody else"}`
+        : null,
+      href: `/projects/${input.projectId}`,
+      projectId: input.projectId,
+    });
+  }
+
+  if (input.fromId) {
+    await notify({
+      userId: input.fromId,
+      actorId: input.actorId,
+      kind: "project_manager",
+      title: `You are no longer the project manager on ${input.projectName}`,
+      body: input.toId ? `Now ${nameOf(input.toId)}` : null,
+      href: `/projects/${input.projectId}`,
+      projectId: input.projectId,
+    });
+  }
 }
 
 const memberSchema = z.object({
@@ -159,6 +262,20 @@ export async function upsertProjectMember(
     detail: { who: member.name, role },
   });
 
+  const project = await db.project.findUniqueOrThrow({
+    where: { id: projectId },
+    select: { name: true },
+  });
+  await notify({
+    userId,
+    actorId: actor.id,
+    kind: "project_manager",
+    title: `You are on the ${project.name} project`,
+    body: ROLE_WORDING[role],
+    href: `/projects/${projectId}`,
+    projectId,
+  });
+
   revalidatePath(`/projects/${projectId}`);
   return { ok: true };
 }
@@ -197,6 +314,19 @@ export async function removeProjectMember(
     projectId,
     action: "project_member_removed",
     detail: { who: removed?.name ?? userId },
+  });
+
+  const leftProject = await db.project.findUniqueOrThrow({
+    where: { id: projectId },
+    select: { name: true },
+  });
+  await notify({
+    userId,
+    actorId: actor.id,
+    kind: "project_manager",
+    title: `You are off the ${leftProject.name} project`,
+    href: `/projects`,
+    projectId,
   });
 
   revalidatePath(`/projects/${projectId}`);
