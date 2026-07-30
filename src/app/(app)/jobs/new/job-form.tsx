@@ -144,7 +144,7 @@ export function JobForm({
           </Field>
 
           <Field
-            label="Client"
+            label="Representing company"
             htmlFor="clientId"
             hint="The buyer / representing company."
           >

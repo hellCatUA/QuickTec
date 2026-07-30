@@ -389,13 +389,92 @@ async function main() {
   check("work order is a PDF", pdfBody.subarray(0, 5).toString(), "%PDF-");
   await bossContext.close();
 
+  // --- the shell ------------------------------------------------------------
+  // A name of its own, because the header collapses "QuickTec | QuickTec" to
+  // one on a fresh install. Restored at the end so the suite leaves no trace.
+  const settings = await db.companySettings.findUniqueOrThrow({
+    where: { id: "singleton" },
+    select: { name: true },
+  });
+  await db.companySettings.update({
+    where: { id: "singleton" },
+    data: { name: "417 Group" },
+  });
+  await page.goto(`${BASE}/dashboard`, { waitUntil: "domcontentloaded" });
+
+  check(
+    "the header names the company and the app",
+    await page.locator("header").getByText("417 Group | QuickTec").isVisible(),
+    true,
+  );
+  check(
+    "the theme control is not taking up header space",
+    await page.locator("header").getByRole("radiogroup", { name: "Theme" }).count(),
+    0,
+  );
+
+  // It moved to the account page, which is also where signing out lives.
+  await page.goto(`${BASE}/account`, { waitUntil: "domcontentloaded" });
+  check(
+    "the theme control is on the account page",
+    await page.getByRole("radiogroup", { name: "Theme" }).isVisible(),
+    true,
+  );
+  check(
+    "which also shows who you are signed in as",
+    await page.getByText("tech@417group.org").isVisible(),
+    true,
+  );
+  check(
+    "and offers a sign-out of its own, not only the header icon",
+    await page
+      .getByRole("main")
+      .getByRole("button", { name: "Sign out" })
+      .isVisible(),
+    true,
+  );
+
+  // Renamed because "client" reads as the customer being served, which is the
+  // opposite of what it means here.
+  await bossPage(browser, bossToken, async (adminPage) => {
+    await adminPage.goto(`${BASE}/directory`, { waitUntil: "domcontentloaded" });
+    check(
+      "the directory calls them representing companies",
+      await adminPage.getByText("Representing companies").first().isVisible(),
+      true,
+    );
+    check(
+      "and never clients",
+      await adminPage.getByText("Clients", { exact: true }).count(),
+      0,
+    );
+  });
+
   await browser.close();
+  await db.companySettings.update({
+    where: { id: "singleton" },
+    data: { name: settings.name },
+  });
   await db.$disconnect();
 
   console.log(
     `\n${failures === 0 ? "ALL BROWSER CHECKS PASSED" : `${failures} CHECK(S) FAILED`}`,
   );
   process.exit(failures === 0 ? 0 : 1);
+}
+
+/** Runs a block in a fresh manager session, then closes it. */
+async function bossPage(
+  browser: import("playwright").Browser,
+  token: string,
+  run: (page: import("playwright").Page) => Promise<void>,
+) {
+  const context = await browser.newContext();
+  await context.addCookies([
+    { name: "authjs.session-token", value: token, url: BASE },
+  ]);
+  await run(await context.newPage());
+  await context.close();
 }
 
 /**

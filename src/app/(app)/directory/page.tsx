@@ -27,10 +27,10 @@ export default async function DirectoryPage() {
     {
       href: "/directory/clients",
       icon: Building,
-      title: "Clients",
+      title: "Representing companies",
       count: clients,
       description:
-        "Buyers and representing companies that dispatch work to us. Exported as “Buyer/Representing company”.",
+        "The companies that dispatch work to us and pay for it. Not the same as customers — exported as “Buyer/Representing company”.",
       visible: canManageClients,
     },
     {

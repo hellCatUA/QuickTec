@@ -176,23 +176,20 @@ function cookieHeader(jar: Map<string, string>): string {
   return [...jar.entries()].map(([name, value]) => `${name}=${value}`).join("; ");
 }
 
-/** Runs a full sign-in and returns where the app finally sent the browser. */
-async function signInRoundTrip(): Promise<{ location: string; authorize: URL }> {
+/**
+ * Runs a full sign-in the way a person does — through /api/auth/start, which
+ * is where an unauthenticated visit lands — and returns where the app finally
+ * sent the browser.
+ */
+async function signInRoundTrip(
+  options: { reauth?: boolean } = {},
+): Promise<{ location: string; authorize: URL }> {
   const jar = new Map<string, string>();
 
-  const csrfResponse = await fetch(`${BASE}/api/auth/csrf`);
-  mergeCookies(jar, csrfResponse);
-  const { csrfToken } = (await csrfResponse.json()) as { csrfToken: string };
-
-  const start = await fetch(`${BASE}/api/auth/signin/nextcloud`, {
-    method: "POST",
-    redirect: "manual",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Cookie: cookieHeader(jar),
-    },
-    body: new URLSearchParams({ csrfToken, callbackUrl: "/dashboard" }),
-  });
+  const start = await fetch(
+    `${BASE}/api/auth/start${options.reauth ? "?reauth=1" : ""}`,
+    { redirect: "manual" },
+  );
   mergeCookies(jar, start);
 
   const authorize = new URL(start.headers.get("location") ?? "");
@@ -261,6 +258,31 @@ async function main() {
     true,
   );
 
+  // Nobody is asked whether they would like to sign in: NextCloud is the only
+  // way in, so /signin hands straight over.
+  const signinPage = await fetch(`${BASE}/signin`, { redirect: "manual" });
+  check(
+    "an unauthenticated visit is sent straight into the flow",
+    signinPage.headers.get("location"),
+    "/api/auth/start",
+  );
+  check(
+    "a normal sign-in does not force a password prompt",
+    first.authorize.searchParams.get("prompt"),
+    null,
+  );
+
+  // After signing out it does, otherwise signing out on a shared phone and
+  // back in silently returns the same account.
+  const afterSignOut = await fetch(`${BASE}/signin?reauth=1`, {
+    redirect: "manual",
+  });
+  check(
+    "signing out routes back through the flow",
+    afterSignOut.headers.get("location"),
+    "/api/auth/start?reauth=1",
+  );
+
   // --- claims in the ID token, the straightforward case --------------------
   check("a complete ID token signs the user in", first.location, `${PUBLIC}/dashboard`);
 
@@ -317,6 +339,27 @@ async function main() {
     "an account with no email is told exactly that",
     new URL(fourth.location).searchParams.get("error"),
     "NoEmail",
+  );
+
+  // --- re-authentication ----------------------------------------------------
+  idTokenClaims = {
+    sub: "u-idtoken",
+    email: emails[0],
+    name: "Ivy IdToken",
+    roles: ["quicktec-manager"],
+  };
+  userInfoClaims = null;
+
+  const reauth = await signInRoundTrip({ reauth: true });
+  check(
+    "coming back after a sign-out asks NextCloud for credentials again",
+    reauth.authorize.searchParams.get("prompt"),
+    "login",
+  );
+  check(
+    "and still signs in once they are given",
+    reauth.location,
+    `${PUBLIC}/dashboard`,
   );
 
   stop();

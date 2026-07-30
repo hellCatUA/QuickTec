@@ -80,7 +80,7 @@ export default async function RatesPage() {
             scopeLabel: rate.project
               ? `Project · ${rate.project.name}`
               : rate.client
-                ? `Client · ${rate.client.name}`
+                ? `Company · ${rate.client.name}`
                 : "Default",
           }))}
           projects={projects}

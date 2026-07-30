@@ -1,11 +1,13 @@
 import { LogOut } from "lucide-react";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { signOut } from "@/auth";
 import { BottomNav, SideNav } from "@/components/app-nav";
+import { CompanyMark } from "@/components/company-mark";
 import { ConnectionStatus } from "@/components/connection-status";
 import { ServiceWorkerRegistrar } from "@/components/service-worker";
-import { ThemeToggle } from "@/components/theme";
 import { Button } from "@/components/ui/button";
+import { brandLine } from "@/lib/company";
 import { db } from "@/lib/db";
 import { buildNavItems } from "@/lib/nav";
 import { getSessionUser } from "@/lib/session";
@@ -39,36 +41,36 @@ export default async function AppLayout({
       <ConnectionStatus />
 
       <header className="flex items-center gap-3 border-b border-border bg-surface px-4 py-2">
-        <div className="flex min-w-0 items-center gap-2">
-          {company?.logoUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={company.logoUrl}
-              alt=""
-              className="size-7 rounded object-contain"
-            />
-          ) : (
-            <div className="flex size-7 items-center justify-center rounded bg-primary text-xs font-bold text-primary-foreground">
-              Q
-            </div>
-          )}
+        <Link href="/dashboard" className="flex min-w-0 items-center gap-2">
+          <CompanyMark
+            logoUrl={company?.logoUrl}
+            name={company?.name}
+            className="size-10 text-sm"
+          />
+          {/* The company owns the deployment, QuickTec is what it is running.
+              Both belong here — replacing one with the other loses which app
+              you are looking at. */}
           <span className="truncate text-sm font-semibold">
-            {company?.name ?? "QuickTec"}
+            {brandLine(company?.name)}
           </span>
-        </div>
+        </Link>
 
         <div className="ml-auto flex items-center gap-2">
-          <div className="hidden text-right sm:block">
+          <Link
+            href="/account"
+            className="hidden rounded-lg px-2 py-1 text-right hover:bg-muted sm:block"
+          >
             <div className="text-xs font-medium leading-tight">{user.name}</div>
             <div className="text-[10px] leading-tight text-muted-foreground">
               {ROLE_LABEL[user.baseRole] ?? user.baseRole}
             </div>
-          </div>
-          <ThemeToggle />
+          </Link>
           <form
             action={async () => {
               "use server";
-              await signOut({ redirectTo: "/signin" });
+              // Back through NextCloud asking for credentials, so signing out
+              // on a shared phone actually signs you out.
+              await signOut({ redirectTo: "/signin?reauth=1" });
             }}
           >
             <Button

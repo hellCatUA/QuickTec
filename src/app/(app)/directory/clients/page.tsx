@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 import { can, getSessionUser } from "@/lib/session";
 import { ClientList } from "./client-list";
 
-export const metadata = { title: "Clients" };
+export const metadata = { title: "Representing companies" };
 
 export default async function ClientsPage() {
   const user = await getSessionUser();
@@ -26,9 +26,9 @@ export default async function ClientsPage() {
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4">
       <PageHeader
-        title="Clients"
+        title="Representing companies"
         backHref="/directory"
-        description="Buyers and representing companies. This is what fills “Buyer/Representing company” on the client-facing report."
+        description="Who dispatches work to us and pays for it. Fills “Buyer/Representing company” on the report we send back."
       />
       <ClientList clients={clients} />
     </div>

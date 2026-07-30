@@ -1,0 +1,116 @@
+import { LogOut } from "lucide-react";
+import { redirect } from "next/navigation";
+import { signOut } from "@/auth";
+import { ThemeToggle } from "@/components/theme";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { PageHeader } from "@/components/ui/page-header";
+import { db } from "@/lib/db";
+import { getSessionUser } from "@/lib/session";
+
+export const metadata = { title: "Your account" };
+
+const ROLE_LABEL: Record<string, string> = {
+  ADMINISTRATOR: "Administrator",
+  MANAGER: "Manager",
+  SUPERVISOR: "Supervisor",
+  TECH: "Tech",
+  ACCOUNTANT: "Accountant",
+};
+
+/**
+ * Everything that belongs to the person rather than the company.
+ *
+ * The theme lives here rather than in the header: it is set once and then
+ * never again, so a permanent control on every screen was three taps of dead
+ * space on a phone.
+ */
+export default async function AccountPage() {
+  const user = await getSessionUser();
+  if (!user) redirect("/signin");
+
+  const supervisor = user.directSupervisorId
+    ? await db.user.findUnique({
+        where: { id: user.directSupervisorId },
+        select: { name: true, email: true },
+      })
+    : null;
+
+  return (
+    <div className="mx-auto flex max-w-3xl flex-col gap-4">
+      <PageHeader
+        title="Your account"
+        description="Read from NextCloud on every sign-in. Ask a manager to change anything here."
+      />
+
+      <Card>
+        <CardHeader>
+          <CardTitle>{user.name}</CardTitle>
+          <CardDescription>{user.email}</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-2 text-sm">
+          <Row label="Role" value={ROLE_LABEL[user.baseRole] ?? user.baseRole} />
+          <Row label="Time zone" value={user.timeZone} />
+          <Row
+            label="Direct supervisor"
+            value={
+              supervisor
+                ? `${supervisor.name} · ${supervisor.email}`
+                : "not set — payroll needs one"
+            }
+          />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Appearance</CardTitle>
+          <CardDescription>
+            Dark is the default and what the app is designed for. Kept on this
+            device only.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ThemeToggle />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Sign out</CardTitle>
+          <CardDescription>
+            Signing back in asks NextCloud for your password again, so a shared
+            phone does not stay signed in as you.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form
+            action={async () => {
+              "use server";
+              await signOut({ redirectTo: "/signin?reauth=1" });
+            }}
+          >
+            <Button type="submit" variant="danger">
+              <LogOut /> Sign out
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex flex-wrap items-baseline justify-between gap-2">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="text-right">{value}</span>
+    </div>
+  );
+}

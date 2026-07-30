@@ -724,10 +724,17 @@ async function main() {
 
   check("zip is a real archive", zip.subarray(0, 2).toString(), "PK");
   check("zip contains the report", names.includes("887766-Report.txt"), true);
+  // The folder follows the company name, so read it rather than assuming it.
+  const companyName = (await db.companySettings.findUniqueOrThrow({
+    where: { id: "singleton" },
+    select: { name: true },
+  })).name;
+
   check(
     "zip contains the internal work order",
     names.some(
-      (name) => name.startsWith("QuickTec INT WO/") && name.endsWith(".pdf"),
+      (name) =>
+        name.startsWith(`${companyName} INT WO/`) && name.endsWith(".pdf"),
     ),
     true,
   );
@@ -980,6 +987,21 @@ async function main() {
   check("column order ends with the note", headers[headers.length - 1], "Pay Note");
 
   await db.job.delete({ where: { id: payJob.id } });
+
+  // --- branding -----------------------------------------------------------
+  const { brandLine } = await import("@/lib/company");
+
+  check(
+    "the header names the company and the app",
+    brandLine("417 Group"),
+    "417 Group | QuickTec",
+  );
+  check(
+    "a fresh install does not read QuickTec twice",
+    brandLine("QuickTec"),
+    "QuickTec",
+  );
+  check("nor when the name is blank", brandLine("  "), "QuickTec");
 
   // --- NextCloud groups ---------------------------------------------------
   const { extractGroups, resolveBaseRole } = await import(

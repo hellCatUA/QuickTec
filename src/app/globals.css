@@ -3,6 +3,9 @@
 /* Theme is class-driven so the inline script in layout.tsx can set it before
    first paint. Dark is the default; .light is the opt-out. */
 @custom-variant dark (&:where(.dark, .dark *));
+/* Its counterpart, for the few things drawn for dark and corrected on light —
+   the company logo, which is inverted rather than shipped twice. */
+@custom-variant light (&:where(.light, .light *));
 
 :root,
 .dark {

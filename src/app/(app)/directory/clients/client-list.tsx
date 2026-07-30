@@ -85,7 +85,7 @@ function ClientForm({
       <FormStatus
         state={state as SaveState}
         pending={pending}
-        label={client ? "Save" : "Add client"}
+        label={client ? "Save" : "Add company"}
       />
     </form>
   );
@@ -100,7 +100,7 @@ export function ClientList({ clients }: { clients: ClientRecord[] }) {
       {adding ? (
         <Card>
           <CardContent className="flex flex-col gap-4">
-            <div className="text-sm font-semibold">New client</div>
+            <div className="text-sm font-semibold">New representing company</div>
             <ClientForm onSaved={() => setAdding(false)} />
             <Button
               type="button"
@@ -119,14 +119,14 @@ export function ClientList({ clients }: { clients: ClientRecord[] }) {
           onClick={() => setAdding(true)}
           className="self-start"
         >
-          <Plus /> Add client
+          <Plus /> Add a representing company
         </Button>
       )}
 
       {clients.length === 0 && !adding ? (
         <EmptyState
-          title="No clients yet"
-          description="A client is the company that dispatches work to you — usually the subcontractor you invoice."
+          title="No representing companies yet"
+          description="The company that dispatches work to you and that you invoice — usually a subcontractor. Not the customer whose site you visit."
         />
       ) : null}
 

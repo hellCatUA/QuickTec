@@ -14,6 +14,20 @@ export async function getCompanySettings() {
 
 export type CompanySettings = Awaited<ReturnType<typeof getCompanySettings>>;
 
+export const APP_NAME = "QuickTec";
+
+/**
+ * "417 Group | QuickTec" — whose deployment this is, and what it is running.
+ *
+ * Falls back to the app name alone on a fresh install, where the company row
+ * is still called QuickTec and "QuickTec | QuickTec" would be the result.
+ */
+export function brandLine(companyName: string | null | undefined): string {
+  const name = (companyName ?? "").trim();
+  if (!name || name.toLowerCase() === APP_NAME.toLowerCase()) return APP_NAME;
+  return `${name} | ${APP_NAME}`;
+}
+
 /** "NetCom INT WO ID" — the field label follows the company name. */
 export function intWoFieldLabel(company: {
   name: string;

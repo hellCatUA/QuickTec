@@ -1,9 +1,10 @@
 import { AlertCircle } from "lucide-react";
 import { redirect } from "next/navigation";
 import { callbackUri, discoveryUrl, signIn, SIGNIN_ERRORS } from "@/auth";
-import { ThemeToggle } from "@/components/theme";
+import { CompanyMark } from "@/components/company-mark";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { brandLine } from "@/lib/company";
 import { db } from "@/lib/db";
 import { probeDiscovery, reportConfigProblems } from "@/lib/env";
 import { getSessionUser } from "@/lib/session";
@@ -33,17 +34,33 @@ function errorMessage(code: string | undefined): string | null {
 export default async function SignInPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string; callbackUrl?: string }>;
+  searchParams: Promise<{
+    error?: string;
+    callbackUrl?: string;
+    reauth?: string;
+  }>;
 }) {
   const user = await getSessionUser();
   if (user) redirect("/dashboard");
 
-  const { error, callbackUrl } = await searchParams;
+  const { error, callbackUrl, reauth } = await searchParams;
   const message = errorMessage(error);
 
   // A missing NEXTCLOUD_* variable otherwise presents as a sign-in button that
   // silently does nothing, so say so plainly instead.
   const configProblems = reportConfigProblems();
+
+  // Nothing to decide: NextCloud is the only way in, so go there. The page
+  // itself is only rendered when there is something to say — a failure to
+  // explain, or a configuration to fix — which is also what stops a redirect
+  // loop when sign-in keeps failing.
+  if (!error && configProblems.length === 0) {
+    const params = new URLSearchParams();
+    if (callbackUrl) params.set("callbackUrl", callbackUrl);
+    if (reauth === "1") params.set("reauth", "1");
+    const query = params.toString();
+    redirect(`/api/auth/start${query ? `?${query}` : ""}`);
+  }
 
   // Only after a configuration failure, and only then: Auth.js gives no clue
   // which of half a dozen causes it was, and the answer is one request away.
@@ -64,27 +81,14 @@ export default async function SignInPage({
 
   return (
     <div className="flex min-h-dvh flex-col items-center justify-center gap-6 p-6">
-      <div className="absolute right-4 top-4">
-        <ThemeToggle />
-      </div>
-
       <div className="flex flex-col items-center gap-3">
-        {company?.logoUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={company.logoUrl}
-            alt=""
-            className="size-14 rounded-xl object-contain"
-          />
-        ) : (
-          <div className="flex size-14 items-center justify-center rounded-xl bg-primary text-2xl font-bold text-primary-foreground">
-            Q
-          </div>
-        )}
+        <CompanyMark
+          logoUrl={company?.logoUrl}
+          name={company?.name}
+          className="size-16 rounded-xl text-2xl"
+        />
         <div className="text-center">
-          <h1 className="text-xl font-semibold">
-            {company?.name ?? "QuickTec"}
-          </h1>
+          <h1 className="text-xl font-semibold">{brandLine(company?.name)}</h1>
           <p className="text-sm text-muted-foreground">
             Field service time tracking &amp; reporting
           </p>
@@ -158,13 +162,15 @@ export default async function SignInPage({
               });
             }}
           >
+            {/* Only ever seen after a failure — an ordinary visit never gets
+                this far, it is redirected straight to NextCloud. */}
             <Button
               type="submit"
               size="lg"
               block
               disabled={configProblems.length > 0}
             >
-              Sign in with NextCloud
+              Try signing in again
             </Button>
           </form>
 

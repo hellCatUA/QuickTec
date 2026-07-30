@@ -67,7 +67,7 @@ export function ProjectForm({
         </Field>
 
         <Field
-          label="Client project ID"
+          label="Their project ID"
           htmlFor={`pext-${key}`}
           hint="The client's own ID. Goes into the internal WO number; blank becomes 0000."
         >
@@ -80,7 +80,7 @@ export function ProjectForm({
           />
         </Field>
 
-        <Field label="Client" htmlFor={`pclient-${key}`}>
+        <Field label="Representing company" htmlFor={`pclient-${key}`}>
           <Select
             id={`pclient-${key}`}
             name="clientId"

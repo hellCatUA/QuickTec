@@ -229,7 +229,7 @@ function OverrideForm({
           </Select>
         </Field>
 
-        <Field label={target === "project" ? "Project" : "Client"} htmlFor={`which-${userId}`}>
+        <Field label={target === "project" ? "Project" : "Representing company"} htmlFor={`which-${userId}`}>
           <Select
             id={`which-${userId}`}
             value={targetId}
