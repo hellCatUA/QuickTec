@@ -674,6 +674,41 @@ async function main() {
     );
   });
 
+  // --- the scheduled time, saved without being changed ----------------------
+  // The input is rendered in the site's zone. Saving it read the value back in
+  // the server's, so opening a job and pressing Save moved it by the site's
+  // offset — and again on the next save.
+  await bossPage(browser, bossToken, async (planner) => {
+    const planted = new Date("2026-07-28T16:30:00.000Z");
+    await db.job.update({
+      where: { id: assignment.jobId },
+      data: { scheduledStart: planted },
+    });
+
+    await planner.goto(url, { waitUntil: "load" });
+    await planner.waitForTimeout(1000);
+
+    await planner.getByRole("button", { name: "Edit Scheduled start" }).click();
+    check(
+      "the scheduled time is shown in the site's zone",
+      await planner.locator('input[type="datetime-local"]').inputValue(),
+      "2026-07-28T09:30",
+    );
+
+    await planner.getByRole("button", { name: "Save", exact: true }).click();
+    await planner.waitForTimeout(2000);
+
+    const saved = await db.job.findUniqueOrThrow({
+      where: { id: assignment.jobId },
+      select: { scheduledStart: true },
+    });
+    check(
+      "saving it untouched leaves the job where it was",
+      saved.scheduledStart?.toISOString(),
+      planted.toISOString(),
+    );
+  });
+
   // --- the crew picker ------------------------------------------------------
   await bossPage(browser, bossToken, async (planner) => {
     await planner.goto(url, { waitUntil: "load" });

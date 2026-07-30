@@ -153,9 +153,86 @@ export function endOfWeekMonday(date: Date, timeZone: string): Date {
 }
 
 /**
- * The UTC instant corresponding to 00:00 on a calendar date in a zone.
+ * Reads what a `datetime-local` input submitted back as an instant.
+ *
+ * The counterpart to toDatetimeLocalInZone, and it has to exist: the input
+ * submits "2026-07-28T09:30" with no offset, and `new Date` of that is
+ * *server* local time. The server runs in UTC, so a job at 09:30 in Los
+ * Angeles came back as 09:30Z — two in the morning on site. Worse, it was
+ * stable in neither direction: opening the job and pressing Save without
+ * touching anything shifted the schedule by the site's offset every time,
+ * and took the crew's calendars with it.
+ *
+ * Anything with an explicit offset (or a plain date) is left to the Date
+ * constructor, which already knows what to do with it.
+ */
+export function parseDatetimeLocalInZone(
+  value: string,
+  timeZone: string,
+): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::\d{2})?$/.exec(
+    value.trim(),
+  );
+  if (!match) {
+    const fallback = new Date(value);
+    return Number.isNaN(fallback.getTime()) ? null : fallback;
+  }
+
+  const [, year, month, day, hour, minute] = match;
+  return zonedWallTime(
+    Number(year),
+    Number(month),
+    Number(day),
+    Number(hour),
+    Number(minute),
+    timeZone,
+  );
+}
+
+/**
+ * The UTC instant of a wall-clock time in a zone.
+ *
  * Solved by iteration because the offset depends on the answer — on a DST
- * boundary the first guess can be an hour out.
+ * boundary the first guess can be an hour out. The drift is measured by
+ * putting both the wanted civil time and the observed one through Date.UTC
+ * and subtracting: month lengths and year ends then take care of themselves.
+ * The arithmetic this replaced treated a month as a flat 30 days, so the 31st
+ * of a month and the 1st of the next came out as the same instant — a pay
+ * week anchored on 1 November started on 31 October, and the schedule of any
+ * job planned for the 1st was a day early.
+ */
+export function zonedWallTime(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+  timeZone: string,
+): Date {
+  const wanted = Date.UTC(year, month - 1, day, hour, minute, 0, 0);
+  let guess = new Date(wanted);
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const parts = zonedParts(guess, timeZone);
+    const observed = Date.UTC(
+      parts.year,
+      parts.month - 1,
+      parts.day,
+      parts.hour,
+      parts.minute,
+      0,
+      0,
+    );
+
+    if (observed === wanted) break;
+    guess = new Date(guess.getTime() - (observed - wanted));
+  }
+
+  return guess;
+}
+
+/**
+ * The UTC instant corresponding to 00:00 on a calendar date in a zone.
  */
 export function zonedMidnight(
   year: number,
@@ -163,22 +240,7 @@ export function zonedMidnight(
   day: number,
   timeZone: string,
 ): Date {
-  let guess = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
-
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const parts = zonedParts(guess, timeZone);
-    const driftMinutes =
-      (parts.year - year) * 525_600 +
-      (parts.month - month) * 43_200 +
-      (parts.day - day) * 1_440 +
-      parts.hour * 60 +
-      parts.minute;
-
-    if (driftMinutes === 0) break;
-    guess = new Date(guess.getTime() - driftMinutes * 60_000);
-  }
-
-  return guess;
+  return zonedWallTime(year, month, day, 0, 0, timeZone);
 }
 
 /**

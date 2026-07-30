@@ -48,6 +48,12 @@ export function AutosaveText({
   // flush can skip work that is already saved.
   const savedValue = React.useRef(initialValue);
   const inFlight = React.useRef(false);
+  // What was typed while a save was already running. Without it the newer text
+  // was simply dropped — the debounce had already fired, so no timer was left
+  // to try again, and the tech's last sentence only reached the server if they
+  // happened to type once more or tab away. On one bar of signal a save is in
+  // flight for seconds at a time, which is most of them.
+  const queued = React.useRef<string | null>(null);
   // The retry inside flush has to call flush again. Going through a ref keeps
   // it pointed at the current one rather than capturing the version that
   // existed when the failing attempt started.
@@ -55,7 +61,12 @@ export function AutosaveText({
 
   const flush = React.useCallback(
     async (next: string) => {
-      if (inFlight.current || next === savedValue.current) return;
+      if (inFlight.current) {
+        queued.current = next;
+        setStatus("dirty");
+        return;
+      }
+      if (next === savedValue.current) return;
 
       inFlight.current = true;
       setStatus("saving");
@@ -73,16 +84,30 @@ export function AutosaveText({
         }
       } catch {
         // Almost always a dropped connection. Back off and try again rather
-        // than telling the tech their work is gone.
+        // than telling the tech their work is gone. Retry the newest text if
+        // there is one — resending what they have already moved on from would
+        // put the older version back.
         retries.current = Math.min(retries.current + 1, 5);
         setError("No connection — will retry");
         setStatus("error");
+
+        const retryWith = queued.current ?? next;
+        queued.current = null;
+        if (timer.current) clearTimeout(timer.current);
         timer.current = setTimeout(
-          () => void flushRef.current(next),
+          () => void flushRef.current(retryWith),
           1000 * 2 ** retries.current,
         );
       } finally {
         inFlight.current = false;
+
+        // Anything typed while that was in flight goes now, so the last thing
+        // written is the thing that ends up stored.
+        const pending = queued.current;
+        queued.current = null;
+        if (pending !== null && pending !== savedValue.current) {
+          void flushRef.current(pending);
+        }
       }
     },
     [save],

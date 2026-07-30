@@ -5,7 +5,7 @@ import { z } from "zod";
 import { recordAudit } from "@/lib/audit";
 import { syncJobInBackground } from "@/lib/calendar/sync";
 import { getCompanySettings } from "@/lib/company";
-import { roundToInterval } from "@/lib/datetime";
+import { parseDatetimeLocalInZone, roundToInterval } from "@/lib/datetime";
 import { db } from "@/lib/db";
 import { deliverableLabel, resolveDeliverableRules } from "@/lib/deliverables";
 import { isJobField, JOB_FIELDS, type JobFieldName } from "@/lib/job-fields";
@@ -30,6 +30,8 @@ type JobContext = {
     breakPaid: boolean;
     lifecycle: string;
     assigneeIds: string[];
+    /** The site's zone: what a planner means when they type a time. */
+    timeZone: string;
   };
 };
 
@@ -46,10 +48,13 @@ async function loadContext(jobId: string): Promise<JobContext | null> {
       createdById: true,
       breakPaid: true,
       lifecycle: true,
+      site: { select: { timeZone: true } },
       assignments: { select: { userId: true } },
     },
   });
   if (!job) return null;
+
+  const company = await getCompanySettings();
 
   return {
     user,
@@ -60,6 +65,7 @@ async function loadContext(jobId: string): Promise<JobContext | null> {
       breakPaid: job.breakPaid,
       lifecycle: job.lifecycle,
       assigneeIds: job.assignments.map((assignment) => assignment.userId),
+      timeZone: job.site.timeZone ?? company.defaultTimeZone,
     },
   };
 }
@@ -454,6 +460,7 @@ export async function toggleBreak(formData: FormData): Promise<ActionResult> {
 function coerceField(
   field: JobFieldName,
   raw: string,
+  timeZone: string,
 ): { value: Prisma.JobUpdateInput[JobFieldName] } | { error: string } {
   const trimmed = raw.trim();
   const kind = JOB_FIELDS[field].kind;
@@ -469,8 +476,10 @@ function coerceField(
 
   if (kind === "datetime") {
     if (trimmed === "") return { value: null };
-    const parsed = new Date(trimmed);
-    if (Number.isNaN(parsed.getTime())) {
+    // The input holds site-local time, which is what the planner typed and
+    // what the page rendered. Reading it as anything else moves the job.
+    const parsed = parseDatetimeLocalInZone(trimmed, timeZone);
+    if (!parsed) {
       return { error: `${JOB_FIELDS[field].label} is not a valid date.` };
     }
     return { value: parsed };
@@ -508,7 +517,11 @@ export async function saveJobField(formData: FormData): Promise<ActionResult> {
     return fail("You cannot change this field.");
   }
 
-  const coerced = coerceField(field, String(formData.get("value") ?? ""));
+  const coerced = coerceField(
+    field,
+    String(formData.get("value") ?? ""),
+    job.timeZone,
+  );
   if ("error" in coerced) return fail(coerced.error);
 
   await db.job.update({
@@ -872,7 +885,11 @@ export async function reviewChangeRequest(
     return fail("That field no longer exists.");
   }
 
-  const coerced = coerceField(request.fieldPath, request.newValue ?? "");
+  const coerced = coerceField(
+    request.fieldPath,
+    request.newValue ?? "",
+    job.timeZone,
+  );
   if ("error" in coerced) return fail(coerced.error);
 
   await db.$transaction(async (tx) => {

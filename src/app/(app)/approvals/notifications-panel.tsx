@@ -24,19 +24,36 @@ export type NotificationRow = {
  */
 export function NotificationsPanel({ rows }: { rows: NotificationRow[] }) {
   const [dismissed, setDismissed] = React.useState<Set<string>>(new Set());
+  const [error, setError] = React.useState<string | null>(null);
   const [pending, startTransition] = React.useTransition();
 
   const visible = rows.filter((row) => !dismissed.has(row.id));
   if (visible.length === 0) return null;
 
+  /** Puts rows back when the server did not in fact record the acknowledgement. */
+  function restore(ids: string[]) {
+    setDismissed((current) => {
+      const back = new Set(current);
+      for (const id of ids) back.delete(id);
+      return back;
+    });
+  }
+
   function acknowledge(id: string) {
     // Off the screen immediately: the record is what matters, and waiting for
-    // a round trip to remove a line you have read feels broken.
+    // a round trip to remove a line you have read feels broken. If it did not
+    // land, the line comes back rather than leaving somebody sure they have
+    // acknowledged something the record says they have not.
+    setError(null);
     setDismissed((current) => new Set(current).add(id));
     startTransition(async () => {
       const formData = new FormData();
       formData.set("id", id);
-      await acknowledgeNotification(formData);
+      const result = await acknowledgeNotification(formData);
+      if (!result.ok) {
+        restore([id]);
+        setError(result.error ?? "That did not go through.");
+      }
     });
   }
 
@@ -59,9 +76,19 @@ export function NotificationsPanel({ rows }: { rows: NotificationRow[] }) {
             className="ml-auto"
             disabled={pending}
             onClick={() => {
-              setDismissed(new Set(rows.map((row) => row.id)));
+              const ids = visible.map((row) => row.id);
+              setError(null);
+              setDismissed((current) => {
+                const next = new Set(current);
+                for (const id of ids) next.add(id);
+                return next;
+              });
               startTransition(async () => {
-                await acknowledgeAll();
+                const result = await acknowledgeAll();
+                if (!result.ok) {
+                  restore(ids);
+                  setError(result.error ?? "That did not go through.");
+                }
               });
             }}
           >
@@ -69,6 +96,8 @@ export function NotificationsPanel({ rows }: { rows: NotificationRow[] }) {
           </Button>
         ) : null}
       </div>
+
+      {error ? <p className="text-sm text-danger">{error}</p> : null}
 
       <ul className="flex flex-col gap-1.5">
         {visible.map((row) => (

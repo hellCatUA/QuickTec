@@ -5,6 +5,7 @@ import { z } from "zod";
 import { recordAudit } from "@/lib/audit";
 import { syncJobInBackground } from "@/lib/calendar/sync";
 import { getCompanySettings } from "@/lib/company";
+import { parseDatetimeLocalInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
 import { optionalText } from "@/lib/form";
 import {
@@ -74,10 +75,13 @@ export async function createJob(
   const company = await getCompanySettings();
   const timeZone = site.timeZone ?? company.defaultTimeZone;
 
+  // A datetime-local input submits site-local wall time with no offset, so
+  // `new Date` of it would be read in the server's zone — UTC in the
+  // container — and the job would land hours from where it was planned.
   const scheduledStart = input.scheduledStart
-    ? new Date(input.scheduledStart)
+    ? parseDatetimeLocalInZone(input.scheduledStart, timeZone)
     : null;
-  if (scheduledStart && Number.isNaN(scheduledStart.getTime())) {
+  if (input.scheduledStart && !scheduledStart) {
     return { ok: false, error: "Scheduled time is not a valid date." };
   }
 
@@ -286,10 +290,13 @@ export async function createRevisit(
   const company = await getCompanySettings();
   const timeZone = parent.site.timeZone ?? company.defaultTimeZone;
 
+  // A datetime-local input submits site-local wall time with no offset, so
+  // `new Date` of it would be read in the server's zone — UTC in the
+  // container — and the job would land hours from where it was planned.
   const scheduledStart = input.scheduledStart
-    ? new Date(input.scheduledStart)
+    ? parseDatetimeLocalInZone(input.scheduledStart, timeZone)
     : null;
-  if (scheduledStart && Number.isNaN(scheduledStart.getTime())) {
+  if (input.scheduledStart && !scheduledStart) {
     return { ok: false, error: "Scheduled time is not a valid date." };
   }
 

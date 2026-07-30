@@ -10,6 +10,9 @@ import {
   roundToInterval,
   decimalHours,
   isoDateInZone,
+  parseDatetimeLocalInZone,
+  toDatetimeLocalInZone,
+  zonedMidnight,
 } from "@/lib/datetime";
 
 /**
@@ -289,6 +292,72 @@ async function main() {
   check("rounding 10:06 -> 10:05", round("10:06"), "10:05");
   check("rounding 10:07 -> 10:10", round("10:07"), "10:10");
   check("2h35m as decimal hours", decimalHours(155), "2.58");
+
+  // A datetime-local input is rendered in the site's zone and submitted back
+  // with no offset at all. Reading it with `new Date` took it as the server's
+  // zone — UTC here — so opening a job and pressing Save without touching
+  // anything moved it by the site's offset, every time, and dragged the crew's
+  // calendars along.
+  const roundTrip = (iso: string, zone: string) =>
+    parseDatetimeLocalInZone(
+      toDatetimeLocalInZone(new Date(iso), zone),
+      zone,
+    )?.toISOString();
+
+  check(
+    "a scheduled time survives being rendered and saved again",
+    roundTrip("2026-07-28T16:30:00.000Z", TZ),
+    "2026-07-28T16:30:00.000Z",
+  );
+  check(
+    "and in winter, when the offset is different",
+    roundTrip("2026-01-15T17:00:00.000Z", TZ),
+    "2026-01-15T17:00:00.000Z",
+  );
+  check(
+    "9am on site is 9am on site, not 9am UTC",
+    parseDatetimeLocalInZone("2026-07-28T09:00", TZ)?.toISOString(),
+    "2026-07-28T16:00:00.000Z",
+  );
+  check(
+    "an hour after the clocks go back is still that hour",
+    roundTrip("2026-11-01T10:30:00.000Z", TZ),
+    "2026-11-01T10:30:00.000Z",
+  );
+  check(
+    "a value that already carries an offset is left alone",
+    parseDatetimeLocalInZone("2026-07-28T16:30:00.000Z", TZ)?.toISOString(),
+    "2026-07-28T16:30:00.000Z",
+  );
+  check(
+    "and nonsense is still rejected",
+    parseDatetimeLocalInZone("not a date", TZ),
+    null,
+  );
+
+  // The drift correction underneath all of this used to count a month as a
+  // flat 30 days, so the 31st and the 1st of the next month cancelled out and
+  // came back as the same instant.
+  check(
+    "the first of a month is not the last of the one before",
+    zonedMidnight(2026, 11, 1, TZ).toISOString(),
+    "2026-11-01T07:00:00.000Z",
+  );
+  check(
+    "nor after a 31-day month in summer",
+    zonedMidnight(2026, 6, 1, TZ).toISOString(),
+    "2026-06-01T07:00:00.000Z",
+  );
+  check(
+    "and a new year is a new year",
+    zonedMidnight(2027, 1, 1, TZ).toISOString(),
+    "2027-01-01T08:00:00.000Z",
+  );
+  check(
+    "a pay week over a month boundary starts on the right Monday",
+    startOfWeekMonday(new Date("2026-11-01T12:00:00Z"), TZ).toISOString(),
+    "2026-10-26T07:00:00.000Z",
+  );
 
   // --- scope filtering ----------------------------------------------------
   const { jobScopeWhere } = await import("@/lib/scope");
