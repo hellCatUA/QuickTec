@@ -228,6 +228,19 @@ export async function createJob(
     },
   });
 
+  // Also on the project's own history, so "five jobs were added in March" is
+  // answerable from the project rather than by trawling the job list.
+  if (project) {
+    await recordAudit({
+      actorId: actor.id,
+      entityType: "Job",
+      entityId: job.id,
+      projectId: project.id,
+      action: "project_job_created",
+      detail: { who: job.intWoId, to: input.title },
+    });
+  }
+
   syncJobInBackground(job.id);
   revalidatePath("/jobs");
   return { ok: true, id: job.id };
@@ -370,6 +383,17 @@ export async function createRevisit(
     action: "revisit_scheduled",
     detail: { revisitJobId: job.id, intWoId: job.intWoId },
   });
+
+  if (parent.projectId) {
+    await recordAudit({
+      actorId: actor.id,
+      entityType: "Job",
+      entityId: job.id,
+      projectId: parent.projectId,
+      action: "revisit_created",
+      detail: { who: job.intWoId },
+    });
+  }
 
   revalidatePath("/jobs");
   revalidatePath(`/jobs/${parent.id}`);

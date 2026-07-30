@@ -96,6 +96,8 @@ model User {
   uploads               Attachment[]
   auditEvents           AuditEvent[]
   notifications         Notification[]
+  raisedNotifications   Notification[]       @relation("NotificationActor")
+  pmChanges             ProjectPmChange[]    @relation("PmChangedBy")
   calendarEvents        CalendarEvent[]
 
   @@index([baseRole, active])
@@ -196,6 +198,7 @@ model Client {
   projects Project[]
   jobs     Job[]
   payRates PayRate[]
+  contacts ExternalContact[]
 }
 
 /// The end brand, e.g. SBUX. Independent of Client because the same customer
@@ -277,6 +280,13 @@ model Project {
   managerId String?
   manager   User?   @relation("ProjectManager", fields: [managerId], references: [id], onDelete: SetNull)
 
+  /// The representing company's own project manager or coordinator — their
+  /// side, not ours. Copied onto each job as it is created, so replacing them
+  /// mid-project leaves the jobs already planned under the person who actually
+  /// ran them.
+  pmContactId String?
+  pmContact   ExternalContact? @relation("ProjectPmContact", fields: [pmContactId], references: [id], onDelete: SetNull)
+
   /// Markdown/HTML, prepended to each job's own scope.
   generalScopeOfWork String?
 
@@ -298,8 +308,65 @@ model Project {
   dispatchContacts    DispatchContact[]
   payRates            PayRate[]
   permissionOverrides PermissionOverride[]
+  pmHistory           ProjectPmChange[]
+  auditEvents         AuditEvent[]
+  notifications       Notification[]
 
   @@index([clientId])
+}
+
+/// Somebody on the other side of the work — the representing company's project
+/// manager or coordinator.
+///
+/// Kept as a directory because the same handful of people come back job after
+/// job, and re-typing a phone number from memory is how it ends up wrong. Their
+/// details are internal: only the name reaches the client-facing report.
+model ExternalContact {
+  id    String  @id @default(cuid())
+  name  String
+  title String?
+  phone String?
+  email String?
+  notes String?
+
+  /// Which representing company they work for, when it is known.
+  clientId String?
+  client   Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  projects  Project[]         @relation("ProjectPmContact")
+  jobs      Job[]             @relation("JobPmContact")
+  pmChanges ProjectPmChange[]
+
+  @@index([name])
+  @@index([clientId])
+}
+
+/// Who ran a project, and from when.
+///
+/// The current PM is on the project; this is the record of how it got there.
+/// Without it a mid-project handover would rewrite history, and "who was the
+/// coordinator on that job in June" is exactly the question that gets asked.
+model ProjectPmChange {
+  id        String  @id @default(cuid())
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  contactId String?
+  contact   ExternalContact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  changedById String?
+  changedBy   User?   @relation("PmChangedBy", fields: [changedById], references: [id], onDelete: SetNull)
+
+  /// Why, when somebody bothered to say. Worth having on a handover.
+  reason String?
+
+  createdAt DateTime @default(now())
+
+  @@index([projectId, createdAt])
 }
 
 model ProjectMember {
@@ -330,6 +397,10 @@ enum JobLifecycle {
   /// Clocked out, waiting on supervisor review.
   PENDING_REVIEW
   APPROVED
+  /// The representing company has paid for it and payroll has been run.
+  BILLED
+  /// The techs have been paid. Nothing left to do.
+  CLOSED
 }
 
 /// What the tech reported at checkout. Appears on client-facing exports.
@@ -391,6 +462,18 @@ model Job {
   outcome        JobOutcome?
   internalStatus JobInternalStatus?
 
+  /// When the representing company's money arrived, and when the techs were
+  /// paid. Stamped rather than derived so the timeline has something to show
+  /// even after a payroll period is rebuilt.
+  billedAt DateTime?
+  closedAt DateTime?
+
+  /// The representing company's coordinator for this job, copied from the
+  /// project when the job was created. A handover on the project does not
+  /// rewrite the jobs that ran under the previous one.
+  pmContactId String?
+  pmContact   ExternalContact? @relation("JobPmContact", fields: [pmContactId], references: [id], onDelete: SetNull)
+
   /// Filled at checkout. noReleaseCode records an explicit "there isn't one".
   releaseCode          String?
   noReleaseCode        Boolean @default(false)
@@ -430,6 +513,7 @@ model Job {
   changeRequests   ChangeRequest[]
   auditEvents      AuditEvent[]
   calendarEvents   CalendarEvent[]
+  notifications    Notification[]
 
   @@index([lifecycle])
   @@index([siteId])
@@ -978,34 +1062,58 @@ model AuditEvent {
   jobId String?
   job   Job?    @relation(fields: [jobId], references: [id], onDelete: Cascade)
 
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
   entityType String
   entityId   String
   action     String
-  /// { field, from, to } or action-specific payload.
+  /// Free shape, but the timeline reads these keys when they are present:
+  /// field, from, to, who, reason, count.
   detail     Json?
 
   createdAt DateTime @default(now())
 
   @@index([jobId, createdAt])
+  @@index([projectId, createdAt])
   @@index([entityType, entityId])
   @@index([actorId, createdAt])
 }
 
+/// Something that happened to somebody rather than something they must decide.
+///
+/// Being put on a job, taken off one, or made a project's coordinator are not
+/// approvals — there is nothing to accept or reject — but they are also not
+/// things to find out about by noticing your schedule changed. So they are
+/// listed separately and wait for an acknowledgement, which is what makes
+/// "they were told" a fact rather than an assumption.
 model Notification {
   id     String @id @default(cuid())
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  kind   String
-  title  String
-  body   String?
+  /// Who caused it. Null for anything the system did on its own.
+  actorId String?
+  actor   User?   @relation("NotificationActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  kind  String
+  title String
+  body  String?
   /// In-app deep link.
-  href   String?
-  readAt DateTime?
+  href  String?
+
+  jobId String?
+  job   Job?    @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  acknowledgedAt DateTime?
 
   createdAt DateTime @default(now())
 
-  @@index([userId, readAt])
+  @@index([userId, acknowledgedAt])
+  @@index([userId, createdAt])
 }
 
 /// What has been pushed to a tech's NextCloud calendar.

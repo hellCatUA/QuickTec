@@ -76,7 +76,8 @@ export async function saveProject(
       actorId: actor.id,
       entityType: "Project",
       entityId: project.id,
-      action: "updated",
+      projectId: project.id,
+      action: "project_updated",
       detail: { name: project.name },
     });
     revalidatePath(`/projects/${id}`);
@@ -111,7 +112,8 @@ export async function saveProject(
     actorId: actor.id,
     entityType: "Project",
     entityId: project.id,
-    action: "created",
+    projectId: project.id,
+    action: "project_created",
     detail: { name: project.name },
   });
 
@@ -137,6 +139,11 @@ export async function upsertProjectMember(
 
   const { projectId, userId, role } = parsed.data;
 
+  const member = await db.user.findUniqueOrThrow({
+    where: { id: userId },
+    select: { name: true },
+  });
+
   await db.projectMember.upsert({
     where: { projectId_userId: { projectId, userId } },
     update: { role },
@@ -147,8 +154,9 @@ export async function upsertProjectMember(
     actorId: actor.id,
     entityType: "ProjectMember",
     entityId: `${projectId}:${userId}`,
-    action: "set",
-    detail: { role },
+    projectId,
+    action: "project_member_added",
+    detail: { who: member.name, role },
   });
 
   revalidatePath(`/projects/${projectId}`);
@@ -176,13 +184,19 @@ export async function removeProjectMember(
     };
   }
 
+  const removed = await db.user.findUnique({
+    where: { id: userId },
+    select: { name: true },
+  });
   await db.projectMember.deleteMany({ where: { projectId, userId } });
 
   await recordAudit({
     actorId: actor.id,
     entityType: "ProjectMember",
     entityId: `${projectId}:${userId}`,
-    action: "removed",
+    projectId,
+    action: "project_member_removed",
+    detail: { who: removed?.name ?? userId },
   });
 
   revalidatePath(`/projects/${projectId}`);
@@ -241,8 +255,9 @@ export async function saveDeliverableRule(
     actorId: actor.id,
     entityType: "DeliverableRequirement",
     entityId: `${projectId}:${category}`,
-    action: "set",
-    detail: normalised,
+    projectId,
+    action: "project_rules_updated",
+    detail: { field: category, ...normalised },
   });
 
   revalidatePath(`/projects/${projectId}`);
@@ -284,8 +299,9 @@ export async function addDispatchContact(
     actorId: actor.id,
     entityType: "DispatchContact",
     entityId: contact.id,
-    action: "created",
-    detail: { label: contact.label },
+    projectId,
+    action: "project_updated",
+    detail: { field: "Dispatch contact", to: contact.label },
   });
 
   revalidatePath(`/projects/${projectId}`);
@@ -306,7 +322,9 @@ export async function deleteDispatchContact(
     actorId: actor.id,
     entityType: "DispatchContact",
     entityId: id,
-    action: "deleted",
+    projectId,
+    action: "project_updated",
+    detail: { field: "Dispatch contact", from: "removed" },
   });
 
   revalidatePath(`/projects/${projectId}`);

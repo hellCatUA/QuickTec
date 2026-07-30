@@ -17,7 +17,12 @@ export const LIFECYCLE_META: Record<
   IN_PROGRESS: { label: "In progress", variant: "success" },
   PENDING_REVIEW: { label: "Pending review", variant: "warning" },
   APPROVED: { label: "Approved", variant: "success" },
+  BILLED: { label: "Billed", variant: "success" },
+  CLOSED: { label: "Closed", variant: "neutral" },
 };
+
+/** Finished as far as anybody is concerned. Nothing left to chase. */
+export const SETTLED_LIFECYCLES: JobLifecycle[] = ["BILLED", "CLOSED"];
 
 /** What the tech reported at checkout. Appears on client-facing exports. */
 export const OUTCOME_META: Record<

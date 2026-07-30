@@ -28,10 +28,12 @@ import {
 } from "@/lib/job-status";
 import { formatRate } from "@/lib/money";
 import { canOnJob } from "@/lib/scope";
+import { loadTimeline } from "@/lib/timeline-data";
 import { can, getSessionUser } from "@/lib/session";
 import { loadJobForExport } from "@/lib/exports/job-data";
 import { buildTextReport } from "@/lib/exports/text-report";
 import { jobSpan } from "@/lib/time-tracking";
+import { Timeline } from "@/components/timeline";
 import { approveJob } from "../actions";
 import { ChangeRequests } from "./change-requests";
 import { CrewPanel } from "./crew-panel";
@@ -408,18 +410,7 @@ export default async function JobPage({
     ...(job.project?.dispatchContacts ?? []),
   ];
 
-  const timeline = await db.auditEvent.findMany({
-    where: { jobId: job.id },
-    orderBy: { createdAt: "desc" },
-    take: 40,
-    select: {
-      id: true,
-      action: true,
-      detail: true,
-      createdAt: true,
-      actor: { select: { name: true } },
-    },
-  });
+  const timeline = await loadTimeline({ jobId: job.id }, zone);
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4">
@@ -940,33 +931,11 @@ export default async function JobPage({
             {usDateTimeInZone(job.createdAt, zone)}
           </CardDescription>
         </CardHeader>
-        <CardContent className="flex flex-col gap-2 text-sm">
-          {timeline.map((event) => {
-            const detail = event.detail as {
-              field?: string;
-              who?: string;
-            } | null;
-            // "who" is the person the event was about, "actor" the person who
-            // did it — the two differ on exactly the entries that matter here,
-            // like one supervisor taking another's tech off a job.
-            const subject = detail?.field ?? detail?.who;
-            return (
-              <div key={event.id} className="flex flex-wrap items-baseline gap-2">
-                <span className="tabular text-xs text-muted-foreground">
-                  {usDateTimeInZone(event.createdAt, zone)}
-                </span>
-                <span>
-                  {event.action.replace(/_/g, " ")}
-                  {subject ? ` · ${subject}` : ""}
-                </span>
-                <span className="text-xs text-muted-foreground">
-                  {event.actor?.name ?? "system"}
-                </span>
-              </div>
-            );
-          })}
+        <CardContent>
+          <Timeline rows={timeline} />
         </CardContent>
       </Card>
+
     </div>
   );
 }

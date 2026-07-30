@@ -988,6 +988,72 @@ async function main() {
 
   await db.job.delete({ where: { id: payJob.id } });
 
+  // --- timeline grouping --------------------------------------------------
+  const { groupTimeline, timelineMeta } = await import("@/lib/timeline");
+
+  function event(id: string, action: string, actorName: string | null) {
+    return {
+      id,
+      action,
+      actorName,
+      createdAt: new Date(),
+      detail: null,
+    };
+  }
+
+  check(
+    "a run of the same bulk action collapses into one row",
+    groupTimeline([
+      event("1", "project_job_created", "Boss"),
+      event("2", "project_job_created", "Boss"),
+      event("3", "project_job_created", "Boss"),
+    ]).length,
+    1,
+  );
+  check(
+    "and keeps every event inside it",
+    groupTimeline([
+      event("1", "project_job_created", "Boss"),
+      event("2", "project_job_created", "Boss"),
+    ])[0].events.length,
+    2,
+  );
+  check(
+    "a lone bulk event stays a plain row rather than an empty block",
+    groupTimeline([event("1", "project_job_created", "Boss")])[0].events.length,
+    1,
+  );
+  check(
+    "a different person breaks the run — who did it is part of the story",
+    groupTimeline([
+      event("1", "tech_assigned", "Boss"),
+      event("2", "tech_assigned", "Sup"),
+    ]).length,
+    2,
+  );
+  check(
+    "so does something happening in between",
+    groupTimeline([
+      event("1", "tech_assigned", "Boss"),
+      event("2", "clock_in", "Boss"),
+      event("3", "tech_assigned", "Boss"),
+    ]).length,
+    3,
+  );
+  check(
+    "actions that never arrive in bulk do not collapse",
+    groupTimeline([
+      event("1", "project_created", "Boss"),
+      event("2", "project_created", "Boss"),
+    ]).length,
+    2,
+  );
+  check(
+    "an action nobody registered still reads as something",
+    timelineMeta("some_new_thing_happened").label,
+    "Some new thing happened",
+  );
+
   // --- branding -----------------------------------------------------------
   const { brandLine } = await import("@/lib/company");
 

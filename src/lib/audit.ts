@@ -11,7 +11,10 @@ export async function recordAudit(input: {
   entityType: string;
   entityId: string;
   action: string;
+  /** Set to put the event on that job's timeline. */
   jobId?: string | null;
+  /** Set to put it on that project's timeline. Both may apply at once. */
+  projectId?: string | null;
   detail?: Prisma.InputJsonValue;
 }) {
   await db.auditEvent.create({
@@ -21,6 +24,7 @@ export async function recordAudit(input: {
       entityId: input.entityId,
       action: input.action,
       jobId: input.jobId ?? null,
+      projectId: input.projectId ?? null,
       detail: input.detail,
     },
   });

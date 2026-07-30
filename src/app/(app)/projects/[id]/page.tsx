@@ -6,10 +6,13 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Timeline } from "@/components/timeline";
 import { PageHeader } from "@/components/ui/page-header";
+import { getCompanySettings } from "@/lib/company";
 import { db } from "@/lib/db";
 import { DELIVERABLE_ORDER } from "@/lib/deliverables";
 import { can, getSessionUser } from "@/lib/session";
+import { loadTimeline } from "@/lib/timeline-data";
 import { ProjectForm } from "../project-form";
 import { DeliverableRules } from "./deliverable-rules";
 import { DispatchContacts } from "./dispatch-contacts";
@@ -112,6 +115,12 @@ export default async function ProjectPage({
   ]);
 
   if (!project) notFound();
+
+  const company = await getCompanySettings();
+  const timeline = await loadTimeline(
+    { projectId: project.id },
+    company.defaultTimeZone,
+  );
 
   // Categories with no stored row yet still need a switch to turn on.
   const rulesByCategory = new Map(
@@ -218,6 +227,19 @@ export default async function ProjectPage({
             projectId={project.id}
             contacts={project.dispatchContacts}
           />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Timeline</CardTitle>
+          <CardDescription>
+            Everything that has happened to this project, newest first. Runs of
+            the same thing collapse — tap to open them.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Timeline rows={timeline} />
         </CardContent>
       </Card>
     </div>
