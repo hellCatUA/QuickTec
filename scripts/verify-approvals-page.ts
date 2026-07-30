@@ -363,7 +363,10 @@ async function main() {
   );
 
   await supPage.getByRole("button", { name: "Add a tech" }).click();
-  await supPage.locator("#crew-add").selectOption(tech.user.id);
+  // A search, not a wheel: forty names do not fit in a native select.
+  await supPage.locator("#crew-add").click();
+  await supPage.locator("#crew-add").fill(tech.user.name);
+  await supPage.getByRole("option", { name: tech.user.name }).click();
   await supPage.getByRole("button", { name: "Add to crew" }).click();
   await supPage.waitForSelector("text=Lead", { timeout: 20_000 });
 

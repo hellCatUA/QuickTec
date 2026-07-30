@@ -15,6 +15,10 @@ import { db } from "@/lib/db";
  */
 
 const BASE = process.env.BASE_URL ?? "http://127.0.0.1:3000";
+
+/** A saved job, as opposed to /jobs/new — cuids all start with a c and are long. */
+const JOB_URL = /\/jobs\/c[a-z0-9]{10,}$/;
+
 let failures = 0;
 
 function check(label: string, actual: unknown, expected: unknown) {
@@ -43,6 +47,7 @@ async function main() {
   await db.pointOfContact.deleteMany({ where: { jobId: assignment.jobId } });
   await db.deliverableItem.deleteMany({ where: { jobId: assignment.jobId } });
   await db.reimbursement.deleteMany({ where: { jobId: assignment.jobId } });
+  await db.attachment.deleteMany({ where: { workOrderJobId: assignment.jobId } });
   await db.auditEvent.deleteMany({ where: { jobId: assignment.jobId } });
   await db.job.update({
     where: { id: assignment.jobId },
@@ -434,6 +439,106 @@ async function main() {
     true,
   );
 
+  // --- the new-job form -----------------------------------------------------
+  // Every picker here was a native select: fine for four options, miserable
+  // for forty, and unsearchable at either size.
+  await bossPage(browser, bossToken, async (planner) => {
+    await planner.goto(`${BASE}/jobs/new`, { waitUntil: "load" });
+    await planner.waitForTimeout(1500);
+
+    check(
+      "nothing is preselected — a company nobody checked is a company nobody checked",
+      await planner.locator('input[name="clientId"]').inputValue(),
+      "",
+    );
+
+    // Representing company: type, filter, pick.
+    await planner.locator("#clientId").click();
+    await planner.locator("#clientId").fill("netcom");
+    await planner.getByRole("option", { name: /NetCom/ }).click();
+    check(
+      "the company can be found by typing",
+      (await planner.locator('input[name="clientId"]').inputValue()).length > 0,
+      true,
+    );
+
+    // Site: search for a number that does not exist yet and add it.
+    const newNumber = String(Math.floor(Math.random() * 90000 + 10000));
+    await planner.locator("#siteId").click();
+    await planner.locator("#siteId").fill(newNumber);
+    check(
+      "an unknown site number offers to be added",
+      await planner.getByText(`Add site #${newNumber}`).isVisible(),
+      true,
+    );
+    await planner.getByText(`Add site #${newNumber}`).click();
+
+    await planner.locator("#qs-address").fill("1 Test Way");
+    await planner.locator("#qs-city").fill("Tacoma");
+    await planner.locator("#qs-state").fill("WA");
+    await planner.getByRole("button", { name: "Add site" }).click();
+    await planner.waitForTimeout(2500);
+
+    const created = await db.site.findFirst({ where: { siteNumber: newNumber } });
+    check("the site is created from the job form", Boolean(created), true);
+    check("with the address that was to hand", created?.city, "Tacoma");
+    check(
+      "and it is selected, so the form can carry on",
+      await planner.locator('input[name="siteId"]').inputValue(),
+      created?.id,
+    );
+
+    // Estimate in hours, not minutes.
+    await planner.getByRole("button", { name: "4h" }).click();
+    check(
+      "four hours is stored as minutes",
+      await planner.locator('input[name="estimateMinutes"]').inputValue(),
+      "240",
+    );
+
+    // Techs required by thumb.
+    await planner.getByRole("button", { name: "3", exact: true }).click();
+    check(
+      "the crew size preset applies",
+      await planner.locator('input[name="techsRequired"]').inputValue(),
+      "3",
+    );
+    await planner.getByRole("button", { name: "One fewer" }).click();
+    check(
+      "and the arrows adjust it",
+      await planner.locator('input[name="techsRequired"]').inputValue(),
+      "2",
+    );
+
+    // Techs by search rather than a wall of checkboxes.
+    await planner.locator("#assignee-search").click();
+    await planner.locator("#assignee-search").fill("terry");
+    await planner.getByRole("option", { name: /Terry/ }).click();
+    check(
+      "a tech added by search is on the job",
+      await planner.locator('input[name="assigneeIds"]').count(),
+      1,
+    );
+
+    await planner.locator("#title").fill("Built from the reworked form");
+    await planner.getByRole("button", { name: "Create job" }).click();
+    // Not /jobs\/[a-z0-9]+$/: that also matches /jobs/new, so a form that never
+    // submitted looked like a form that had.
+    await planner.waitForURL(JOB_URL, { timeout: 20_000 }).catch(() => undefined);
+
+    const made = await db.job.findFirst({
+      where: { title: "Built from the reworked form" },
+      include: { assignments: true },
+    });
+    check("the job is created", Boolean(made), true);
+    check("with the estimate in minutes", made?.estimateMinutes, 240);
+    check("the crew size", made?.techsRequired, 2);
+    check("and the tech on it", made?.assignments.length, 1);
+
+    if (made) await db.job.delete({ where: { id: made.id } });
+    if (created) await db.site.delete({ where: { id: created.id } });
+  });
+
   // --- creating a job -------------------------------------------------------
   // The Lead radio only exists in the DOM once somebody is assigned, so a job
   // planned with no crew submitted no leadId at all and the whole form was
@@ -443,16 +548,18 @@ async function main() {
     await planner.waitForTimeout(1500);
 
     await planner.locator("#title").fill("Planned with no crew");
-    await planner.locator('select[name="siteId"]').selectOption({ index: 1 });
+    // Nothing is preselected any more, so the company is part of filling it in.
+    await planner.locator("#clientId").click();
+    await planner.getByRole("option").first().click();
+    await planner.locator("#siteId").click();
+    await planner.getByRole("option").first().click();
     await planner.getByRole("button", { name: "Create job" }).click();
 
-    await planner
-      .waitForURL(/\/jobs\/[a-z0-9]+$/, { timeout: 20_000 })
-      .catch(() => undefined);
+    await planner.waitForURL(JOB_URL, { timeout: 20_000 }).catch(() => undefined);
 
     check(
       "a job with no crew can be created",
-      /\/jobs\/[a-z0-9]+$/.test(new URL(planner.url()).pathname),
+      JOB_URL.test(new URL(planner.url()).pathname),
       true,
     );
   });
@@ -464,6 +571,122 @@ async function main() {
   check("and it really exists", Boolean(planned), true);
   check("with nobody on it yet", planned?.assignments.length, 0);
   if (planned) await db.job.delete({ where: { id: planned.id } });
+
+  // --- the representing company's work order --------------------------------
+  // It used to live in somebody's inbox, which meant the tech at the door
+  // could not read the document the job answers to.
+  await bossPage(browser, bossToken, async (planner) => {
+    await planner.goto(url, { waitUntil: "load" });
+    await planner.waitForTimeout(1000);
+
+    check(
+      "there is somewhere to put the representing company's WO",
+      await planner.getByText("No work order attached yet.").isVisible(),
+      true,
+    );
+
+    await planner.locator('input[type="file"][accept*="pdf"]').last().setInputFiles({
+      name: "NetCom-WO-887766.pdf",
+      mimeType: "application/pdf",
+      buffer: Buffer.from(
+        "%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n",
+      ),
+    });
+    await planner.getByRole("button", { name: "Attach" }).click();
+    await planner.waitForTimeout(2500);
+
+    const stored = await db.attachment.findFirst({
+      where: { workOrderJobId: assignment.jobId },
+      select: { id: true, originalName: true, watermarked: true },
+    });
+    check("the work order is filed against the job", Boolean(stored), true);
+    check(
+      "under the name it arrived with",
+      stored?.originalName,
+      "NetCom-WO-887766.pdf",
+    );
+    // Their document, not ours — stamping it would misrepresent it.
+    check("and unstamped", stored?.watermarked, false);
+    check(
+      "and it is offered to open",
+      await planner.getByRole("link", { name: "NetCom-WO-887766.pdf" }).isVisible(),
+      true,
+    );
+
+    // Anyone on the job may open it; the permission check has to resolve the
+    // attachment back to the job through its new parent.
+    const asTech = await browser.newContext();
+    await asTech.addCookies([
+      { name: "authjs.session-token", value: token, url: BASE },
+    ]);
+    const fetched = await asTech.request.get(`${BASE}/api/files/${stored!.id}`);
+    check("the tech on the job can open it", fetched.status(), 200);
+    await asTech.close();
+
+    await planner
+      .getByRole("button", { name: "Remove NetCom-WO-887766.pdf" })
+      .click();
+    await planner.waitForTimeout(2000);
+    check(
+      "and a wrong one can be taken back off",
+      await db.attachment.count({ where: { workOrderJobId: assignment.jobId } }),
+      0,
+    );
+  });
+
+  // --- breaks, when the project got it wrong --------------------------------
+  await bossPage(browser, bossToken, async (planner) => {
+    const before = await db.job.findUniqueOrThrow({
+      where: { id: assignment.jobId },
+      select: { breakPaid: true },
+    });
+
+    await planner.goto(url, { waitUntil: "load" });
+    await planner.waitForTimeout(1000);
+
+    await planner
+      .getByRole("radio", {
+        name: before.breakPaid ? "Unpaid" : "Paid",
+        exact: true,
+      })
+      .click();
+    await planner.waitForTimeout(2000);
+
+    const after = await db.job.findUniqueOrThrow({
+      where: { id: assignment.jobId },
+      select: { breakPaid: true },
+    });
+    check(
+      "the inherited break setting can be overridden on the job",
+      after.breakPaid,
+      !before.breakPaid,
+    );
+
+    // A break logged unpaid and now paid has to reach payroll as paid.
+    const breaks = await db.breakPeriod.findMany({
+      where: { visit: { assignment: { jobId: assignment.jobId } } },
+      select: { paid: true },
+    });
+    check(
+      "and the breaks already logged move with it",
+      breaks.length > 0 && breaks.every((entry) => entry.paid === after.breakPaid),
+      true,
+    );
+  });
+
+  // --- the crew picker ------------------------------------------------------
+  await bossPage(browser, bossToken, async (planner) => {
+    await planner.goto(url, { waitUntil: "load" });
+    await planner.waitForTimeout(1000);
+
+    await planner.getByRole("button", { name: "Add a tech" }).click();
+    await planner.locator("#crew-add").click();
+    check(
+      "the crew is picked by searching too, not from a wheel",
+      await planner.locator('input[role="combobox"]#crew-add').isVisible(),
+      true,
+    );
+  });
 
   // Renamed because "client" reads as the customer being served, which is the
   // opposite of what it means here.

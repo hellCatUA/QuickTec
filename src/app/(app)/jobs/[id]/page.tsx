@@ -37,6 +37,8 @@ import { Timeline } from "@/components/timeline";
 import { approveJob } from "../actions";
 import { ChangeRequests } from "./change-requests";
 import { CrewPanel } from "./crew-panel";
+import { BreakPay } from "./break-pay";
+import { WorkOrderDocs } from "./work-order-docs";
 import { EditableField } from "./editable-field";
 import { PointsOfContact } from "./points-of-contact";
 import { RevisitPanel } from "./revisit-panel";
@@ -102,6 +104,15 @@ export default async function JobPage({
         select: { id: true, intWoId: true, revisitNumber: true, lifecycle: true },
       },
       client: { select: { name: true } },
+      workOrderDocs: {
+        orderBy: { createdAt: "asc" },
+        select: {
+          id: true,
+          originalName: true,
+          mimeType: true,
+          sizeBytes: true,
+        },
+      },
       customer: { select: { code: true, name: true } },
       site: {
         select: {
@@ -681,6 +692,28 @@ export default async function JobPage({
 
       <Card>
         <CardHeader>
+          <CardTitle>Work order</CardTitle>
+          <CardDescription>
+            The WO as {job.client.name} issued it. Whoever plans the job
+            attaches it; everybody on the job can open it.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <WorkOrderDocs
+            jobId={job.id}
+            canManage={canEditPlanned}
+            docs={job.workOrderDocs.map((doc) => ({
+              id: doc.id,
+              originalName: doc.originalName,
+              mimeType: doc.mimeType,
+              sizeBytes: doc.sizeBytes,
+            }))}
+          />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle>Work performed</CardTitle>
         </CardHeader>
         <CardContent>
@@ -749,7 +782,11 @@ export default async function JobPage({
 
           {editable("releaseCode", job.releaseCode ?? "")}
           {editable("returnTrackingNumber", job.returnTrackingNumber ?? "")}
-          <Static label="Breaks" value={job.breakPaid ? "Paid" : "Unpaid"} />
+          <BreakPay
+            jobId={job.id}
+            paid={job.breakPaid}
+            canChange={canEditPlanned}
+          />
         </CardContent>
       </Card>
 

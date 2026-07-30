@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 /**
  * Which job an attachment belongs to.
  *
- * Attachments hang off four different parents, so permission checks need a
+ * Attachments hang off five different parents, so permission checks need a
  * single place that resolves any of them back to a job. Mileage photos have no
  * job at all — they belong to the person who logged the trip — so the caller
  * gets told that instead of being handed a wrong answer.
@@ -22,6 +22,7 @@ export async function attachmentOwner(
       deliverableItem: { select: { jobId: true } },
       reimbursement: { select: { jobId: true } },
       signature: { select: { jobId: true } },
+      workOrderJobId: true,
       mileageStartEntry: { select: { userId: true } },
       mileageEndEntry: { select: { userId: true } },
     },
@@ -33,6 +34,7 @@ export async function attachmentOwner(
     attachment.deliverableItem?.jobId ??
     attachment.reimbursement?.jobId ??
     attachment.signature?.jobId ??
+    attachment.workOrderJobId ??
     null;
 
   if (jobId) return { kind: "job", jobId };

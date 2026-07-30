@@ -1105,3 +1105,49 @@ export async function saveMergedWorkPerformed(
 
   return ok;
 }
+
+/**
+ * Switches whether this job's breaks are paid.
+ *
+ * Not just a label: every break already recorded carries its own copy, which
+ * is what payroll reads. Changing the rule has to reach those too, or the
+ * change is cosmetic and the money comes out by the old one. The project
+ * supplies the default; a job can still differ from it.
+ */
+export async function setBreakPaid(formData: FormData): Promise<ActionResult> {
+  const jobId = String(formData.get("jobId") ?? "");
+  const paid = String(formData.get("paid") ?? "") === "true";
+
+  const context = await loadContext(jobId);
+  if (!context) return fail("Job not found.");
+  const { user, job } = context;
+
+  if (!(await canOnJob(user, "job.edit_planned_fields", job))) {
+    return fail("You cannot change how breaks are paid on this job.");
+  }
+  if (job.breakPaid === paid) return ok;
+
+  await db.$transaction([
+    db.job.update({ where: { id: jobId }, data: { breakPaid: paid } }),
+    db.breakPeriod.updateMany({
+      where: { visit: { assignment: { jobId } } },
+      data: { paid },
+    }),
+  ]);
+
+  await recordAudit({
+    actorId: user.id,
+    entityType: "Job",
+    entityId: jobId,
+    jobId,
+    action: "field_edited",
+    detail: {
+      field: "Breaks are paid",
+      from: String(job.breakPaid),
+      to: String(paid),
+    },
+  });
+
+  touch(jobId);
+  return ok;
+}

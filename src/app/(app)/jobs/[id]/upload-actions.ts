@@ -327,6 +327,115 @@ export async function deleteDeliverableItem(
 }
 
 // ---------------------------------------------------------------------------
+// The representing company's work order
+// ---------------------------------------------------------------------------
+
+/**
+ * Files the WO the representing company issued.
+ *
+ * It is the paperwork the whole job is answerable to — the scope, the site,
+ * what was agreed — and until now it lived in somebody's inbox, which meant
+ * the tech standing at the door could not read it. Several are allowed: a WO
+ * gets revised, and the superseded one is still what somebody was told on the
+ * day.
+ *
+ * Not a deliverable: deliverables are the crew's output and are foldered by
+ * tech in the export. This is an input.
+ */
+export async function uploadWorkOrder(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  const jobId = String(formData.get("jobId") ?? "");
+
+  const user = await getSessionUser();
+  if (!user) return fail("Not signed in.");
+
+  const job = await loadJob(jobId);
+  if (!job) return fail("Job not found.");
+
+  // Whoever plans the job is who receives the WO. A tech may read it but not
+  // replace it — the document is the record of what was agreed.
+  if (!(await canOnJob(user, "job.edit_planned_fields", job))) {
+    return fail("You cannot attach a work order to this job.");
+  }
+
+  const files = formData
+    .getAll("files")
+    .filter((entry): entry is File => entry instanceof File && entry.size > 0);
+  if (files.length === 0) return fail("Choose a file first.");
+
+  const failures: string[] = [];
+  let stored = 0;
+
+  for (const file of files) {
+    // No watermark: this is their document, and stamping it would misrepresent
+    // it as ours.
+    const result = await storeUpload(job, user, file, { watermark: false });
+    if ("error" in result) {
+      failures.push(`${file.name}: ${result.error}`);
+      continue;
+    }
+    await db.attachment.update({
+      where: { id: result.attachmentId },
+      data: { workOrderJobId: job.id },
+    });
+    stored++;
+  }
+
+  if (stored === 0) return fail(failures.join("; ") || "Nothing was saved.");
+
+  await recordAudit({
+    actorId: user.id,
+    entityType: "Job",
+    entityId: job.id,
+    jobId: job.id,
+    action: "work_order_attached",
+    detail: { files: stored, name: files[0]?.name ?? null },
+  });
+
+  touch(job.id);
+  return failures.length > 0 ? fail(failures.join("; ")) : ok();
+}
+
+export async function deleteWorkOrder(
+  formData: FormData,
+): Promise<ActionResult> {
+  const id = String(formData.get("id") ?? "");
+
+  const attachment = await db.attachment.findUnique({
+    where: { id },
+    select: { id: true, storagePath: true, originalName: true, workOrderJobId: true },
+  });
+  if (!attachment?.workOrderJobId) return fail("Not found.");
+
+  const user = await getSessionUser();
+  if (!user) return fail("Not signed in.");
+
+  const job = await loadJob(attachment.workOrderJobId);
+  if (!job) return fail("Job not found.");
+
+  if (!(await canOnJob(user, "job.edit_planned_fields", job))) {
+    return fail("You cannot remove this work order.");
+  }
+
+  await deleteFile(attachment.storagePath);
+  await db.attachment.delete({ where: { id } });
+
+  await recordAudit({
+    actorId: user.id,
+    entityType: "Job",
+    entityId: job.id,
+    jobId: job.id,
+    action: "work_order_removed",
+    detail: { name: attachment.originalName },
+  });
+
+  touch(job.id);
+  return ok();
+}
+
+// ---------------------------------------------------------------------------
 // Reimbursements
 // ---------------------------------------------------------------------------
 

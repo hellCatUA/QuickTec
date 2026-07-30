@@ -146,7 +146,10 @@ export async function createJob(
         estimateMinutes: input.estimateMinutes,
         techsRequired: input.techsRequired ?? 1,
         scopeOfWork: input.scopeOfWork,
-        breakPaid: project ? project.breakPaid : input.breakPaid,
+        // The project supplies the default; the planner can still overrule it
+        // for this job, which is a real case — a long day where breaks are
+        // covered on work that normally does not.
+        breakPaid: input.breakPaid,
         lifecycle: needsApproval
           ? "PENDING_APPROVAL"
           : scheduledStart
@@ -410,4 +413,96 @@ export async function approveJob(formData: FormData): Promise<ActionResult> {
   revalidatePath("/jobs");
   revalidatePath(`/jobs/${jobId}`);
   return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Sites created while planning or on site
+// ---------------------------------------------------------------------------
+
+const quickSiteSchema = z.object({
+  customerId: optionalText,
+  /** Used when the customer is new too — a brand nobody has logged yet. */
+  customerName: optionalText,
+  customerCode: optionalText,
+  siteNumber: z.string().trim().min(1, "Enter the site number"),
+  addressLine1: optionalText,
+  city: optionalText,
+  state: optionalText,
+  postalCode: optionalText,
+});
+
+/**
+ * Creates a site from whatever is known at the time.
+ *
+ * A site number is very often not known in advance — it turns up in a phone
+ * call or on the door — so anyone who can raise a job can add one, and the
+ * address is recorded if they have it rather than demanded before they can
+ * carry on. The directory is where a site gets tidied up afterwards.
+ */
+export async function quickCreateSite(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  const actor = await requirePermission("job.create");
+
+  const parsed = quickSiteSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) {
+    return { ok: false, error: z.prettifyError(parsed.error) };
+  }
+  const input = parsed.data;
+
+  let customerId = input.customerId;
+
+  if (!customerId) {
+    if (!input.customerName) {
+      return { ok: false, error: "Pick a customer, or name a new one." };
+    }
+
+    // A code is what shows up as "SBUX #24541", so derive one rather than
+    // making somebody invent it mid-call.
+    const code = (input.customerCode ?? input.customerName)
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "")
+      .slice(0, 8);
+    if (!code) return { ok: false, error: "That customer name has no letters." };
+
+    const existing = await db.customer.findUnique({ where: { code } });
+    customerId =
+      existing?.id ??
+      (
+        await db.customer.create({
+          data: { name: input.customerName, code },
+        })
+      ).id;
+  }
+
+  const duplicate = await db.site.findUnique({
+    where: {
+      customerId_siteNumber: { customerId, siteNumber: input.siteNumber },
+    },
+    select: { id: true },
+  });
+  if (duplicate) return { ok: true, id: duplicate.id };
+
+  const site = await db.site.create({
+    data: {
+      customerId,
+      siteNumber: input.siteNumber,
+      addressLine1: input.addressLine1 ?? "",
+      city: input.city ?? "",
+      state: input.state ?? "",
+      postalCode: input.postalCode ?? "",
+    },
+  });
+
+  await recordAudit({
+    actorId: actor.id,
+    entityType: "Site",
+    entityId: site.id,
+    action: "created",
+    detail: { siteNumber: site.siteNumber, city: site.city },
+  });
+
+  revalidatePath("/jobs/new");
+  return { ok: true, id: site.id };
 }

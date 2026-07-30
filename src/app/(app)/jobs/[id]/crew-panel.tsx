@@ -4,7 +4,8 @@ import { Star, UserPlus, X } from "lucide-react";
 import * as React from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Field, Input, Select } from "@/components/ui/field";
+import { Combobox } from "@/components/ui/combobox";
+import { Field, Input } from "@/components/ui/field";
 import { assignTech, setLeadTech, unassignTech } from "./actions";
 
 export type CrewMember = {
@@ -171,19 +172,19 @@ export function CrewPanel({
         adding ? (
           <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface-raised p-3">
             <Field label="Who is going" htmlFor="crew-add">
-              <Select
+              <Combobox
                 id="crew-add"
                 value={picked}
-                onChange={(event) => setPicked(event.target.value)}
-                autoFocus
-              >
-                <option value="">Pick someone</option>
-                {available.map((person) => (
-                  <option key={person.id} value={person.id}>
-                    {person.name} · {person.role.toLowerCase()}
-                  </option>
-                ))}
-              </Select>
+                onChange={setPicked}
+                placeholder="Search by name…"
+                emptyText="Nobody by that name is free for this job."
+                allowClear={false}
+                options={available.map((person) => ({
+                  value: person.id,
+                  label: person.name,
+                  hint: person.role.toLowerCase(),
+                }))}
+              />
             </Field>
             <p className="text-xs text-muted-foreground">
               Their rate is read from the project or client when they are added

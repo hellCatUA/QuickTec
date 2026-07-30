@@ -508,6 +508,8 @@ model Job {
   deliverableRules DeliverableRequirement[]
   deliverables     DeliverableItem[]
   reimbursements   Reimbursement[]
+  /// The representing company's own work order, as they issued it.
+  workOrderDocs    Attachment[]            @relation("JobWorkOrderDocs")
   mileageEntries   MileageEntry[]
   scopeChecks      JobScopeCheck[]
   changeRequests   ChangeRequest[]
@@ -1046,12 +1048,20 @@ model Attachment {
   reimbursementId String?
   reimbursement   Reimbursement? @relation(fields: [reimbursementId], references: [id], onDelete: Cascade)
 
+  /// Set when this is the representing company's work order for a job, rather
+  /// than something a tech produced on site. Kept off DeliverableItem on
+  /// purpose: it is not the crew's work and must not appear in their folder
+  /// of the export.
+  workOrderJobId String?
+  workOrderJob   Job?    @relation("JobWorkOrderDocs", fields: [workOrderJobId], references: [id], onDelete: Cascade)
+
   signature         Signature?
   mileageStartEntry MileageEntry? @relation("MileageStartPhoto")
   mileageEndEntry   MileageEntry? @relation("MileageEndPhoto")
 
   @@index([deliverableItemId])
   @@index([reimbursementId])
+  @@index([workOrderJobId])
 }
 
 model AuditEvent {

@@ -91,6 +91,8 @@ export const TIMELINE_META: Record<string, TimelineMeta> = {
   checkout_completed: { label: "Checkout completed", icon: CircleCheck, tone: "success" },
   outcome_set: { label: "Outcome recorded", icon: Flag, tone: "neutral" },
   report_changed: { label: "Report edited", icon: FileText, tone: "warning", groups: true },
+  work_order_attached: { label: "Work order attached", icon: FilePlus2, tone: "primary" },
+  work_order_removed: { label: "Work order removed", icon: Ban, tone: "warning" },
   deliverable_added: { label: "Deliverable added", icon: FilePlus2, tone: "neutral", groups: true },
   deliverable_removed: { label: "Deliverable removed", icon: Ban, tone: "warning", groups: true },
   signature_captured: { label: "Signature captured", icon: Pencil, tone: "success" },

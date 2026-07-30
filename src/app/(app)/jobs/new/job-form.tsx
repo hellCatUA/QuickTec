@@ -1,6 +1,6 @@
 "use client";
 
-import { Info } from "lucide-react";
+import { Info, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useActionState, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -11,9 +11,13 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Field, Input, Select, Textarea } from "@/components/ui/field";
+import { Button } from "@/components/ui/button";
+import { Combobox } from "@/components/ui/combobox";
+import { Field, Input, Textarea } from "@/components/ui/field";
 import { FormStatus, type SaveState } from "@/components/ui/form-status";
+import { HoursPicker, Stepper } from "@/components/ui/stepper";
 import { createJob, type ActionResult } from "../actions";
+import { SitePicker, type CustomerOption } from "./site-picker";
 
 type Client = { id: string; name: string };
 type Site = {
@@ -30,6 +34,7 @@ type Project = {
   clientId: string;
   customerId: string | null;
   intWoCounter: number;
+  breakPaid: boolean;
 };
 type Tech = { id: string; name: string; baseRole: string };
 
@@ -40,6 +45,7 @@ export function JobForm({
   sites,
   projects,
   techs,
+  customers,
   globalNextSequence,
   breakPaidByDefault,
 }: {
@@ -49,17 +55,23 @@ export function JobForm({
   sites: Site[];
   projects: Project[];
   techs: Tech[];
+  customers: CustomerOption[];
   globalNextSequence: number;
   breakPaidByDefault: boolean;
 }) {
   const router = useRouter();
 
-  const [clientId, setClientId] = useState(clients[0]?.id ?? "");
+  // Nothing is preselected. A company chosen for you is a company nobody
+  // checked, and this form files the work order under it.
+  const [clientId, setClientId] = useState("");
   const [projectId, setProjectId] = useState("");
   const [siteId, setSiteId] = useState("");
   const [scheduledStart, setScheduledStart] = useState("");
+  const [estimateMinutes, setEstimateMinutes] = useState<number | null>(null);
+  const [techsRequired, setTechsRequired] = useState(1);
   const [assignees, setAssignees] = useState<string[]>([]);
   const [leadId, setLeadId] = useState("");
+  const [breakPaidChoice, setBreakPaidChoice] = useState<boolean | null>(null);
 
   const [state, formAction, pending] = useActionState<ActionResult | null, FormData>(
     async (prev, formData) => {
@@ -80,6 +92,13 @@ export function JobForm({
   const selectedProject = availableProjects.find(
     (project) => project.id === projectId,
   );
+  const projectBreakPaid = selectedProject?.breakPaid ?? breakPaidByDefault;
+
+  // Follows the project until somebody sets it by hand, after which their
+  // choice stands — changing project must not silently undo a deliberate
+  // override. Derived rather than synced through an effect, so there is no
+  // render where the two disagree.
+  const breakPaid = breakPaidChoice ?? projectBreakPaid;
 
   // Mirrors formatIntWo on the server. Advisory only: the real number is
   // allocated inside the creating transaction, so a concurrent save can shift it.
@@ -108,6 +127,8 @@ export function JobForm({
     !techs.some(
       (tech) => assignees.includes(tech.id) && tech.baseRole !== "TECH",
     );
+
+  const unassigned = techs.filter((tech) => !assignees.includes(tech.id));
 
   function toggleAssignee(id: string) {
     setAssignees((current) =>
@@ -146,77 +167,66 @@ export function JobForm({
           <Field
             label="Representing company"
             htmlFor="clientId"
-            hint="The buyer / representing company."
+            hint="Who dispatched the work and pays for it. Not the customer whose site you visit."
           >
-            <Select
+            <Combobox
               id="clientId"
               name="clientId"
               value={clientId}
-              onChange={(event) => {
-                setClientId(event.target.value);
+              onChange={(next) => {
+                setClientId(next);
                 setProjectId("");
               }}
-              required
-            >
-              {clients.map((client) => (
-                <option key={client.id} value={client.id}>
-                  {client.name}
-                </option>
-              ))}
-            </Select>
+              placeholder="Search companies…"
+              options={clients.map((client) => ({
+                value: client.id,
+                label: client.name,
+              }))}
+            />
           </Field>
 
           <Field
             label="Project"
             htmlFor="projectId"
             hint={
-              availableProjects.length === 0
-                ? "No active projects for this client. The job will use the yearly counter."
-                : "Blank uses the global yearly counter and 0000 as the project ref."
+              !clientId
+                ? "Pick a company first — projects belong to one."
+                : availableProjects.length === 0
+                  ? "No active projects for this company. The job uses the yearly counter."
+                  : "Leave it empty to use the yearly counter and 0000 as the project ref."
             }
           >
-            <Select
+            <Combobox
               id="projectId"
               name="projectId"
               value={projectId}
-              onChange={(event) => setProjectId(event.target.value)}
-              disabled={availableProjects.length === 0}
-            >
-              <option value="">— no project —</option>
-              {availableProjects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                  {project.externalProjectId
-                    ? ` (${project.externalProjectId})`
-                    : ""}
-                </option>
-              ))}
-            </Select>
+              onChange={setProjectId}
+              disabled={!clientId || availableProjects.length === 0}
+              placeholder={
+                availableProjects.length === 0
+                  ? "No project"
+                  : "Search projects…"
+              }
+              options={availableProjects.map((project) => ({
+                value: project.id,
+                label: project.name,
+                hint: project.externalProjectId ?? undefined,
+              }))}
+            />
           </Field>
 
           <Field
             label="Site"
             htmlFor="siteId"
-            hint="Supplies the customer and the address on the report."
+            hint="Supplies the customer and the address on the report. Not there yet? Search for the number and add it."
             className="sm:col-span-2"
           >
-            <Select
-              id="siteId"
-              name="siteId"
+            <SitePicker
+              sites={sites}
+              customers={customers}
               value={siteId}
-              onChange={(event) => setSiteId(event.target.value)}
-              required
-            >
-              <option value="" disabled>
-                Select a site…
-              </option>
-              {sites.map((site) => (
-                <option key={site.id} value={site.id}>
-                  {site.customer.code} #{site.siteNumber} — {site.city},{" "}
-                  {site.state}
-                </option>
-              ))}
-            </Select>
+              onChange={setSiteId}
+            />
           </Field>
 
           <Field
@@ -246,7 +256,7 @@ export function JobForm({
         <CardHeader>
           <CardTitle>Schedule</CardTitle>
         </CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-3">
+        <CardContent className="grid gap-4 sm:grid-cols-2">
           <Field
             label="Scheduled start"
             htmlFor="scheduledStart"
@@ -262,28 +272,25 @@ export function JobForm({
           </Field>
 
           <Field
-            label="Estimate (minutes)"
+            label="Estimate"
             htmlFor="estimateMinutes"
             hint="Sets the calendar event length until the real clock-out lands."
           >
-            <Input
-              id="estimateMinutes"
+            <HoursPicker
               name="estimateMinutes"
-              type="number"
-              min={1}
-              step={15}
-              placeholder="120"
+              minutes={estimateMinutes}
+              onChange={setEstimateMinutes}
             />
           </Field>
 
           <Field label="Techs required" htmlFor="techsRequired">
-            <Input
-              id="techsRequired"
+            <Stepper
               name="techsRequired"
-              type="number"
+              value={techsRequired}
+              onChange={setTechsRequired}
               min={1}
               max={20}
-              defaultValue={1}
+              presets={[2, 3]}
             />
           </Field>
         </CardContent>
@@ -304,21 +311,29 @@ export function JobForm({
             placeholder={"- [ ] Swap the failed switch\n- [ ] Label all patch leads"}
           />
 
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              name="breakPaid"
-              defaultChecked={breakPaidByDefault}
-              disabled={Boolean(selectedProject)}
-              className="size-5 accent-[var(--color-primary)]"
-            />
-            Breaks are paid
+          <div className="flex flex-col gap-1">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                name="breakPaid"
+                checked={breakPaid}
+                onChange={(event) => setBreakPaidChoice(event.target.checked)}
+                className="size-5 accent-[var(--color-primary)]"
+              />
+              Breaks are paid
+            </label>
+
+            {/* The project supplies the default, but a single job can differ —
+                a long day where breaks are covered on work that normally does
+                not. Saying which it is beats disabling the box. */}
             {selectedProject ? (
               <span className="text-xs text-muted-foreground">
-                (inherited from the project)
+                {breakPaid === projectBreakPaid
+                  ? `Same as the ${selectedProject.name} project.`
+                  : `Overriding the ${selectedProject.name} project, which says ${projectBreakPaid ? "paid" : "unpaid"}.`}
               </span>
             ) : null}
-          </label>
+          </div>
         </CardContent>
       </Card>
 
@@ -332,42 +347,68 @@ export function JobForm({
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
-            {techs.map((tech) => {
-              const checked = assignees.includes(tech.id);
+            {assignees.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                Nobody yet. A job can be planned now and crewed later.
+              </p>
+            ) : null}
+
+            {assignees.map((id) => {
+              const tech = techs.find((entry) => entry.id === id);
+              if (!tech) return null;
+
               return (
                 <div
-                  key={tech.id}
+                  key={id}
                   className="flex flex-wrap items-center gap-2 rounded-lg border border-border p-2"
                 >
-                  <label className="flex min-w-0 flex-1 items-center gap-2 text-sm">
+                  <input type="hidden" name="assigneeIds" value={id} />
+                  <span className="min-w-0 flex-1 truncate text-sm">
+                    {tech.name}
+                  </span>
+                  <Badge variant="neutral">{tech.baseRole}</Badge>
+
+                  <label className="flex items-center gap-1.5 text-xs">
                     <input
-                      type="checkbox"
-                      name="assigneeIds"
-                      value={tech.id}
-                      checked={checked}
-                      onChange={() => toggleAssignee(tech.id)}
-                      className="size-5 accent-[var(--color-primary)]"
+                      type="radio"
+                      name="leadId"
+                      value={id}
+                      checked={effectiveLead === id}
+                      onChange={() => setLeadId(id)}
+                      className="size-4 accent-[var(--color-primary)]"
                     />
-                    <span className="truncate">{tech.name}</span>
-                    <Badge variant="neutral">{tech.baseRole}</Badge>
+                    Lead
                   </label>
 
-                  {checked ? (
-                    <label className="flex items-center gap-1.5 text-xs">
-                      <input
-                        type="radio"
-                        name="leadId"
-                        value={tech.id}
-                        checked={effectiveLead === tech.id}
-                        onChange={() => setLeadId(tech.id)}
-                        className="size-4 accent-[var(--color-primary)]"
-                      />
-                      Lead
-                    </label>
-                  ) : null}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-label={`Remove ${tech.name}`}
+                    onClick={() => toggleAssignee(id)}
+                  >
+                    <X />
+                  </Button>
                 </div>
               );
             })}
+
+            {unassigned.length > 0 ? (
+              <Combobox
+                id="assignee-search"
+                value=""
+                onChange={(id) => {
+                  if (id) toggleAssignee(id);
+                }}
+                placeholder="Search people to add…"
+                allowClear={false}
+                options={unassigned.map((tech) => ({
+                  value: tech.id,
+                  label: tech.name,
+                  hint: tech.baseRole.toLowerCase(),
+                }))}
+              />
+            ) : null}
 
             {multiTechNoSupervisor ? (
               <div className="flex items-start gap-2 rounded-lg bg-warning/15 p-3 text-xs text-warning ring-1 ring-inset ring-warning/30">
