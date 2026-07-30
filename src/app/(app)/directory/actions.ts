@@ -4,14 +4,11 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { recordAudit } from "@/lib/audit";
 import { db } from "@/lib/db";
+import { flag, optionalText } from "@/lib/form";
 import { requirePermission } from "@/lib/session";
 
 export type ActionResult = { ok: true; id?: string } | { ok: false; error: string };
 
-const optionalText = z
-  .string()
-  .trim()
-  .transform((value) => (value === "" ? null : value));
 
 function fail(error: unknown): ActionResult {
   if (error instanceof z.ZodError) {
@@ -38,7 +35,7 @@ const clientSchema = z.object({
   name: z.string().trim().min(1, "Name is required"),
   code: optionalText,
   notes: optionalText,
-  active: z.coerce.boolean(),
+  active: flag,
 });
 
 export async function saveClient(
@@ -86,7 +83,7 @@ const customerSchema = z.object({
     // Goes straight into "SBUX #24541" on the client-facing report.
     .max(16, "Keep the code short — it appears in exports")
     .transform((value) => value.toUpperCase()),
-  active: z.coerce.boolean(),
+  active: flag,
 });
 
 export async function saveCustomer(
@@ -139,7 +136,7 @@ const siteSchema = z.object({
   // Blank means "use the company default", which is the common case.
   timeZone: optionalText,
   notes: optionalText,
-  active: z.coerce.boolean(),
+  active: flag,
 });
 
 export async function saveSite(

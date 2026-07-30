@@ -434,6 +434,37 @@ async function main() {
     true,
   );
 
+  // --- creating a job -------------------------------------------------------
+  // The Lead radio only exists in the DOM once somebody is assigned, so a job
+  // planned with no crew submitted no leadId at all and the whole form was
+  // rejected — presenting as a Create button that did nothing.
+  await bossPage(browser, bossToken, async (planner) => {
+    await planner.goto(`${BASE}/jobs/new`, { waitUntil: "load" });
+    await planner.waitForTimeout(1500);
+
+    await planner.locator("#title").fill("Planned with no crew");
+    await planner.locator('select[name="siteId"]').selectOption({ index: 1 });
+    await planner.getByRole("button", { name: "Create job" }).click();
+
+    await planner
+      .waitForURL(/\/jobs\/[a-z0-9]+$/, { timeout: 20_000 })
+      .catch(() => undefined);
+
+    check(
+      "a job with no crew can be created",
+      /\/jobs\/[a-z0-9]+$/.test(new URL(planner.url()).pathname),
+      true,
+    );
+  });
+
+  const planned = await db.job.findFirst({
+    where: { title: "Planned with no crew" },
+    include: { assignments: true },
+  });
+  check("and it really exists", Boolean(planned), true);
+  check("with nobody on it yet", planned?.assignments.length, 0);
+  if (planned) await db.job.delete({ where: { id: planned.id } });
+
   // Renamed because "client" reads as the customer being served, which is the
   // opposite of what it means here.
   await bossPage(browser, bossToken, async (adminPage) => {

@@ -4,16 +4,13 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { diffFields, recordAudit } from "@/lib/audit";
 import { db } from "@/lib/db";
+import { flag, optionalText } from "@/lib/form";
 import { PERMISSION_KEYS, type Permission } from "@/lib/permissions";
 import { requirePermission } from "@/lib/session";
 import { BaseRole, PermissionScope } from "@prisma-client";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
-const optionalText = z
-  .string()
-  .trim()
-  .transform((value) => (value === "" ? null : value));
 
 const companySchema = z.object({
   name: z.string().trim().min(1, "Company name is required"),
@@ -31,11 +28,11 @@ const companySchema = z.object({
   defaultTimeZone: z.string().trim().min(1),
   timeRoundingMinutes: z.coerce.number().int().min(1).max(60),
   techTimeAdjustLimit: z.coerce.number().int().min(0).max(480),
-  breakPaidByDefault: z.coerce.boolean(),
+  breakPaidByDefault: flag,
   mileageRate: z.coerce.number().min(0).max(100),
   payLagWeeks: z.coerce.number().int().min(0).max(26),
   maxPhotosPerJob: z.coerce.number().int().min(1).max(500),
-  watermarkEnabled: z.coerce.boolean(),
+  watermarkEnabled: flag,
 });
 
 export async function updateCompanySettings(
@@ -93,7 +90,7 @@ const userSchema = z.object({
   directSupervisorId: optionalText,
   timeZone: z.string().trim().min(1),
   phone: optionalText,
-  active: z.coerce.boolean(),
+  active: flag,
 });
 
 export async function updateUser(

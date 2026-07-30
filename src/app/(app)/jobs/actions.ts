@@ -6,6 +6,7 @@ import { recordAudit } from "@/lib/audit";
 import { syncJobInBackground } from "@/lib/calendar/sync";
 import { getCompanySettings } from "@/lib/company";
 import { db } from "@/lib/db";
+import { optionalText } from "@/lib/form";
 import {
   allocateIntWo,
   allocateRevisitIntWo,
@@ -14,36 +15,11 @@ import {
 import { resolvePayRate } from "@/lib/pay-rates";
 import { resolveJobSupervisor } from "@/lib/scope";
 import { can, requirePermission } from "@/lib/session";
+import { jobFormSchema } from "./schema";
 
 export type ActionResult = { ok: true; id?: string } | { ok: false; error: string };
 
-const optionalText = z
-  .string()
-  .trim()
-  .transform((value) => (value === "" ? null : value));
 
-const jobSchema = z.object({
-  title: z.string().trim().min(1, "Title is required"),
-  clientId: z.string().min(1, "Pick a client"),
-  siteId: z.string().min(1, "Pick a site"),
-  projectId: optionalText,
-  externalAssignmentId: optionalText,
-  ticketNumber: optionalText,
-  incNumber: optionalText,
-  scheduledStart: optionalText,
-  estimateMinutes: z
-    .string()
-    .trim()
-    .transform((value) => (value === "" ? null : Number(value)))
-    .refine((value) => value === null || (Number.isFinite(value) && value > 0), {
-      message: "Estimate must be a positive number of minutes",
-    }),
-  techsRequired: z.coerce.number().int().min(1).max(20),
-  scopeOfWork: optionalText,
-  breakPaid: z.coerce.boolean(),
-  assigneeIds: z.array(z.string()).default([]),
-  leadId: optionalText,
-});
 
 export async function createJob(
   _prev: ActionResult | null,
@@ -51,9 +27,8 @@ export async function createJob(
 ): Promise<ActionResult> {
   const actor = await requirePermission("job.create");
 
-  const parsed = jobSchema.safeParse({
+  const parsed = jobFormSchema.safeParse({
     ...Object.fromEntries(formData),
-    breakPaid: formData.get("breakPaid") === "on",
     assigneeIds: formData.getAll("assigneeIds").map(String).filter(Boolean),
   });
   if (!parsed.success) {
@@ -169,7 +144,7 @@ export async function createJob(
         incNumber: input.incNumber,
         scheduledStart,
         estimateMinutes: input.estimateMinutes,
-        techsRequired: input.techsRequired,
+        techsRequired: input.techsRequired ?? 1,
         scopeOfWork: input.scopeOfWork,
         breakPaid: project ? project.breakPaid : input.breakPaid,
         lifecycle: needsApproval

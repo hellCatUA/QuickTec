@@ -988,6 +988,53 @@ async function main() {
 
   await db.job.delete({ where: { id: payJob.id } });
 
+  // --- form coercion ------------------------------------------------------
+  // Both of these presented as "I pressed the button and nothing happened".
+  const { flag, optionalInt, optionalMoney, optionalText } = await import(
+    "@/lib/form"
+  );
+
+  check("a missing field is nothing, not a failure", optionalText.parse(undefined), null);
+  check("so is a blank one", optionalText.parse(""), null);
+  check("padding is trimmed", optionalText.parse("  887766  "), "887766");
+  check("null is nothing too", optionalText.parse(null), null);
+
+  check("a ticked checkbox is true", flag.parse("on"), true);
+  check("an absent one is false", flag.parse(undefined), false);
+  // z.coerce.boolean() gets this wrong: Boolean("false") is true, so switching
+  // something off switched it back on.
+  check('the string "false" is false', flag.parse("false"), false);
+  check('and "true" is true', flag.parse("true"), true);
+  check("an empty string is false", flag.parse(""), false);
+  check("a real boolean passes through", flag.parse(false), false);
+
+  const minutes = optionalInt({ min: 1, max: 100 });
+  check("a missing number is nothing", minutes.parse(undefined), null);
+  check("a given one is a number", minutes.parse("90"), 90);
+  check(
+    "out of range is refused",
+    minutes.safeParse("0").success,
+    false,
+  );
+  check("so is nonsense", minutes.safeParse("later").success, false);
+
+  check("blank money is nothing", optionalMoney.parse(""), null);
+  check("negative money is refused", optionalMoney.safeParse("-5").success, false);
+
+  // The regression itself: the Lead radio only exists in the DOM once somebody
+  // is assigned, so creating a job with no crew submitted no leadId at all.
+  const { jobFormSchema } = await import("@/app/(app)/jobs/schema");
+  const noCrew = jobFormSchema.safeParse({
+    title: "Switch swap",
+    clientId: "c1",
+    siteId: "s1",
+    projectId: "",
+    techsRequired: "1",
+  });
+  if (!noCrew.success) console.log(`      ${noCrew.error.issues[0]?.message}`);
+  check("a job with no crew and no lead validates", noCrew.success, true);
+  check("and its lead is simply nobody", noCrew.data?.leadId ?? null, null);
+
   // --- timeline grouping --------------------------------------------------
   const { groupTimeline, timelineMeta } = await import("@/lib/timeline");
 

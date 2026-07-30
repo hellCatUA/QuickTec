@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { recordAudit } from "@/lib/audit";
 import { db } from "@/lib/db";
+import { flag, optionalMoney, optionalText } from "@/lib/form";
 import { PROJECT_DEFAULT_RULES } from "@/lib/deliverables";
 import { notify } from "@/lib/notifications";
 import { requirePermission } from "@/lib/session";
@@ -11,19 +12,7 @@ import { DeliverableCategory, ProjectRole, ProjectStatus } from "@prisma-client"
 
 export type ActionResult = { ok: true; id?: string } | { ok: false; error: string };
 
-const optionalText = z
-  .string()
-  .trim()
-  .transform((value) => (value === "" ? null : value));
 
-const optionalMoney = z
-  .string()
-  .trim()
-  .transform((value) => (value === "" ? null : value))
-  .refine(
-    (value) => value === null || (!Number.isNaN(Number(value)) && Number(value) >= 0),
-    { message: "Enter a positive amount, or leave it blank" },
-  );
 
 /** How a membership role reads in a message. */
 const ROLE_WORDING: Record<ProjectRole, string> = {
@@ -40,7 +29,7 @@ const projectSchema = z.object({
   managerId: optionalText,
   generalScopeOfWork: optionalText,
   travelReimbursement: optionalMoney,
-  breakPaid: z.coerce.boolean(),
+  breakPaid: flag,
   status: z.enum(ProjectStatus),
 });
 
@@ -337,10 +326,10 @@ const ruleSchema = z.object({
   projectId: z.string().min(1),
   category: z.enum(DeliverableCategory),
   customLabel: optionalText,
-  enabled: z.coerce.boolean(),
-  required: z.coerce.boolean(),
-  requiresPhoto: z.coerce.boolean(),
-  requiresText: z.coerce.boolean(),
+  enabled: flag,
+  required: flag,
+  requiresPhoto: flag,
+  requiresText: flag,
 });
 
 export async function saveDeliverableRule(
