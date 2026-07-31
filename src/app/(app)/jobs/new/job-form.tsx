@@ -1,6 +1,6 @@
 "use client";
 
-import { Info, X } from "lucide-react";
+import { FileText, Info, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useActionState, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -17,26 +17,29 @@ import { Field, Input, Textarea } from "@/components/ui/field";
 import { FormStatus, type SaveState } from "@/components/ui/form-status";
 import { HoursPicker, Stepper } from "@/components/ui/stepper";
 import { createJob, type ActionResult } from "../actions";
-import { SitePicker, type CustomerOption } from "./site-picker";
+import { SitePicker, type SiteOption } from "./site-picker";
 
 type Client = { id: string; name: string };
-type Site = {
-  id: string;
-  siteNumber: string;
-  city: string;
-  state: string;
-  customer: { id: string; code: string; name: string };
-};
+type Customer = { id: string; code: string; name: string };
 type Project = {
   id: string;
   name: string;
   externalProjectId: string | null;
   clientId: string;
+  clientName: string;
   customerId: string | null;
   intWoCounter: number;
   breakPaid: boolean;
+  memberIds: string[];
 };
 type Tech = { id: string; name: string; baseRole: string };
+type Template = {
+  id: string;
+  clientId: string;
+  kind: "CLIENT_WORK_ORDER" | "SIGN_OFF";
+  label: string;
+  isDefault: boolean;
+};
 
 export function JobForm({
   canAssign,
@@ -46,16 +49,18 @@ export function JobForm({
   projects,
   techs,
   customers,
+  templates,
   globalNextSequence,
   breakPaidByDefault,
 }: {
   canAssign: boolean;
   needsApproval: boolean;
   clients: Client[];
-  sites: Site[];
+  sites: SiteOption[];
   projects: Project[];
   techs: Tech[];
-  customers: CustomerOption[];
+  customers: Customer[];
+  templates: Template[];
   globalNextSequence: number;
   breakPaidByDefault: boolean;
 }) {
@@ -63,8 +68,9 @@ export function JobForm({
 
   // Nothing is preselected. A company chosen for you is a company nobody
   // checked, and this form files the work order under it.
-  const [clientId, setClientId] = useState("");
   const [projectId, setProjectId] = useState("");
+  const [clientId, setClientId] = useState("");
+  const [customerId, setCustomerId] = useState("");
   const [siteId, setSiteId] = useState("");
   const [scheduledStart, setScheduledStart] = useState("");
   const [estimateMinutes, setEstimateMinutes] = useState<number | null>(null);
@@ -72,6 +78,9 @@ export function JobForm({
   const [assignees, setAssignees] = useState<string[]>([]);
   const [leadId, setLeadId] = useState("");
   const [breakPaidChoice, setBreakPaidChoice] = useState<boolean | null>(null);
+  const [noWorkOrder, setNoWorkOrder] = useState(false);
+  const [pickedTemplates, setPickedTemplates] = useState<string[] | null>(null);
+  const [addedSites, setAddedSites] = useState<SiteOption[]>([]);
 
   const [state, formAction, pending] = useActionState<ActionResult | null, FormData>(
     async (prev, formData) => {
@@ -82,16 +91,47 @@ export function JobForm({
     null,
   );
 
+  const selectedProject = projects.find((project) => project.id === projectId);
+
+  /**
+   * Choosing the project answers the company and often the customer too, which
+   * is why it comes first: those three used to be filled in one at a time and
+   * disagreeing with each other was possible at every step.
+   */
+  function chooseProject(next: string) {
+    setProjectId(next);
+    const project = projects.find((entry) => entry.id === next);
+    if (!project) return;
+
+    setClientId(project.clientId);
+    if (project.customerId && project.customerId !== customerId) {
+      setCustomerId(project.customerId);
+      setSiteId("");
+    }
+  }
+
+  const allSites = useMemo(
+    () => [...addedSites, ...sites],
+    [addedSites, sites],
+  );
+  const customerSites = useMemo(
+    () => allSites.filter((site) => site.customer.id === customerId),
+    [allSites, customerId],
+  );
+
+  const customerName =
+    customers.find((customer) => customer.id === customerId)?.name ?? "";
+
   // Only projects belonging to the chosen client can apply — the project's own
   // counter and ID would otherwise end up on another client's work order.
   const availableProjects = useMemo(
-    () => projects.filter((project) => project.clientId === clientId),
+    () =>
+      clientId
+        ? projects.filter((project) => project.clientId === clientId)
+        : projects,
     [projects, clientId],
   );
 
-  const selectedProject = availableProjects.find(
-    (project) => project.id === projectId,
-  );
   const projectBreakPaid = selectedProject?.breakPaid ?? breakPaidByDefault;
 
   // Follows the project until somebody sets it by hand, after which their
@@ -99,6 +139,17 @@ export function JobForm({
   // override. Derived rather than synced through an effect, so there is no
   // render where the two disagree.
   const breakPaid = breakPaidChoice ?? projectBreakPaid;
+
+  const clientTemplates = useMemo(
+    () => templates.filter((template) => template.clientId === clientId),
+    [templates, clientId],
+  );
+
+  // Their defaults start ticked; once somebody touches the list their choice
+  // stands, even if they then switch company and switch back.
+  const chosenTemplates =
+    pickedTemplates ??
+    clientTemplates.filter((template) => template.isDefault).map((t) => t.id);
 
   // Mirrors formatIntWo on the server. Advisory only: the real number is
   // allocated inside the creating transaction, so a concurrent save can shift it.
@@ -128,7 +179,18 @@ export function JobForm({
       (tech) => assignees.includes(tech.id) && tech.baseRole !== "TECH",
     );
 
-  const unassigned = techs.filter((tech) => !assignees.includes(tech.id));
+  const projectMembers = selectedProject?.memberIds ?? [];
+
+  // People already on the project first: they are who this work is normally
+  // given to, and scrolling past the whole company to find them is how the
+  // wrong person ends up on a job.
+  const unassigned = useMemo(() => {
+    const free = techs.filter((tech) => !assignees.includes(tech.id));
+    return [
+      ...free.filter((tech) => projectMembers.includes(tech.id)),
+      ...free.filter((tech) => !projectMembers.includes(tech.id)),
+    ];
+  }, [techs, assignees, projectMembers]);
 
   function toggleAssignee(id: string) {
     setAssignees((current) =>
@@ -154,20 +216,34 @@ export function JobForm({
         </CardHeader>
 
         <CardContent className="grid gap-4 sm:grid-cols-2">
-          <Field label="Job title" htmlFor="title" className="sm:col-span-2">
-            <Input
-              id="title"
-              name="title"
-              placeholder="Switch replacement"
-              required
-              autoComplete="off"
+          <Field
+            label="Project"
+            htmlFor="projectId"
+            hint="Fills in the company and the customer. Leave it empty for one-off work — the job then uses the yearly counter and 0000 as the project ref."
+            className="sm:col-span-2"
+          >
+            <Combobox
+              id="projectId"
+              name="projectId"
+              value={projectId}
+              onChange={chooseProject}
+              placeholder="Search projects…"
+              emptyText="No project matches."
+              options={availableProjects.map((project) => ({
+                value: project.id,
+                label: project.name,
+                hint: project.externalProjectId
+                  ? `${project.clientName} · ${project.externalProjectId}`
+                  : project.clientName,
+                keywords: project.clientName,
+              }))}
             />
           </Field>
 
           <Field
             label="Representing company"
             htmlFor="clientId"
-            hint="Who dispatched the work and pays for it. Not the customer whose site you visit."
+            hint="Who dispatched the work and pays for it."
           >
             <Combobox
               id="clientId"
@@ -176,6 +252,7 @@ export function JobForm({
               onChange={(next) => {
                 setClientId(next);
                 setProjectId("");
+                setPickedTemplates(null);
               }}
               placeholder="Search companies…"
               options={clients.map((client) => ({
@@ -186,46 +263,50 @@ export function JobForm({
           </Field>
 
           <Field
-            label="Project"
-            htmlFor="projectId"
-            hint={
-              !clientId
-                ? "Pick a company first — projects belong to one."
-                : availableProjects.length === 0
-                  ? "No active projects for this company. The job uses the yearly counter."
-                  : "Leave it empty to use the yearly counter and 0000 as the project ref."
-            }
+            label="Customer"
+            htmlFor="customerId"
+            hint="Whose site you visit — the brand on the door, not who pays."
           >
             <Combobox
-              id="projectId"
-              name="projectId"
-              value={projectId}
-              onChange={setProjectId}
-              disabled={!clientId || availableProjects.length === 0}
-              placeholder={
-                availableProjects.length === 0
-                  ? "No project"
-                  : "Search projects…"
-              }
-              options={availableProjects.map((project) => ({
-                value: project.id,
-                label: project.name,
-                hint: project.externalProjectId ?? undefined,
+              id="customerId"
+              name="customerId"
+              value={customerId}
+              onChange={(next) => {
+                setCustomerId(next);
+                setSiteId("");
+              }}
+              placeholder="Search customers…"
+              options={customers.map((customer) => ({
+                value: customer.id,
+                label: customer.name,
+                hint: customer.code,
               }))}
             />
           </Field>
 
           <Field
-            label="Site"
+            label="Site ID"
             htmlFor="siteId"
-            hint="Supplies the customer and the address on the report. Not there yet? Search for the number and add it."
+            hint="Supplies the address on the report. Not there yet? Type the number and add it."
             className="sm:col-span-2"
           >
             <SitePicker
-              sites={sites}
-              customers={customers}
+              sites={customerSites}
+              customerId={customerId}
+              customerName={customerName}
               value={siteId}
               onChange={setSiteId}
+              onCreated={(site) => setAddedSites((current) => [site, ...current])}
+            />
+          </Field>
+
+          <Field label="Job title" htmlFor="title" className="sm:col-span-2">
+            <Input
+              id="title"
+              name="title"
+              placeholder="Switch replacement"
+              required
+              autoComplete="off"
             />
           </Field>
 
@@ -304,36 +385,84 @@ export function JobForm({
             job page. Checklist lines become tickable for the tech.
           </CardDescription>
         </CardHeader>
-        <CardContent className="flex flex-col gap-4">
+        <CardContent>
           <Textarea
             name="scopeOfWork"
             rows={6}
             placeholder={"- [ ] Swap the failed switch\n- [ ] Label all patch leads"}
           />
+        </CardContent>
+      </Card>
 
-          <div className="flex flex-col gap-1">
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                name="breakPaid"
-                checked={breakPaid}
-                onChange={(event) => setBreakPaidChoice(event.target.checked)}
-                className="size-5 accent-[var(--color-primary)]"
-              />
-              Breaks are paid
-            </label>
-
-            {/* The project supplies the default, but a single job can differ —
-                a long day where breaks are covered on work that normally does
-                not. Saying which it is beats disabling the box. */}
-            {selectedProject ? (
-              <span className="text-xs text-muted-foreground">
-                {breakPaid === projectBreakPaid
-                  ? `Same as the ${selectedProject.name} project.`
-                  : `Overriding the ${selectedProject.name} project, which says ${projectBreakPaid ? "paid" : "unpaid"}.`}
+      <Card>
+        <CardHeader>
+          <CardTitle>Paperwork</CardTitle>
+          <CardDescription>
+            The representing company&rsquo;s own work order and sign-off sheet.
+            Files are attached from the job page once it exists — by whoever has
+            them, which is often the tech on the morning.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          {clientTemplates.length > 0 ? (
+            <div className="flex flex-col gap-2">
+              <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Their standing forms
               </span>
-            ) : null}
-          </div>
+              {clientTemplates.map((template) => (
+                <label
+                  key={template.id}
+                  className="flex items-center gap-2 rounded-lg border border-border p-2 text-sm"
+                >
+                  <input
+                    type="checkbox"
+                    name="templateIds"
+                    value={template.id}
+                    checked={chosenTemplates.includes(template.id)}
+                    onChange={(event) =>
+                      setPickedTemplates(
+                        event.target.checked
+                          ? [...chosenTemplates, template.id]
+                          : chosenTemplates.filter((id) => id !== template.id),
+                      )
+                    }
+                    className="size-5 accent-[var(--color-primary)]"
+                  />
+                  <FileText className="size-4 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1 truncate">
+                    {template.label}
+                  </span>
+                  <Badge variant="neutral">
+                    {template.kind === "SIGN_OFF" ? "Sign-off" : "Work order"}
+                  </Badge>
+                </label>
+              ))}
+            </div>
+          ) : clientId ? (
+            <p className="text-sm text-muted-foreground">
+              This company has no standing forms saved. Add their sign-off sheet
+              in the directory and every job for them starts with it attached.
+            </p>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Pick a representing company to see the forms saved against them.
+            </p>
+          )}
+
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              name="noWorkOrder"
+              checked={noWorkOrder}
+              onChange={(event) => setNoWorkOrder(event.target.checked)}
+              className="size-5 accent-[var(--color-primary)]"
+            />
+            No WO for this job
+          </label>
+          <span className="text-xs text-muted-foreground">
+            Says the company issued none, so the empty slot reads as a decision
+            rather than paperwork nobody chased. Attaching one later clears it.
+          </span>
         </CardContent>
       </Card>
 
@@ -366,6 +495,9 @@ export function JobForm({
                   <span className="min-w-0 flex-1 truncate text-sm">
                     {tech.name}
                   </span>
+                  {projectMembers.includes(id) ? (
+                    <Badge variant="primary">On the project</Badge>
+                  ) : null}
                   <Badge variant="neutral">{tech.baseRole}</Badge>
 
                   <label className="flex items-center gap-1.5 text-xs">
@@ -400,12 +532,18 @@ export function JobForm({
                 onChange={(id) => {
                   if (id) toggleAssignee(id);
                 }}
-                placeholder="Search people to add…"
+                placeholder={
+                  selectedProject
+                    ? "Search — people on the project come first…"
+                    : "Search people to add…"
+                }
                 allowClear={false}
                 options={unassigned.map((tech) => ({
                   value: tech.id,
                   label: tech.name,
-                  hint: tech.baseRole.toLowerCase(),
+                  hint: projectMembers.includes(tech.id)
+                    ? `on the project · ${tech.baseRole.toLowerCase()}`
+                    : tech.baseRole.toLowerCase(),
                 }))}
               />
             ) : null}
@@ -421,6 +559,35 @@ export function JobForm({
           </CardContent>
         </Card>
       ) : null}
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Miscellaneous</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-1">
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              name="breakPaid"
+              checked={breakPaid}
+              onChange={(event) => setBreakPaidChoice(event.target.checked)}
+              className="size-5 accent-[var(--color-primary)]"
+            />
+            Paid Breaks
+          </label>
+
+          {/* The project supplies the default, but a single job can differ —
+              a long day where breaks are covered on work that normally does
+              not. Saying which it is beats disabling the box. */}
+          {selectedProject ? (
+            <span className="text-xs text-muted-foreground">
+              {breakPaid === projectBreakPaid
+                ? `Same as the ${selectedProject.name} project.`
+                : `Overriding the ${selectedProject.name} project, which says ${projectBreakPaid ? "paid" : "unpaid"}.`}
+            </span>
+          ) : null}
+        </CardContent>
+      </Card>
 
       {needsApproval ? (
         <div className="flex items-start gap-2 rounded-lg bg-warning/15 p-3 text-sm text-warning ring-1 ring-inset ring-warning/30">

@@ -12,7 +12,8 @@ export default async function NewJobPage() {
   if (!user) redirect("/signin");
   if (!can(user, "job.create")) redirect("/jobs");
 
-  const [company, clients, sites, projects, customers, techs] = await Promise.all([
+  const [company, clients, sites, projects, customers, techs, templates] =
+    await Promise.all([
     getCompanySettings(),
     db.client.findMany({
       where: { active: true },
@@ -25,6 +26,7 @@ export default async function NewJobPage() {
       select: {
         id: true,
         siteNumber: true,
+        numberPending: true,
         city: true,
         state: true,
         customer: { select: { id: true, code: true, name: true } },
@@ -38,9 +40,13 @@ export default async function NewJobPage() {
         name: true,
         externalProjectId: true,
         clientId: true,
+        client: { select: { name: true } },
         customerId: true,
         intWoCounter: true,
         breakPaid: true,
+        // Who normally does this work. Shown first in the crew search rather
+        // than enforced: a project member is a default, not a fence.
+        members: { select: { userId: true } },
       },
     }),
     db.customer.findMany({
@@ -52,6 +58,17 @@ export default async function NewJobPage() {
       where: { active: true },
       orderBy: { name: "asc" },
       select: { id: true, name: true, baseRole: true },
+    }),
+    db.clientDocumentTemplate.findMany({
+      where: { active: true },
+      orderBy: [{ isDefault: "desc" }, { label: "asc" }],
+      select: {
+        id: true,
+        clientId: true,
+        kind: true,
+        label: true,
+        isDefault: true,
+      },
     }),
   ]);
 
@@ -82,9 +99,20 @@ export default async function NewJobPage() {
         needsApproval={!can(user, "job.approve_report")}
         clients={clients}
         sites={sites}
-        projects={projects}
+        projects={projects.map((project) => ({
+          id: project.id,
+          name: project.name,
+          externalProjectId: project.externalProjectId,
+          clientId: project.clientId,
+          clientName: project.client.name,
+          customerId: project.customerId,
+          intWoCounter: project.intWoCounter,
+          breakPaid: project.breakPaid,
+          memberIds: project.members.map((member) => member.userId),
+        }))}
         techs={techs}
         customers={customers}
+        templates={templates}
         globalNextSequence={
           (await db.intWoCounter.findUnique({
             where: { scope: `global:${new Date().getFullYear()}` },

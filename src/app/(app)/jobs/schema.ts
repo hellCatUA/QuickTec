@@ -23,6 +23,10 @@ export const jobFormSchema = z.object({
   techsRequired: optionalInt({ min: 1, max: 20 }),
   scopeOfWork: optionalText,
   breakPaid: flag,
+  /// The representing company issued no work order for this job.
+  noWorkOrder: flag,
+  /// Blanks kept against the representing company to copy onto the job.
+  templateIds: z.array(z.string()).default([]),
   assigneeIds: z.array(z.string()).default([]),
   leadId: optionalText,
 });

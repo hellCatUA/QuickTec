@@ -1168,3 +1168,73 @@ export async function setBreakPaid(formData: FormData): Promise<ActionResult> {
   touch(jobId);
   return ok;
 }
+
+/**
+ * Fills in a site number that was not known when the job was raised.
+ *
+ * Dispatch often gives a customer and a city and nothing else; the number is
+ * on the door. Anyone who can clock in here can set it, because they are the
+ * person standing in front of it — and getting it recorded while they are
+ * there is the whole point.
+ */
+export async function setSiteNumber(formData: FormData): Promise<ActionResult> {
+  const jobId = String(formData.get("jobId") ?? "");
+  const siteNumber = String(formData.get("siteNumber") ?? "").trim();
+
+  if (!siteNumber) return fail("Enter the site number.");
+
+  const context = await loadContext(jobId);
+  if (!context) return fail("Job not found.");
+  const { user, job } = context;
+
+  if (!(await canOnJob(user, "job.clock_in", job))) {
+    return fail("You cannot change this site.");
+  }
+
+  const target = await db.job.findUniqueOrThrow({
+    where: { id: jobId },
+    select: {
+      site: {
+        select: { id: true, customerId: true, siteNumber: true, numberPending: true },
+      },
+    },
+  });
+  if (!target.site.numberPending) {
+    return fail("This site already has a number. Edit it in the directory.");
+  }
+
+  // The real site may already exist — somebody worked it last year under the
+  // number that has just been read off the door. Move the job onto it rather
+  // than creating a second one, so the site history stays in one place.
+  const existing = await db.site.findUnique({
+    where: {
+      customerId_siteNumber: { customerId: target.site.customerId, siteNumber },
+    },
+    select: { id: true },
+  });
+
+  if (existing && existing.id !== target.site.id) {
+    await db.job.update({ where: { id: jobId }, data: { siteId: existing.id } });
+    // The placeholder is only ever referenced by this job, so it goes.
+    await db.site
+      .delete({ where: { id: target.site.id } })
+      .catch(() => undefined);
+  } else {
+    await db.site.update({
+      where: { id: target.site.id },
+      data: { siteNumber, numberPending: false },
+    });
+  }
+
+  await recordAudit({
+    actorId: user.id,
+    entityType: "Job",
+    entityId: jobId,
+    jobId,
+    action: "field_edited",
+    detail: { field: "Site ID", from: null, to: siteNumber },
+  });
+
+  touch(jobId);
+  return ok;
+}

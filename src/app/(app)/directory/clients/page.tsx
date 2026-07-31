@@ -20,6 +20,17 @@ export default async function ClientsPage() {
       notes: true,
       active: true,
       _count: { select: { jobs: true, projects: true } },
+      templates: {
+        where: { active: true },
+        orderBy: [{ kind: "asc" }, { label: "asc" }],
+        select: {
+          id: true,
+          kind: true,
+          label: true,
+          isDefault: true,
+          attachmentId: true,
+        },
+      },
     },
   });
 

@@ -10,7 +10,9 @@ import { db } from "@/lib/db";
  */
 export type AttachmentOwner =
   | { kind: "job"; jobId: string }
-  | { kind: "user"; userId: string };
+  | { kind: "user"; userId: string }
+  /** A blank form kept against a representing company — no customer data in it. */
+  | { kind: "directory" };
 
 export async function attachmentOwner(
   attachmentId: string,
@@ -22,7 +24,8 @@ export async function attachmentOwner(
       deliverableItem: { select: { jobId: true } },
       reimbursement: { select: { jobId: true } },
       signature: { select: { jobId: true } },
-      workOrderJobId: true,
+      jobDocumentId: true,
+      clientTemplate: { select: { id: true } },
       mileageStartEntry: { select: { userId: true } },
       mileageEndEntry: { select: { userId: true } },
     },
@@ -34,10 +37,12 @@ export async function attachmentOwner(
     attachment.deliverableItem?.jobId ??
     attachment.reimbursement?.jobId ??
     attachment.signature?.jobId ??
-    attachment.workOrderJobId ??
+    attachment.jobDocumentId ??
     null;
 
   if (jobId) return { kind: "job", jobId };
+
+  if (attachment.clientTemplate) return { kind: "directory" };
 
   const userId =
     attachment.mileageStartEntry?.userId ?? attachment.mileageEndEntry?.userId;

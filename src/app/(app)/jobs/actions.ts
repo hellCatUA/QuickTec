@@ -1,5 +1,6 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { recordAudit } from "@/lib/audit";
@@ -7,7 +8,8 @@ import { syncJobInBackground } from "@/lib/calendar/sync";
 import { getCompanySettings } from "@/lib/company";
 import { parseDatetimeLocalInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
-import { optionalText } from "@/lib/form";
+import { flag, optionalText } from "@/lib/form";
+import { copyTemplateToJob } from "@/lib/job-documents";
 import {
   allocateIntWo,
   allocateRevisitIntWo,
@@ -20,6 +22,12 @@ import { jobFormSchema } from "./schema";
 
 export type ActionResult = { ok: true; id?: string } | { ok: false; error: string };
 
+/** quickCreateSite also hands back the customer code, so the picker can label
+ *  the row it has just added without another round trip. */
+export type SiteResult =
+  | { ok: true; id: string; customerCode: string }
+  | { ok: false; error: string };
+
 
 
 export async function createJob(
@@ -31,6 +39,7 @@ export async function createJob(
   const parsed = jobFormSchema.safeParse({
     ...Object.fromEntries(formData),
     assigneeIds: formData.getAll("assigneeIds").map(String).filter(Boolean),
+    templateIds: formData.getAll("templateIds").map(String).filter(Boolean),
   });
   if (!parsed.success) {
     return { ok: false, error: z.prettifyError(parsed.error) };
@@ -154,6 +163,7 @@ export async function createJob(
         // for this job, which is a real case — a long day where breaks are
         // covered on work that normally does not.
         breakPaid: input.breakPaid,
+        noWorkOrder: input.noWorkOrder,
         lifecycle: needsApproval
           ? "PENDING_APPROVAL"
           : scheduledStart
@@ -196,6 +206,18 @@ export async function createJob(
       select: { id: true, intWoId: true },
     });
   });
+
+  // The company's standing blanks come across as copies, so replacing a
+  // template next year cannot change what a job that ran this year went out on.
+  if (input.templateIds.length > 0) {
+    const allowed = await db.clientDocumentTemplate.findMany({
+      where: { id: { in: input.templateIds }, clientId: input.clientId },
+      select: { id: true },
+    });
+    for (const template of allowed) {
+      await copyTemplateToJob(template.id, job.id, actor.id);
+    }
+  }
 
   await recordAudit({
     actorId: actor.id,
@@ -431,7 +453,10 @@ const quickSiteSchema = z.object({
   /** Used when the customer is new too — a brand nobody has logged yet. */
   customerName: optionalText,
   customerCode: optionalText,
-  siteNumber: z.string().trim().min(1, "Enter the site number"),
+  siteNumber: optionalText,
+  /// The number is not known yet; a placeholder stands in until somebody on
+  /// the door replaces it.
+  numberPending: flag,
   addressLine1: optionalText,
   city: optionalText,
   state: optionalText,
@@ -447,9 +472,9 @@ const quickSiteSchema = z.object({
  * carry on. The directory is where a site gets tidied up afterwards.
  */
 export async function quickCreateSite(
-  _prev: ActionResult | null,
+  _prev: SiteResult | null,
   formData: FormData,
-): Promise<ActionResult> {
+): Promise<SiteResult> {
   const actor = await requirePermission("job.create");
 
   const parsed = quickSiteSchema.safeParse(Object.fromEntries(formData));
@@ -483,23 +508,38 @@ export async function quickCreateSite(
       ).id;
   }
 
-  const duplicate = await db.site.findUnique({
-    where: {
-      customerId_siteNumber: { customerId, siteNumber: input.siteNumber },
-    },
-    select: { id: true },
-  });
-  if (duplicate) return { ok: true, id: duplicate.id };
+  if (!input.numberPending && !input.siteNumber) {
+    return { ok: false, error: "Enter the site number, or add it without one." };
+  }
+
+  if (input.siteNumber) {
+    const duplicate = await db.site.findUnique({
+      where: {
+        customerId_siteNumber: { customerId, siteNumber: input.siteNumber },
+      },
+      select: { id: true, customer: { select: { code: true } } },
+    });
+    if (duplicate) {
+      return { ok: true, id: duplicate.id, customerCode: duplicate.customer.code };
+    }
+  }
+
+  // A pending site gets a placeholder rather than an empty string: the number
+  // is half of a site's identity and two blanks would collide on the unique
+  // key, merging two jobs onto one site that is neither of them.
+  const siteNumber = input.siteNumber ?? `TBD-${randomUUID().slice(0, 8)}`;
 
   const site = await db.site.create({
     data: {
       customerId,
-      siteNumber: input.siteNumber,
+      siteNumber,
+      numberPending: input.numberPending,
       addressLine1: input.addressLine1 ?? "",
       city: input.city ?? "",
       state: input.state ?? "",
       postalCode: input.postalCode ?? "",
     },
+    select: { id: true, siteNumber: true, city: true, customer: { select: { code: true } } },
   });
 
   await recordAudit({
@@ -511,5 +551,5 @@ export async function quickCreateSite(
   });
 
   revalidatePath("/jobs/new");
-  return { ok: true, id: site.id };
+  return { ok: true, id: site.id, customerCode: site.customer.code };
 }

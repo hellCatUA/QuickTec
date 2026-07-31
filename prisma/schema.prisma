@@ -195,10 +195,45 @@ model Client {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  projects Project[]
-  jobs     Job[]
-  payRates PayRate[]
-  contacts ExternalContact[]
+  projects  Project[]
+  jobs      Job[]
+  payRates  PayRate[]
+  contacts  ExternalContact[]
+  templates ClientDocumentTemplate[]
+}
+
+/// Which piece of paper an attachment is.
+enum JobDocumentKind {
+  /// The work order the representing company issued, as they issued it.
+  CLIENT_WORK_ORDER
+  /// Their sign-off sheet: a blank the tech fills in and gets signed on site.
+  SIGN_OFF
+}
+
+/// A blank form a representing company always uses.
+///
+/// The sign-off sheet is nearly always the same document for a given company,
+/// and re-uploading it per job is how jobs end up going out on last year's
+/// form. Stored once here and copied onto the job when it is raised.
+model ClientDocumentTemplate {
+  id       String @id @default(cuid())
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  kind  JobDocumentKind
+  label String
+
+  /// Offered with the box already ticked when a job is raised for this company.
+  isDefault Boolean @default(false)
+  active    Boolean @default(true)
+
+  attachmentId String     @unique
+  attachment   Attachment @relation("ClientTemplateFile", fields: [attachmentId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([clientId, kind])
 }
 
 /// The end brand, e.g. SBUX. Independent of Client because the same customer
@@ -226,6 +261,11 @@ model Site {
   /// External store number, e.g. "24541". Combined with customer code as
   /// "SBUX #24541" in exports.
   siteNumber String
+  /// The number is not known yet. Dispatch often reads out a customer and a
+  /// city and nothing else; the tech reads the number off the door. The site
+  /// still exists so the job has an address and a timezone, and siteNumber
+  /// holds a placeholder until somebody replaces it.
+  numberPending Boolean @default(false)
   name       String?
 
   addressLine1 String
@@ -458,6 +498,11 @@ model Job {
 
   breakPaid Boolean @default(true)
 
+  /// The representing company issued no work order for this job. Recorded so
+  /// the empty slot reads as a decision somebody made rather than paperwork
+  /// nobody got round to chasing.
+  noWorkOrder Boolean @default(false)
+
   lifecycle      JobLifecycle       @default(DRAFT)
   outcome        JobOutcome?
   internalStatus JobInternalStatus?
@@ -508,8 +553,8 @@ model Job {
   deliverableRules DeliverableRequirement[]
   deliverables     DeliverableItem[]
   reimbursements   Reimbursement[]
-  /// The representing company's own work order, as they issued it.
-  workOrderDocs    Attachment[]            @relation("JobWorkOrderDocs")
+  /// The representing company's paperwork: their work order and sign-off blank.
+  documents        Attachment[]            @relation("JobDocuments")
   mileageEntries   MileageEntry[]
   scopeChecks      JobScopeCheck[]
   changeRequests   ChangeRequest[]
@@ -1048,12 +1093,16 @@ model Attachment {
   reimbursementId String?
   reimbursement   Reimbursement? @relation(fields: [reimbursementId], references: [id], onDelete: Cascade)
 
-  /// Set when this is the representing company's work order for a job, rather
-  /// than something a tech produced on site. Kept off DeliverableItem on
-  /// purpose: it is not the crew's work and must not appear in their folder
-  /// of the export.
-  workOrderJobId String?
-  workOrderJob   Job?    @relation("JobWorkOrderDocs", fields: [workOrderJobId], references: [id], onDelete: Cascade)
+  /// Set when this is paperwork attached to a job — the representing
+  /// company's work order, or their sign-off blank — rather than something a
+  /// tech produced on site. Kept off DeliverableItem on purpose: it is not the
+  /// crew's work and must not appear in their folder of the export.
+  jobDocumentId   String?
+  jobDocument     Job?             @relation("JobDocuments", fields: [jobDocumentId], references: [id], onDelete: Cascade)
+  jobDocumentKind JobDocumentKind?
+
+  /// Set when this is a blank kept against a representing company.
+  clientTemplate ClientDocumentTemplate? @relation("ClientTemplateFile")
 
   signature         Signature?
   mileageStartEntry MileageEntry? @relation("MileageStartPhoto")
@@ -1061,7 +1110,7 @@ model Attachment {
 
   @@index([deliverableItemId])
   @@index([reimbursementId])
-  @@index([workOrderJobId])
+  @@index([jobDocumentId])
 }
 
 model AuditEvent {

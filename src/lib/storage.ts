@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 /**
@@ -67,6 +67,40 @@ export async function storeFile(
 
   return {
     storagePath,
+    sizeBytes: data.byteLength,
+    sha256: createHash("sha256").update(data).digest("hex"),
+  };
+}
+
+/**
+ * Duplicates a stored file under another key.
+ *
+ * Used when a company's saved blank is put onto a job: the job keeps its own
+ * copy, so replacing the template next year cannot change what a finished job
+ * went out on. Returns null if the source is gone, which is a missing file
+ * rather than a failure worth stopping a save for.
+ */
+export async function copyFile(
+  storagePath: string,
+  jobId: string,
+): Promise<StoredFile | null> {
+  const source = absolutePath(storagePath);
+  let data: Buffer;
+  try {
+    data = await readFile(source);
+  } catch {
+    return null;
+  }
+
+  const extension = path.extname(storagePath).slice(1) || "bin";
+  const target = path.join("jobs", jobId, `${randomUUID()}.${extension}`);
+
+  const absolute = absolutePath(target);
+  await mkdir(path.dirname(absolute), { recursive: true });
+  await writeFile(absolute, data);
+
+  return {
+    storagePath: target,
     sizeBytes: data.byteLength,
     sha256: createHash("sha256").update(data).digest("hex"),
   };

@@ -38,11 +38,12 @@ import { approveJob } from "../actions";
 import { ChangeRequests } from "./change-requests";
 import { CrewPanel } from "./crew-panel";
 import { BreakPay } from "./break-pay";
-import { WorkOrderDocs } from "./work-order-docs";
+import { JobDocuments } from "./job-documents";
 import { EditableField } from "./editable-field";
 import { PointsOfContact } from "./points-of-contact";
 import { RevisitPanel } from "./revisit-panel";
 import { ScopeOfWork } from "./scope-of-work";
+import { SiteNumberPrompt } from "./site-number";
 import { Deliverables } from "./deliverables";
 import { ExportsPanel } from "./exports-panel";
 import { Reimbursements } from "./reimbursements";
@@ -91,6 +92,7 @@ export default async function JobPage({
       returnTrackingNumber: true,
       workPerformedMerged: true,
       breakPaid: true,
+      noWorkOrder: true,
       lifecycle: true,
       outcome: true,
       internalStatus: true,
@@ -104,19 +106,20 @@ export default async function JobPage({
         select: { id: true, intWoId: true, revisitNumber: true, lifecycle: true },
       },
       client: { select: { name: true } },
-      workOrderDocs: {
+      documents: {
         orderBy: { createdAt: "asc" },
         select: {
           id: true,
           originalName: true,
-          mimeType: true,
           sizeBytes: true,
+          jobDocumentKind: true,
         },
       },
       customer: { select: { code: true, name: true } },
       site: {
         select: {
           siteNumber: true,
+          numberPending: true,
           addressLine1: true,
           addressLine2: true,
           city: true,
@@ -555,12 +558,16 @@ export default async function JobPage({
             <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Site ID
             </div>
-            <Link
-              href={`/sites/${job.siteId}`}
-              className="text-primary underline-offset-4 hover:underline"
-            >
-              {siteLabel(job.customer.code, job.site.siteNumber)}
-            </Link>
+            {job.site.numberPending ? (
+              <SiteNumberPrompt jobId={job.id} canSet={canClockHere} />
+            ) : (
+              <Link
+                href={`/sites/${job.siteId}`}
+                className="text-primary underline-offset-4 hover:underline"
+              >
+                {siteLabel(job.customer.code, job.site.siteNumber)}
+              </Link>
+            )}
           </div>
           <Static label={intWoFieldLabel(company)} value={job.intWoId} mono />
 
@@ -692,22 +699,26 @@ export default async function JobPage({
 
       <Card>
         <CardHeader>
-          <CardTitle>Work order</CardTitle>
+          <CardTitle>{job.client.name} paperwork</CardTitle>
           <CardDescription>
-            The WO as {job.client.name} issued it. Whoever plans the job
-            attaches it; everybody on the job can open it.
+            Their work order and their sign-off sheet. Either can be added now
+            or when it turns up, by whoever has it.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <WorkOrderDocs
+          <JobDocuments
             jobId={job.id}
-            canManage={canEditPlanned}
-            docs={job.workOrderDocs.map((doc) => ({
-              id: doc.id,
-              originalName: doc.originalName,
-              mimeType: doc.mimeType,
-              sizeBytes: doc.sizeBytes,
-            }))}
+            noWorkOrder={job.noWorkOrder}
+            canUpload={canUpload}
+            canDeclare={canEditPlanned}
+            documents={job.documents
+              .filter((doc) => doc.jobDocumentKind !== null)
+              .map((doc) => ({
+                id: doc.id,
+                kind: doc.jobDocumentKind as "CLIENT_WORK_ORDER" | "SIGN_OFF",
+                originalName: doc.originalName,
+                sizeBytes: doc.sizeBytes,
+              }))}
           />
         </CardContent>
       </Card>

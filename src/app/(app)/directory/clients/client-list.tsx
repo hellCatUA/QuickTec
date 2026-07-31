@@ -9,6 +9,7 @@ import { Field, Input, Textarea } from "@/components/ui/field";
 import { FormStatus, type SaveState } from "@/components/ui/form-status";
 import { EmptyState } from "@/components/ui/page-header";
 import { saveClient, type ActionResult } from "../actions";
+import { ClientTemplates, type TemplateRecord } from "./client-templates";
 
 type ClientRecord = {
   id: string;
@@ -17,6 +18,7 @@ type ClientRecord = {
   notes: string | null;
   active: boolean;
   _count: { jobs: number; projects: number };
+  templates: TemplateRecord[];
 };
 
 function ClientForm({
@@ -167,8 +169,14 @@ export function ClientList({ clients }: { clients: ClientRecord[] }) {
             </div>
 
             {editingId === client.id ? (
-              <div className="border-t border-border pt-3">
+              <div className="flex flex-col gap-4 border-t border-border pt-3">
                 <ClientForm client={client} />
+                <div className="border-t border-border pt-3">
+                  <ClientTemplates
+                    clientId={client.id}
+                    templates={client.templates}
+                  />
+                </div>
               </div>
             ) : null}
           </CardContent>

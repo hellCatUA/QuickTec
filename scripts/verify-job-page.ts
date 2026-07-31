@@ -1,7 +1,10 @@
 import "dotenv/config";
 import { chromium } from "playwright";
 import { encode } from "next-auth/jwt";
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import { db } from "@/lib/db";
+import { absolutePath } from "@/lib/storage";
 
 /**
  * Drives the job page in a real browser: clock in, take a break, end it, clock
@@ -47,7 +50,7 @@ async function main() {
   await db.pointOfContact.deleteMany({ where: { jobId: assignment.jobId } });
   await db.deliverableItem.deleteMany({ where: { jobId: assignment.jobId } });
   await db.reimbursement.deleteMany({ where: { jobId: assignment.jobId } });
-  await db.attachment.deleteMany({ where: { workOrderJobId: assignment.jobId } });
+  await db.attachment.deleteMany({ where: { jobDocumentId: assignment.jobId } });
   await db.auditEvent.deleteMany({ where: { jobId: assignment.jobId } });
   await db.job.update({
     where: { id: assignment.jobId },
@@ -171,8 +174,10 @@ async function main() {
   async function upload(section: string) {
     await page.getByRole("button", { name: `Add to ${section}` }).click();
 
+    // Not just the first file input on the page any more: the company's
+    // paperwork block sits above the deliverables.
     await page
-      .locator('input[type="file"]')
+      .locator('input[type="file"]:not([id^="doc-"])')
       .first()
       .setInputFiles({
         name: "IMG_0001.jpg",
@@ -452,13 +457,56 @@ async function main() {
       "",
     );
 
-    // Representing company: type, filter, pick.
+    // The project comes first and answers the two fields under it, which is
+    // the whole reason it moved: they used to be filled in one at a time and
+    // could disagree with each other at every step.
+    await planner.locator("#projectId").click();
+    await planner.getByRole("option").first().click();
+    await planner.waitForTimeout(300);
+    check(
+      "picking the project fills in the representing company",
+      (await planner.locator('input[name="clientId"]').inputValue()).length > 0,
+      true,
+    );
+
+    // Representing company: type, filter, pick. Clearing the project too,
+    // since choosing a company by hand is choosing to leave the project.
     await planner.locator("#clientId").click();
     await planner.locator("#clientId").fill("netcom");
     await planner.getByRole("option", { name: /NetCom/ }).click();
     check(
       "the company can be found by typing",
       (await planner.locator('input[name="clientId"]').inputValue()).length > 0,
+      true,
+    );
+
+    // The customer is its own field now — it used to be reachable only by
+    // knowing a site number, which is the thing least likely to be to hand.
+    check(
+      "a site cannot be picked before the customer",
+      await planner.getByText("Pick the customer first").isVisible(),
+      true,
+    );
+    await planner.locator("#customerId").click();
+    await planner.getByRole("option").first().click();
+    await planner.waitForTimeout(300);
+
+    const pickedCustomerId = await planner
+      .locator('input[name="customerId"]')
+      .inputValue();
+    check("the customer can be chosen on its own", pickedCustomerId.length > 0, true);
+
+    // And the site list is that customer's sites, not everybody's.
+    await planner.locator("#siteId").click();
+    const offered = await planner.getByRole("option").allInnerTexts();
+    await planner.keyboard.press("Escape");
+    const theirs = await db.site.findMany({
+      where: { customerId: pickedCustomerId, active: true },
+      select: { id: true },
+    });
+    check(
+      "only that customer's sites are offered",
+      offered.length <= theirs.length,
       true,
     );
 
@@ -520,6 +568,19 @@ async function main() {
       1,
     );
 
+    // Paid Breaks lives in its own block now rather than tacked to the end of
+    // Scope of work, where it read as part of the scope.
+    check(
+      "paid breaks are under Miscellaneous",
+      await planner.getByText("Miscellaneous").isVisible(),
+      true,
+    );
+    check(
+      "and named Paid Breaks",
+      await planner.getByText("Paid Breaks").isVisible(),
+      true,
+    );
+
     await planner.locator("#title").fill("Built from the reworked form");
     await planner.getByRole("button", { name: "Create job" }).click();
     // Not /jobs\/[a-z0-9]+$/: that also matches /jobs/new, so a form that never
@@ -548,9 +609,14 @@ async function main() {
     await planner.waitForTimeout(1500);
 
     await planner.locator("#title").fill("Planned with no crew");
-    // Nothing is preselected any more, so the company is part of filling it in.
+    // Nothing is preselected any more, so the company and the customer are
+    // both part of filling it in — and the site list only exists once the
+    // customer is known.
     await planner.locator("#clientId").click();
     await planner.getByRole("option").first().click();
+    await planner.locator("#customerId").click();
+    await planner.getByRole("option").first().click();
+    await planner.waitForTimeout(300);
     await planner.locator("#siteId").click();
     await planner.getByRole("option").first().click();
     await planner.getByRole("button", { name: "Create job" }).click();
@@ -572,7 +638,7 @@ async function main() {
   check("with nobody on it yet", planned?.assignments.length, 0);
   if (planned) await db.job.delete({ where: { id: planned.id } });
 
-  // --- the representing company's work order --------------------------------
+  // --- the representing company's paperwork ---------------------------------
   // It used to live in somebody's inbox, which meant the tech at the door
   // could not read the document the job answers to.
   await bossPage(browser, bossToken, async (planner) => {
@@ -580,23 +646,29 @@ async function main() {
     await planner.waitForTimeout(1000);
 
     check(
-      "there is somewhere to put the representing company's WO",
-      await planner.getByText("No work order attached yet.").isVisible(),
+      "the WO has somewhere to go",
+      await planner.getByText("Not attached yet.", { exact: false }).first().isVisible(),
+      true,
+    );
+    check(
+      "and so does their sign-off blank",
+      await planner.getByText("Sign-off sheet").first().isVisible(),
       true,
     );
 
-    await planner.locator('input[type="file"][accept*="pdf"]').last().setInputFiles({
-      name: "NetCom-WO-887766.pdf",
-      mimeType: "application/pdf",
-      buffer: Buffer.from(
-        "%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n",
-      ),
-    });
-    await planner.getByRole("button", { name: "Attach" }).click();
+    await planner
+      .locator("#doc-CLIENT_WORK_ORDER")
+      .setInputFiles({
+        name: "NetCom-WO-887766.pdf",
+        mimeType: "application/pdf",
+        buffer: Buffer.from(
+          "%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n",
+        ),
+      });
     await planner.waitForTimeout(2500);
 
     const stored = await db.attachment.findFirst({
-      where: { workOrderJobId: assignment.jobId },
+      where: { jobDocumentId: assignment.jobId },
       select: { id: true, originalName: true, watermarked: true },
     });
     check("the work order is filed against the job", Boolean(stored), true);
@@ -629,10 +701,64 @@ async function main() {
     await planner.waitForTimeout(2000);
     check(
       "and a wrong one can be taken back off",
-      await db.attachment.count({ where: { workOrderJobId: assignment.jobId } }),
+      await db.attachment.count({ where: { jobDocumentId: assignment.jobId } }),
       0,
     );
+
+    // "There isn't one" and "nobody has chased it" look identical on screen,
+    // and only one of them is a decision.
+    await planner.getByRole("button", { name: "No WO for this job" }).click();
+    await planner.waitForTimeout(2000);
+    check(
+      "no WO can be recorded as a decision",
+      (
+        await db.job.findUniqueOrThrow({
+          where: { id: assignment.jobId },
+          select: { noWorkOrder: true },
+        })
+      ).noWorkOrder,
+      true,
+    );
   });
+
+  // The PDF often lands in the tech's inbox at eight in the morning, long
+  // after whoever planned the job has moved on.
+  check(
+    "the tech on the job can attach the sign-off blank themselves",
+    await (async () => {
+      await page.goto(url, { waitUntil: "load" });
+      await page.waitForTimeout(1000);
+      await page.locator("#doc-SIGN_OFF").setInputFiles({
+        name: "SignOff.pdf",
+        mimeType: "application/pdf",
+        buffer: Buffer.from("%PDF-1.4\ntrailer<<>>\n%%EOF\n"),
+      });
+      await page.waitForTimeout(2500);
+      return db.attachment.count({
+        where: { jobDocumentId: assignment.jobId, jobDocumentKind: "SIGN_OFF" },
+      });
+    })(),
+    1,
+  );
+
+  // Attaching a WO answers the flag rather than leaving the page saying both.
+  await page.locator("#doc-CLIENT_WORK_ORDER").setInputFiles({
+    name: "LateWO.pdf",
+    mimeType: "application/pdf",
+    buffer: Buffer.from("%PDF-1.4\ntrailer<<>>\n%%EOF\n"),
+  });
+  await page.waitForTimeout(2500);
+  check(
+    "and a WO that turns up after all clears the no-WO mark",
+    (
+      await db.job.findUniqueOrThrow({
+        where: { id: assignment.jobId },
+        select: { noWorkOrder: true },
+      })
+    ).noWorkOrder,
+    false,
+  );
+  await db.attachment.deleteMany({ where: { jobDocumentId: assignment.jobId } });
 
   // --- breaks, when the project got it wrong --------------------------------
   await bossPage(browser, bossToken, async (planner) => {
@@ -672,6 +798,57 @@ async function main() {
       breaks.length > 0 && breaks.every((entry) => entry.paid === after.breakPaid),
       true,
     );
+  });
+
+  // --- a job raised with no site number -------------------------------------
+  // Dispatch reads out a customer and a city often enough that demanding the
+  // number up front means a made-up one, and a made-up one is worse than none.
+  await bossPage(browser, bossToken, async (planner) => {
+    await planner.goto(`${BASE}/jobs/new`, { waitUntil: "load" });
+    await planner.waitForTimeout(1500);
+
+    await planner.locator("#clientId").click();
+    await planner.getByRole("option").first().click();
+    await planner.locator("#customerId").click();
+    await planner.getByRole("option").first().click();
+    await planner.waitForTimeout(300);
+
+    await planner.getByRole("button", { name: "No SiteID" }).click();
+    await planner.locator("#qs-city").fill("Bellingham");
+    await planner.getByRole("button", { name: "Add it without a number" }).click();
+    await planner.waitForTimeout(2500);
+
+    await planner.locator("#title").fill("Raised without a site number");
+    await planner.getByRole("button", { name: "Create job" }).click();
+    await planner.waitForURL(JOB_URL, { timeout: 20_000 }).catch(() => undefined);
+
+    const raised = await db.job.findFirst({
+      where: { title: "Raised without a site number" },
+      select: { id: true, site: { select: { id: true, numberPending: true, city: true } } },
+    });
+    check("the job exists without a site number", Boolean(raised), true);
+    check("and its site is marked pending", raised?.site.numberPending, true);
+    check("with whatever was known at the time", raised?.site.city, "Bellingham");
+
+    check(
+      "the job page asks for the number rather than showing a placeholder",
+      await planner.getByText("Not known when this job was raised.").isVisible(),
+      true,
+    );
+
+    await planner.getByLabel("Site number").fill("77123");
+    await planner.getByRole("button", { name: "Save", exact: true }).first().click();
+    await planner.waitForTimeout(2500);
+
+    const filled = await db.job.findUniqueOrThrow({
+      where: { id: raised!.id },
+      select: { site: { select: { siteNumber: true, numberPending: true } } },
+    });
+    check("the number can be filled in from the job", filled.site.siteNumber, "77123");
+    check("and it stops being pending", filled.site.numberPending, false);
+
+    await db.job.delete({ where: { id: raised!.id } });
+    await db.site.delete({ where: { id: raised!.site.id } }).catch(() => undefined);
   });
 
   // --- the scheduled time, saved without being changed ----------------------
@@ -722,6 +899,94 @@ async function main() {
       true,
     );
   });
+
+  // --- a company's standing blank, offered on the next job ------------------
+  // The sign-off sheet is the same PDF every time. Re-uploading it per job is
+  // how a job goes out on last year's form.
+  const netcom = await db.client.findFirstOrThrow({ where: { name: { startsWith: "NetCom" } } });
+  const blank = await db.attachment.create({
+    data: {
+      storagePath: "templates/seed-signoff.pdf",
+      originalName: "NetCom-SignOff.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 32,
+      uploadedById: boss.id,
+    },
+  });
+  await mkdir(dirname(absolutePath("templates/seed-signoff.pdf")), {
+    recursive: true,
+  });
+  await writeFile(
+    absolutePath("templates/seed-signoff.pdf"),
+    "%PDF-1.4\ntrailer<<>>\n%%EOF\n",
+  );
+  const template = await db.clientDocumentTemplate.create({
+    data: {
+      clientId: netcom.id,
+      kind: "SIGN_OFF",
+      label: "NetCom sign-off 2026",
+      isDefault: true,
+      attachmentId: blank.id,
+    },
+  });
+
+  await bossPage(browser, bossToken, async (planner) => {
+    await planner.goto(`${BASE}/jobs/new`, { waitUntil: "load" });
+    await planner.waitForTimeout(1500);
+
+    await planner.locator("#clientId").click();
+    await planner.locator("#clientId").fill("netcom");
+    await planner.getByRole("option", { name: /NetCom/ }).click();
+    await planner.waitForTimeout(300);
+
+    check(
+      "their standing form is offered",
+      await planner.getByText("NetCom sign-off 2026").isVisible(),
+      true,
+    );
+    check(
+      "already ticked, because it is their default",
+      await planner
+        .locator(`input[name="templateIds"][value="${template.id}"]`)
+        .isChecked(),
+      true,
+    );
+
+    await planner.locator("#customerId").click();
+    await planner.getByRole("option").first().click();
+    await planner.waitForTimeout(300);
+    await planner.locator("#siteId").click();
+    await planner.getByRole("option").first().click();
+    await planner.locator("#title").fill("Job with their sign-off blank");
+    await planner.getByRole("button", { name: "Create job" }).click();
+    await planner.waitForURL(JOB_URL, { timeout: 20_000 }).catch(() => undefined);
+
+    const withBlank = await db.job.findFirst({
+      where: { title: "Job with their sign-off blank" },
+      select: {
+        id: true,
+        documents: { select: { originalName: true, jobDocumentKind: true, storagePath: true } },
+      },
+    });
+    check("the blank comes across onto the job", withBlank?.documents.length, 1);
+    check(
+      "as the sign-off sheet",
+      withBlank?.documents[0]?.jobDocumentKind,
+      "SIGN_OFF",
+    );
+    // Its own copy of the bytes: replacing the template next year must not
+    // change what a job that already went out was sent on.
+    check(
+      "with its own copy of the file",
+      withBlank?.documents[0]?.storagePath !== blank.storagePath,
+      true,
+    );
+
+    if (withBlank) await db.job.delete({ where: { id: withBlank.id } });
+  });
+
+  await db.clientDocumentTemplate.delete({ where: { id: template.id } });
+  await db.attachment.delete({ where: { id: blank.id } });
 
   // Renamed because "client" reads as the customer being served, which is the
   // opposite of what it means here.

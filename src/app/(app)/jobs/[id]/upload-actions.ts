@@ -8,6 +8,7 @@ import { isoDateInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
 import { deliverableLabel } from "@/lib/deliverables";
 import { processImage, processSignature, watermarkText } from "@/lib/images";
+import { DOCUMENT_LABELS, storeDocument } from "@/lib/job-documents";
 import { canOnJob } from "@/lib/scope";
 import { getSessionUser, type SessionUser } from "@/lib/session";
 import { deleteFile, storeFile } from "@/lib/storage";
@@ -327,38 +328,40 @@ export async function deleteDeliverableItem(
 }
 
 // ---------------------------------------------------------------------------
-// The representing company's work order
+// The representing company's paperwork
 // ---------------------------------------------------------------------------
 
 /**
- * Files the WO the representing company issued.
+ * Files the WO the company issued, or the sign-off blank the tech will get
+ * signed.
  *
- * It is the paperwork the whole job is answerable to — the scope, the site,
- * what was agreed — and until now it lived in somebody's inbox, which meant
- * the tech standing at the door could not read it. Several are allowed: a WO
- * gets revised, and the superseded one is still what somebody was told on the
- * day.
+ * The WO is the paperwork the whole job is answerable to — the scope, the
+ * site, what was agreed — and it used to live in somebody's inbox, which meant
+ * the tech standing at the door could not read it. Several of each are
+ * allowed: a WO gets revised, and the superseded one is still what somebody
+ * was told on the day.
+ *
+ * Anyone on the job may attach one. The planner usually has the WO when they
+ * raise the job, but often does not, and the tech who is sent the PDF at eight
+ * in the morning is the only person who can put it where the crew will see it.
+ * Removing somebody else's needs the wider permission.
  *
  * Not a deliverable: deliverables are the crew's output and are foldered by
  * tech in the export. This is an input.
  */
-export async function uploadWorkOrder(
+export async function uploadJobDocument(
   _prev: ActionResult | null,
   formData: FormData,
 ): Promise<ActionResult> {
   const jobId = String(formData.get("jobId") ?? "");
-
-  const user = await getSessionUser();
-  if (!user) return fail("Not signed in.");
-
-  const job = await loadJob(jobId);
-  if (!job) return fail("Job not found.");
-
-  // Whoever plans the job is who receives the WO. A tech may read it but not
-  // replace it — the document is the record of what was agreed.
-  if (!(await canOnJob(user, "job.edit_planned_fields", job))) {
-    return fail("You cannot attach a work order to this job.");
+  const kind = String(formData.get("kind") ?? "");
+  if (kind !== "CLIENT_WORK_ORDER" && kind !== "SIGN_OFF") {
+    return fail("Unknown document type.");
   }
+
+  const context = await requireUpload(jobId);
+  if ("error" in context) return fail(context.error);
+  const { user, job } = context;
 
   const files = formData
     .getAll("files")
@@ -369,55 +372,78 @@ export async function uploadWorkOrder(
   let stored = 0;
 
   for (const file of files) {
-    // No watermark: this is their document, and stamping it would misrepresent
-    // it as ours.
-    const result = await storeUpload(job, user, file, { watermark: false });
+    const result = await storeDocument(file, user.id, job.id);
     if ("error" in result) {
       failures.push(`${file.name}: ${result.error}`);
       continue;
     }
     await db.attachment.update({
-      where: { id: result.attachmentId },
-      data: { workOrderJobId: job.id },
+      where: { id: result.id },
+      data: { jobDocumentId: job.id, jobDocumentKind: kind },
     });
     stored++;
   }
 
   if (stored === 0) return fail(failures.join("; ") || "Nothing was saved.");
 
+  // Attaching a work order answers the "there isn't one" flag.
+  if (kind === "CLIENT_WORK_ORDER") {
+    await db.job.updateMany({
+      where: { id: job.id, noWorkOrder: true },
+      data: { noWorkOrder: false },
+    });
+  }
+
   await recordAudit({
     actorId: user.id,
     entityType: "Job",
     entityId: job.id,
     jobId: job.id,
-    action: "work_order_attached",
-    detail: { files: stored, name: files[0]?.name ?? null },
+    action: "document_attached",
+    detail: {
+      field: DOCUMENT_LABELS[kind],
+      files: stored,
+      to: files[0]?.name ?? null,
+    },
   });
 
   touch(job.id);
   return failures.length > 0 ? fail(failures.join("; ")) : ok();
 }
 
-export async function deleteWorkOrder(
+export async function deleteJobDocument(
   formData: FormData,
 ): Promise<ActionResult> {
   const id = String(formData.get("id") ?? "");
 
   const attachment = await db.attachment.findUnique({
     where: { id },
-    select: { id: true, storagePath: true, originalName: true, workOrderJobId: true },
+    select: {
+      id: true,
+      storagePath: true,
+      originalName: true,
+      uploadedById: true,
+      jobDocumentId: true,
+      jobDocumentKind: true,
+    },
   });
-  if (!attachment?.workOrderJobId) return fail("Not found.");
+  if (!attachment?.jobDocumentId || !attachment.jobDocumentKind) {
+    return fail("Not found.");
+  }
 
   const user = await getSessionUser();
   if (!user) return fail("Not signed in.");
 
-  const job = await loadJob(attachment.workOrderJobId);
+  const job = await loadJob(attachment.jobDocumentId);
   if (!job) return fail("Job not found.");
 
-  if (!(await canOnJob(user, "job.edit_planned_fields", job))) {
-    return fail("You cannot remove this work order.");
-  }
+  // Clearing up your own upload is housekeeping; removing the WO somebody else
+  // filed is a change to the record of the job.
+  const isOwn = attachment.uploadedById === user.id;
+  const allowed = isOwn
+    ? await canOnJob(user, "deliverable.upload", job)
+    : await canOnJob(user, "job.edit_planned_fields", job);
+  if (!allowed) return fail("You cannot remove this document.");
 
   await deleteFile(attachment.storagePath);
   await db.attachment.delete({ where: { id } });
@@ -427,11 +453,66 @@ export async function deleteWorkOrder(
     entityType: "Job",
     entityId: job.id,
     jobId: job.id,
-    action: "work_order_removed",
-    detail: { name: attachment.originalName },
+    action: "document_removed",
+    detail: {
+      field: DOCUMENT_LABELS[attachment.jobDocumentKind],
+      from: attachment.originalName,
+    },
   });
 
   touch(job.id);
+  return ok();
+}
+
+/**
+ * Records that the representing company issued no work order.
+ *
+ * An empty slot and a deliberate "there isn't one" look identical on screen,
+ * and the difference decides whether anybody chases it. Only somebody who can
+ * change the planned fields may assert it; a tech who finds there is in fact a
+ * WO clears it by attaching one.
+ */
+export async function setNoWorkOrder(
+  formData: FormData,
+): Promise<ActionResult> {
+  const jobId = String(formData.get("jobId") ?? "");
+  const none = String(formData.get("none") ?? "") === "true";
+
+  const user = await getSessionUser();
+  if (!user) return fail("Not signed in.");
+
+  const job = await loadJob(jobId);
+  if (!job) return fail("Job not found.");
+
+  if (!(await canOnJob(user, "job.edit_planned_fields", job))) {
+    return fail("You cannot change this.");
+  }
+
+  if (none) {
+    const filed = await db.attachment.count({
+      where: { jobDocumentId: jobId, jobDocumentKind: "CLIENT_WORK_ORDER" },
+    });
+    if (filed > 0) {
+      return fail("There is a work order attached — remove it first.");
+    }
+  }
+
+  await db.job.update({ where: { id: jobId }, data: { noWorkOrder: none } });
+
+  await recordAudit({
+    actorId: user.id,
+    entityType: "Job",
+    entityId: jobId,
+    jobId,
+    action: "field_edited",
+    detail: {
+      field: "Work order",
+      from: none ? "expected" : "none issued",
+      to: none ? "none issued" : "expected",
+    },
+  });
+
+  touch(jobId);
   return ok();
 }
 

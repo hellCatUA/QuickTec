@@ -60,6 +60,9 @@ export async function GET(
       createdById: job.createdById,
     });
     if (!allowed) return new NextResponse("Not found", { status: 404 });
+  } else if (owner.kind === "directory") {
+    // A company's blank sign-off sheet holds no customer data and is the
+    // document a tech is expected to fill in, so anyone signed in may read it.
   } else if (owner.userId !== user.id) {
     // Mileage photos: the owner always, plus whoever can see other people's
     // trips at a wide enough scope.

@@ -5,7 +5,9 @@ import { z } from "zod";
 import { recordAudit } from "@/lib/audit";
 import { db } from "@/lib/db";
 import { flag, optionalText } from "@/lib/form";
+import { DOCUMENT_LABELS, storeDocument } from "@/lib/job-documents";
 import { requirePermission } from "@/lib/session";
+import { deleteFile } from "@/lib/storage";
 
 export type ActionResult = { ok: true; id?: string } | { ok: false; error: string };
 
@@ -169,4 +171,112 @@ export async function saveSite(
   } catch (error) {
     return fail(error);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Default blanks kept against a representing company
+// ---------------------------------------------------------------------------
+
+/**
+ * Stores a blank form a company always uses.
+ *
+ * A sign-off sheet is nearly always the same document for a given company, and
+ * re-uploading it per job is how a job ends up going out on last year's form.
+ * Kept here once and offered when a job is raised.
+ */
+export async function saveClientTemplate(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  const actor = await requirePermission("client.manage");
+
+  const clientId = String(formData.get("clientId") ?? "");
+  const kind = String(formData.get("kind") ?? "");
+  const label = String(formData.get("label") ?? "").trim();
+  const isDefault = formData.get("isDefault") === "on";
+
+  if (kind !== "CLIENT_WORK_ORDER" && kind !== "SIGN_OFF") {
+    return { ok: false, error: "Pick what kind of form this is." };
+  }
+
+  const client = await db.client.findUnique({
+    where: { id: clientId },
+    select: { id: true, name: true },
+  });
+  if (!client) return { ok: false, error: "Company not found." };
+
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) {
+    return { ok: false, error: "Choose a file first." };
+  }
+
+  const stored = await storeDocument(file, actor.id, `templates/${client.id}`);
+  if ("error" in stored) return { ok: false, error: stored.error };
+
+  const template = await db.clientDocumentTemplate.create({
+    data: {
+      clientId: client.id,
+      kind,
+      label: label || file.name || DOCUMENT_LABELS[kind],
+      isDefault,
+      attachmentId: stored.id,
+    },
+    select: { id: true },
+  });
+
+  // One default per company and kind: two both ticked on the new-job form is
+  // two forms going to the customer, and nobody notices until it comes back.
+  if (isDefault) {
+    await db.clientDocumentTemplate.updateMany({
+      where: { clientId: client.id, kind, id: { not: template.id } },
+      data: { isDefault: false },
+    });
+  }
+
+  await recordAudit({
+    actorId: actor.id,
+    entityType: "ClientDocumentTemplate",
+    entityId: template.id,
+    action: "created",
+    detail: { who: client.name, field: DOCUMENT_LABELS[kind], to: label },
+  });
+
+  revalidatePath("/directory/clients");
+  revalidatePath("/jobs/new");
+  return { ok: true, id: template.id };
+}
+
+export async function deleteClientTemplate(
+  formData: FormData,
+): Promise<ActionResult> {
+  const actor = await requirePermission("client.manage");
+  const id = String(formData.get("id") ?? "");
+
+  const template = await db.clientDocumentTemplate.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      label: true,
+      attachment: { select: { id: true, storagePath: true } },
+    },
+  });
+  if (!template) return { ok: false, error: "Not found." };
+
+  // Jobs hold their own copy of the bytes, so removing the template here
+  // cannot change what a job that already went out was sent on.
+  await deleteFile(template.attachment.storagePath);
+  await db.clientDocumentTemplate.delete({ where: { id } });
+  await db.attachment.delete({ where: { id: template.attachment.id } });
+
+  await recordAudit({
+    actorId: actor.id,
+    entityType: "ClientDocumentTemplate",
+    entityId: id,
+    action: "deleted",
+    detail: { from: template.label },
+  });
+
+  revalidatePath("/directory/clients");
+  revalidatePath("/jobs/new");
+  return { ok: true };
 }
