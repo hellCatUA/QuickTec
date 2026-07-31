@@ -7,8 +7,13 @@ import type { PayType } from "@prisma-client";
  *   1. per-job override        (set on the assignment, handled by the caller)
  *   2. tech + project
  *   3. tech + client
- *   4. tech default
- *   5. non-billable
+ *   4. the project's own default
+ *   5. tech default
+ *   6. non-billable
+ *
+ * The project default sits above the tech default on purpose: it is the number
+ * negotiated for this work, and a personal default is what applies to work
+ * nobody negotiated.
  *
  * Travel reimbursement is intentionally absent from steps 4 and 5: it is money
  * the customer allocates for a particular job or project, so a tech never
@@ -21,7 +26,7 @@ export type ResolvedRate = {
   rate: string;
   travelReimbursement: string | null;
   /** Where the rate came from, for showing the operator why. */
-  source: "project" | "client" | "default" | "none";
+  source: "project" | "client" | "project-default" | "default" | "none";
 };
 
 export async function resolvePayRate(
@@ -64,6 +69,25 @@ export async function resolvePayRate(
       travelReimbursement: byClient.travelReimbursement?.toString() ?? null,
       source: "client",
     };
+  }
+
+  if (projectId) {
+    const project = await db.project.findUnique({
+      where: { id: projectId },
+      select: {
+        defaultPayType: true,
+        defaultPayRate: true,
+        travelReimbursement: true,
+      },
+    });
+    if (project?.defaultPayType) {
+      return {
+        payType: project.defaultPayType,
+        rate: project.defaultPayRate?.toString() ?? "0",
+        travelReimbursement: project.travelReimbursement?.toString() ?? null,
+        source: "project-default",
+      };
+    }
   }
 
   const user = await db.user.findUnique({

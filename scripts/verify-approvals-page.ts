@@ -2,6 +2,7 @@ import "dotenv/config";
 import { encode } from "next-auth/jwt";
 import { chromium } from "playwright";
 import { db } from "@/lib/db";
+import { resolvePayRate } from "@/lib/pay-rates";
 import { weekRange } from "@/lib/payroll";
 
 /**
@@ -405,8 +406,7 @@ async function main() {
   );
 
   await techSitePage
-    .getByRole("button", { name: /^Mark read:/ })
-    .first()
+    .getByRole("button", { name: `Mark read: ${assignedNote.title}` })
     .click();
   await techSitePage.waitForTimeout(2500);
 
@@ -467,7 +467,7 @@ async function main() {
   // rather than by noticing the project moved.
   const project = await db.project.upsert({
     where: { id: "verify-pm-project" },
-    update: { managerId: null, name: "PM handover project" },
+    update: { managerId: null, pmContactId: null, name: "PM handover project" },
     create: {
       id: "verify-pm-project",
       name: "PM handover project",
@@ -479,7 +479,7 @@ async function main() {
   await db.auditEvent.deleteMany({ where: { projectId: project.id } });
 
   const bossPage = await pageFor(boss.token);
-  await bossPage.goto(`${BASE}/projects/${project.id}`, {
+  await bossPage.goto(`${BASE}/projects/${project.id}/settings`, {
     waitUntil: "domcontentloaded",
   });
   await bossPage
@@ -555,6 +555,222 @@ async function main() {
     await db.notification.count({ where: { projectId: project.id } }),
     before,
   );
+
+  // --- the representing company's PM/PC -------------------------------------
+  // The person a tech rings when the door is locked. Ours is the project
+  // manager above; this one works for the other company and has no account.
+  await bossPage.goto(`${BASE}/projects/${project.id}/settings`, {
+    waitUntil: "load",
+  });
+  await bossPage.waitForTimeout(1000);
+
+  await bossPage.locator("#pmContactId").click();
+  await bossPage.locator("#pmContactId").fill("Dana Whitfield");
+  await bossPage.getByText("Add Dana Whitfield").click();
+  await bossPage.locator("#pm-title").fill("Project coordinator");
+  await bossPage.locator("#pm-phone").fill("206-555-0114");
+  await bossPage.getByRole("button", { name: "Save contact" }).click();
+  await bossPage.waitForTimeout(1500);
+
+  check(
+    "their contact details come with them once picked",
+    await bossPage.locator('a[href="tel:206-555-0114"]').isVisible(),
+    true,
+  );
+
+  await bossPage.getByRole("button", { name: "Save project" }).click();
+  await bossPage.waitForTimeout(2500);
+
+  const withPm = await db.project.findUniqueOrThrow({
+    where: { id: project.id },
+    select: { pmContactId: true, pmContact: { select: { name: true, phone: true } } },
+  });
+  check("the rep company PM/PC is recorded", withPm.pmContact?.name, "Dana Whitfield");
+  check("with their number", withPm.pmContact?.phone, "206-555-0114");
+
+  check(
+    "the handover is kept, not just the current value",
+    await db.projectPmChange.count({
+      where: { projectId: project.id, contactId: withPm.pmContactId },
+    }),
+    1,
+  );
+  check(
+    "and it reads as a first assignment on the timeline",
+    (
+      await db.auditEvent.findFirst({
+        where: { projectId: project.id, action: "project_pm_contact_assigned" },
+      })
+    ) !== null,
+    true,
+  );
+
+  // A job raised now carries them; a handover later must not rewrite it.
+  const underPm = await db.job.create({
+    data: {
+      ...base,
+      projectId: project.id,
+      intWoId: `2026-07-0000-${stamp + 3}`,
+      intWoSequence: stamp + 3,
+      title: "Job under the coordinator",
+      createdById: boss.user.id,
+      pmContactId: withPm.pmContactId,
+    },
+  });
+
+  await db.job.create({
+    data: {
+      ...base,
+      projectId: project.id,
+      intWoId: `2026-04-0000-${stamp + 4}`,
+      intWoSequence: stamp + 4,
+      title: "Finished last month",
+      createdById: boss.user.id,
+      lifecycle: "APPROVED",
+      outcome: "COMPLETED",
+    },
+  });
+
+  const replacement = await db.externalContact.create({
+    data: { name: "Sam Oduya", clientId: client.id },
+  });
+  await db.project.update({
+    where: { id: project.id },
+    data: { pmContactId: replacement.id },
+  });
+
+  check(
+    "a job already raised stays with whoever ran it",
+    (
+      await db.job.findUniqueOrThrow({
+        where: { id: underPm.id },
+        select: { pmContact: { select: { name: true } } },
+      })
+    ).pmContact?.name,
+    "Dana Whitfield",
+  );
+
+  // --- the project page is a page about the project -------------------------
+  // Its settings used to sit on top of the work, so the list of jobs — the
+  // reason anybody opens it — was below four forms.
+  await bossPage.goto(`${BASE}/projects/${project.id}`, { waitUntil: "load" });
+  await bossPage.waitForTimeout(1000);
+
+  check(
+    "the overview does not carry the settings forms",
+    await bossPage.locator('select[name="managerId"]').count(),
+    0,
+  );
+  check(
+    "they are behind a settings button",
+    await bossPage.getByRole("link", { name: "Settings" }).isVisible(),
+    true,
+  );
+  check(
+    "the rep company PM/PC is on the overview",
+    await bossPage
+      .getByRole("heading", { name: "Rep Company PM/PC" })
+      .isVisible(),
+    true,
+  );
+  check(
+    "the jobs are searchable",
+    await bossPage
+      .getByPlaceholder("Search by WO, title, site, city or who is on it…")
+      .isVisible(),
+    true,
+  );
+  check(
+    "the list can be narrowed to what is still coming",
+    await bossPage.getByRole("button", { name: /^Scheduled/ }).isVisible(),
+    true,
+  );
+  await bossPage.getByRole("button", { name: /^Completed/ }).click();
+  await bossPage.waitForTimeout(300);
+  check(
+    "and to what is behind us",
+    await bossPage.getByText("Finished last month").isVisible(),
+    true,
+  );
+  check(
+    "which leaves the unfinished one out",
+    await bossPage.getByText("Job under the coordinator").count(),
+    0,
+  );
+  await bossPage.getByRole("button", { name: /^All/ }).click();
+  await bossPage.waitForTimeout(300);
+
+  await bossPage
+    .getByPlaceholder("Search by WO, title, site, city or who is on it…")
+    .fill("under the coordinator");
+  await bossPage.waitForTimeout(300);
+  check(
+    "and searching narrows the list",
+    await bossPage.getByText("Job under the coordinator").isVisible(),
+    true,
+  );
+
+  // --- job settings, kept apart from the project's own details --------------
+  await bossPage.goto(`${BASE}/projects/${project.id}/settings`, {
+    waitUntil: "load",
+  });
+  await bossPage.waitForTimeout(1000);
+
+  check(
+    "there is a block for how its jobs are filled in",
+    await bossPage
+      .getByRole("heading", { name: "In Project Jobs Settings" })
+      .isVisible(),
+    true,
+  );
+  check(
+    "deliverables read as requirements there",
+    await bossPage.getByText("Deliverables Requirements").isVisible(),
+    true,
+  );
+  check(
+    "breaks are called Paid Breaks",
+    await bossPage.getByText("Paid Breaks").isVisible(),
+    true,
+  );
+
+  await bossPage.locator("#defaultJobTitle").fill("Register swap");
+  await bossPage.locator("#defaultPayType").selectOption("HOURLY");
+  await bossPage.locator("#defaultPayRate").fill("52.50");
+  await bossPage.getByRole("button", { name: "Save job settings" }).click();
+  await bossPage.waitForTimeout(2500);
+
+  const prefill = await db.project.findUniqueOrThrow({
+    where: { id: project.id },
+    select: {
+      defaultJobTitle: true,
+      defaultPayType: true,
+      defaultPayRate: true,
+      pmContactId: true,
+    },
+  });
+  check("the job title prefill is stored", prefill.defaultJobTitle, "Register swap");
+  check("with the pay type", prefill.defaultPayType, "HOURLY");
+  check("and the rate", prefill.defaultPayRate?.toString(), "52.5");
+  // Two forms, two actions: saving one must not blank a field owned by the
+  // other, which is exactly what one shared action would have done.
+  check(
+    "saving job settings leaves the PM/PC alone",
+    prefill.pmContactId,
+    replacement.id,
+  );
+
+  const rate = await resolvePayRate(tech.user.id, project.id, client.id);
+  check(
+    "and somebody with no rate of their own is paid the project's",
+    `${rate.payType} ${rate.rate}`,
+    "HOURLY 52.5",
+  );
+
+  await db.job.deleteMany({ where: { projectId: project.id } });
+  await db.externalContact.deleteMany({
+    where: { id: { in: [withPm.pmContactId!, replacement.id] } },
+  });
 
   await browser.close();
   await db.job.deleteMany({ where: { siteId: site.id } });

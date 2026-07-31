@@ -2,13 +2,13 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { recordAudit } from "@/lib/audit";
+import { diffFields, recordAudit } from "@/lib/audit";
 import { db } from "@/lib/db";
 import { flag, optionalMoney, optionalText } from "@/lib/form";
 import { PROJECT_DEFAULT_RULES } from "@/lib/deliverables";
 import { notify } from "@/lib/notifications";
 import { requirePermission } from "@/lib/session";
-import { DeliverableCategory, ProjectRole, ProjectStatus } from "@prisma-client";
+import { DeliverableCategory, PayType, ProjectRole, ProjectStatus } from "@prisma-client";
 
 export type ActionResult = { ok: true; id?: string } | { ok: false; error: string };
 
@@ -21,15 +21,19 @@ const ROLE_WORDING: Record<ProjectRole, string> = {
   TECH: "As a tech",
 };
 
+/**
+ * What the project is. How its jobs get filled in is a separate form and a
+ * separate action — sending half of one form's fields through the other is how
+ * a save quietly resets a field nobody touched.
+ */
 const projectSchema = z.object({
   name: z.string().trim().min(1, "Name is required"),
   externalProjectId: optionalText,
   clientId: z.string().min(1, "Pick a client"),
   customerId: optionalText,
   managerId: optionalText,
+  pmContactId: optionalText,
   generalScopeOfWork: optionalText,
-  travelReimbursement: optionalMoney,
-  breakPaid: flag,
   status: z.enum(ProjectStatus),
 });
 
@@ -40,10 +44,7 @@ export async function saveProject(
   const actor = await requirePermission("project.manage");
   const id = String(formData.get("id") ?? "");
 
-  const parsed = projectSchema.safeParse({
-    ...Object.fromEntries(formData),
-    breakPaid: formData.get("breakPaid") === "on",
-  });
+  const parsed = projectSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) {
     return { ok: false, error: z.prettifyError(parsed.error) };
   }
@@ -53,7 +54,7 @@ export async function saveProject(
   if (id) {
     const before = await db.project.findUnique({
       where: { id },
-      select: { managerId: true, name: true },
+      select: { managerId: true, pmContactId: true, name: true },
     });
 
     const project = await db.project.update({ where: { id }, data });
@@ -93,7 +94,19 @@ export async function saveProject(
       });
     }
 
+    if ((before?.pmContactId ?? null) !== (project.pmContactId ?? null)) {
+      await recordPmContactChange({
+        actorId: actor.id,
+        projectId: project.id,
+        projectName: project.name,
+        fromId: before?.pmContactId ?? null,
+        toId: project.pmContactId ?? null,
+        reason: String(formData.get("pmContactReason") ?? "").trim() || null,
+      });
+    }
+
     revalidatePath(`/projects/${id}`);
+    revalidatePath(`/projects/${id}/settings`);
     revalidatePath("/projects");
     return { ok: true, id };
   }
@@ -448,4 +461,262 @@ export async function deleteDispatchContact(
 
   revalidatePath(`/projects/${projectId}`);
   return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// The representing company's PM/PC — their side, not ours
+// ---------------------------------------------------------------------------
+
+const externalContactSchema = z.object({
+  name: z.string().trim().min(1, "Name is required"),
+  title: optionalText,
+  phone: optionalText,
+  email: optionalText,
+  clientId: optionalText,
+});
+
+/**
+ * Adds a person on the representing company's side.
+ *
+ * You meet the same coordinators over and over, so they are records rather
+ * than three text fields retyped per project — pick them once and their number
+ * comes with them. Internal only: the client report carries the name and
+ * nothing else.
+ */
+export async function createExternalContact(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  const actor = await requirePermission("project.manage");
+
+  const parsed = externalContactSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) {
+    return { ok: false, error: z.prettifyError(parsed.error) };
+  }
+
+  const contact = await db.externalContact.create({
+    data: parsed.data,
+    select: { id: true, name: true },
+  });
+
+  await recordAudit({
+    actorId: actor.id,
+    entityType: "ExternalContact",
+    entityId: contact.id,
+    action: "created",
+    detail: { who: contact.name },
+  });
+
+  return { ok: true, id: contact.id };
+}
+
+/** Rewrites what we hold for somebody. Their number changes; the person does not. */
+export async function updateExternalContact(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  const actor = await requirePermission("project.manage");
+  const id = String(formData.get("id") ?? "");
+
+  const parsed = externalContactSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) {
+    return { ok: false, error: z.prettifyError(parsed.error) };
+  }
+
+  const contact = await db.externalContact.update({
+    where: { id },
+    data: parsed.data,
+    select: { id: true, name: true },
+  });
+
+  await recordAudit({
+    actorId: actor.id,
+    entityType: "ExternalContact",
+    entityId: contact.id,
+    action: "updated",
+    detail: { who: contact.name },
+  });
+
+  revalidatePath("/projects");
+  return { ok: true, id: contact.id };
+}
+
+/**
+ * Puts a change of the representing company's PM/PC on the project timeline.
+ *
+ * Kept as its own table rather than only an audit row because the jobs already
+ * raised point at whoever ran them, so "who was the coordinator in March" is a
+ * question with a real answer that the current value cannot give.
+ */
+async function recordPmContactChange(input: {
+  actorId: string;
+  projectId: string;
+  projectName: string;
+  fromId: string | null;
+  toId: string | null;
+  reason: string | null;
+}) {
+  const [from, to] = await Promise.all([
+    input.fromId
+      ? db.externalContact.findUnique({
+          where: { id: input.fromId },
+          select: { name: true },
+        })
+      : null,
+    input.toId
+      ? db.externalContact.findUnique({
+          where: { id: input.toId },
+          select: { name: true },
+        })
+      : null,
+  ]);
+
+  await db.projectPmChange.create({
+    data: {
+      projectId: input.projectId,
+      contactId: input.toId,
+      changedById: input.actorId,
+      reason: input.reason,
+    },
+  });
+
+  await recordAudit({
+    actorId: input.actorId,
+    entityType: "Project",
+    entityId: input.projectId,
+    projectId: input.projectId,
+    action: input.fromId
+      ? input.toId
+        ? "project_pm_contact_changed"
+        : "project_pm_contact_cleared"
+      : "project_pm_contact_assigned",
+    detail: {
+      who: to?.name ?? from?.name ?? null,
+      from: from?.name ?? null,
+      to: to?.name ?? null,
+      reason: input.reason,
+    },
+  });
+
+  // Our own people need to know who to ring now. The contact is external and
+  // has no account, so there is nobody on their side to notify.
+  const audience = await db.projectMember.findMany({
+    where: { projectId: input.projectId },
+    select: { userId: true },
+  });
+
+  for (const member of audience) {
+    await notify({
+      userId: member.userId,
+      actorId: input.actorId,
+      projectId: input.projectId,
+      kind: "project_pm",
+      title: to
+        ? `${to.name} is now the contact on ${input.projectName}`
+        : `${input.projectName} has no representing-company contact`,
+      body: input.reason,
+      href: `/projects/${input.projectId}`,
+    });
+  }
+}
+
+const jobSettingsSchema = z.object({
+  breakPaid: flag,
+  defaultJobTitle: optionalText,
+  travelReimbursement: optionalMoney,
+  defaultPayType: optionalText,
+  defaultPayRate: optionalMoney,
+});
+
+/**
+ * How jobs under this project are filled in.
+ *
+ * Separate from the project's own details because it is edited on a different
+ * rhythm — the identity of a project is set once, the defaults get tuned as
+ * the work reveals what it actually looks like.
+ */
+export async function saveProjectJobSettings(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  const actor = await requirePermission("project.manage");
+  const id = String(formData.get("id") ?? "");
+  if (!id) return { ok: false, error: "Project not found." };
+
+  const parsed = jobSettingsSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) {
+    return { ok: false, error: z.prettifyError(parsed.error) };
+  }
+  const input = parsed.data;
+
+  if (input.defaultPayType && !(input.defaultPayType in PayType)) {
+    return { ok: false, error: "Unknown pay type." };
+  }
+  // A rate with no type would be a number nobody can interpret, and a type
+  // with no rate pays zero without saying so.
+  if (Boolean(input.defaultPayType) !== Boolean(input.defaultPayRate)) {
+    return {
+      ok: false,
+      error: "Set both the pay type and the rate, or neither.",
+    };
+  }
+
+  const before = await db.project.findUnique({
+    where: { id },
+    select: {
+      breakPaid: true,
+      defaultJobTitle: true,
+      travelReimbursement: true,
+      defaultPayType: true,
+      defaultPayRate: true,
+    },
+  });
+  if (!before) return { ok: false, error: "Project not found." };
+
+  const project = await db.project.update({
+    where: { id },
+    data: {
+      breakPaid: input.breakPaid,
+      defaultJobTitle: input.defaultJobTitle,
+      travelReimbursement: input.travelReimbursement,
+      defaultPayType: (input.defaultPayType as PayType | null) ?? null,
+      defaultPayRate: input.defaultPayRate,
+    },
+    select: { id: true, name: true },
+  });
+
+  const changed = diffFields(
+    {
+      breakPaid: before.breakPaid,
+      defaultJobTitle: before.defaultJobTitle,
+      travelReimbursement: before.travelReimbursement,
+      defaultPayType: before.defaultPayType,
+      defaultPayRate: before.defaultPayRate,
+    },
+    {
+      breakPaid: input.breakPaid,
+      defaultJobTitle: input.defaultJobTitle,
+      travelReimbursement: input.travelReimbursement,
+      defaultPayType: input.defaultPayType,
+      defaultPayRate: input.defaultPayRate,
+    },
+  );
+
+  // Nothing moved, so nothing goes on the timeline: a save that changed
+  // nothing is not an event.
+  if (Object.keys(changed).length > 0) {
+    await recordAudit({
+      actorId: actor.id,
+      entityType: "Project",
+      entityId: project.id,
+      projectId: project.id,
+      action: "project_job_settings_updated",
+      detail: { fields: Object.keys(changed).join(", ") },
+    });
+  }
+
+  revalidatePath(`/projects/${id}`);
+  revalidatePath(`/projects/${id}/settings`);
+  revalidatePath("/jobs/new");
+  return { ok: true, id };
 }

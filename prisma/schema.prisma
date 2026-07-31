@@ -335,6 +335,17 @@ model Project {
   travelReimbursement Decimal? @db.Decimal(10, 2)
   breakPaid           Boolean  @default(true)
 
+  /// Prefilled into a new job's title. Work under one project tends to be the
+  /// same sentence forty times over.
+  defaultJobTitle String?
+
+  /// What this project pays somebody who has no rate of their own on it. Sits
+  /// below a tech's project or client rate and above their personal default:
+  /// this is the number negotiated for this work, and a personal default is
+  /// what applies to work nobody negotiated.
+  defaultPayType PayType?
+  defaultPayRate Decimal? @db.Decimal(10, 2)
+
   /// Lifetime counter for INT WO IDs inside this project — never reset.
   intWoCounter Int @default(0)
 

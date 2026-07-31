@@ -40,7 +40,7 @@ export default async function ProjectsPage() {
           ],
         };
 
-  const [projects, clients, customers, managers] = await Promise.all([
+  const [projects, clients, customers, managers, contacts] = await Promise.all([
     db.project.findMany({
       where: visibility,
       orderBy: [{ status: "asc" }, { name: "asc" }],
@@ -71,6 +71,18 @@ export default async function ProjectsPage() {
       orderBy: { name: "asc" },
       select: { id: true, name: true, baseRole: true },
     }),
+    db.externalContact.findMany({
+      where: { active: true },
+      orderBy: { name: "asc" },
+      select: {
+        id: true,
+        name: true,
+        title: true,
+        phone: true,
+        email: true,
+        clientId: true,
+      },
+    }),
   ]);
 
   return (
@@ -94,6 +106,7 @@ export default async function ProjectsPage() {
             id: manager.id,
             label: `${manager.name} · ${manager.baseRole}`,
           }))}
+          contacts={contacts}
         />
       ) : null}
 

@@ -30,6 +30,7 @@ type Project = {
   customerId: string | null;
   intWoCounter: number;
   breakPaid: boolean;
+  defaultJobTitle: string | null;
   memberIds: string[];
 };
 type Tech = { id: string; name: string; baseRole: string };
@@ -78,6 +79,8 @@ export function JobForm({
   const [assignees, setAssignees] = useState<string[]>([]);
   const [leadId, setLeadId] = useState("");
   const [breakPaidChoice, setBreakPaidChoice] = useState<boolean | null>(null);
+  const [title, setTitle] = useState("");
+  const [titleTouched, setTitleTouched] = useState(false);
   const [noWorkOrder, setNoWorkOrder] = useState(false);
   const [pickedTemplates, setPickedTemplates] = useState<string[] | null>(null);
   const [addedSites, setAddedSites] = useState<SiteOption[]>([]);
@@ -107,6 +110,12 @@ export function JobForm({
     if (project.customerId && project.customerId !== customerId) {
       setCustomerId(project.customerId);
       setSiteId("");
+    }
+    // Work inside one project is the same sentence forty times over. Anything
+    // typed by hand stands: a prefill that overwrites what somebody wrote is
+    // worse than no prefill.
+    if (!titleTouched && project.defaultJobTitle) {
+      setTitle(project.defaultJobTitle);
     }
   }
 
@@ -304,6 +313,11 @@ export function JobForm({
             <Input
               id="title"
               name="title"
+              value={title}
+              onChange={(event) => {
+                setTitle(event.target.value);
+                setTitleTouched(true);
+              }}
               placeholder="Switch replacement"
               required
               autoComplete="off"

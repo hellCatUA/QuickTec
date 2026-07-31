@@ -63,6 +63,26 @@ export const TIMELINE_META: Record<string, TimelineMeta> = {
     icon: UserMinus,
     tone: "warning",
   },
+  project_pm_contact_assigned: {
+    label: "Rep company PM/PC set",
+    icon: UserPlus,
+    tone: "primary",
+  },
+  project_pm_contact_changed: {
+    label: "Rep company PM/PC changed",
+    icon: ArrowRightLeft,
+    tone: "warning",
+  },
+  project_pm_contact_cleared: {
+    label: "Rep company PM/PC removed",
+    icon: UserMinus,
+    tone: "warning",
+  },
+  project_job_settings_updated: {
+    label: "Job settings updated",
+    icon: ClipboardList,
+    tone: "neutral",
+  },
   project_member_added: { label: "Member added", icon: Users, tone: "neutral", groups: true },
   project_member_removed: { label: "Member removed", icon: UserMinus, tone: "neutral", groups: true },
   project_job_created: { label: "Job created in project", icon: CalendarPlus, tone: "primary", groups: true },

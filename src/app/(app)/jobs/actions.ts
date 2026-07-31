@@ -61,6 +61,8 @@ export async function createJob(
           externalProjectId: true,
           breakPaid: true,
           travelReimbursement: true,
+          defaultJobTitle: true,
+          pmContactId: true,
           deliverableRules: {
             where: { jobId: null },
             select: {
@@ -149,6 +151,10 @@ export async function createJob(
         intWoSequence: sequence,
         title: input.title,
         clientId: input.clientId,
+        // Whoever the coordinator is right now. Copied rather than looked up
+        // through the project, so a handover later leaves the jobs already
+        // planned under the person who actually ran them.
+        pmContactId: project?.pmContactId ?? null,
         customerId: site.customerId,
         siteId: input.siteId,
         projectId: project?.id ?? null,

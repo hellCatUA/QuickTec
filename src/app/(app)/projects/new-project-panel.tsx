@@ -4,16 +4,19 @@ import { Plus } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import type { ContactOption } from "./[id]/pm-contact";
 import { ProjectForm, type Option } from "./project-form";
 
 export function NewProjectPanel({
   clients,
   customers,
   managers,
+  contacts,
 }: {
   clients: Option[];
   customers: Option[];
   managers: Option[];
+  contacts: ContactOption[];
 }) {
   const [open, setOpen] = useState(false);
 
@@ -44,6 +47,7 @@ export function NewProjectPanel({
           clients={clients}
           customers={customers}
           managers={managers}
+          contacts={contacts}
           redirectOnCreate
         />
         <Button

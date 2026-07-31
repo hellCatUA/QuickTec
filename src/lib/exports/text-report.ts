@@ -142,7 +142,18 @@ export function buildTextReport(data: JobExportData): string {
 
     "Parking/Tolls": bulletList(parkingTolls) ?? NOT_APPLICABLE,
 
-    "PM/PC name": contactNames(data, "PM_PC").join(", ") || NOT_APPLICABLE,
+    // The coordinator recorded on the job and anybody named PM/PC on site,
+    // deduped: to the client they are the same line. Names only — the phone
+    // number we hold for them is ours, not theirs to be handed back.
+    "PM/PC name":
+      Array.from(
+        new Set(
+          [
+            data.job.pmContact?.name,
+            ...contactNames(data, "PM_PC"),
+          ].filter((name): name is string => Boolean(name)),
+        ),
+      ).join(", ") || NOT_APPLICABLE,
 
     // A site genuinely without a manager on duty is a fact worth stating
     // rather than a gap, so it gets its own wording.

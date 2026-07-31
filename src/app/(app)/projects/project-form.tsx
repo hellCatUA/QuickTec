@@ -1,9 +1,13 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Field, Input, Select, Textarea } from "@/components/ui/field";
 import { FormStatus, type SaveState } from "@/components/ui/form-status";
+import {
+  PmContactPicker,
+  type ContactOption,
+} from "./[id]/pm-contact";
 import { saveProject, type ActionResult } from "./actions";
 
 export type Option = { id: string; label: string };
@@ -15,23 +19,33 @@ export type ProjectFormValues = {
   clientId: string;
   customerId: string | null;
   managerId: string | null;
+  pmContactId: string | null;
   generalScopeOfWork: string | null;
   travelReimbursement: string | null;
   breakPaid: boolean;
   status: string;
 };
 
+/**
+ * What the project is: who it belongs to, who runs it, what it covers.
+ *
+ * Everything about how its jobs are filled in lives in Job settings instead —
+ * this form is the identity of the project, and it is edited once and then
+ * rarely.
+ */
 export function ProjectForm({
   project,
   clients,
   customers,
   managers,
+  contacts,
   redirectOnCreate,
 }: {
   project?: ProjectFormValues;
   clients: Option[];
   customers: Option[];
   managers: Option[];
+  contacts: ContactOption[];
   redirectOnCreate?: boolean;
 }) {
   const router = useRouter();
@@ -50,6 +64,8 @@ export function ProjectForm({
   );
 
   const key = project?.id ?? "new";
+  const [clientId, setClientId] = useState(project?.clientId ?? "");
+  const [pmContactId, setPmContactId] = useState(project?.pmContactId ?? "");
 
   return (
     <form action={formAction} className="flex flex-col gap-4">
@@ -80,11 +96,16 @@ export function ProjectForm({
           />
         </Field>
 
-        <Field label="Representing company" htmlFor={`pclient-${key}`}>
+        <Field
+          label="Representing company"
+          htmlFor={`pclient-${key}`}
+          hint="Who dispatches this work and pays for it. Goes onto every job raised under the project."
+        >
           <Select
             id={`pclient-${key}`}
             name="clientId"
-            defaultValue={project?.clientId ?? ""}
+            value={clientId}
+            onChange={(event) => setClientId(event.target.value)}
             required
           >
             <option value="" disabled>
@@ -120,7 +141,7 @@ export function ProjectForm({
         <Field
           label="Project manager"
           htmlFor={`pmgr-${key}`}
-          hint="Approves changes and statuses on this project's jobs. Not the same as the client-side PM/PC recorded on a job."
+          hint="Ours. Approves changes and statuses on this project's jobs."
         >
           <Select
             id={`pmgr-${key}`}
@@ -149,18 +170,17 @@ export function ProjectForm({
         </Field>
 
         <Field
-          label="Travel reimbursement ($)"
-          htmlFor={`ptravel-${key}`}
-          hint="Money the customer allocates for travel on jobs in this project. Separate from mileage, which is a write-off record."
+          label="Rep Company PM/PC"
+          htmlFor="pmContactId"
+          hint="Theirs. The coordinator a tech rings when the door is locked. Copied onto each job as it is raised, so replacing them mid-project leaves the jobs already planned under whoever actually ran them."
+          className="sm:col-span-2"
         >
-          <Input
-            id={`ptravel-${key}`}
-            name="travelReimbursement"
-            type="number"
-            step="0.01"
-            min={0}
-            defaultValue={project?.travelReimbursement ?? ""}
-            placeholder="Leave blank for none"
+          <PmContactPicker
+            name="pmContactId"
+            contacts={contacts}
+            value={pmContactId}
+            onChange={setPmContactId}
+            clientId={clientId}
           />
         </Field>
       </div>
@@ -177,16 +197,6 @@ export function ProjectForm({
           rows={6}
         />
       </Field>
-
-      <label className="flex items-center gap-2 text-sm">
-        <input
-          type="checkbox"
-          name="breakPaid"
-          defaultChecked={project?.breakPaid ?? true}
-          className="size-5 accent-[var(--color-primary)]"
-        />
-        Breaks are paid on this project
-      </label>
 
       <FormStatus
         state={state as SaveState}

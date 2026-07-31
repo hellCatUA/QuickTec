@@ -44,6 +44,7 @@ export default async function NewJobPage() {
         customerId: true,
         intWoCounter: true,
         breakPaid: true,
+        defaultJobTitle: true,
         // Who normally does this work. Shown first in the crew search rather
         // than enforced: a project member is a default, not a fence.
         members: { select: { userId: true } },
@@ -108,6 +109,7 @@ export default async function NewJobPage() {
           customerId: project.customerId,
           intWoCounter: project.intWoCounter,
           breakPaid: project.breakPaid,
+          defaultJobTitle: project.defaultJobTitle,
           memberIds: project.members.map((member) => member.userId),
         }))}
         techs={techs}

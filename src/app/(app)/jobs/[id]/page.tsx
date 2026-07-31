@@ -106,6 +106,9 @@ export default async function JobPage({
         select: { id: true, intWoId: true, revisitNumber: true, lifecycle: true },
       },
       client: { select: { name: true } },
+      pmContact: {
+        select: { name: true, title: true, phone: true, email: true },
+      },
       documents: {
         orderBy: { createdAt: "asc" },
         select: {
@@ -416,6 +419,23 @@ export default async function JobPage({
             name: supervisor.name,
             phone: supervisor.phone,
             email: supervisor.email,
+            note: null as string | null,
+          },
+        ]
+      : []),
+    // Their coordinator, as recorded when this job was raised. A tech at a
+    // locked door needs them, and they are not a dispatch contact we keep on
+    // the project — they belong to the other company.
+    ...(job.pmContact
+      ? [
+          {
+            id: "pm-contact",
+            label: `${job.client.name} PM/PC`,
+            name: job.pmContact.title
+              ? `${job.pmContact.name} · ${job.pmContact.title}`
+              : job.pmContact.name,
+            phone: job.pmContact.phone,
+            email: job.pmContact.email,
             note: null as string | null,
           },
         ]
