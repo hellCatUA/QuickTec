@@ -988,6 +988,148 @@ async function main() {
   await db.clientDocumentTemplate.delete({ where: { id: template.id } });
   await db.attachment.delete({ where: { id: blank.id } });
 
+  // --- the shell -----------------------------------------------------------
+  // The sign-out icon was one mis-tap from ending somebody's shift, and it was
+  // the only route to the account page short of knowing the URL.
+  await bossPage(browser, bossToken, async (planner) => {
+    await planner.goto(`${BASE}/dashboard`, { waitUntil: "load" });
+    await planner.waitForTimeout(500);
+
+    check(
+      "there is no bare sign-out button in the corner",
+      await planner.getByRole("button", { name: "Sign out" }).count(),
+      0,
+    );
+
+    await planner.getByRole("button", { name: "Account" }).click();
+    check(
+      "the account menu offers the profile",
+      await planner.getByRole("menuitem", { name: "Your profile" }).isVisible(),
+      true,
+    );
+    check(
+      "the settings",
+      await planner.getByRole("menuitem", { name: "Settings" }).isVisible(),
+      true,
+    );
+    check(
+      "and signing out, behind a deliberate open",
+      await planner.getByRole("menuitem", { name: "Sign out" }).isVisible(),
+      true,
+    );
+    await planner.keyboard.press("Escape");
+
+    // The company owns the deployment; whether its name is spelled out is a
+    // setting, because a long one eats the whole bar on a phone.
+    check(
+      "the header names the company by default",
+      await planner.locator("header").getByText("417 Group | QuickTec").isVisible(),
+      true,
+    );
+
+    await db.companySettings.update({
+      where: { id: "singleton" },
+      data: { showCompanyNameInHeader: false },
+    });
+    await planner.reload({ waitUntil: "load" });
+    check(
+      "and can be told to show only the app",
+      await planner.locator("header").getByText("QuickTec", { exact: true }).isVisible(),
+      true,
+    );
+    await db.companySettings.update({
+      where: { id: "singleton" },
+      data: { showCompanyNameInHeader: true },
+    });
+  });
+
+  // --- the dashboard is about the work -------------------------------------
+  // It used to describe your own permissions, which is a thing you find out
+  // once and never need again.
+  await bossPage(browser, bossToken, async (planner) => {
+    const monday = new Date();
+    monday.setUTCHours(18, 0, 0, 0);
+
+    await db.job.update({
+      where: { id: assignment.jobId },
+      data: { scheduledStart: monday, lifecycle: "SCHEDULED" },
+    });
+
+    await planner.goto(`${BASE}/dashboard`, { waitUntil: "load" });
+    await planner.waitForTimeout(500);
+
+    check(
+      "the week is what the dashboard opens on",
+      await planner.getByRole("heading", { name: "This week" }).isVisible(),
+      true,
+    );
+    // Both layouts are in the DOM and CSS decides which one shows, so ask for
+    // the visible one rather than the first one.
+    check(
+      "a job scheduled this week is on it",
+      await planner
+        .locator(`a[href="/jobs/${assignment.jobId}"]:visible`)
+        .count(),
+      1,
+    );
+
+    // And the phone gets the same week as a vertical run of days.
+    await planner.setViewportSize({ width: 390, height: 844 });
+    await planner.waitForTimeout(300);
+    check(
+      "which a phone shows too, in its own shape",
+      await planner
+        .locator(`a[href="/jobs/${assignment.jobId}"]:visible`)
+        .count(),
+      1,
+    );
+    await planner.setViewportSize({ width: 1280, height: 800 });
+    check(
+      "what is waiting on you is there too",
+      await planner.getByRole("heading", { name: "Waiting on you" }).isVisible(),
+      true,
+    );
+    check(
+      "and the projects you are on",
+      await planner.getByRole("heading", { name: "Your projects" }).isVisible(),
+      true,
+    );
+    check(
+      "with no wall of permission badges",
+      await planner.getByText("What you can do").count(),
+      0,
+    );
+  });
+
+  // --- the tab bar is a fixed shape ----------------------------------------
+  await bossPage(browser, bossToken, async (planner) => {
+    await planner.setViewportSize({ width: 390, height: 844 });
+    await planner.goto(`${BASE}/dashboard`, { waitUntil: "load" });
+    await planner.waitForTimeout(500);
+
+    const bar = planner.locator("nav").last();
+    check(
+      "five tabs, no more",
+      await bar.getByRole("link").count(),
+      5,
+    );
+    for (const label of ["Dashboard", "Jobs", "Projects", "Approvals", "More"]) {
+      check(
+        `  ${label} is one of them`,
+        await bar.getByRole("link", { name: label }).isVisible(),
+        true,
+      );
+    }
+
+    await bar.getByRole("link", { name: "More" }).click();
+    await planner.waitForTimeout(500);
+    check(
+      "and More holds what the bar does not, without repeating it",
+      await planner.getByRole("main").getByRole("link", { name: "Jobs" }).count(),
+      0,
+    );
+  });
+
   // Renamed because "client" reads as the customer being served, which is the
   // opposite of what it means here.
   await bossPage(browser, bossToken, async (adminPage) => {

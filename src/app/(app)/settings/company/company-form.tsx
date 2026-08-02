@@ -27,6 +27,7 @@ const TIME_ZONES = [
 type CompanyFormValues = {
   name: string;
   logoUrl: string | null;
+  showCompanyNameInHeader: boolean;
   addressLine1: string | null;
   addressLine2: string | null;
   city: string | null;
@@ -92,6 +93,23 @@ export function CompanyForm({ company }: { company: CompanyFormValues }) {
               placeholder="https://…"
             />
           </Field>
+
+          <label className="flex items-center gap-3 sm:col-span-2">
+            <input
+              type="checkbox"
+              name="showCompanyNameInHeader"
+              defaultChecked={company.showCompanyNameInHeader}
+              className="size-5 accent-[var(--color-primary)]"
+            />
+            <span className="text-sm">
+              Show the company name in the header
+              <span className="block text-xs text-muted-foreground">
+                On: &ldquo;{company.name} | QuickTec&rdquo;. Off: the logo and
+                QuickTec alone, which a long name is worth trading for on a
+                phone.
+              </span>
+            </span>
+          </label>
         </CardContent>
       </Card>
 

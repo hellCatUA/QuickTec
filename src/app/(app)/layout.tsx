@@ -1,16 +1,15 @@
-import { LogOut } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { signOut } from "@/auth";
+import { AccountMenu } from "@/components/account-menu";
 import { BottomNav, SideNav } from "@/components/app-nav";
 import { CompanyMark } from "@/components/company-mark";
 import { ConnectionStatus } from "@/components/connection-status";
 import { ServiceWorkerRegistrar } from "@/components/service-worker";
-import { Button } from "@/components/ui/button";
-import { brandLine } from "@/lib/company";
+import { APP_NAME, brandLine } from "@/lib/company";
 import { db } from "@/lib/db";
 import { buildNavItems } from "@/lib/nav";
-import { getSessionUser } from "@/lib/session";
+import { can, getSessionUser } from "@/lib/session";
 
 const ROLE_LABEL: Record<string, string> = {
   ADMINISTRATOR: "Administrator",
@@ -30,10 +29,15 @@ export default async function AppLayout({
 
   const company = await db.companySettings.findUnique({
     where: { id: "singleton" },
-    select: { name: true, logoUrl: true },
+    select: { name: true, logoUrl: true, showCompanyNameInHeader: true },
   });
 
   const items = buildNavItems(user);
+  const canManageSettings =
+    can(user, "settings.company") ||
+    can(user, "users.manage") ||
+    can(user, "roles.manage") ||
+    can(user, "settings.integrations");
 
   return (
     <div className="flex min-h-dvh flex-col">
@@ -48,41 +52,28 @@ export default async function AppLayout({
             className="size-10 text-sm"
           />
           {/* The company owns the deployment, QuickTec is what it is running.
-              Both belong here — replacing one with the other loses which app
-              you are looking at. */}
-          <span className="truncate text-sm font-semibold">
-            {brandLine(company?.name)}
+              Whether both are spelled out is a setting: a long company name
+              eats the whole bar on a phone, and the logo already says whose
+              deployment this is. */}
+          <span className="truncate text-lg font-semibold tracking-tight">
+            {company?.showCompanyNameInHeader === false
+              ? APP_NAME
+              : brandLine(company?.name)}
           </span>
         </Link>
 
         <div className="ml-auto flex items-center gap-2">
-          <Link
-            href="/account"
-            className="hidden rounded-lg px-2 py-1 text-right hover:bg-muted sm:block"
-          >
-            <div className="text-xs font-medium leading-tight">{user.name}</div>
-            <div className="text-[10px] leading-tight text-muted-foreground">
-              {ROLE_LABEL[user.baseRole] ?? user.baseRole}
-            </div>
-          </Link>
-          <form
-            action={async () => {
+          <AccountMenu
+            name={user.name}
+            role={ROLE_LABEL[user.baseRole] ?? user.baseRole}
+            canManageSettings={canManageSettings}
+            signOutAction={async () => {
               "use server";
               // Back through NextCloud asking for credentials, so signing out
               // on a shared phone actually signs you out.
               await signOut({ redirectTo: "/signin?reauth=1" });
             }}
-          >
-            <Button
-              type="submit"
-              variant="ghost"
-              size="icon"
-              aria-label="Sign out"
-              title="Sign out"
-            >
-              <LogOut />
-            </Button>
-          </form>
+          />
         </div>
       </header>
 

@@ -408,14 +408,20 @@ async function main() {
   await techSitePage
     .getByRole("button", { name: `Mark read: ${assignedNote.title}` })
     .click();
-  await techSitePage.waitForTimeout(2500);
 
-  check(
-    "acknowledging records that they saw it",
-    (await db.notification.findUniqueOrThrow({ where: { id: assignedNote.id } }))
-      .acknowledgedAt !== null,
-    true,
-  );
+  // Poll rather than sleep: a cold server takes longer than any fixed wait,
+  // and a fixed wait that is long enough for that is dead time on every run.
+  let acknowledged = false;
+  for (let attempt = 0; attempt < 20 && !acknowledged; attempt++) {
+    await techSitePage.waitForTimeout(500);
+    acknowledged =
+      (
+        await db.notification.findUniqueOrThrow({
+          where: { id: assignedNote.id },
+        })
+      ).acknowledgedAt !== null;
+  }
+  check("acknowledging records that they saw it", acknowledged, true);
 
   // Taking somebody off carries the reason into both the record and the message.
   await supPage.goto(`${BASE}/jobs/${revisit.id}`, {
@@ -460,6 +466,81 @@ async function main() {
       .getByRole("button", { name: `Take ${tech.user.name} off this job` })
       .count(),
     0,
+  );
+
+  // --- your own requests, and what became of them ---------------------------
+  // A tech cannot approve their own suggestion but is the person most likely
+  // to be wondering where it got to, so it is theirs by authorship.
+  await techSitePage.goto(`${BASE}/approvals?tab=outgoing`, {
+    waitUntil: "domcontentloaded",
+  });
+
+  check(
+    "a tech can see what they have asked for",
+    await techSitePage.getByText("Swap registers 3 and 4").isVisible(),
+    true,
+  );
+  check(
+    "and it reads as pending until somebody answers it",
+    await techSitePage.getByText("Pending").first().isVisible(),
+    true,
+  );
+  check(
+    "with no answer time yet",
+    await techSitePage.getByText("Not answered yet").first().isVisible(),
+    true,
+  );
+
+  // Answer it, and both timestamps become the record.
+  const answered = await db.changeRequest.findFirstOrThrow({
+    where: { jobId: visited.id, status: "PENDING" },
+  });
+  await db.changeRequest.update({
+    where: { id: answered.id },
+    data: {
+      status: "APPROVED",
+      reviewedById: sup.user.id,
+      reviewedAt: new Date(),
+    },
+  });
+
+  await techSitePage.reload({ waitUntil: "domcontentloaded" });
+  check(
+    "once answered it says so",
+    await techSitePage.getByText("Approved", { exact: true }).first().isVisible(),
+    true,
+  );
+  check(
+    "naming who did it",
+    await techSitePage.getByText(`by ${sup.user.name}`).first().isVisible(),
+    true,
+  );
+
+  // The archive is the approver's view of the same event.
+  await supPage.goto(`${BASE}/approvals?tab=archive`, {
+    waitUntil: "domcontentloaded",
+  });
+  check(
+    "the approver finds it in the archive",
+    await supPage.getByText("Swap registers 3 and 4").isVisible(),
+    true,
+  );
+  check(
+    "with when it was raised",
+    (await supPage.getByText(/^Raised /).count()) > 0,
+    true,
+  );
+  check(
+    "and when it was answered",
+    (await supPage.getByText(/^Approved .* by /).count()) > 0,
+    true,
+  );
+  check(
+    "and it is no longer waiting on them",
+    await supPage
+      .getByRole("link", { name: /^Waiting on you/ })
+      .isVisible(),
+    true,
   );
 
   // --- project manager handover ---------------------------------------------

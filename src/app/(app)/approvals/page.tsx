@@ -17,7 +17,13 @@ import { JOB_FIELDS, isJobField } from "@/lib/job-fields";
 import { formatMoney } from "@/lib/money";
 import { jobScopeWhere, reportIds } from "@/lib/scope";
 import { getSessionUser, permissionScope } from "@/lib/session";
+import { DecidedList, fieldKind, type DecidedRow } from "./decided";
 import { NotificationsPanel } from "./notifications-panel";
+import {
+  ApprovalTabs,
+  isApprovalTab,
+  type ApprovalTab,
+} from "./tabs";
 
 export const metadata = { title: "Approvals" };
 
@@ -28,9 +34,16 @@ export const metadata = { title: "Approvals" };
  * the page is empty for a tech and full for a supervisor — nobody is shown a
  * queue they cannot clear.
  */
-export default async function ApprovalsPage() {
+export default async function ApprovalsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ tab?: string }>;
+}) {
   const user = await getSessionUser();
   if (!user) redirect("/signin");
+
+  const { tab } = await searchParams;
+  const active: ApprovalTab = isApprovalTab(tab) ? tab : "waiting";
 
   const company = await getCompanySettings();
   const zone = company.defaultTimeZone;
@@ -144,17 +157,200 @@ export default async function ApprovalsPage() {
     pendingReview.length +
     payrollPeriods.length;
 
+  // --- what you have asked for ----------------------------------------------
+  // Yours by authorship, not by scope: a tech cannot approve their own request
+  // but is the person most likely to be wondering where it got to.
+  const outgoing: DecidedRow[] =
+    active === "outgoing"
+      ? (
+          await db.changeRequest.findMany({
+            where: { requestedById: user.id },
+            orderBy: [{ status: "asc" }, { createdAt: "desc" }],
+            take: 100,
+            select: {
+              id: true,
+              fieldPath: true,
+              oldValue: true,
+              newValue: true,
+              status: true,
+              createdAt: true,
+              reviewedAt: true,
+              reviewedBy: { select: { name: true } },
+              job: { select: { id: true, title: true, intWoId: true } },
+            },
+          })
+        ).map((request) => ({
+          id: request.id,
+          href: `/jobs/${request.job.id}`,
+          kind: fieldKind(request.fieldPath),
+          title: request.job.title,
+          subtitle: request.job.intWoId,
+          from: request.oldValue,
+          to: request.newValue,
+          raisedBy: null,
+          raisedAt: usDateTimeInZone(request.createdAt, zone),
+          decidedBy: request.reviewedBy?.name ?? null,
+          decidedAt: request.reviewedAt
+            ? usDateTimeInZone(request.reviewedAt, zone)
+            : null,
+          outcome:
+            request.status === "PENDING"
+              ? ("PENDING" as const)
+              : request.status === "APPROVED"
+                ? ("APPROVED" as const)
+                : ("REJECTED" as const),
+        }))
+      : [];
+
+  // Counted even when the tab is not open, because the badge is how somebody
+  // finds out their request is still sitting there.
+  const outgoingPending = await db.changeRequest.count({
+    where: { requestedById: user.id, status: "PENDING" },
+  });
+
+  // --- what has already been decided ----------------------------------------
+  const archive: DecidedRow[] =
+    active === "archive"
+      ? [
+          ...(changeWhere
+            ? (
+                await db.changeRequest.findMany({
+                  where: { status: { not: "PENDING" }, job: changeWhere },
+                  orderBy: { reviewedAt: "desc" },
+                  take: 50,
+                  select: {
+                    id: true,
+                    fieldPath: true,
+                    oldValue: true,
+                    newValue: true,
+                    status: true,
+                    createdAt: true,
+                    reviewedAt: true,
+                    requestedBy: { select: { name: true } },
+                    reviewedBy: { select: { name: true } },
+                    job: { select: { id: true, title: true, intWoId: true } },
+                  },
+                })
+              ).map((request) => ({
+                id: `change-${request.id}`,
+                href: `/jobs/${request.job.id}`,
+                kind: fieldKind(request.fieldPath),
+                title: request.job.title,
+                subtitle: request.job.intWoId,
+                from: request.oldValue,
+                to: request.newValue,
+                raisedBy: request.requestedBy.name,
+                raisedAt: usDateTimeInZone(request.createdAt, zone),
+                decidedBy: request.reviewedBy?.name ?? null,
+                decidedAt: request.reviewedAt
+                  ? usDateTimeInZone(request.reviewedAt, zone)
+                  : null,
+                outcome:
+                  request.status === "APPROVED"
+                    ? ("APPROVED" as const)
+                    : ("REJECTED" as const),
+              }))
+            : []),
+
+          ...(reportWhere
+            ? (
+                await db.job.findMany({
+                  where: { AND: [reportWhere, { approvedAt: { not: null } }] },
+                  orderBy: { approvedAt: "desc" },
+                  take: 50,
+                  select: {
+                    id: true,
+                    title: true,
+                    intWoId: true,
+                    createdAt: true,
+                    approvedAt: true,
+                    createdBy: { select: { name: true } },
+                    approvedBy: { select: { name: true } },
+                  },
+                })
+              ).map((job) => ({
+                id: `job-${job.id}`,
+                href: `/jobs/${job.id}`,
+                kind: "Job",
+                title: job.title,
+                subtitle: job.intWoId,
+                raisedBy: job.createdBy.name,
+                raisedAt: usDateTimeInZone(job.createdAt, zone),
+                decidedBy: job.approvedBy?.name ?? null,
+                decidedAt: job.approvedAt
+                  ? usDateTimeInZone(job.approvedAt, zone)
+                  : null,
+                outcome: "APPROVED" as const,
+              }))
+            : []),
+        ].sort((a, b) => (a.decidedAt ?? "") < (b.decidedAt ?? "") ? 1 : -1)
+      : [];
+
+  const heading =
+    active === "waiting"
+      ? total === 0
+        ? "Nothing is waiting on you."
+        : `${total} item${total === 1 ? "" : "s"} waiting on you.`
+      : active === "outgoing"
+        ? outgoingPending === 0
+          ? "None of your requests are still waiting."
+          : `${outgoingPending} of your requests ${outgoingPending === 1 ? "is" : "are"} still waiting.`
+        : "Decisions already made, with when they were asked for.";
+
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4">
-      <PageHeader
-        title="Approvals"
-        description={
-          total === 0
-            ? "Nothing is waiting on you."
-            : `${total} item${total === 1 ? "" : "s"} waiting on you.`
-        }
+      <PageHeader title="Approvals" description={heading} />
+
+      <ApprovalTabs
+        active={active}
+        counts={{ waiting: total, outgoing: outgoingPending }}
       />
 
+      {active === "outgoing" ? (
+        outgoing.length === 0 ? (
+          <EmptyState
+            title="You have not asked for anything"
+            description="Suggest a change on a job you cannot edit directly and it appears here until somebody answers it."
+          />
+        ) : (
+          <Card>
+            <CardHeader>
+              <CardTitle>Your requests</CardTitle>
+              <CardDescription>
+                Changes you suggested, newest first. Pending ones are still with
+                whoever can approve them.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <DecidedList rows={outgoing} />
+            </CardContent>
+          </Card>
+        )
+      ) : null}
+
+      {active === "archive" ? (
+        archive.length === 0 ? (
+          <EmptyState
+            title="Nothing decided yet"
+            description="Approved and rejected requests, and jobs you have approved, are kept here with both timestamps."
+          />
+        ) : (
+          <Card>
+            <CardHeader>
+              <CardTitle>Archive</CardTitle>
+              <CardDescription>
+                What was decided, when it was raised and when it was answered.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <DecidedList rows={archive} />
+            </CardContent>
+          </Card>
+        )
+      ) : null}
+
+      {active !== "waiting" ? null : (
+      <>
       <NotificationsPanel
         rows={notifications.map((notification) => ({
           id: notification.id,
@@ -318,6 +514,8 @@ export default async function ApprovalsPage() {
           </CardContent>
         </Card>
       ) : null}
+      </>
+      )}
     </div>
   );
 }

@@ -1,9 +1,11 @@
 import {
   Car,
+  CircleUser,
   ClipboardList,
   FolderKanban,
   Inbox,
   LayoutDashboard,
+  Layers,
   Settings,
   Wallet,
 } from "lucide-react";
@@ -17,7 +19,9 @@ import {
 export const NAV_ICONS = {
   dashboard: LayoutDashboard,
   jobs: ClipboardList,
+  projects: Layers,
   approvals: Inbox,
+  account: CircleUser,
   directory: FolderKanban,
   mileage: Car,
   pay: Wallet,
@@ -31,3 +35,23 @@ export type NavItem = {
   label: string;
   icon: NavIcon;
 };
+
+/** How many destinations live in the tab bar itself before More. */
+export const PRIMARY_NAV_COUNT = 4;
+
+/**
+ * What the bar shows, and what More holds.
+ *
+ * Lives here rather than in lib/nav for the same reason the icon map does:
+ * app-nav.tsx is a client component, and lib/nav reaches session and then the
+ * database. Importing it from the client pulls pg into the browser bundle.
+ */
+export function splitNav(items: NavItem[]): {
+  primary: NavItem[];
+  overflow: NavItem[];
+} {
+  return {
+    primary: items.slice(0, PRIMARY_NAV_COUNT),
+    overflow: items.slice(PRIMARY_NAV_COUNT),
+  };
+}

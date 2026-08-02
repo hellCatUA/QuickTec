@@ -145,6 +145,11 @@ model CompanySettings {
   name    String  @default("QuickTec")
   logoUrl String?
 
+  /// Whether the header reads "<Company> | QuickTec" or just the logo and
+  /// QuickTec. A long company name eats the whole bar on a phone, and the logo
+  /// already says whose deployment this is.
+  showCompanyNameInHeader Boolean @default(true)
+
   addressLine1 String?
   addressLine2 String?
   city         String?

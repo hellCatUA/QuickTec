@@ -1,7 +1,7 @@
 import { ChevronRight } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { NAV_ICONS } from "@/components/nav-icons";
+import { NAV_ICONS, splitNav } from "@/components/nav-icons";
 import { Card, CardContent } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
 import { buildNavItems } from "@/lib/nav";
@@ -15,14 +15,16 @@ export default async function MorePage() {
   const user = await getSessionUser();
   if (!user) redirect("/signin");
 
-  const items = buildNavItems(user);
+  // Only what the tab bar does not already hold: repeating Jobs here is a
+  // second place to look for something that never moved.
+  const { overflow } = splitNav(buildNavItems(user));
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4 md:hidden">
       <PageHeader title="More" />
 
       <div className="flex flex-col gap-2">
-        {items.map((item) => {
+        {overflow.map((item) => {
           const Icon = NAV_ICONS[item.icon];
           return (
             <Link key={item.href} href={item.href}>

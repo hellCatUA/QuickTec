@@ -3,11 +3,8 @@
 import { MoreHorizontal } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { NAV_ICONS, type NavItem } from "@/components/nav-icons";
+import { NAV_ICONS, splitNav, type NavItem } from "@/components/nav-icons";
 import { cn } from "@/lib/utils";
-
-/** How many tabs fit on a 375px phone before the labels start colliding. */
-const MOBILE_TAB_LIMIT = 5;
 
 function useIsActive() {
   const pathname = usePathname();
@@ -44,16 +41,18 @@ export function SideNav({ items }: { items: NavItem[] }) {
 }
 
 /**
- * Bottom tab bar on phones. A manager has six destinations and a phone has
- * room for five, so anything past the fourth collapses into More rather than
- * shrinking every tab into an unhittable sliver.
+ * Bottom tab bar on phones: four destinations and More, always.
+ *
+ * The split is fixed rather than an overflow of whatever the user happens to
+ * have permission for — muscle memory is most of what a tab bar is for, and a
+ * bar that changes shape between two people looking at the same phone is worse
+ * than one tap more.
  */
 export function BottomNav({ items }: { items: NavItem[] }) {
   const isActive = useIsActive();
 
-  const overflows = items.length > MOBILE_TAB_LIMIT;
-  const visible = overflows ? items.slice(0, MOBILE_TAB_LIMIT - 1) : items;
-  const overflowItems = overflows ? items.slice(MOBILE_TAB_LIMIT - 1) : [];
+  const { primary: visible, overflow: overflowItems } = splitNav(items);
+  const overflows = overflowItems.length > 0;
 
   return (
     <nav

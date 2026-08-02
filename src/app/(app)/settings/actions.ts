@@ -28,6 +28,7 @@ const companySchema = z.object({
   defaultTimeZone: z.string().trim().min(1),
   timeRoundingMinutes: z.coerce.number().int().min(1).max(60),
   techTimeAdjustLimit: z.coerce.number().int().min(0).max(480),
+  showCompanyNameInHeader: flag,
   breakPaidByDefault: flag,
   mileageRate: z.coerce.number().min(0).max(100),
   payLagWeeks: z.coerce.number().int().min(0).max(26),
@@ -44,6 +45,7 @@ export async function updateCompanySettings(
   const parsed = companySchema.safeParse({
     ...Object.fromEntries(formData),
     // Unchecked checkboxes are simply absent from FormData.
+    showCompanyNameInHeader: formData.get("showCompanyNameInHeader") === "on",
     breakPaidByDefault: formData.get("breakPaidByDefault") === "on",
     watermarkEnabled: formData.get("watermarkEnabled") === "on",
   });
