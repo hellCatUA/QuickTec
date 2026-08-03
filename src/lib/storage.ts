@@ -148,6 +148,29 @@ export async function fileExists(storagePath: string): Promise<boolean> {
   }
 }
 
+/**
+ * Whether the app can actually write to the uploads volume.
+ *
+ * A bind mount replaces whatever the image set up with the host directory's
+ * ownership, so a volume the container cannot write to looks completely normal
+ * until the first upload — which is a tech on site with a photo, months after
+ * anybody could remember what changed. Checked where somebody can see it
+ * instead.
+ */
+export async function uploadsWritable(): Promise<
+  { ok: true } | { ok: false; reason: string }
+> {
+  const probe = path.join(uploadsRoot(), ".write-probe");
+  try {
+    await mkdir(uploadsRoot(), { recursive: true });
+    await writeFile(probe, "");
+    await rm(probe, { force: true });
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, reason: storageErrorMessage(error) };
+  }
+}
+
 export function readFileStream(storagePath: string) {
   return createReadStream(absolutePath(storagePath));
 }

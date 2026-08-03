@@ -29,6 +29,7 @@ import {
 import { db } from "@/lib/db";
 import { OPEN_LIFECYCLES } from "@/lib/job-status";
 import { jobScopeWhere, reportIds } from "@/lib/scope";
+import { uploadsWritable } from "@/lib/storage";
 import { can, getSessionUser, permissionScope } from "@/lib/session";
 
 export const metadata = { title: "Dashboard" };
@@ -55,6 +56,9 @@ export default async function DashboardPage() {
   const today = isoDateInZone(now, zone);
 
   const jobWhere = await jobScopeWhere(user, "job.view");
+  const uploads = can(user, "settings.company")
+    ? await uploadsWritable()
+    : ({ ok: true } as const);
 
   const [scheduled, projects, supervisor] = await Promise.all([
     jobWhere
@@ -253,6 +257,17 @@ export default async function DashboardPage() {
           detail:
             "Payroll approval routes through this link. A tech without one cannot be paid.",
           href: "/settings/users",
+        },
+        // Found here rather than by a tech on site with a photo to file: a
+        // bind mount takes the host directory's ownership, so a volume the
+        // container cannot write to looks entirely normal until it matters.
+        {
+          done: uploads.ok,
+          label: "Make the uploads volume writable",
+          detail: uploads.ok
+            ? ""
+            : `Photos, signatures and exports cannot be saved. ${uploads.reason}`,
+          href: "/settings",
         },
       ].filter((check) => !check.done)
     : [];
