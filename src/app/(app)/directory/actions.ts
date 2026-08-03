@@ -213,37 +213,65 @@ export async function saveClientTemplate(
   const stored = await storeDocument(file, actor.id, `templates/${client.id}`);
   if ("error" in stored) return { ok: false, error: stored.error };
 
-  const template = await db.clientDocumentTemplate.create({
-    data: {
-      clientId: client.id,
-      kind,
-      label: label || file.name || DOCUMENT_LABELS[kind],
-      isDefault,
-      attachmentId: stored.id,
-    },
-    select: { id: true },
-  });
-
-  // One default per company and kind: two both ticked on the new-job form is
-  // two forms going to the customer, and nobody notices until it comes back.
-  if (isDefault) {
-    await db.clientDocumentTemplate.updateMany({
-      where: { clientId: client.id, kind, id: { not: template.id } },
-      data: { isDefault: false },
+  // Anything past here is a database write, and an unhandled throw would reach
+  // the person as a Next.js error digest — a number with no way to act on it.
+  try {
+    const template = await db.clientDocumentTemplate.create({
+      data: {
+        clientId: client.id,
+        kind,
+        label: label || file.name || DOCUMENT_LABELS[kind],
+        isDefault,
+        attachmentId: stored.id,
+      },
+      select: { id: true },
     });
+
+    // One default per company and kind: two both ticked on the new-job form is
+    // two forms going to the customer, and nobody notices until it comes back.
+    if (isDefault) {
+      await db.clientDocumentTemplate.updateMany({
+        where: { clientId: client.id, kind, id: { not: template.id } },
+        data: { isDefault: false },
+      });
+    }
+
+    await recordAudit({
+      actorId: actor.id,
+      entityType: "ClientDocumentTemplate",
+      entityId: template.id,
+      action: "created",
+      detail: { who: client.name, field: DOCUMENT_LABELS[kind], to: label },
+    });
+
+    revalidatePath("/directory/clients");
+    revalidatePath("/jobs/new");
+    return { ok: true, id: template.id };
+  } catch (error) {
+    // The bytes are on disk but nothing points at them; drop the orphan rather
+    // than leaving a file nobody can reach or delete.
+    console.error("[directory] saving a default form failed", error);
+    await deleteFileFor(stored.id);
+    return {
+      ok: false,
+      error: "That form could not be saved. The server log has the detail.",
+    };
   }
+}
 
-  await recordAudit({
-    actorId: actor.id,
-    entityType: "ClientDocumentTemplate",
-    entityId: template.id,
-    action: "created",
-    detail: { who: client.name, field: DOCUMENT_LABELS[kind], to: label },
-  });
-
-  revalidatePath("/directory/clients");
-  revalidatePath("/jobs/new");
-  return { ok: true, id: template.id };
+/** Removes an attachment and its bytes after a save that did not complete. */
+async function deleteFileFor(attachmentId: string): Promise<void> {
+  try {
+    const attachment = await db.attachment.findUnique({
+      where: { id: attachmentId },
+      select: { storagePath: true },
+    });
+    if (attachment) await deleteFile(attachment.storagePath);
+    await db.attachment.delete({ where: { id: attachmentId } });
+  } catch {
+    // Already gone, or the same fault that brought us here. Nothing useful
+    // left to do, and throwing would replace a clear message with a digest.
+  }
 }
 
 export async function deleteClientTemplate(

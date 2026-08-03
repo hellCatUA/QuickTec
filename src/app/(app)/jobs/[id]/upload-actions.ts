@@ -11,7 +11,7 @@ import { processImage, processSignature, watermarkText } from "@/lib/images";
 import { DOCUMENT_LABELS, storeDocument } from "@/lib/job-documents";
 import { canOnJob } from "@/lib/scope";
 import { getSessionUser, type SessionUser } from "@/lib/session";
-import { deleteFile, storeFile } from "@/lib/storage";
+import { deleteFile, storeFile, storageErrorMessage } from "@/lib/storage";
 import {
   DeliverableCategory,
   ReimbursementType,
@@ -140,7 +140,13 @@ async function storeUpload(
     };
   }
 
-  const stored = await storeFile(job.id, processed.data, processed.mimeType);
+  let stored;
+  try {
+    stored = await storeFile(job.id, processed.data, processed.mimeType);
+  } catch (error) {
+    console.error("[upload] storing a photo failed", error);
+    return { error: storageErrorMessage(error) };
+  }
 
   const attachment = await db.attachment.create({
     data: {

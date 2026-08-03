@@ -106,6 +106,33 @@ export async function copyFile(
   };
 }
 
+/**
+ * Turns a failed write into a sentence naming the fix.
+ *
+ * These surface at the worst moment — a tech on site with a photo to file —
+ * and an unhandled throw reaches them as a Next.js error digest, which is a
+ * number and nothing else. The two that actually happen are a volume the
+ * container cannot write to and a volume that is full, and both are somebody
+ * else's five-minute job once they know which it is.
+ */
+export function storageErrorMessage(error: unknown): string {
+  const code =
+    typeof error === "object" && error !== null && "code" in error
+      ? String((error as { code: unknown }).code)
+      : "";
+
+  if (code === "EACCES" || code === "EPERM") {
+    return "The uploads volume is not writable by the app. It has to belong to uid 1001 — see the deployment guide.";
+  }
+  if (code === "ENOSPC") {
+    return "The uploads volume is full. Free some space and try again.";
+  }
+  if (code === "EROFS") {
+    return "The uploads volume is mounted read-only.";
+  }
+  return "The file could not be written to storage. The server log has the detail.";
+}
+
 export async function deleteFile(storagePath: string): Promise<void> {
   // A missing file is not an error: the row is what matters, and a half-failed
   // upload should still be removable.

@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { processImage } from "@/lib/images";
-import { copyFile, storeFile } from "@/lib/storage";
+import { copyFile, storeFile, storageErrorMessage } from "@/lib/storage";
 import type { JobDocumentKind } from "@prisma-client";
 
 /**
@@ -44,7 +44,13 @@ export async function storeDocument(
     return { error: "That file could not be read as a photo or a PDF." };
   }
 
-  const stored = await storeFile(storageKey, processed.data, processed.mimeType);
+  let stored;
+  try {
+    stored = await storeFile(storageKey, processed.data, processed.mimeType);
+  } catch (error) {
+    console.error("[upload] storing a document failed", error);
+    return { error: storageErrorMessage(error) };
+  }
 
   const attachment = await db.attachment.create({
     data: {
