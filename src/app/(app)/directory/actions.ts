@@ -5,6 +5,7 @@ import { z } from "zod";
 import { recordAudit } from "@/lib/audit";
 import { db } from "@/lib/db";
 import { flag, optionalText } from "@/lib/form";
+import { analyzeForm, type FormAnalysis } from "@/lib/forms/analyze";
 import { DOCUMENT_LABELS, storeDocument } from "@/lib/job-documents";
 import { requirePermission } from "@/lib/session";
 import { deleteFile } from "@/lib/storage";
@@ -213,6 +214,20 @@ export async function saveClientTemplate(
   const stored = await storeDocument(file, actor.id, `templates/${client.id}`);
   if ("error" in stored) return { ok: false, error: stored.error };
 
+  // Read the blank while we have it: a PDF that declares its own fields hands
+  // us the boxes for free, and everything else needs them drawn once by hand.
+  // Doing it here means the mapping screen opens knowing what it is looking at.
+  let analysis: FormAnalysis | null = null;
+  if (file.type === "application/pdf") {
+    try {
+      analysis = await analyzeForm(Buffer.from(await file.arrayBuffer()));
+    } catch (error) {
+      // A file we cannot parse is still a file worth keeping — it just cannot
+      // be filled automatically, which is exactly where we were before.
+      console.error("[directory] reading a blank for its fields failed", error);
+    }
+  }
+
   // Anything past here is a database write, and an unhandled throw would reach
   // the person as a Next.js error digest — a number with no way to act on it.
   try {
@@ -223,6 +238,25 @@ export async function saveClientTemplate(
         label: label || file.name || DOCUMENT_LABELS[kind],
         isDefault,
         attachmentId: stored.id,
+        boxSource: analysis?.boxSource ?? null,
+        pageCount: analysis?.pageCount ?? null,
+        pageWidth: analysis?.pageWidth ?? null,
+        pageHeight: analysis?.pageHeight ?? null,
+        placements: analysis
+          ? {
+              create: analysis.placements.map((placement) => ({
+                fieldName: placement.fieldName,
+                page: placement.page,
+                x: placement.x,
+                y: placement.y,
+                width: placement.width,
+                height: placement.height,
+                kind: placement.kind,
+                sampleText: placement.sampleText,
+                order: placement.order,
+              })),
+            }
+          : undefined,
       },
       select: { id: true },
     });

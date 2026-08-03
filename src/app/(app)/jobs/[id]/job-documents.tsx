@@ -1,8 +1,9 @@
 "use client";
 
-import { FileText, Loader2, Upload, X } from "lucide-react";
+import { FileText, Loader2, Upload, Wand2, X } from "lucide-react";
 import * as React from "react";
 import { Button } from "@/components/ui/button";
+import { fillJobForm } from "./form-actions";
 import {
   deleteJobDocument,
   setNoWorkOrder,
@@ -16,6 +17,10 @@ export type JobDocument = {
   kind: JobDocumentKind;
   originalName: string;
   sizeBytes: number;
+  /** Produced by filling a blank in, rather than uploaded. */
+  generated: boolean;
+  /** How many of this blank's boxes the app knows how to fill. Zero means no. */
+  fillableBoxes: number;
 };
 
 function readableSize(bytes: number) {
@@ -137,6 +142,64 @@ export function JobDocuments({
   );
 }
 
+/**
+ * Fills the company's sheet from the job.
+ *
+ * Deliberately a button somebody presses rather than something that happens
+ * on its own: the values are only as complete as the job is, and it is worth
+ * pressing again once the signature is captured. Whatever did not resolve is
+ * named afterwards, because a gap somebody knows about gets filled in by hand
+ * on site and a gap nobody mentions goes to the customer.
+ */
+function FillButton({ document }: { document: JobDocument }) {
+  const [result, setResult] = React.useState<
+    { kind: "ok"; empty: string[] } | { kind: "error"; text: string } | null
+  >(null);
+  const [pending, startTransition] = React.useTransition();
+
+  function run() {
+    setResult(null);
+    startTransition(async () => {
+      const formData = new FormData();
+      formData.set("attachmentId", document.id);
+      const outcome = await fillJobForm(formData);
+      setResult(
+        outcome.ok
+          ? { kind: "ok", empty: outcome.empty }
+          : { kind: "error", text: outcome.error },
+      );
+    });
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      <Button
+        type="button"
+        size="sm"
+        variant="secondary"
+        className="self-start"
+        disabled={pending}
+        onClick={run}
+      >
+        {pending ? <Loader2 className="animate-spin" /> : <Wand2 />}
+        {pending ? "Filling" : "Fill it in from this job"}
+      </Button>
+
+      {result?.kind === "error" ? (
+        <p className="text-xs text-danger">{result.text}</p>
+      ) : null}
+
+      {result?.kind === "ok" ? (
+        <p className="text-xs text-muted-foreground">
+          {result.empty.length === 0
+            ? "Filled. Every mapped box had a value."
+            : `Filled. ${result.empty.length} box${result.empty.length === 1 ? "" : "es"} had nothing to put in ${result.empty.length === 1 ? "it" : "them"} and ${result.empty.length === 1 ? "was" : "were"} left for you: ${result.empty.slice(0, 6).join(", ")}${result.empty.length > 6 ? "…" : ""}`}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function Section({
   title,
   hint,
@@ -177,31 +240,44 @@ function Section({
         documents.map((doc) => (
           <div
             key={doc.id}
-            className="flex items-center gap-2 rounded-lg border border-border p-2 text-sm"
+            className="flex flex-col gap-2 rounded-lg border border-border p-2 text-sm"
           >
-            <FileText className="size-4 shrink-0 text-muted-foreground" />
-            <a
-              href={`/api/files/${doc.id}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="min-w-0 flex-1 truncate underline-offset-2 hover:underline"
-            >
-              {doc.originalName}
-            </a>
-            <span className="shrink-0 text-xs text-muted-foreground">
-              {readableSize(doc.sizeBytes)}
-            </span>
-            {canUpload ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                aria-label={`Remove ${doc.originalName}`}
-                disabled={pending}
-                onClick={() => onRemove(doc.id)}
+            <div className="flex items-center gap-2">
+              {doc.generated ? (
+                <Wand2 className="size-4 shrink-0 text-[var(--color-primary)]" />
+              ) : (
+                <FileText className="size-4 shrink-0 text-muted-foreground" />
+              )}
+              <a
+                href={`/api/files/${doc.id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="min-w-0 flex-1 truncate underline-offset-2 hover:underline"
               >
-                <X />
-              </Button>
+                {doc.originalName}
+              </a>
+              <span className="shrink-0 text-xs text-muted-foreground">
+                {readableSize(doc.sizeBytes)}
+              </span>
+              {canUpload ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label={`Remove ${doc.originalName}`}
+                  disabled={pending}
+                  onClick={() => onRemove(doc.id)}
+                >
+                  <X />
+                </Button>
+              ) : null}
+            </div>
+
+            {/* Fill it in from the job, rather than by hand in a lobby. Offered
+                only on the blank itself: the filled copy is regenerated from
+                this one, never from itself. */}
+            {canUpload && !doc.generated && doc.fillableBoxes > 0 ? (
+              <FillButton document={doc} />
             ) : null}
           </div>
         ))

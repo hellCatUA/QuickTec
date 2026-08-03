@@ -18,7 +18,8 @@
     "verify:pay": "tsx --tsconfig tsconfig.json scripts/verify-pay-page.ts",
     "verify:approvals": "tsx --tsconfig tsconfig.json scripts/verify-approvals-page.ts",
     "verify:auth": "tsx --tsconfig tsconfig.json scripts/verify-auth.ts",
-    "verify:forms": "tsx --tsconfig tsconfig.json scripts/verify-forms.ts"
+    "verify:forms": "tsx --tsconfig tsconfig.json scripts/verify-forms.ts",
+    "verify:form-pages": "tsx --tsconfig tsconfig.json scripts/verify-form-pages.ts"
   },
   "repository": {
     "type": "git",

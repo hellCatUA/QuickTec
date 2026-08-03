@@ -1,6 +1,7 @@
 "use client";
 
-import { FileText, Loader2, Upload, X } from "lucide-react";
+import { FileText, Loader2, Upload, Wand2, X } from "lucide-react";
+import Link from "next/link";
 import * as React from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,6 +14,9 @@ export type TemplateRecord = {
   label: string;
   isDefault: boolean;
   attachmentId: string;
+  /** Boxes on the blank, and how many of them are pointed at a value. */
+  boxCount: number;
+  mappedCount: number;
 };
 
 const KIND_LABELS = {
@@ -106,6 +110,20 @@ export function ClientTemplates({
             {template.isDefault ? (
               <Badge variant="primary">Default</Badge>
             ) : null}
+
+            {/* Whether this form fills itself, and what is left to do about
+                it. A blank nobody mapped is a blank the tech types out by
+                hand, which is the thing worth surfacing here. */}
+            <Link
+              href={`/directory/clients/${clientId}/forms/${template.id}`}
+              className="flex min-h-9 items-center gap-1 rounded-lg px-2 text-xs text-muted-foreground underline-offset-2 hover:bg-muted hover:text-foreground hover:underline"
+            >
+              <Wand2 className="size-3.5" />
+              {template.mappedCount > 0
+                ? `Fills ${template.mappedCount} of ${template.boxCount} boxes`
+                : "Set up autofill"}
+            </Link>
+
             <Button
               type="button"
               variant="ghost"

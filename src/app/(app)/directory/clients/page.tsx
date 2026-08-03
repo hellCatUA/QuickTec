@@ -29,6 +29,7 @@ export default async function ClientsPage() {
           label: true,
           isDefault: true,
           attachmentId: true,
+          placements: { select: { source: true } },
         },
       },
     },
@@ -41,7 +42,17 @@ export default async function ClientsPage() {
         backHref="/directory"
         description="Who dispatches work to us and pays for it. Fills “Buyer/Representing company” on the report we send back."
       />
-      <ClientList clients={clients} />
+      <ClientList
+        clients={clients.map((client) => ({
+          ...client,
+          templates: client.templates.map(({ placements, ...template }) => ({
+            ...template,
+            boxCount: placements.length,
+            mappedCount: placements.filter((placement) => placement.source)
+              .length,
+          })),
+        }))}
+      />
     </div>
   );
 }

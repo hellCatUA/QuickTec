@@ -104,6 +104,9 @@ export async function copyTemplateToJob(
       uploadedById,
       jobDocumentId: jobId,
       jobDocumentKind: template.kind,
+      // Remembered so the job can find the box positions that belong to the
+      // sheet it is holding, rather than guessing from the company.
+      sourceTemplateId: templateId,
     },
     select: { id: true },
   });
