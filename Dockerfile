@@ -40,8 +40,12 @@ ENV NODE_ENV=production
 # The migration engine is a native binary that links OpenSSL, and the slim
 # image ships without it. Prisma then guesses a version, says so loudly on
 # every deploy, and picks the wrong engine on some hosts.
+# psql is here for one job: reading back whether a failed migration applied
+# anything, so a deploy that lost a race for a lock can be retried rather than
+# needing somebody to unstick it by hand.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends openssl ca-certificates \
+ && apt-get install -y --no-install-recommends \
+      openssl ca-certificates postgresql-client \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/node_modules ./node_modules
@@ -49,7 +53,8 @@ COPY --from=builder /app/generated ./generated
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/src/lib/permissions.ts ./src/lib/permissions.ts
 COPY --from=builder /app/prisma.config.ts /app/package.json /app/tsconfig.json ./
-CMD ["sh", "-c", "npx prisma migrate deploy && npx prisma db seed"]
+COPY --from=builder /app/scripts/migrate.sh ./scripts/migrate.sh
+CMD ["sh", "./scripts/migrate.sh"]
 
 # ---------------------------------------------------------------------------
 # Runtime

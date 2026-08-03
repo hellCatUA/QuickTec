@@ -136,6 +136,9 @@ UPLOADS_HOST_DIR=/tank/data/quicktec/uploads
 TZ=America/Los_Angeles
 NODE_ENV=production
 APP_PORT=3100
+# How long a schema change waits for a table the old app is still holding
+# before giving up and saying so. Raise it on a slow disk.
+MIGRATE_LOCK_TIMEOUT=15s
 ```
 
 **Leave `DATABASE_URL` commented out.** `docker-compose.yml` derives it from
@@ -432,10 +435,23 @@ crew that plainly — the failure looks like the app is down.
 ```bash
 cd /docker/apps/quicktec
 git pull
+docker compose stop app          # see below — this line matters
 docker compose up -d --build
 ```
 
-`migrate` runs again on every deploy: it applies any new migrations and seeds
+**Why `stop app` first.** `docker compose up` starts the migrator *alongside*
+the running app, not instead of it. A release that changes a table has to take
+an exclusive lock on it, and a single open transaction from the old app is
+enough to block that — after which every other query on that table queues
+behind the waiting migration, so the old app freezes too and never lets go.
+The deploy then sits there until somebody notices.
+
+Stopping the app first costs about twenty seconds of downtime and removes the
+whole problem. If you forget, the migration now gives up after
+`MIGRATE_LOCK_TIMEOUT` (15s by default), tells you what happened, and leaves
+the database exactly as it was — the old app keeps serving and you can retry.
+
+`migrate` runs on every deploy: it applies any new migrations and seeds
 defaults for permissions the release has added. It never rewrites a permission
 the database already knows about, so tuning in `/settings/roles` survives.
 
@@ -552,6 +568,45 @@ the two apart: a `413` never reaches the app, an `EACCES` does.
 **Calendar sync reports failures for every tech**
 Run the step 8 reachability test. `server unreachable` means DNS or routing;
 `HTTP 401` means the app password is wrong or you used the account password.
+
+**`quicktec-migrate` hangs and the app stops responding**
+The old app is holding a table the migration needs. Stop it and the migration
+completes immediately:
+
+```bash
+docker compose stop app
+docker compose logs -f migrate
+docker compose up -d
+```
+
+To see who is holding what:
+
+```bash
+docker compose exec db psql -U quicktec -d quicktec -c "
+SELECT pid, state, now()-xact_start AS age, pg_blocking_pids(pid) AS blocked_by,
+       left(query,80) AS query
+FROM pg_stat_activity WHERE datname='quicktec' ORDER BY xact_start;"
+```
+
+If nothing is blocking anything and it still hangs, two migrate runs are
+racing for Prisma's advisory lock. Clear the stale holder:
+
+```bash
+docker compose exec db psql -U quicktec -d quicktec -c \
+  "SELECT pg_terminate_backend(pid) FROM pg_locks
+   WHERE locktype='advisory' AND objid=72707369;"
+```
+
+Nothing is half-applied in either case — each migration runs in its own
+transaction.
+
+**A migration failed and now every deploy refuses to start**
+Prisma records the failed attempt and will not go past it. If the attempt
+applied nothing — which is the case for a lock timeout — the migrator clears
+that record itself on the next run. If it got partway, that is a real question
+about the state of the database: read `docker compose logs migrate`, decide
+whether the change is there, and then tell Prisma which it was with
+`migrate resolve --rolled-back` or `--applied`.
 
 **`quicktec-migrate` keeps restarting**
 It should not restart — it is `restart: "no"` and exits 0 on success. A

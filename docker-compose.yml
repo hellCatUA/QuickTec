@@ -44,6 +44,10 @@ services:
     environment:
       DATABASE_URL: *database-url
       TZ: ${TZ:-America/Los_Angeles}
+      # How long a schema change waits for a table the old app is still using
+      # before giving up and saying so. Without it a deploy hangs indefinitely
+      # and takes the running app down with it.
+      MIGRATE_LOCK_TIMEOUT: ${MIGRATE_LOCK_TIMEOUT:-15s}
     depends_on:
       db:
         condition: service_healthy
