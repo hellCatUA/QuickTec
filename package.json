@@ -17,7 +17,8 @@
     "verify:ui": "tsx --tsconfig tsconfig.json scripts/verify-job-page.ts",
     "verify:pay": "tsx --tsconfig tsconfig.json scripts/verify-pay-page.ts",
     "verify:approvals": "tsx --tsconfig tsconfig.json scripts/verify-approvals-page.ts",
-    "verify:auth": "tsx --tsconfig tsconfig.json scripts/verify-auth.ts"
+    "verify:auth": "tsx --tsconfig tsconfig.json scripts/verify-auth.ts",
+    "verify:forms": "tsx --tsconfig tsconfig.json scripts/verify-forms.ts"
   },
   "repository": {
     "type": "git",
@@ -40,6 +41,8 @@
     "lucide-react": "^1.27.0",
     "next": "^16.2.12",
     "next-auth": "^5.0.0-beta.32",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^5.7.284",
     "pdfkit": "^0.19.1",
     "pg": "^8.22.0",
     "react": "^19.2.8",

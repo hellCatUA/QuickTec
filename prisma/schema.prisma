@@ -116,12 +116,12 @@ model RoleGrant {
 
 /// Point grant/revoke on top of the base role, optionally narrowed to a project.
 model PermissionOverride {
-  id         String  @id @default(cuid())
+  id         String           @id @default(cuid())
   userId     String
-  user       User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user       User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   permission String
   /// false = explicit revoke, which beats the role grant.
-  granted    Boolean @default(true)
+  granted    Boolean          @default(true)
   /// Ignored when granted = false.
   scope      PermissionScope?
   projectId  String?
@@ -177,7 +177,7 @@ model CompanySettings {
   /// Weeks between the end of a pay week and the expected payment date.
   payLagWeeks Int     @default(3)
 
-  maxPhotosPerJob Int @default(30)
+  maxPhotosPerJob  Int     @default(30)
   /// Bottom-right stamp: YYYY-MM-DD-AssignmentID-Customer-#SiteID
   watermarkEnabled Boolean @default(true)
 
@@ -235,10 +235,95 @@ model ClientDocumentTemplate {
   attachmentId String     @unique
   attachment   Attachment @relation("ClientTemplateFile", fields: [attachmentId], references: [id], onDelete: Cascade)
 
+  /// Where this blank's boxes came from. Set when the file is read on upload.
+  boxSource FormBoxSource?
+
+  /// Page geometry in PDF points, read once so the mapping editor and the
+  /// filler agree on where a box is without opening the file.
+  pageCount  Int?
+  pageWidth  Float?
+  pageHeight Float?
+
+  /// Boxes on the blank and what goes in each. Empty until someone maps it,
+  /// which is what tells the job page whether filling is on offer.
+  placements FormPlacement[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([clientId, kind])
+}
+
+/// Where a blank's boxes came from.
+///
+/// Not how it gets filled — filling is the same either way. The filler draws
+/// every value onto the page itself and takes the form fields out, because a
+/// blank produced by whatever was to hand cannot be relied on to flatten: one
+/// of the two real sheets this was built against throws on it, and a form that
+/// stays editable after the customer signs it is not a signed form.
+enum FormBoxSource {
+  /// The PDF declared form fields, so the boxes were read out of the file.
+  FIELDS
+  /// A flat PDF — the boxes were placed by hand, which is what somebody does
+  /// today in a phone annotator every time they fill one of these in.
+  DRAWN
+}
+
+/// What a placement puts on the page.
+enum FormPlacementKind {
+  TEXT
+  /// A tick when the value is truthy, nothing when it is not.
+  CHECK
+  /// The signature captured on site, fitted into the box.
+  SIGNATURE
+}
+
+/// One box on a blank, and the job datum that fills it.
+///
+/// Seeded from the PDF's own fields where it has them, drawn by hand where it
+/// does not. Either way the filler only ever writes where a placement says to:
+/// a form that goes to a customer with the wrong value in a box is worse than
+/// one that went out empty, so nothing is guessed at fill time.
+model FormPlacement {
+  id         String                 @id @default(cuid())
+  templateId String
+  template   ClientDocumentTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  /// The AcroForm field this fills. Null on a flat form, where there is no
+  /// field to name and the rectangle is all we have.
+  fieldName String?
+
+  /// Zero-based page, and the box in PDF points from its bottom-left corner.
+  page   Int   @default(0)
+  x      Float
+  y      Float
+  width  Float
+  height Float
+
+  kind FormPlacementKind @default(TEXT)
+
+  /// Key into the catalogue in src/lib/forms/catalogue.ts. Deliberately a
+  /// string and not an enum: the set of things a form can ask for grows every
+  /// time a company invents a box, and that should not need a migration.
+  /// Empty means the box is left for somebody to fill in by hand.
+  source String?
+
+  /// The literal text, when source is the static one.
+  staticText String?
+
+  /// Which entry a list source refers to — day two of a timesheet is row 1.
+  rowIndex Int?
+
+  /// Point size for drawn text. Null lets the filler pick what fits.
+  fontSize Float?
+
+  /// What the blank already had in this field, kept as the hint that tells
+  /// somebody what "Text19" is for. Not written to any filled form.
+  sampleText String?
+
+  order Int @default(0)
+
+  @@index([templateId, page])
 }
 
 /// The end brand, e.g. SBUX. Independent of Client because the same customer
@@ -265,13 +350,13 @@ model Site {
 
   /// External store number, e.g. "24541". Combined with customer code as
   /// "SBUX #24541" in exports.
-  siteNumber String
+  siteNumber    String
   /// The number is not known yet. Dispatch often reads out a customer and a
   /// city and nothing else; the tech reads the number off the door. The site
   /// still exists so the job has an address and a timezone, and siteNumber
   /// holds a placeholder until somebody replaces it.
   numberPending Boolean @default(false)
-  name       String?
+  name          String?
 
   addressLine1 String
   addressLine2 String?
@@ -479,7 +564,7 @@ model Job {
   id String @id @default(cuid())
 
   /// YYYY-MM-PRJID-NNNN, plus -R<n> for revisits. Month is the revisit's month.
-  intWoId String @unique
+  intWoId       String @unique
   /// The NNNN part on its own. A revisit reuses its parent's sequence, so
   /// generating one never has to parse the string back apart.
   intWoSequence Int
@@ -504,7 +589,7 @@ model Job {
   ticketNumber String?
   incNumber    String?
 
-  scheduledStart DateTime?
+  scheduledStart  DateTime?
   /// Drives the calendar event length until the real clock-out lands.
   estimateMinutes Int?
   techsRequired   Int       @default(1)
@@ -580,7 +665,7 @@ model Job {
   deliverables     DeliverableItem[]
   reimbursements   Reimbursement[]
   /// The representing company's paperwork: their work order and sign-off blank.
-  documents        Attachment[]            @relation("JobDocuments")
+  documents        Attachment[]             @relation("JobDocuments")
   mileageEntries   MileageEntry[]
   scopeChecks      JobScopeCheck[]
   changeRequests   ChangeRequest[]
@@ -867,11 +952,11 @@ model Reimbursement {
   assignmentId String?
   assignment   JobAssignment? @relation(fields: [assignmentId], references: [id], onDelete: SetNull)
 
-  type ReimbursementType
+  type   ReimbursementType
   /// Material name, or the hotel name. Unused for PARKING/TOLL, whose export
   /// label is the type itself.
   label  String?
-  amount Decimal @db.Decimal(10, 2)
+  amount Decimal           @db.Decimal(10, 2)
   note   String?
 
   createdAt DateTime @default(now())
@@ -917,8 +1002,8 @@ model MileageEntry {
 
   category MileageCategory
 
-  jobId String?
-  job   Job?    @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  jobId     String?
+  job       Job?    @relation(fields: [jobId], references: [id], onDelete: SetNull)
   /// Denormalised Assignment ID so the entry survives job edits and reads
   /// correctly in exports.
   reference String?
@@ -971,8 +1056,8 @@ model PayRate {
   clientId  String?
   client    Client?  @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
-  payType PayType
-  rate    Decimal @db.Decimal(10, 2)
+  payType             PayType
+  rate                Decimal  @db.Decimal(10, 2)
   /// Travel reimbursement is set per job/project, never as a tech default;
   /// this column only exists so a project-scoped rate row can carry it.
   travelReimbursement Decimal? @db.Decimal(10, 2)
@@ -1009,17 +1094,17 @@ model PayrollPeriod {
 
   status PayrollStatus @default(DRAFT)
 
-  expectedAmount Decimal   @default("0") @db.Decimal(12, 2)
-  receivedAmount Decimal?  @db.Decimal(12, 2)
-  receivedDate   DateTime?
+  expectedAmount  Decimal   @default("0") @db.Decimal(12, 2)
+  receivedAmount  Decimal?  @db.Decimal(12, 2)
+  receivedDate    DateTime?
   /// weekEnd + CompanySettings.payLagWeeks.
   expectedPayDate DateTime?
 
-  approvedById String?
-  approvedBy   User?     @relation("PayrollApprover", fields: [approvedById], references: [id], onDelete: SetNull)
-  approvedAt   DateTime?
+  approvedById       String?
+  approvedBy         User?     @relation("PayrollApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  approvedAt         DateTime?
   /// True when a Manager approved instead of the Direct Supervisor.
-  approvedAsFallback Boolean @default(false)
+  approvedAsFallback Boolean   @default(false)
 
   note String?
 
