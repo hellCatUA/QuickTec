@@ -69,14 +69,22 @@ fixed unprivileged user (`nextjs`, 1001:1001) rather than the linuxserver
 
 ```bash
 chown -R 1001:1001 /tank/data/quicktec/uploads
+ls -ld /tank/data/quicktec/uploads       # expect: drwxr-xr-x ... 1001 1001
 ```
+
+A bind mount takes the ownership of the host directory, replacing whatever the
+image set up. That means this is not something the image can fix for you, and
+nothing about it looks wrong until the first file is saved.
 
 Postgres sorts its own ownership out on first start; you do not need to touch
 `data/postgres`.
 
-> Skipping the `chown` is the single most common first-run failure. It shows up
-> as `EACCES: permission denied` the first time somebody uploads a photo —
-> everything else works, which makes it easy to misread.
+> Skipping the `chown` is the single most common first-run failure. Everything
+> else works — signing in, planning jobs, clocking on — right up until somebody
+> uploads a photo or adds a company's sign-off form, and then it fails with
+> `EACCES: permission denied`. The app says so in words and the dashboard warns
+> about it before anybody gets that far (step 9), but it is five seconds of
+> work here and a call from a tech on site otherwise.
 
 ---
 
@@ -391,6 +399,20 @@ The dashboard shows a checklist until these are done:
    person who approves and pays their week, so payroll is stuck until it is set
 3. **`/settings/roles`** — the permission matrix, if the defaults do not fit
 
+**If the checklist mentions the uploads volume, stop and fix that first.** It
+means the container cannot write to it, so no photo, signature or export will
+save. Go back to step 2, `chown` it, and reload the dashboard — the warning
+goes away on its own, with no restart.
+
+Worth proving rather than assuming, because it is the one thing on this page
+that fails silently until a tech is standing on site:
+
+```bash
+docker compose exec app sh -c 'touch /data/uploads/.probe && rm /data/uploads/.probe && echo writable'
+```
+
+`writable` is the whole answer. Anything else is the same problem.
+
 Then turn on calendar sync. In NextCloud, sign in as `417-sys` →
 **Settings → Security → Devices & sessions → Create new app password**, name it
 `quicktec`, and copy the generated password.
@@ -564,6 +586,17 @@ An old `oidc` app without PKCE support. Update the app from the App Store.
 `client_max_body_size` in the NPM Advanced tab (step 5), or the uploads
 directory is not owned by 1001:1001 (step 2). `docker compose logs app` tells
 the two apart: a `413` never reaches the app, an `EACCES` does.
+
+**A page shows `ERROR` and an eight-digit number**
+That is a Next.js error digest. Production hides the real error from the
+browser on purpose and prints it in the server log under the same number:
+
+```bash
+docker compose logs app | grep -B5 -A30 <the number>
+```
+
+Uploads name their own cause on screen instead — a digest here means something
+that has not been given a message yet, and the log is the only place with it.
 
 **Calendar sync reports failures for every tech**
 Run the step 8 reachability test. `server unreachable` means DNS or routing;
