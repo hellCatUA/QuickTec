@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { flag, optionalInt, optionalText } from "@/lib/form";
+import { flag, optionalInt, optionalMoney, optionalText } from "@/lib/form";
 
 /**
  * The new-job form.
@@ -23,6 +23,19 @@ export const jobFormSchema = z.object({
   techsRequired: optionalInt({ min: 1, max: 20 }),
   scopeOfWork: optionalText,
   breakPaid: flag,
+  /// Pay for this job specifically. Blank leaves the usual resolution alone —
+  /// each tech's own rate, then the project's default. A value here overrides
+  /// both, for everybody on the job.
+  payType: optionalText,
+  payRate: optionalMoney,
+  travelReimbursement: optionalMoney,
+  /// Numbers to reach mid-job, for this job alone. Parallel arrays, because
+  /// they arrive as ordinary repeated form fields.
+  dispatchLabel: z.array(z.string()).default([]),
+  dispatchName: z.array(z.string()).default([]),
+  dispatchPhone: z.array(z.string()).default([]),
+  dispatchEmail: z.array(z.string()).default([]),
+  dispatchNote: z.array(z.string()).default([]),
   /// The representing company issued no work order for this job.
   noWorkOrder: flag,
   /// Blanks kept against the representing company to copy onto the job.

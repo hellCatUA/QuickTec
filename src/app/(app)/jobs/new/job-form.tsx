@@ -13,10 +13,11 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Combobox } from "@/components/ui/combobox";
-import { Field, Input, Textarea } from "@/components/ui/field";
+import { Field, Input, Select, Textarea } from "@/components/ui/field";
 import { FormStatus, type SaveState } from "@/components/ui/form-status";
 import { HoursPicker, Stepper } from "@/components/ui/stepper";
 import { createJob, type ActionResult } from "../actions";
+import { DispatchList } from "./dispatch-list";
 import { SitePicker, type SiteOption } from "./site-picker";
 
 type Client = { id: string; name: string };
@@ -31,7 +32,11 @@ type Project = {
   intWoCounter: number;
   breakPaid: boolean;
   defaultJobTitle: string | null;
+  defaultPayType: string | null;
+  defaultPayRate: string | null;
+  travelReimbursement: string | null;
   memberIds: string[];
+  dispatchContacts: { id: string; label: string; name: string | null }[];
 };
 type Tech = { id: string; name: string; baseRole: string };
 type Template = {
@@ -51,6 +56,7 @@ export function JobForm({
   techs,
   customers,
   templates,
+  canSetPay,
   globalNextSequence,
   breakPaidByDefault,
 }: {
@@ -62,6 +68,8 @@ export function JobForm({
   techs: Tech[];
   customers: Customer[];
   templates: Template[];
+  /** Setting a rate on a job is a pay decision, not a planning one. */
+  canSetPay: boolean;
   globalNextSequence: number;
   breakPaidByDefault: boolean;
 }) {
@@ -84,6 +92,8 @@ export function JobForm({
   const [noWorkOrder, setNoWorkOrder] = useState(false);
   const [pickedTemplates, setPickedTemplates] = useState<string[] | null>(null);
   const [addedSites, setAddedSites] = useState<SiteOption[]>([]);
+  const [payType, setPayType] = useState("");
+  const [payRate, setPayRate] = useState("");
 
   const [state, formAction, pending] = useActionState<ActionResult | null, FormData>(
     async (prev, formData) => {
@@ -187,6 +197,12 @@ export function JobForm({
     !techs.some(
       (tech) => assignees.includes(tech.id) && tech.baseRole !== "TECH",
     );
+
+  // Says out loud what happens if the field is left alone, which is the whole
+  // reason it can be left alone.
+  const payFallback = selectedProject?.defaultPayType
+    ? `Blank means each tech's own rate, then the project's ${selectedProject.defaultPayType.toLowerCase().replace("_", "-")} $${Number(selectedProject.defaultPayRate ?? 0).toFixed(2)}.`
+    : "Blank means each tech's own rate.";
 
   const projectMembers = selectedProject?.memberIds ?? [];
 
@@ -570,6 +586,83 @@ export function JobForm({
                 check it is the right person.
               </div>
             ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Dispatch</CardTitle>
+          <CardDescription>
+            Numbers a tech may need mid-job, for this job alone. Their own
+            supervisor is always shown first and does not need adding.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <DispatchList inherited={selectedProject?.dispatchContacts ?? []} />
+        </CardContent>
+      </Card>
+
+      {canSetPay ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Pay</CardTitle>
+            <CardDescription>
+              For this job only. Left blank, everybody on it keeps their own
+              rate — or the project&rsquo;s default where they have none.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4 sm:grid-cols-2">
+            <Field
+              label="Pay type"
+              htmlFor="payType"
+              hint={payFallback}
+            >
+              <Select
+                id="payType"
+                name="payType"
+                value={payType}
+                onChange={(event) => setPayType(event.target.value)}
+              >
+                <option value="">— leave as it resolves —</option>
+                <option value="HOURLY">Hourly</option>
+                <option value="FLAT">Flat rate</option>
+                <option value="NON_BILLABLE">Non-billable</option>
+              </Select>
+            </Field>
+
+            <Field label="Pay rate ($)" htmlFor="payRate">
+              <Input
+                id="payRate"
+                name="payRate"
+                type="number"
+                step="0.01"
+                min={0}
+                value={payRate}
+                onChange={(event) => setPayRate(event.target.value)}
+                placeholder={payType ? "Required with a pay type" : "Leave blank"}
+              />
+            </Field>
+
+            <Field
+              label="Travel reimbursement ($)"
+              htmlFor="travelReimbursement"
+              hint={
+                selectedProject?.travelReimbursement
+                  ? `Blank uses the project's $${Number(selectedProject.travelReimbursement).toFixed(2)}.`
+                  : "Money the customer allocates for travel. Separate from mileage."
+              }
+              className="sm:col-span-2"
+            >
+              <Input
+                id="travelReimbursement"
+                name="travelReimbursement"
+                type="number"
+                step="0.01"
+                min={0}
+                placeholder="Leave blank for the project default"
+              />
+            </Field>
           </CardContent>
         </Card>
       ) : null}

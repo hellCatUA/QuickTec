@@ -37,6 +37,8 @@ import { Timeline } from "@/components/timeline";
 import { approveJob } from "../actions";
 import { ChangeRequests } from "./change-requests";
 import { CrewPanel } from "./crew-panel";
+import { DispatchPanel } from "./dispatch-panel";
+import { JobPay } from "./job-pay";
 import { BreakPay } from "./break-pay";
 import { JobDocuments } from "./job-documents";
 import { EditableField } from "./editable-field";
@@ -322,9 +324,10 @@ export default async function JobPage({
     canOnJob(user, "job.approve_report", jobRef),
   ]);
 
-  const [canAssign, canReassign] = await Promise.all([
+  const [canAssign, canReassign, canEditRates] = await Promise.all([
     canOnJob(user, "job.assign", jobRef),
     canOnJob(user, "job.reassign", jobRef),
+    canOnJob(user, "pay.edit_rates", jobRef),
   ]);
 
   // Only fetched for someone who can actually act on it, so a tech's job page
@@ -420,6 +423,7 @@ export default async function JobPage({
             phone: supervisor.phone,
             email: supervisor.email,
             note: null as string | null,
+            removable: false,
           },
         ]
       : []),
@@ -437,11 +441,17 @@ export default async function JobPage({
             phone: job.pmContact.phone,
             email: job.pmContact.email,
             note: null as string | null,
+            removable: false,
           },
         ]
       : []),
-    ...job.dispatchContacts,
-    ...(job.project?.dispatchContacts ?? []),
+    // Only the job's own can be taken off here. The project's belong to the
+    // project, and the supervisor is a link rather than a row.
+    ...job.dispatchContacts.map((contact) => ({ ...contact, removable: true })),
+    ...(job.project?.dispatchContacts ?? []).map((contact) => ({
+      ...contact,
+      removable: false,
+    })),
   ];
 
   const timeline = await loadTimeline({ jobId: job.id }, zone);
@@ -625,7 +635,7 @@ export default async function JobPage({
         </CardContent>
       </Card>
 
-      {dispatch.length > 0 ? (
+      {dispatch.length > 0 || canEditPlanned ? (
         <Card>
           <CardHeader>
             <CardTitle>Dispatch info</CardTitle>
@@ -633,43 +643,12 @@ export default async function JobPage({
               Numbers to reach mid-job. Tap to dial.
             </CardDescription>
           </CardHeader>
-          <CardContent className="flex flex-col gap-2">
-            {dispatch.map((contact) => (
-              <div
-                key={contact.id}
-                className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-border p-2"
-              >
-                <span className="text-sm font-medium">{contact.label}</span>
-                {contact.name ? (
-                  <span className="text-xs text-muted-foreground">
-                    {contact.name}
-                  </span>
-                ) : null}
-                {contact.phone ? (
-                  <a
-                    href={`tel:${contact.phone}`}
-                    className="flex items-center gap-1 text-xs text-primary underline-offset-4 hover:underline"
-                  >
-                    <Phone className="size-3" />
-                    {contact.phone}
-                  </a>
-                ) : null}
-                {contact.email ? (
-                  <a
-                    href={`mailto:${contact.email}`}
-                    className="flex items-center gap-1 text-xs text-primary underline-offset-4 hover:underline"
-                  >
-                    <Mail className="size-3" />
-                    {contact.email}
-                  </a>
-                ) : null}
-                {contact.note ? (
-                  <span className="w-full text-xs text-muted-foreground">
-                    {contact.note}
-                  </span>
-                ) : null}
-              </div>
-            ))}
+          <CardContent>
+            <DispatchPanel
+              jobId={job.id}
+              canEdit={canEditPlanned}
+              contacts={dispatch}
+            />
           </CardContent>
         </Card>
       ) : null}
@@ -862,6 +841,35 @@ export default async function JobPage({
           />
         </CardContent>
       </Card>
+
+      {canEditRates ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Pay</CardTitle>
+            <CardDescription>
+              What this job pays, for everybody on it. Normally inherited from
+              the tech, the project or the company — set it here when this job
+              is none of those.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <JobPay
+              jobId={job.id}
+              canEdit={canEditRates}
+              payType={job.assignments[0]?.payType ?? "HOURLY"}
+              payRate={job.assignments[0]?.payRate.toString() ?? "0"}
+              travelReimbursement={
+                job.assignments[0]?.travelReimbursement?.toString() ?? null
+              }
+              note={
+                job.assignments.length === 0
+                  ? "Nobody is on this job yet — a rate set now applies to whoever is added."
+                  : (job.assignments[0]?.payRateNote ?? null)
+              }
+            />
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card>
         <CardHeader>

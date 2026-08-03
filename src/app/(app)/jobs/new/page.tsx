@@ -45,6 +45,13 @@ export default async function NewJobPage() {
         intWoCounter: true,
         breakPaid: true,
         defaultJobTitle: true,
+        defaultPayType: true,
+        defaultPayRate: true,
+        travelReimbursement: true,
+        dispatchContacts: {
+          orderBy: { order: "asc" },
+          select: { id: true, label: true, name: true },
+        },
         // Who normally does this work. Shown first in the crew search rather
         // than enforced: a project member is a default, not a fence.
         members: { select: { userId: true } },
@@ -110,11 +117,16 @@ export default async function NewJobPage() {
           intWoCounter: project.intWoCounter,
           breakPaid: project.breakPaid,
           defaultJobTitle: project.defaultJobTitle,
+          defaultPayType: project.defaultPayType,
+          defaultPayRate: project.defaultPayRate?.toString() ?? null,
+          travelReimbursement: project.travelReimbursement?.toString() ?? null,
           memberIds: project.members.map((member) => member.userId),
+          dispatchContacts: project.dispatchContacts,
         }))}
         techs={techs}
         customers={customers}
         templates={templates}
+        canSetPay={can(user, "pay.edit_rates")}
         globalNextSequence={
           (await db.intWoCounter.findUnique({
             where: { scope: `global:${new Date().getFullYear()}` },

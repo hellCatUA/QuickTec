@@ -461,7 +461,7 @@ async function main() {
     // the whole reason it moved: they used to be filled in one at a time and
     // could disagree with each other at every step.
     await planner.locator("#projectId").click();
-    await planner.getByRole("option").first().click();
+    await planner.locator("#projectId-list").getByRole("option").first().click();
     await planner.waitForTimeout(300);
     check(
       "picking the project fills in the representing company",
@@ -488,7 +488,7 @@ async function main() {
       true,
     );
     await planner.locator("#customerId").click();
-    await planner.getByRole("option").first().click();
+    await planner.locator("#customerId-list").getByRole("option").first().click();
     await planner.waitForTimeout(300);
 
     const pickedCustomerId = await planner
@@ -498,7 +498,10 @@ async function main() {
 
     // And the site list is that customer's sites, not everybody's.
     await planner.locator("#siteId").click();
-    const offered = await planner.getByRole("option").allInnerTexts();
+    const offered = await planner
+      .locator("#siteId-list")
+      .getByRole("option")
+      .allInnerTexts();
     await planner.keyboard.press("Escape");
     const theirs = await db.site.findMany({
       where: { customerId: pickedCustomerId, active: true },
@@ -581,6 +584,21 @@ async function main() {
       true,
     );
 
+    // Dispatch numbers for this job, which had nowhere to go on the form at
+    // all and so in practice were never recorded.
+    await planner
+      .getByRole("button", { name: "Add a dispatch contact" })
+      .click();
+    await planner.locator("#dispatch-label-0").fill("Bridge line");
+    await planner.locator("#dispatch-phone-0").fill("206-555-0177");
+    await planner.locator("#dispatch-note-0").fill("Ask for the duty manager");
+
+    // What this job pays, which likewise could only be reached by changing the
+    // tech's standing rate and leaking it into every other job they touch.
+    await planner.locator("#payType").selectOption("FLAT");
+    await planner.locator("#payRate").fill("600");
+    await planner.locator("#travelReimbursement").fill("75");
+
     await planner.locator("#title").fill("Built from the reworked form");
     await planner.getByRole("button", { name: "Create job" }).click();
     // Not /jobs\/[a-z0-9]+$/: that also matches /jobs/new, so a form that never
@@ -595,6 +613,29 @@ async function main() {
     check("with the estimate in minutes", made?.estimateMinutes, 240);
     check("the crew size", made?.techsRequired, 2);
     check("and the tech on it", made?.assignments.length, 1);
+
+    const numbers = await db.dispatchContact.findMany({
+      where: { jobId: made!.id },
+      select: { label: true, phone: true, note: true },
+    });
+    check("the dispatch number is on the job", numbers.length, 1);
+    check("with who to ask for", numbers[0]?.note, "Ask for the duty manager");
+    check("and the number itself", numbers[0]?.phone, "206-555-0177");
+
+    // Set on the job, so it applies to everybody on it rather than following
+    // whatever rate each of them happens to carry.
+    check("the job's own pay type is used", made?.assignments[0]?.payType, "FLAT");
+    check("with its rate", made?.assignments[0]?.payRate.toString(), "600");
+    check(
+      "and its travel money",
+      made?.assignments[0]?.travelReimbursement?.toString(),
+      "75",
+    );
+    check(
+      "recorded as a decision about this job",
+      made?.assignments[0]?.payRateNote,
+      "Set on this job",
+    );
 
     if (made) await db.job.delete({ where: { id: made.id } });
     if (created) await db.site.delete({ where: { id: created.id } });
@@ -613,12 +654,12 @@ async function main() {
     // both part of filling it in — and the site list only exists once the
     // customer is known.
     await planner.locator("#clientId").click();
-    await planner.getByRole("option").first().click();
+    await planner.locator("#clientId-list").getByRole("option").first().click();
     await planner.locator("#customerId").click();
-    await planner.getByRole("option").first().click();
+    await planner.locator("#customerId-list").getByRole("option").first().click();
     await planner.waitForTimeout(300);
     await planner.locator("#siteId").click();
-    await planner.getByRole("option").first().click();
+    await planner.locator("#siteId-list").getByRole("option").first().click();
     await planner.getByRole("button", { name: "Create job" }).click();
 
     await planner.waitForURL(JOB_URL, { timeout: 20_000 }).catch(() => undefined);
@@ -808,9 +849,9 @@ async function main() {
     await planner.waitForTimeout(1500);
 
     await planner.locator("#clientId").click();
-    await planner.getByRole("option").first().click();
+    await planner.locator("#clientId-list").getByRole("option").first().click();
     await planner.locator("#customerId").click();
-    await planner.getByRole("option").first().click();
+    await planner.locator("#customerId-list").getByRole("option").first().click();
     await planner.waitForTimeout(300);
 
     await planner.getByRole("button", { name: "No SiteID" }).click();
@@ -886,6 +927,66 @@ async function main() {
     );
   });
 
+  // --- dispatch numbers and pay, after the fact -----------------------------
+  await bossPage(browser, bossToken, async (planner) => {
+    await db.dispatchContact.deleteMany({ where: { jobId: assignment.jobId } });
+
+    await planner.goto(url, { waitUntil: "load" });
+    await planner.waitForTimeout(1000);
+
+    await planner.getByRole("button", { name: "Add a number" }).click();
+    await planner.locator("#dispatch-add-label").fill("Site security");
+    await planner.locator("#dispatch-add-phone").fill("206-555-0199");
+    await planner.getByRole("button", { name: "Add contact" }).click();
+    await planner.waitForTimeout(2000);
+
+    const added = await db.dispatchContact.findFirst({
+      where: { jobId: assignment.jobId },
+      select: { id: true, label: true, phone: true },
+    });
+    check("a number can be added to a job already running", added?.label, "Site security");
+
+    await planner
+      .getByRole("button", { name: "Remove Site security" })
+      .click();
+    await planner.waitForTimeout(2000);
+    check(
+      "and taken back off",
+      await db.dispatchContact.count({ where: { jobId: assignment.jobId } }),
+      0,
+    );
+
+    // The project's own contacts are not this job's to remove.
+    check(
+      "the project's numbers are not removable from a job",
+      await planner.getByRole("button", { name: /^Remove NetCom/ }).count(),
+      0,
+    );
+
+    await planner.locator("#job-pay-type").selectOption("FLAT");
+    await planner.locator("#job-pay-rate").fill("450");
+    await planner.locator("#job-pay-travel").fill("30");
+    await planner
+      .getByRole("button", { name: "Apply to everybody on this job" })
+      .click();
+    await planner.waitForTimeout(2500);
+
+    const paid = await db.jobAssignment.findMany({
+      where: { jobId: assignment.jobId },
+      select: { payType: true, payRate: true, travelReimbursement: true },
+    });
+    check(
+      "the rate can be changed on a job afterwards",
+      paid.every((row) => row.payType === "FLAT" && row.payRate.toString() === "450"),
+      true,
+    );
+    check(
+      "travel money with it",
+      paid[0]?.travelReimbursement?.toString(),
+      "30",
+    );
+  });
+
   // --- the crew picker ------------------------------------------------------
   await bossPage(browser, bossToken, async (planner) => {
     await planner.goto(url, { waitUntil: "load" });
@@ -953,10 +1054,10 @@ async function main() {
     );
 
     await planner.locator("#customerId").click();
-    await planner.getByRole("option").first().click();
+    await planner.locator("#customerId-list").getByRole("option").first().click();
     await planner.waitForTimeout(300);
     await planner.locator("#siteId").click();
-    await planner.getByRole("option").first().click();
+    await planner.locator("#siteId-list").getByRole("option").first().click();
     await planner.locator("#title").fill("Job with their sign-off blank");
     await planner.getByRole("button", { name: "Create job" }).click();
     await planner.waitForURL(JOB_URL, { timeout: 20_000 }).catch(() => undefined);
@@ -1047,12 +1148,22 @@ async function main() {
   // It used to describe your own permissions, which is a thing you find out
   // once and never need again.
   await bossPage(browser, bossToken, async (planner) => {
-    const monday = new Date();
-    monday.setUTCHours(18, 0, 0, 0);
+    // Tuesday noon at the site, derived from the week the app itself computes.
+    // "today at 18:00Z" is next week when UTC has rolled over and Los Angeles
+    // has not, which is every evening.
+    const { startOfWeekMonday } = await import("@/lib/datetime");
+    const company = await db.companySettings.findUniqueOrThrow({
+      where: { id: "singleton" },
+      select: { defaultTimeZone: true },
+    });
+    const midweek = new Date(
+      startOfWeekMonday(new Date(), company.defaultTimeZone).getTime() +
+        36 * 3_600_000,
+    );
 
     await db.job.update({
       where: { id: assignment.jobId },
-      data: { scheduledStart: monday, lifecycle: "SCHEDULED" },
+      data: { scheduledStart: midweek, lifecycle: "SCHEDULED" },
     });
 
     await planner.goto(`${BASE}/dashboard`, { waitUntil: "load" });

@@ -18,6 +18,7 @@ import {
 import { resolvePayRate } from "@/lib/pay-rates";
 import { resolveJobSupervisor } from "@/lib/scope";
 import { can, requirePermission } from "@/lib/session";
+import { PayType } from "@prisma-client";
 import { jobFormSchema } from "./schema";
 
 export type ActionResult = { ok: true; id?: string } | { ok: false; error: string };
@@ -40,6 +41,11 @@ export async function createJob(
     ...Object.fromEntries(formData),
     assigneeIds: formData.getAll("assigneeIds").map(String).filter(Boolean),
     templateIds: formData.getAll("templateIds").map(String).filter(Boolean),
+    dispatchLabel: formData.getAll("dispatchLabel").map(String),
+    dispatchName: formData.getAll("dispatchName").map(String),
+    dispatchPhone: formData.getAll("dispatchPhone").map(String),
+    dispatchEmail: formData.getAll("dispatchEmail").map(String),
+    dispatchNote: formData.getAll("dispatchNote").map(String),
   });
   if (!parsed.success) {
     return { ok: false, error: z.prettifyError(parsed.error) };
@@ -116,12 +122,49 @@ export async function createJob(
     assigneeIds.push(actor.id);
   }
 
+  if (input.payType && !(input.payType in PayType)) {
+    return { ok: false, error: "Unknown pay type." };
+  }
+  // A rate with no type is a number nobody can interpret; a type with no rate
+  // pays zero without saying so.
+  if (Boolean(input.payType) !== Boolean(input.payRate)) {
+    return {
+      ok: false,
+      error: "Set both the pay type and the rate for this job, or neither.",
+    };
+  }
+  if ((input.payType || input.travelReimbursement) && !can(actor, "pay.edit_rates")) {
+    return { ok: false, error: "You cannot set pay on a job." };
+  }
+
   const rates = await Promise.all(
-    assigneeIds.map(async (userId) => ({
-      userId,
-      rate: await resolvePayRate(userId, project?.id ?? null, input.clientId),
-      supervisorId: await resolveJobSupervisor(userId, project?.id ?? null),
-    })),
+    assigneeIds.map(async (userId) => {
+      const resolved = await resolvePayRate(
+        userId,
+        project?.id ?? null,
+        input.clientId,
+      );
+      const supervisorId = await resolveJobSupervisor(
+        userId,
+        project?.id ?? null,
+      );
+
+      // Blank leaves the usual chain alone — each tech's own rate, then the
+      // project's. A value here is a decision about this job and overrides
+      // both, which is the case the field exists for.
+      if (!input.payType) return { userId, rate: resolved, supervisorId };
+
+      return {
+        userId,
+        supervisorId,
+        rate: {
+          ...resolved,
+          payType: input.payType as PayType,
+          rate: input.payRate!,
+          source: "job" as const,
+        },
+      };
+    }),
   );
 
   // The lead defaults to whoever on site outranks a plain tech; an explicit
@@ -199,10 +242,13 @@ export async function createJob(
             payType: rate.payType,
             payRate: rate.rate,
             payRateNote:
-              rate.source === "none"
-                ? "No rate configured — defaulted to non-billable"
-                : null,
+              rate.source === "job"
+                ? "Set on this job"
+                : rate.source === "none"
+                  ? "No rate configured — defaulted to non-billable"
+                  : null,
             travelReimbursement:
+              input.travelReimbursement ??
               rate.travelReimbursement ??
               project?.travelReimbursement?.toString() ??
               null,
@@ -212,6 +258,26 @@ export async function createJob(
       select: { id: true, intWoId: true },
     });
   });
+
+  // Numbers for this job alone. The project's own travel with every job under
+  // it and are not copied here — two rows saying the same thing is how one of
+  // them ends up stale.
+  const dispatch = input.dispatchLabel
+    .map((label, index) => ({
+      label: label.trim(),
+      name: input.dispatchName[index]?.trim() || null,
+      phone: input.dispatchPhone[index]?.trim() || null,
+      email: input.dispatchEmail[index]?.trim() || null,
+      note: input.dispatchNote[index]?.trim() || null,
+      order: index,
+    }))
+    .filter((contact) => contact.label !== "");
+
+  if (dispatch.length > 0) {
+    await db.dispatchContact.createMany({
+      data: dispatch.map((contact) => ({ ...contact, jobId: job.id })),
+    });
+  }
 
   // The company's standing blanks come across as copies, so replacing a
   // template next year cannot change what a job that ran this year went out on.

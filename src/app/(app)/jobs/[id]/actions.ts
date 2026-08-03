@@ -14,7 +14,12 @@ import { notify } from "@/lib/notifications";
 import { canOnJob, resolveJobSupervisor } from "@/lib/scope";
 import { getSessionUser, permissionScope, type SessionUser } from "@/lib/session";
 import { adjustmentMinutes } from "@/lib/time-tracking";
-import { ContactType, JobOutcome, type Prisma } from "@prisma-client";
+import {
+  ContactType,
+  JobOutcome,
+  PayType as JobPayType,
+  type Prisma,
+} from "@prisma-client";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -1233,6 +1238,190 @@ export async function setSiteNumber(formData: FormData): Promise<ActionResult> {
     jobId,
     action: "field_edited",
     detail: { field: "Site ID", from: null, to: siteNumber },
+  });
+
+  touch(jobId);
+  return ok;
+}
+
+// ---------------------------------------------------------------------------
+// Dispatch numbers for this job
+// ---------------------------------------------------------------------------
+
+/**
+ * Adds a number to reach mid-job.
+ *
+ * The project's contacts travel with every job under it; these belong to this
+ * one — a bridge line that only exists today, a duty manager's mobile read out
+ * on the call. Anyone who can plan the job can add one, because the person who
+ * takes the call is the person who has the number.
+ */
+export async function addJobDispatchContact(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  const jobId = String(formData.get("jobId") ?? "");
+  const label = String(formData.get("label") ?? "").trim();
+  if (!label) return fail("Say who they are.");
+
+  const context = await loadContext(jobId);
+  if (!context) return fail("Job not found.");
+  const { user, job } = context;
+
+  if (!(await canOnJob(user, "job.edit_planned_fields", job))) {
+    return fail("You cannot add contacts to this job.");
+  }
+
+  const last = await db.dispatchContact.findFirst({
+    where: { jobId },
+    orderBy: { order: "desc" },
+    select: { order: true },
+  });
+
+  const contact = await db.dispatchContact.create({
+    data: {
+      jobId,
+      label,
+      name: String(formData.get("name") ?? "").trim() || null,
+      phone: String(formData.get("phone") ?? "").trim() || null,
+      email: String(formData.get("email") ?? "").trim() || null,
+      note: String(formData.get("note") ?? "").trim() || null,
+      order: (last?.order ?? -1) + 1,
+    },
+    select: { id: true },
+  });
+
+  await recordAudit({
+    actorId: user.id,
+    entityType: "DispatchContact",
+    entityId: contact.id,
+    jobId,
+    action: "dispatch_added",
+    detail: { who: label },
+  });
+
+  touch(jobId);
+  return ok;
+}
+
+export async function deleteJobDispatchContact(
+  formData: FormData,
+): Promise<ActionResult> {
+  const id = String(formData.get("id") ?? "");
+
+  const contact = await db.dispatchContact.findUnique({
+    where: { id },
+    select: { id: true, jobId: true, label: true },
+  });
+  // Project contacts are managed on the project; this only ever removes one
+  // that belongs to the job itself.
+  if (!contact?.jobId) return fail("Not found.");
+
+  const context = await loadContext(contact.jobId);
+  if (!context) return fail("Job not found.");
+  const { user, job } = context;
+
+  if (!(await canOnJob(user, "job.edit_planned_fields", job))) {
+    return fail("You cannot remove contacts from this job.");
+  }
+
+  await db.dispatchContact.delete({ where: { id } });
+
+  await recordAudit({
+    actorId: user.id,
+    entityType: "DispatchContact",
+    entityId: id,
+    jobId: contact.jobId,
+    action: "dispatch_removed",
+    detail: { who: contact.label },
+  });
+
+  touch(contact.jobId);
+  return ok;
+}
+
+// ---------------------------------------------------------------------------
+// What this job pays
+// ---------------------------------------------------------------------------
+
+/**
+ * Sets the rate and travel money for everybody on this job.
+ *
+ * A rate arrives from the tech, the project or the company, and every so often
+ * a single job is none of those — overtime rates for a weekend cutover, a flat
+ * fee somebody negotiated. Per job rather than per tech on the job: the
+ * negotiation was about the work, and two people doing the same work on the
+ * same night at different rates is a mistake far more often than an intent.
+ *
+ * Payroll lines snapshot what they were built from, so anything already paid
+ * keeps the number it was paid at. A week that has been approved is refused
+ * anyway — the screen would then disagree with the payment.
+ */
+export async function setJobPay(formData: FormData): Promise<ActionResult> {
+  const jobId = String(formData.get("jobId") ?? "");
+  const payType = String(formData.get("payType") ?? "").trim();
+  const payRate = String(formData.get("payRate") ?? "").trim();
+  const travel = String(formData.get("travelReimbursement") ?? "").trim();
+
+  const context = await loadContext(jobId);
+  if (!context) return fail("Job not found.");
+  const { user, job } = context;
+
+  if (!(await canOnJob(user, "pay.edit_rates", job))) {
+    return fail("You cannot change what this job pays.");
+  }
+
+  if (!payType || !(payType in JobPayType)) return fail("Pick a pay type.");
+  const rate = Number(payRate);
+  if (!Number.isFinite(rate) || rate < 0) {
+    return fail("Enter a rate of zero or more.");
+  }
+  const travelAmount = travel === "" ? null : Number(travel);
+  if (travelAmount !== null && (!Number.isFinite(travelAmount) || travelAmount < 0)) {
+    return fail("Enter a travel amount of zero or more.");
+  }
+
+  const settled = await db.payrollLine.count({
+    where: {
+      assignment: { jobId },
+      payrollPeriod: { status: { not: "DRAFT" } },
+    },
+  });
+  if (settled > 0) {
+    return fail(
+      "This job is in a payroll week that has already been approved. Changing the rate now would disagree with what was paid.",
+    );
+  }
+
+  const before = await db.jobAssignment.findMany({
+    where: { jobId },
+    select: { payType: true, payRate: true },
+  });
+
+  await db.jobAssignment.updateMany({
+    where: { jobId },
+    data: {
+      payType: payType as JobPayType,
+      payRate: payRate,
+      payRateNote: "Set on this job",
+      travelReimbursement: travelAmount === null ? null : travel,
+    },
+  });
+
+  await recordAudit({
+    actorId: user.id,
+    entityType: "Job",
+    entityId: jobId,
+    jobId,
+    action: "pay_changed",
+    detail: {
+      field: "Pay",
+      from: before[0]
+        ? `${before[0].payType} ${before[0].payRate.toString()}`
+        : null,
+      to: `${payType} ${payRate}`,
+      who: `${before.length} on the job`,
+    },
   });
 
   touch(jobId);
