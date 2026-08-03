@@ -62,6 +62,7 @@ company has a form mapped against them; new ones get added.
 | `tech.names` | Everyone assigned, comma separated |
 | `tech.lead` | The lead tech |
 | `tech.initials` | Their initials — `Zhuly Gonzales` → `ZG` |
+| `tech.count` | How many techs were on it — for a `# Techs` column |
 
 ### Job
 
@@ -113,6 +114,7 @@ company has a form mapped against them; new ones get added.
 | `time.offsite` | Last check-out |
 | `time.total` | Total time, e.g. `3.83 hrs` |
 | `time.scheduled` | The date it was scheduled for |
+| `time.created` | The date the job came in — for a `Date Received` box |
 
 ### Per visit — repeats, takes `#N`
 

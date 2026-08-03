@@ -144,8 +144,16 @@ function wrap(
 }
 
 /**
- * The largest size at or below the requested one whose wrapped text still fits
- * the box, with the lines at that size.
+ * How the text should sit in its box.
+ *
+ * A form has two kinds of box and they want opposite things. A table cell is
+ * one line tall: a date that does not fit belongs smaller, not broken after
+ * "06-25-202" with a lonely "6" underneath spilling out of the row. A box for
+ * a paragraph has room for many lines, and there the answer is the largest
+ * size that fits — shrinking it to save a line only makes it harder to read.
+ *
+ * The box's own height says which it is, so nothing has to be guessed about
+ * the text.
  */
 export function fitText(
   text: string,
@@ -155,11 +163,21 @@ export function fitText(
   height: number,
 ): { size: number; lines: string[] } {
   const usable = Math.max(1, width - PADDING_X * 2);
+  const roomForSeveralLines = height >= requested * LINE_SPACING * 2;
 
+  let best: { size: number; lines: string[] } | null = null;
   for (let size = requested; size >= MIN_FONT_SIZE; size -= 0.5) {
     const lines = wrap(text, font, size, usable);
-    if (lines.length * size * LINE_SPACING <= height) return { size, lines };
+    if (lines.length * size * LINE_SPACING > height) continue;
+
+    // A paragraph box takes the first candidate, which is the largest size.
+    if (roomForSeveralLines) return { size, lines };
+
+    // A single-line cell keeps shrinking until the value stops breaking.
+    if (!best || lines.length < best.lines.length) best = { size, lines };
+    if (lines.length === 1) break;
   }
+  if (best) return best;
 
   // Nothing fits: draw at the floor and let it run over rather than dropping
   // the value silently. A visibly cramped box is something somebody notices.

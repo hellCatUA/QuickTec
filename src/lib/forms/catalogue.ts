@@ -110,6 +110,12 @@ const SOURCES: FormSource[] = [
   { group: "Tech", key: "tech.initials", label: "Tech initials",
     resolve: (context) =>
       techNames(context).map(initials).join(", ") || null },
+  // Asked for by name on a real billing table: "# Techs".
+  { group: "Tech", key: "tech.count", label: "Number of techs",
+    resolve: (context) => {
+      const count = context.data.job.assignments.length;
+      return count > 0 ? String(count) : null;
+    } },
 
   // -------------------------------------------------------------------------
   { group: "Job", key: "job.assignmentId", label: "Assignment ID",
@@ -207,6 +213,11 @@ const SOURCES: FormSource[] = [
       context.data.job.scheduledStart
         ? usDateInZone(context.data.job.scheduledStart, zone(context))
         : null },
+  // The day the job was raised here, which is what a form asking for "date
+  // received" is after — the day the work landed on us.
+  { group: "Times", key: "time.created", label: "Date the job came in",
+    resolve: (context) =>
+      usDateInZone(context.data.job.createdAt, zone(context)) },
 
   // A sign-off sheet with a day-by-day table wants these, one row per trip.
   { group: "Per visit", key: "visit.date", label: "Visit date", list: true,

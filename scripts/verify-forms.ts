@@ -450,6 +450,58 @@ async function main() {
   );
 
   // -------------------------------------------------------------------------
+  console.log("\n--- text in a box that is too narrow for it ---");
+
+  // A date in a table cell 39pt wide: it has to shrink onto one line, not
+  // break after "06-25-202" and drop the "6" underneath. Taking the first
+  // size that merely fits does the second, and it looks like a broken form.
+  const narrow = await fillForm(
+    await flatBlank(),
+    [{ fieldName: null, page: 0, x: 20, y: 400, width: 39, height: 17, kind: "TEXT", source: STATIC_SOURCE, staticText: "06-25-2026", rowIndex: null, fontSize: null }],
+    context(null),
+  );
+  const narrowItems = await pageTexts(narrow.bytes);
+  const dateRuns = narrowItems.filter((item) => /\d/.test(item.text));
+  check("a date in a narrow cell stays on one line", dateRuns.length, 1);
+  check("and keeps every character", dateRuns[0]?.text.replace(/\s+/g, ""), "06-25-2026");
+
+  // The same value in a box with room keeps a readable size rather than
+  // shrinking for no reason.
+  const roomy = await fillForm(
+    await flatBlank(),
+    [{ fieldName: null, page: 0, x: 20, y: 400, width: 200, height: 17, kind: "TEXT", source: STATIC_SOURCE, staticText: "06-25-2026", rowIndex: null, fontSize: null }],
+    context(null),
+  );
+  ok(
+    "a box with room does not shrink the text",
+    (await pageTexts(roomy.bytes)).some((item) => item.text.includes("06-25-2026")),
+  );
+
+  // A box with room for several lines is a paragraph box, and there the
+  // largest readable size wins — shrinking it to save a line is the wrong
+  // trade. Same text, same width, only the height differs.
+  const paragraph = await fillForm(
+    await flatBlank(),
+    [{ fieldName: null, page: 0, x: 65, y: 300, width: 200, height: 80, kind: "TEXT", source: "job.summary", staticText: null, rowIndex: null, fontSize: null }],
+    context(null),
+  );
+  // Only what landed inside the box: the blank's own heading is text on the
+  // same page, and measuring the gap down to it would pass no matter what the
+  // filler did.
+  const paragraphLines = (await pageTexts(paragraph.bytes))
+    .filter((item) => item.text.trim() && item.y >= 300 && item.y <= 380)
+    .sort((a, b) => b.y - a.y);
+  ok("a paragraph wraps to several lines", paragraphLines.length > 2);
+
+  // Line spacing is a fixed multiple of the font size, so the distance between
+  // two consecutive lines is how big the text ended up.
+  const gap = paragraphLines[0].y - paragraphLines[1].y;
+  ok(
+    `and is not shrunk to fit fewer of them (line gap ${gap.toFixed(1)}pt)`,
+    gap > 10 && gap < 13,
+  );
+
+  // -------------------------------------------------------------------------
   console.log("\n--- the signature ---");
 
   const relative = path.join("verify-forms", "signature.png");
