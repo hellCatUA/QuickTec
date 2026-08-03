@@ -239,33 +239,19 @@ export function FormMapper({
           <div className="relative" style={{ width: PAGE_WIDTH }}>
             <PdfPage url={fileUrl} page={page} width={PAGE_WIDTH} />
 
-            {onThisPage.map((row) => {
-              const isSelected = row.id === selected;
-              return (
-                <button
-                  key={row.id}
-                  type="button"
-                  onClick={() => setSelected(row.id)}
-                  aria-label={row.fieldName ?? `Box at ${Math.round(row.x)}, ${Math.round(row.y)}`}
-                  className={cn(
-                    "absolute cursor-pointer rounded-[2px] border-2 transition-colors",
-                    isSelected
-                      ? "border-[var(--color-primary)] bg-[var(--color-primary)]/25"
-                      : row.source
-                        ? "border-emerald-500/70 bg-emerald-500/15 hover:bg-emerald-500/30"
-                        : "border-amber-500/70 bg-amber-500/15 hover:bg-amber-500/30",
-                  )}
-                  style={{
-                    left: row.x * scale,
-                    // PDF coordinates run up from the bottom of the page; CSS
-                    // runs down from the top.
-                    top: (pageHeight - row.y - row.height) * scale,
-                    width: Math.max(6, row.width * scale),
-                    height: Math.max(6, row.height * scale),
-                  }}
-                />
-              );
-            })}
+            {onThisPage.map((row) => (
+              <BoxOverlay
+                key={row.id}
+                row={row}
+                scale={scale}
+                pageHeight={pageHeight}
+                pageWidth={pageWidth}
+                selected={row.id === selected}
+                movable={drawn}
+                onSelect={() => setSelected(row.id)}
+                onMove={(patch) => update(row.id, patch)}
+              />
+            ))}
           </div>
         </div>
 
@@ -300,6 +286,165 @@ export function FormMapper({
       </div>
     </div>
   );
+}
+
+/**
+ * One box drawn over the page: where it is, and a handle to move it.
+ *
+ * Dragging is offered only on a blank whose boxes were placed by hand. Where
+ * the file declared its own fields, the rectangles came out of the file and
+ * are right by construction — a box nudged off its line there is somebody
+ * introducing an error, not correcting one.
+ *
+ * Coordinates are kept in PDF points throughout and converted at the edges.
+ * Storing screen pixels would tie a mapping to the width somebody's browser
+ * happened to render at.
+ */
+function BoxOverlay({
+  row,
+  scale,
+  pageHeight,
+  pageWidth,
+  selected,
+  movable,
+  onSelect,
+  onMove,
+}: {
+  row: PlacementRow;
+  scale: number;
+  pageHeight: number;
+  pageWidth: number;
+  selected: boolean;
+  movable: boolean;
+  onSelect: () => void;
+  onMove: (patch: Partial<PlacementRow>) => void;
+}) {
+  const dragRef = React.useRef<{
+    pointerId: number;
+    mode: "move" | "resize";
+    startX: number;
+    startY: number;
+    origin: { x: number; y: number; width: number; height: number };
+  } | null>(null);
+
+  function begin(event: React.PointerEvent, mode: "move" | "resize") {
+    if (!movable) return;
+    event.preventDefault();
+    event.stopPropagation();
+    onSelect();
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    dragRef.current = {
+      pointerId: event.pointerId,
+      mode,
+      startX: event.clientX,
+      startY: event.clientY,
+      origin: { x: row.x, y: row.y, width: row.width, height: row.height },
+    };
+  }
+
+  function move(event: React.PointerEvent) {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+
+    const dx = (event.clientX - drag.startX) / scale;
+    // Screen y grows downward, PDF y grows upward.
+    const dy = -(event.clientY - drag.startY) / scale;
+
+    if (drag.mode === "move") {
+      onMove({
+        x: clamp(drag.origin.x + dx, 0, pageWidth - drag.origin.width),
+        y: clamp(drag.origin.y + dy, 0, pageHeight - drag.origin.height),
+      });
+      return;
+    }
+
+    // The handle is at the bottom-right, so widening keeps the left edge and
+    // heightening keeps the top: the box grows the way the pointer moves.
+    const width = clamp(drag.origin.width + dx, 6, pageWidth - drag.origin.x);
+    const height = clamp(
+      drag.origin.height - dy,
+      6,
+      drag.origin.y + drag.origin.height,
+    );
+    onMove({
+      width,
+      height,
+      y: drag.origin.y + drag.origin.height - height,
+    });
+  }
+
+  function end(event: React.PointerEvent) {
+    if (dragRef.current?.pointerId === event.pointerId) dragRef.current = null;
+  }
+
+  /** Arrow keys for the last point, where a pointer is hopeless. */
+  function nudge(event: React.KeyboardEvent) {
+    if (!movable) return;
+    const step = event.shiftKey ? 10 : 1;
+    const moves: Record<string, [number, number]> = {
+      ArrowLeft: [-step, 0],
+      ArrowRight: [step, 0],
+      ArrowUp: [0, step],
+      ArrowDown: [0, -step],
+    };
+    const delta = moves[event.key];
+    if (!delta) return;
+    event.preventDefault();
+    onMove({
+      x: clamp(row.x + delta[0], 0, pageWidth - row.width),
+      y: clamp(row.y + delta[1], 0, pageHeight - row.height),
+    });
+  }
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onSelect}
+      onKeyDown={nudge}
+      onPointerDown={(event) => begin(event, "move")}
+      onPointerMove={move}
+      onPointerUp={end}
+      onPointerCancel={end}
+      aria-label={
+        row.fieldName ?? `Box at ${Math.round(row.x)}, ${Math.round(row.y)}`
+      }
+      className={cn(
+        "absolute rounded-[2px] border-2 transition-colors",
+        movable ? "cursor-move touch-none" : "cursor-pointer",
+        selected
+          ? "border-[var(--color-primary)] bg-[var(--color-primary)]/25"
+          : row.source
+            ? "border-emerald-500/70 bg-emerald-500/15 hover:bg-emerald-500/30"
+            : "border-amber-500/70 bg-amber-500/15 hover:bg-amber-500/30",
+      )}
+      style={{
+        left: row.x * scale,
+        // PDF coordinates run up from the bottom of the page; CSS runs down
+        // from the top.
+        top: (pageHeight - row.y - row.height) * scale,
+        width: Math.max(6, row.width * scale),
+        height: Math.max(6, row.height * scale),
+      }}
+    >
+      {movable && selected ? (
+        <span
+          role="button"
+          tabIndex={-1}
+          aria-label="Resize this box"
+          onPointerDown={(event) => begin(event, "resize")}
+          onPointerMove={move}
+          onPointerUp={end}
+          onPointerCancel={end}
+          className="absolute -bottom-1.5 -right-1.5 size-3 cursor-se-resize touch-none rounded-full border border-white bg-[var(--color-primary)]"
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function clamp(value: number, low: number, high: number): number {
+  return Math.min(Math.max(value, low), Math.max(low, high));
 }
 
 function PlacementEditor({

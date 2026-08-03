@@ -71,6 +71,21 @@ async function blankWithFields(): Promise<Buffer> {
   return Buffer.from(await pdf.save());
 }
 
+/** A blank with nothing to fill: a designed page and no form fields at all. */
+async function flatBlank(): Promise<Buffer> {
+  const pdf = await PDFDocument.create();
+  const page = pdf.addPage([612, 792]);
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  page.drawText("SERVICE POINT — GENERIC SIGN OFF", {
+    x: 60,
+    y: 720,
+    size: 14,
+    font,
+    color: rgb(0, 0, 0),
+  });
+  return Buffer.from(await pdf.save());
+}
+
 async function main() {
   const boss = await db.user.findUniqueOrThrow({
     where: { email: "boss@417group.org" },
@@ -176,7 +191,7 @@ async function main() {
     await page.getByText("was “Marshall's”").isVisible(),
   );
 
-  const boxes = page.locator('button[aria-label^="Text"]');
+  const boxes = page.locator('[role="button"][aria-label^="Text"]');
   check("every box is drawn over the page", await boxes.count(), 3);
 
   // The box for Text19 must sit where the field does, not somewhere else.
@@ -303,15 +318,15 @@ async function main() {
 
   const bytes = await readFile(absolutePath(generated.storagePath));
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const document = await pdfjs.getDocument({
+  const opened = await pdfjs.getDocument({
     data: new Uint8Array(bytes),
     useSystemFonts: false,
   }).promise;
-  const rendered = await document.getPage(1);
+  const rendered = await opened.getPage(1);
   const text = (await rendered.getTextContent()).items
     .map((item) => ("str" in item ? item.str : ""))
     .join(" ");
-  await document.destroy();
+  await opened.destroy();
 
   const expected = await db.job.findUniqueOrThrow({
     where: { id: job.id },
@@ -341,10 +356,91 @@ async function main() {
     1,
   );
 
+  // -------------------------------------------------------------------------
+  // A flat blank, where the boxes have to be placed by hand. This is the
+  // Service Point shape: a designed PDF with no fields at all, filled today by
+  // typing on top of it in a phone annotator.
+  // -------------------------------------------------------------------------
+  await page.goto(`${BASE}/directory/clients`, { waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: "Edit", exact: true }).first().click();
+  await page.getByRole("button", { name: "Add a default form" }).first().click();
+  await page.locator(`#tpl-label-${job.clientId}`).fill("Verify flat sheet");
+  await page.locator('input[type="file"]').first().setInputFiles({
+    name: "verify-flat.pdf",
+    mimeType: "application/pdf",
+    buffer: await flatBlank(),
+  });
+  await page.getByRole("button", { name: "Add form" }).click();
+  await page.waitForSelector("text=Verify flat sheet", { timeout: 20_000 });
+
+  const flat = await db.clientDocumentTemplate.findFirstOrThrow({
+    where: { clientId: job.clientId, label: "Verify flat sheet" },
+    select: { id: true, boxSource: true, _count: { select: { placements: true } } },
+  });
+  check("a blank with no fields is marked as hand-drawn", flat.boxSource, "DRAWN");
+  check("and starts with no boxes", flat._count.placements, 0);
+
+  await page.goto(
+    `${BASE}/directory/clients/${job.clientId}/forms/${flat.id}`,
+    { waitUntil: "domcontentloaded" },
+  );
+  await page.waitForFunction(
+    () => {
+      const canvas = document.querySelector("canvas");
+      return Boolean(canvas && canvas.width > 100);
+    },
+    { timeout: 30_000 },
+  );
+
+  await page.getByRole("button", { name: "Add a box" }).click();
+  await page.waitForSelector('[role="button"][aria-label^="Box at"]', {
+    timeout: 20_000,
+  });
+
+  const box = page.locator('[role="button"][aria-label^="Box at"]').first();
+  const start = (await box.boundingBox())!;
+
+  // Dragged to where it belongs on the page. Without this the box lands in
+  // the middle and stays there, which makes a flat blank unusable.
+  await page.mouse.move(start.x + start.width / 2, start.y + start.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(
+    start.x + start.width / 2 - 120,
+    start.y + start.height / 2 - 200,
+    { steps: 12 },
+  );
+  await page.mouse.up();
+
+  await page
+    .getByRole("combobox", { name: "What goes in this box" })
+    .first()
+    .selectOption("site.city");
+  await page.getByRole("button", { name: "Save mapping" }).click();
+  await page.waitForSelector("text=Mapping saved.", { timeout: 20_000 });
+
+  const moved = await db.formPlacement.findFirstOrThrow({
+    where: { templateId: flat.id },
+    select: { x: true, y: true, source: true },
+  });
+
+  // 120px left and 200px up, at 720px across a 612pt page.
+  const perPoint = 720 / 612;
+  check("the box keeps what it was pointed at", moved.source, "site.city");
+  ok(
+    `dragging moved it left (${Math.round(moved.x)} ≈ ${Math.round(612 / 2 - 75 - 120 / perPoint)})`,
+    Math.abs(moved.x - (612 / 2 - 75 - 120 / perPoint)) < 4,
+  );
+  ok(
+    `and up the page (${Math.round(moved.y)} ≈ ${Math.round(792 / 2 + 200 / perPoint)})`,
+    Math.abs(moved.y - (792 / 2 + 200 / perPoint)) < 4,
+  );
+
   await browser.close();
 
   // Leave the directory as it was found.
-  await db.clientDocumentTemplate.deleteMany({ where: { id: template.id } });
+  await db.clientDocumentTemplate.deleteMany({
+    where: { id: { in: [template.id, flat.id] } },
+  });
   await db.attachment.deleteMany({ where: { jobDocumentId: job.id } });
 
   console.log(
