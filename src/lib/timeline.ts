@@ -107,6 +107,8 @@ export const TIMELINE_META: Record<string, TimelineMeta> = {
   dispatch_added: { label: "Dispatch number added", icon: Phone, tone: "neutral", groups: true },
   dispatch_removed: { label: "Dispatch number removed", icon: Ban, tone: "neutral", groups: true },
   pay_changed: { label: "Pay changed", icon: CircleDollarSign, tone: "warning" },
+  pay_overridden: { label: "Pay set for one person", icon: CircleDollarSign, tone: "warning" },
+  pay_override_cleared: { label: "Back on the job's pay", icon: CircleDollarSign, tone: "neutral" },
   clock_in: { label: "Clocked in", icon: Play, tone: "success" },
   clock_out: { label: "Clocked out", icon: Square, tone: "neutral" },
   break_start: { label: "Break started", icon: Square, tone: "neutral", groups: true },

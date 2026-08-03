@@ -591,11 +591,31 @@ export async function assignTech(formData: FormData): Promise<ActionResult> {
 
   const details = await db.job.findUniqueOrThrow({
     where: { id: jobId },
-    select: { clientId: true, projectId: true, project: { select: { travelReimbursement: true } } },
+    select: {
+      clientId: true,
+      projectId: true,
+      payType: true,
+      payRate: true,
+      travelReimbursement: true,
+      project: { select: { travelReimbursement: true } },
+    },
   });
 
-  const rate = await resolvePayRate(userId, details.projectId, details.clientId);
+  const resolved = await resolvePayRate(userId, details.projectId, details.clientId);
   const supervisorId = await resolveJobSupervisor(userId, details.projectId);
+
+  // A rate set on the job is a decision about the work, so it applies to
+  // whoever is on it — including somebody added afterwards. Reading it from
+  // the job rather than from the assignments that happened to exist when it
+  // was set is the difference between that working and only appearing to.
+  const rate = details.payType
+    ? {
+        payType: details.payType,
+        rate: details.payRate?.toString() ?? "0",
+        travelReimbursement: details.travelReimbursement?.toString() ?? null,
+        source: "job" as const,
+      }
+    : resolved;
 
   await db.jobAssignment.create({
     data: {
@@ -607,9 +627,11 @@ export async function assignTech(formData: FormData): Promise<ActionResult> {
       payType: rate.payType,
       payRate: rate.rate,
       payRateNote:
-        rate.source === "none"
-          ? "No rate configured — defaulted to non-billable"
-          : null,
+        rate.source === "job"
+          ? "Set on this job"
+          : rate.source === "none"
+            ? "No rate configured — defaulted to non-billable"
+            : null,
       travelReimbursement:
         rate.travelReimbursement ??
         details.project?.travelReimbursement?.toString() ??
@@ -1398,15 +1420,28 @@ export async function setJobPay(formData: FormData): Promise<ActionResult> {
     select: { payType: true, payRate: true },
   });
 
-  await db.jobAssignment.updateMany({
-    where: { jobId },
-    data: {
-      payType: payType as JobPayType,
-      payRate: payRate,
-      payRateNote: "Set on this job",
-      travelReimbursement: travelAmount === null ? null : travel,
-    },
-  });
+  await db.$transaction([
+    // On the job, so somebody assigned tomorrow gets it too.
+    db.job.update({
+      where: { id: jobId },
+      data: {
+        payType: payType as JobPayType,
+        payRate: payRate,
+        travelReimbursement: travelAmount === null ? null : travel,
+      },
+    }),
+    // Anybody deliberately put on a different rate keeps it — saying so is
+    // the whole point of having said so.
+    db.jobAssignment.updateMany({
+      where: { jobId, payOverridden: false },
+      data: {
+        payType: payType as JobPayType,
+        payRate: payRate,
+        payRateNote: "Set on this job",
+        travelReimbursement: travelAmount === null ? null : travel,
+      },
+    }),
+  ]);
 
   await recordAudit({
     actorId: user.id,
@@ -1425,5 +1460,178 @@ export async function setJobPay(formData: FormData): Promise<ActionResult> {
   });
 
   touch(jobId);
+  return ok;
+}
+
+/**
+ * Puts one person on a different rate from the rest of the job.
+ *
+ * A trainee shadowing at half rate, somebody brought in on a favour, a
+ * subcontractor whose number was agreed separately. The reason is required:
+ * a rate that differs from everybody else's on the same night is a question
+ * somebody will ask in three months, and the answer belongs next to it rather
+ * than in whoever's memory.
+ *
+ * Marked as overridden, so setting the job's pay afterwards leaves it alone.
+ */
+export async function setAssignmentPay(
+  formData: FormData,
+): Promise<ActionResult> {
+  const assignmentId = String(formData.get("assignmentId") ?? "");
+  const payType = String(formData.get("payType") ?? "").trim();
+  const payRate = String(formData.get("payRate") ?? "").trim();
+  const travel = String(formData.get("travelReimbursement") ?? "").trim();
+  const reason = String(formData.get("reason") ?? "").trim();
+
+  const assignment = await db.jobAssignment.findUnique({
+    where: { id: assignmentId },
+    select: { id: true, jobId: true, user: { select: { name: true } } },
+  });
+  if (!assignment) return fail("Not found.");
+
+  const context = await loadContext(assignment.jobId);
+  if (!context) return fail("Job not found.");
+  const { user, job } = context;
+
+  if (!(await canOnJob(user, "pay.edit_rates", job))) {
+    return fail("You cannot change what this job pays.");
+  }
+  if (!payType || !(payType in JobPayType)) return fail("Pick a pay type.");
+  if (!reason) return fail("Say why this person is on a different rate.");
+
+  const rate = Number(payRate);
+  if (!Number.isFinite(rate) || rate < 0) {
+    return fail("Enter a rate of zero or more.");
+  }
+  const travelAmount = travel === "" ? null : Number(travel);
+  if (travelAmount !== null && (!Number.isFinite(travelAmount) || travelAmount < 0)) {
+    return fail("Enter a travel amount of zero or more.");
+  }
+
+  const settled = await db.payrollLine.count({
+    where: { assignmentId, payrollPeriod: { status: { not: "DRAFT" } } },
+  });
+  if (settled > 0) {
+    return fail(
+      "This person's week has already been approved. Changing the rate now would disagree with what was paid.",
+    );
+  }
+
+  await db.jobAssignment.update({
+    where: { id: assignmentId },
+    data: {
+      payType: payType as JobPayType,
+      payRate,
+      payRateNote: reason,
+      travelReimbursement: travelAmount === null ? null : travel,
+      payOverridden: true,
+    },
+  });
+
+  await recordAudit({
+    actorId: user.id,
+    entityType: "JobAssignment",
+    entityId: assignmentId,
+    jobId: assignment.jobId,
+    action: "pay_overridden",
+    detail: {
+      who: assignment.user.name,
+      to: `${payType} ${payRate}`,
+      reason,
+    },
+  });
+
+  touch(assignment.jobId);
+  return ok;
+}
+
+/** Puts them back on whatever the job pays everybody else. */
+export async function clearAssignmentPay(
+  formData: FormData,
+): Promise<ActionResult> {
+  const assignmentId = String(formData.get("assignmentId") ?? "");
+
+  const assignment = await db.jobAssignment.findUnique({
+    where: { id: assignmentId },
+    select: {
+      id: true,
+      jobId: true,
+      userId: true,
+      user: { select: { name: true } },
+      job: {
+        select: {
+          clientId: true,
+          projectId: true,
+          payType: true,
+          payRate: true,
+          travelReimbursement: true,
+        },
+      },
+    },
+  });
+  if (!assignment) return fail("Not found.");
+
+  const context = await loadContext(assignment.jobId);
+  if (!context) return fail("Job not found.");
+  const { user, job } = context;
+
+  if (!(await canOnJob(user, "pay.edit_rates", job))) {
+    return fail("You cannot change what this job pays.");
+  }
+
+  const settled = await db.payrollLine.count({
+    where: { assignmentId, payrollPeriod: { status: { not: "DRAFT" } } },
+  });
+  if (settled > 0) {
+    return fail(
+      "This person's week has already been approved. Changing the rate now would disagree with what was paid.",
+    );
+  }
+
+  // Back to whatever they would have got had nobody intervened: the job's own
+  // rate if it has one, otherwise the ordinary resolution.
+  const resolved = assignment.job.payType
+    ? {
+        payType: assignment.job.payType,
+        rate: assignment.job.payRate?.toString() ?? "0",
+        travelReimbursement:
+          assignment.job.travelReimbursement?.toString() ?? null,
+        source: "job" as const,
+      }
+    : await resolvePayRate(
+        assignment.userId,
+        assignment.job.projectId,
+        assignment.job.clientId,
+      );
+
+  await db.jobAssignment.update({
+    where: { id: assignmentId },
+    data: {
+      payType: resolved.payType,
+      payRate: resolved.rate,
+      payRateNote:
+        resolved.source === "job"
+          ? "Set on this job"
+          : resolved.source === "none"
+            ? "No rate configured — defaulted to non-billable"
+            : null,
+      travelReimbursement: resolved.travelReimbursement,
+      payOverridden: false,
+    },
+  });
+
+  await recordAudit({
+    actorId: user.id,
+    entityType: "JobAssignment",
+    entityId: assignmentId,
+    jobId: assignment.jobId,
+    action: "pay_override_cleared",
+    detail: {
+      who: assignment.user.name,
+      to: `${resolved.payType} ${resolved.rate}`,
+    },
+  });
+
+  touch(assignment.jobId);
   return ok;
 }

@@ -514,6 +514,16 @@ model Job {
 
   breakPaid Boolean @default(true)
 
+  /// What this job pays, when it is none of the usual sources — a weekend
+  /// cutover at overtime, a flat fee agreed on the phone. Null leaves the
+  /// normal resolution alone: each tech's own rate, then the project's.
+  ///
+  /// Kept on the job rather than only copied onto the assignments, so somebody
+  /// added tomorrow gets the same decision as somebody added today.
+  payType             PayType?
+  payRate             Decimal? @db.Decimal(10, 2)
+  travelReimbursement Decimal? @db.Decimal(10, 2)
+
   /// The representing company issued no work order for this job. Recorded so
   /// the empty slot reads as a decision somebody made rather than paperwork
   /// nobody got round to chasing.
@@ -604,8 +614,13 @@ model JobAssignment {
 
   payType             PayType
   payRate             Decimal  @default("0") @db.Decimal(10, 2)
+  /// Why this rate, when it is not simply the one that resolved.
   payRateNote         String?
   travelReimbursement Decimal? @db.Decimal(10, 2)
+  /// This person is deliberately on a different rate from the rest of the job
+  /// — a trainee, somebody brought in on a favour. Setting the job's pay
+  /// leaves them alone, which is the whole point of having said so.
+  payOverridden       Boolean  @default(false)
 
   workPerformed String?
 

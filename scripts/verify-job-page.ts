@@ -45,6 +45,17 @@ async function main() {
   // Start from a clean slate so repeated runs are comparable. Contacts and
   // signatures matter as much as visits here: a MOD left over from a previous
   // run changes which branch of the wizard renders.
+  await db.jobAssignment.deleteMany({
+    where: { jobId: assignment.jobId, id: { not: assignment.id } },
+  });
+  await db.jobAssignment.update({
+    where: { id: assignment.id },
+    data: { payOverridden: false },
+  });
+  await db.job.update({
+    where: { id: assignment.jobId },
+    data: { payType: null, payRate: null, travelReimbursement: null },
+  });
   await db.visit.deleteMany({ where: { assignmentId: assignment.id } });
   await db.signature.deleteMany({ where: { jobId: assignment.jobId } });
   await db.pointOfContact.deleteMany({ where: { jobId: assignment.jobId } });
@@ -973,8 +984,9 @@ async function main() {
 
     const paid = await db.jobAssignment.findMany({
       where: { jobId: assignment.jobId },
-      select: { payType: true, payRate: true, travelReimbursement: true },
+      select: { payType: true, payRate: true, travelReimbursement: true, userId: true },
     });
+    const paidUserIds = paid.map((row) => row.userId);
     check(
       "the rate can be changed on a job afterwards",
       paid.every((row) => row.payType === "FLAT" && row.payRate.toString() === "450"),
@@ -985,6 +997,111 @@ async function main() {
       paid[0]?.travelReimbursement?.toString(),
       "30",
     );
+
+    // The bug this replaces: the rate was written onto whoever happened to be
+    // on the job at the time and then forgotten, so the next person added
+    // arrived on their own rate — non-billable, in the usual case — and
+    // somebody had to notice and re-apply it.
+    await planner.getByRole("button", { name: "Add a tech" }).click();
+    await planner.locator("#crew-add").click();
+    const newcomer = await planner
+      .locator("#crew-add-list")
+      .getByRole("option")
+      .first()
+      .innerText();
+    await planner.locator("#crew-add-list").getByRole("option").first().click();
+    await planner.getByRole("button", { name: "Add to crew" }).click();
+    await planner.waitForTimeout(2500);
+
+    const joined = await db.jobAssignment.findFirstOrThrow({
+      where: { jobId: assignment.jobId, user: { name: newcomer.split("\n")[0] } },
+      select: { id: true, payType: true, payRate: true, payRateNote: true },
+    });
+    check(
+      "somebody added afterwards arrives on the job's rate",
+      `${joined.payType} ${joined.payRate.toString()}`,
+      "FLAT 450",
+    );
+    check("and it says where it came from", joined.payRateNote, "Set on this job");
+
+    // One person can still be put somewhere else deliberately.
+    await planner
+      .getByRole("button", { name: `Set pay for ${newcomer.split("\n")[0]}` })
+      .click();
+    await planner.locator("#override-type").selectOption("HOURLY");
+    await planner.locator("#override-rate").fill("22.50");
+
+    check(
+      "a reason is required before that can be saved",
+      await planner.getByRole("button", { name: "Save their rate" }).isDisabled(),
+      true,
+    );
+
+    await planner.locator("#override-reason").fill("Shadowing at half rate");
+    await planner.getByRole("button", { name: "Save their rate" }).click();
+    await planner.waitForTimeout(2500);
+
+    const overridden = await db.jobAssignment.findUniqueOrThrow({
+      where: { id: joined.id },
+      select: { payType: true, payRate: true, payRateNote: true, payOverridden: true },
+    });
+    check(
+      "their own rate applies",
+      `${overridden.payType} ${overridden.payRate.toString()}`,
+      "HOURLY 22.5",
+    );
+    check("carrying why", overridden.payRateNote, "Shadowing at half rate");
+
+    // Setting the job's pay again leaves them alone, which is the whole point
+    // of having said they are different.
+    await planner.locator("#job-pay-rate").fill("500");
+    await planner
+      .getByRole("button", { name: "Apply to everybody on this job" })
+      .click();
+    await planner.waitForTimeout(2500);
+
+    check(
+      "changing the job's pay leaves a deliberate exception alone",
+      (
+        await db.jobAssignment.findUniqueOrThrow({
+          where: { id: joined.id },
+          select: { payRate: true },
+        })
+      ).payRate.toString(),
+      "22.5",
+    );
+    check(
+      "while everybody else moves",
+      (
+        await db.jobAssignment.findFirstOrThrow({
+          where: { jobId: assignment.jobId, payOverridden: false },
+          select: { payRate: true },
+        })
+      ).payRate.toString(),
+      "500",
+    );
+
+    // Putting them back picks up whatever the job pays now, not what it paid
+    // when they were taken off it.
+    await planner
+      .getByRole("button", { name: `Set pay for ${newcomer.split("\n")[0]}` })
+      .click();
+    await planner
+      .getByRole("button", { name: /^Back to the job/ })
+      .click();
+    await planner.waitForTimeout(2500);
+    check(
+      "and they can be put back on it",
+      (
+        await db.jobAssignment.findUniqueOrThrow({
+          where: { id: joined.id },
+          select: { payRate: true, payOverridden: true },
+        })
+      ).payRate.toString(),
+      "500",
+    );
+
+    await db.jobAssignment.delete({ where: { id: joined.id } });
   });
 
   // --- the crew picker ------------------------------------------------------

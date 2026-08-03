@@ -94,6 +94,9 @@ export default async function JobPage({
       returnTrackingNumber: true,
       workPerformedMerged: true,
       breakPaid: true,
+      payType: true,
+      payRate: true,
+      travelReimbursement: true,
       noWorkOrder: true,
       lifecycle: true,
       outcome: true,
@@ -260,6 +263,7 @@ export default async function JobPage({
           payRate: true,
           payRateNote: true,
           travelReimbursement: true,
+          payOverridden: true,
           workPerformed: true,
           // Anyone who has left a trace on the job cannot be unassigned, so
           // the button is not offered for them.
@@ -820,10 +824,17 @@ export default async function JobPage({
               name: person.name,
               role: person.baseRole,
             }))}
+            canEditPay={canEditRates}
             crew={job.assignments.map((assignment) => ({
               id: assignment.id,
               userId: assignment.user.id,
               name: assignment.user.name,
+              payType: assignment.payType,
+              payRate: assignment.payRate.toString(),
+              travelReimbursement:
+                assignment.travelReimbursement?.toString() ?? null,
+              payNote: showPay ? assignment.payRateNote : null,
+              overridden: assignment.payOverridden,
               isLead: assignment.isLead,
               onSite: jobSpan(assignment.visits, now).open,
               hasWorked:
@@ -856,15 +867,13 @@ export default async function JobPage({
             <JobPay
               jobId={job.id}
               canEdit={canEditRates}
-              payType={job.assignments[0]?.payType ?? "HOURLY"}
-              payRate={job.assignments[0]?.payRate.toString() ?? "0"}
-              travelReimbursement={
-                job.assignments[0]?.travelReimbursement?.toString() ?? null
-              }
+              payType={job.payType ?? "HOURLY"}
+              payRate={job.payRate?.toString() ?? ""}
+              travelReimbursement={job.travelReimbursement?.toString() ?? null}
               note={
-                job.assignments.length === 0
-                  ? "Nobody is on this job yet — a rate set now applies to whoever is added."
-                  : (job.assignments[0]?.payRateNote ?? null)
+                job.payType
+                  ? "Applies to everybody on this job, including anybody added later. Somebody put on their own rate keeps it."
+                  : "Not set — everybody keeps their own rate, or the project's default where they have none."
               }
             />
           </CardContent>

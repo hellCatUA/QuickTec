@@ -212,6 +212,10 @@ export async function createJob(
         // for this job, which is a real case — a long day where breaks are
         // covered on work that normally does not.
         breakPaid: input.breakPaid,
+        // On the job, so somebody assigned tomorrow gets the same decision.
+        payType: (input.payType as PayType | null) ?? null,
+        payRate: input.payRate,
+        travelReimbursement: input.travelReimbursement,
         noWorkOrder: input.noWorkOrder,
         lifecycle: needsApproval
           ? "PENDING_APPROVAL"
