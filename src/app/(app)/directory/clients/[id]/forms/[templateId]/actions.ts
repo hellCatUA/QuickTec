@@ -433,9 +433,11 @@ export async function replaceBlank(
                     kind: kept?.kind ?? placement.kind,
                     sampleText: placement.sampleText,
                     order: placement.order,
-                    source: kept?.source ?? null,
+                    // What somebody mapped by hand beats what the new file's
+                    // field names claim: one is a decision, the other a name.
+                    source: kept?.source ?? placement.source,
                     staticText: kept?.staticText ?? null,
-                    rowIndex: kept?.rowIndex ?? null,
+                    rowIndex: kept?.rowIndex ?? placement.rowIndex,
                     fontSize: kept?.fontSize ?? null,
                   };
                 }),

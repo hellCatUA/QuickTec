@@ -253,6 +253,10 @@ export async function saveClientTemplate(
                 height: placement.height,
                 kind: placement.kind,
                 sampleText: placement.sampleText,
+                // Set only where the field named a value outright, which is
+                // something a blank has to be prepared for on purpose.
+                source: placement.source,
+                rowIndex: placement.rowIndex,
                 order: placement.order,
               })),
             }

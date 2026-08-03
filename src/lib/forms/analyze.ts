@@ -13,6 +13,7 @@ import {
   PDFDict,
 } from "pdf-lib";
 import type { FormBoxSource, FormPlacementKind } from "@prisma-client";
+import { formSource } from "@/lib/forms/catalogue";
 
 /**
  * Reading a blank to find out where its boxes are.
@@ -36,8 +37,41 @@ export type SeededPlacement = {
   kind: FormPlacementKind;
   /** Whatever the blank already had in the field, as a hint for mapping. */
   sampleText: string | null;
+  /** Set when the field names a value outright — see nameAsSource(). */
+  source: string | null;
+  rowIndex: number | null;
   order: number;
 };
+
+/**
+ * A field whose name says what belongs in it.
+ *
+ * A blank can be prepared with its fields named after entries in the
+ * catalogue — "site.city", or "visit.date#2" for the second row of a
+ * timesheet. Then uploading it is the whole setup, instead of twenty
+ * dropdowns. Nothing is guessed: the name has to be a catalogue key exactly,
+ * so a form whose author happened to call a field "Address" is left alone.
+ *
+ * A blank that arrives this way is flagged to the person setting it up, who
+ * still has to look at it. A box that filled itself with the wrong value is
+ * the one mistake that reaches a customer.
+ */
+export function nameAsSource(
+  fieldName: string,
+): { source: string; rowIndex: number | null } | null {
+  const match = /^(.+?)(?:#(\d{1,2}))?$/.exec(fieldName.trim());
+  if (!match) return null;
+
+  const source = formSource(match[1]);
+  if (!source) return null;
+
+  // A row number is only meaningful on a source that repeats.
+  const row = match[2] ? Number(match[2]) - 1 : null;
+  return {
+    source: source.key,
+    rowIndex: source.list ? Math.max(0, row ?? 0) : null,
+  };
+}
 
 export type FormAnalysis = {
   boxSource: FormBoxSource;
@@ -137,10 +171,15 @@ export async function analyzeForm(bytes: Buffer): Promise<FormAnalysis> {
 
   let order = 0;
   for (const field of fields) {
-    const kind: FormPlacementKind =
+    const name = field.getName();
+    const named = nameAsSource(name);
+
+    let kind: FormPlacementKind =
       field instanceof PDFCheckBox || field instanceof PDFRadioGroup
         ? "CHECK"
         : "TEXT";
+    // A signature is an image; nothing else can go in that box.
+    if (named && formSource(named.source)?.resolveImage) kind = "SIGNATURE";
 
     let sampleText: string | null = null;
     if (field instanceof PDFTextField) {
@@ -156,7 +195,7 @@ export async function analyzeForm(bytes: Buffer): Promise<FormAnalysis> {
       if (width <= 0 || height <= 0) continue;
 
       analysis.placements.push({
-        fieldName: field.getName(),
+        fieldName: name,
         page: pageOfRef.get(String(widget.dict)) ?? 0,
         x,
         y,
@@ -164,6 +203,8 @@ export async function analyzeForm(bytes: Buffer): Promise<FormAnalysis> {
         height,
         kind,
         sampleText,
+        source: named?.source ?? null,
+        rowIndex: named?.rowIndex ?? null,
         order: order++,
       });
     }

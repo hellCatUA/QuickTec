@@ -2,7 +2,7 @@ import "dotenv/config";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
-import { analyzeForm, liftBoxes } from "@/lib/forms/analyze";
+import { analyzeForm, liftBoxes, nameAsSource } from "@/lib/forms/analyze";
 import { fillForm, toWinAnsi, type FillablePlacement } from "@/lib/forms/fill";
 import { formSource, initials, STATIC_SOURCE } from "@/lib/forms/catalogue";
 import type { FormFillContext } from "@/lib/forms/catalogue";
@@ -66,6 +66,27 @@ async function acroFormBlank(): Promise<Buffer> {
   return Buffer.from(await pdf.save());
 }
 
+/**
+ * A blank prepared the way docs/FORM-BLANKS.md describes: its fields named
+ * after catalogue entries, so uploading it is the whole setup.
+ */
+async function namedBlank(): Promise<Buffer> {
+  const pdf = await PDFDocument.create();
+  const page = pdf.addPage([612, 792]);
+  const form = pdf.getForm();
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+
+  const place = { width: 150, height: 16, font };
+  form.createTextField("site.city").addToPage(page, { ...place, x: 60, y: 700 });
+  // The second row of a timesheet, which is what the # suffix is for.
+  form.createTextField("visit.out#2").addToPage(page, { ...place, x: 60, y: 660 });
+  form.createTextField("signature.mod").addToPage(page, { ...place, x: 60, y: 620 });
+  // Not ours to fill: the site contact writes this on the day.
+  form.createTextField("SiteInitials").addToPage(page, { ...place, x: 60, y: 580 });
+
+  return Buffer.from(await pdf.save());
+}
+
 /** A flat blank: nothing to fill, only a page to draw on. */
 async function flatBlank(): Promise<Buffer> {
   const pdf = await PDFDocument.create();
@@ -104,6 +125,15 @@ function context(signaturePath: string | null): FormFillContext {
         paid: false,
       },
     ],
+  };
+
+  // A second trip the next day. Two visits is the ordinary case, not the edge
+  // one — a job that needs a vendor meet always comes back — and it is what
+  // gives a sign-off sheet with a line per day anything to put on line two.
+  const visitTwo = {
+    clockInAt: at("2026-06-26T21:00:00Z"), // 14:00
+    clockOutAt: at("2026-06-27T01:00:00Z"), // 18:00
+    breaks: [],
   };
 
   const data = {
@@ -180,7 +210,7 @@ function context(signaturePath: string | null): FormFillContext {
           isLead: true,
           workPerformed: null,
           user: { name: "Zhuly Gonzales" },
-          visits: [visitOne],
+          visits: [visitOne, visitTwo],
         },
       ],
     },
@@ -188,7 +218,7 @@ function context(signaturePath: string | null): FormFillContext {
     timeZone: TZ,
     span: {
       onsiteAt: visitOne.clockInAt,
-      offsiteAt: visitOne.clockOutAt,
+      offsiteAt: visitTwo.clockOutAt,
       totalMinutes: 230,
       open: false,
     },
@@ -262,7 +292,7 @@ async function main() {
   check("site city", formSource("site.city")?.resolve?.(ctx, 0), "Covina");
   check("rep company", formSource("client.name")?.resolve?.(ctx, 0), "Mettel");
   check("onsite time", formSource("time.onsite")?.resolve?.(ctx, 0), "8:30 AM");
-  check("offsite time", formSource("time.offsite")?.resolve?.(ctx, 0), "12:20 PM");
+  check("offsite time is the last trip's", formSource("time.offsite")?.resolve?.(ctx, 0), "6:00 PM");
   check("work date", formSource("time.date")?.resolve?.(ctx, 0), "06-25-2026");
   check("today, not the work date", formSource("time.today")?.resolve?.(ctx, 0), "06-26-2026");
   check("MOD", formSource("contact.mod")?.resolve?.(ctx, 0), "Grigorij Dolganov");
@@ -270,7 +300,9 @@ async function main() {
   check("city, state ZIP", formSource("site.cityStateZip")?.resolve?.(ctx, 0), "Covina, CA 91723");
   check("visit row 0 hours", formSource("visit.hours")?.resolve?.(ctx, 0), "3.83 hrs");
   check("visit row 0 break", formSource("visit.break")?.resolve?.(ctx, 0), "0.50 hrs");
-  check("a second visit that does not exist", formSource("visit.hours")?.resolve?.(ctx, 1), null);
+  check("visit row 1 is the second trip", formSource("visit.in")?.resolve?.(ctx, 1), "2:00 PM");
+  check("and its hours", formSource("visit.hours")?.resolve?.(ctx, 1), "4.00 hrs");
+  check("a third visit that does not exist", formSource("visit.hours")?.resolve?.(ctx, 2), null);
 
   // A release code that was explicitly waived must not surface as a value.
   check("waived release code", formSource("job.releaseCode")?.resolve?.(ctx, 0), null);
@@ -293,9 +325,70 @@ async function main() {
       "Text18,Text19,Text23,Check Box5",
   );
 
+  ok(
+    "a field with an unremarkable name maps itself to nothing",
+    analysis.placements.every((placement) => placement.source === null),
+  );
+
   const flat = await analyzeForm(await flatBlank());
   check("a flat blank asks for boxes by hand", flat.boxSource, "DRAWN");
   check("and seeds none", flat.placements.length, 0);
+
+  // -------------------------------------------------------------------------
+  console.log("\n--- a blank prepared with its fields named ---");
+
+  check("a catalogue key maps itself", nameAsSource("site.city")?.source, "site.city");
+  check("with no row on a source that does not repeat", nameAsSource("site.city")?.rowIndex, null);
+  check("a row suffix counts from one", nameAsSource("visit.date#2")?.rowIndex, 1);
+  check("row one is the first", nameAsSource("visit.date#1")?.rowIndex, 0);
+  check("a repeating source with no suffix takes the first", nameAsSource("visit.date")?.rowIndex, 0);
+  check("a suffix on a source that does not repeat is ignored", nameAsSource("site.city#3")?.rowIndex, null);
+  // Nothing is guessed: a name has to be a key exactly.
+  check("a field simply called City is left alone", nameAsSource("City"), null);
+  check("so is one called site_city", nameAsSource("site_city"), null);
+  check("and one called Site.City", nameAsSource("Site.City"), null);
+  check("and a name that no longer exists", nameAsSource("site.county"), null);
+
+  const prepared = await namedBlank();
+  const named = await analyzeForm(prepared);
+  check(
+    "a prepared blank arrives mapped",
+    named.placements.filter((placement) => placement.source).length,
+    3,
+  );
+  check(
+    "the signature field is a signature, not text",
+    named.placements.find((p) => p.fieldName === "signature.mod")?.kind,
+    "SIGNATURE",
+  );
+  check(
+    "and the box left for the site stays unmapped",
+    named.placements.find((p) => p.fieldName === "SiteInitials")?.source,
+    null,
+  );
+
+  const preparedFill = await fillForm(
+    prepared,
+    named.placements
+      .filter((placement) => placement.source)
+      .map((placement) => ({
+        fieldName: placement.fieldName,
+        page: placement.page,
+        x: placement.x,
+        y: placement.y,
+        width: placement.width,
+        height: placement.height,
+        kind: placement.kind,
+        source: placement.source,
+        staticText: null,
+        rowIndex: placement.rowIndex,
+        fontSize: null,
+      })),
+    context(null),
+  );
+  const preparedText = await pageText(preparedFill.bytes);
+  ok("a prepared blank fills with no setup at all", preparedText.includes("Covina"));
+  ok("including the second row of a table", preparedText.includes("6:00 PM"));
 
   // -------------------------------------------------------------------------
   console.log("\n--- filling a blank with fields ---");
@@ -343,7 +436,7 @@ async function main() {
   // the wrong place, which is the one failure that reaches a customer.
   ok("city lands in its box", drawnIn(items, "Covina", drawn[0]));
   ok("check-in time lands in its box", drawnIn(items, "8:30", drawn[1]));
-  ok("check-out time lands in its box", drawnIn(items, "12:20", drawn[2]));
+  ok("check-out time lands in its box", drawnIn(items, "6:00", drawn[2]));
   ok("initials land in their box", drawnIn(items, "ZG", drawn[3]));
   ok("the tech name lands in its box", drawnIn(items, "Zhuly", drawn[4]));
   ok("fixed text lands in its box", drawnIn(items, "No release code", drawn[5]));
@@ -391,6 +484,30 @@ async function main() {
     context(path.join("verify-forms", "gone.png")),
   );
   ok("a missing signature file still produces a form", missing.bytes.length > 0);
+
+  // A truncated one is worse than a missing one: pdf-lib's PNG decoder has no
+  // loop guard and spins forever on it, so a request would never come back.
+  // The bytes below are a real PNG header followed by nothing usable, which is
+  // what a write that ran out of disk leaves behind.
+  const corruptPath = path.join("verify-forms", "corrupt.png");
+  await writeFile(
+    path.join(uploadsRoot(), corruptPath),
+    Buffer.concat([
+      SIGNATURE_PNG.subarray(0, 24),
+      Buffer.alloc(64, 0),
+    ]),
+  );
+  const started = Date.now();
+  const corrupt = await fillForm(
+    await flatBlank(),
+    [{ fieldName: null, page: 0, x: 178, y: 300, width: 91, height: 46, kind: "SIGNATURE", source: "signature.mod", staticText: null, rowIndex: null, fontSize: null }],
+    context(corruptPath),
+  );
+  ok("a corrupt signature file still produces a form", corrupt.bytes.length > 0);
+  ok(
+    `and returns rather than hanging (${Date.now() - started}ms)`,
+    Date.now() - started < 10_000,
+  );
 
   await rm(path.dirname(absolute), { recursive: true, force: true });
 

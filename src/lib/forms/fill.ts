@@ -9,6 +9,7 @@ import {
   rgb,
 } from "pdf-lib";
 import type { PDFPage } from "pdf-lib";
+import sharp from "sharp";
 import type { FormPlacement } from "@prisma-client";
 import { loadPdf } from "@/lib/forms/analyze";
 import {
@@ -238,10 +239,17 @@ async function drawImage(
 
   let image;
   try {
-    image = /\.jpe?g$/i.test(storagePath)
-      ? await pdf.embedJpg(bytes)
-      : await pdf.embedPng(bytes);
-  } catch {
+    // Re-encoded rather than handed over as read. pdf-lib's PNG decoder does
+    // not loop-guard: a truncated file — a write that ran out of disk, an
+    // upload that was cut off — spins forever inside embedPng, and a request
+    // that never returns is far worse than one that fails. sharp is native,
+    // rejects a corrupt file cleanly, and normalises whatever format the
+    // signature was stored in.
+    image = await pdf.embedPng(
+      await sharp(bytes).png({ compressionLevel: 9 }).toBuffer(),
+    );
+  } catch (error) {
+    console.error("[forms] a signature image could not be embedded", error);
     return;
   }
 

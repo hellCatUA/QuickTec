@@ -91,6 +91,13 @@ export function FormMapper({
   const onThisPage = rows.filter((row) => row.page === page);
   const mapped = rows.filter((row) => row.source).length;
 
+  // Boxes that arrived already pointed somewhere, from the initial load only.
+  // Once somebody has saved, the mapping is theirs and the notice has served
+  // its purpose.
+  const [preMapped] = React.useState(
+    () => initial.filter((row) => row.source).length,
+  );
+
   function update(id: string, patch: Partial<PlacementRow>) {
     setSaved(false);
     setRows((current) =>
@@ -219,6 +226,21 @@ export function FormMapper({
       {error ? <p className="text-sm text-danger">{error}</p> : null}
       {saved && !error ? (
         <p className="text-sm text-muted-foreground">Mapping saved.</p>
+      ) : null}
+
+      {/* A blank prepared with its fields named after values sets itself up.
+          That is the whole point of preparing one, and also the only way a box
+          can end up pointed somewhere nobody chose — so it is said out loud,
+          once, until somebody saves and takes ownership of it. */}
+      {preMapped > 0 && !saved ? (
+        <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+          {preMapped} box{preMapped === 1 ? "" : "es"} on this blank named the
+          value {preMapped === 1 ? "it wants" : "they want"}, so{" "}
+          {preMapped === 1 ? "it is" : "they are"} already pointed at{" "}
+          {preMapped === 1 ? "it" : "them"}. Check{" "}
+          {preMapped === 1 ? "it" : "each of them"} against the page before
+          saving — this form goes to a customer.
+        </p>
       ) : null}
 
       {drawn ? (
