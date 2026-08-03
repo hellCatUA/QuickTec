@@ -75,7 +75,10 @@ services:
     volumes:
       # Photos and generated exports. The container runs as uid 1001, so this
       # directory has to be owned by 1001:1001 on the host.
-      - ${UPLOADS_HOST_DIR:-./data/uploads}:/data/uploads
+      # Required rather than defaulted. A fallback here mounts a directory
+      # Docker created as root, the app cannot write to it, and nothing says so
+      # until the first photo — so refusing to start is the kinder failure.
+      - ${UPLOADS_HOST_DIR:?set UPLOADS_HOST_DIR in .env, and chown it 1001:1001}:/data/uploads
     ports:
       - "${APP_BIND:-127.0.0.1}:${APP_PORT:-3000}:3000"
     depends_on:

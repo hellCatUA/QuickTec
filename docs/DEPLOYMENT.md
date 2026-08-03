@@ -59,8 +59,8 @@ mkdir -p /docker/apps/quicktec
 cd /docker/apps/quicktec
 git clone https://github.com/hellCatUA/QuickTec.git .
 
-mkdir -p /docker/apps/quicktec/data/postgres
-mkdir -p /tank/data/quicktec/uploads
+mkdir -p data/postgres                   # beside the checkout, wherever it is
+mkdir -p /tank/data/quicktec/uploads     # on the pool, deliberately elsewhere
 ```
 
 **The uploads directory must belong to uid 1001.** The app image runs as a
@@ -76,11 +76,10 @@ A bind mount takes the ownership of the host directory, replacing whatever the
 image set up. That means this is not something the image can fix for you, and
 nothing about it looks wrong until the first file is saved.
 
-**Then make `UPLOADS_HOST_DIR` point at it in step 3.** `.env.example` ships
-`./data/uploads`, beside the compose file — a sane default for a host with no
-pool, and the wrong answer here. Chowning the pool path while `.env` still
-says `./data/uploads` fixes a directory nothing is mounting, and the symptom
-does not change. Whichever path you settle on, the chown applies to that one:
+`.env.example` already points `UPLOADS_HOST_DIR` here, and compose refuses to
+start without it rather than quietly mounting something else. If you move it,
+the chown moves with it — it applies to whatever `.env` names, not to the path
+written above:
 
 ```bash
 cd /docker/apps/quicktec
@@ -148,10 +147,10 @@ CALDAV_PASSWORD=
 
 # Storage
 # UPLOADS_DIR is the path inside the container and never changes.
-# UPLOADS_HOST_DIR is where those files really live — change it from the
-# example's ./data/uploads, and chown it 1001:1001 (step 2).
+# UPLOADS_HOST_DIR is where those files really live. It must belong to
+# 1001:1001 (step 2), and compose will not start without it.
 UPLOADS_DIR=/data/uploads
-POSTGRES_DIR=/docker/apps/quicktec/data/postgres
+POSTGRES_DIR=./data/postgres
 UPLOADS_HOST_DIR=/tank/data/quicktec/uploads
 
 # Runtime
@@ -520,7 +519,7 @@ docker compose logs migrate | tail -20
 
 | Path | Contents |
 | --- | --- |
-| `/docker/apps/quicktec/data/postgres` | Database |
+| `<checkout>/data/postgres` | Database |
 | `/tank/data/quicktec/uploads` | Photos, signatures, receipts, generated exports |
 | `/docker/apps/quicktec/.env` | Secrets — back this up somewhere else |
 
