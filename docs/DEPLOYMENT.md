@@ -76,6 +76,17 @@ A bind mount takes the ownership of the host directory, replacing whatever the
 image set up. That means this is not something the image can fix for you, and
 nothing about it looks wrong until the first file is saved.
 
+**Then make `UPLOADS_HOST_DIR` point at it in step 3.** `.env.example` ships
+`./data/uploads`, beside the compose file — a sane default for a host with no
+pool, and the wrong answer here. Chowning the pool path while `.env` still
+says `./data/uploads` fixes a directory nothing is mounting, and the symptom
+does not change. Whichever path you settle on, the chown applies to that one:
+
+```bash
+cd /docker/apps/quicktec
+chown -R 1001:1001 "$(grep '^UPLOADS_HOST_DIR=' .env | cut -d= -f2-)"
+```
+
 Postgres sorts its own ownership out on first start; you do not need to touch
 `data/postgres`.
 
@@ -136,6 +147,9 @@ CALDAV_USERNAME=417-sys
 CALDAV_PASSWORD=
 
 # Storage
+# UPLOADS_DIR is the path inside the container and never changes.
+# UPLOADS_HOST_DIR is where those files really live — change it from the
+# example's ./data/uploads, and chown it 1001:1001 (step 2).
 UPLOADS_DIR=/data/uploads
 POSTGRES_DIR=/docker/apps/quicktec/data/postgres
 UPLOADS_HOST_DIR=/tank/data/quicktec/uploads
@@ -411,7 +425,24 @@ that fails silently until a tech is standing on site:
 docker compose exec app sh -c 'touch /data/uploads/.probe && rm /data/uploads/.probe && echo writable'
 ```
 
-`writable` is the whole answer. Anything else is the same problem.
+`writable` is the whole answer. `Permission denied` after a chown almost always
+means the chown and `UPLOADS_HOST_DIR` are pointing at different directories —
+ask the running container what it actually has mounted:
+
+```bash
+docker inspect quicktec-app \
+  --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{"\n"}}{{end}}'
+```
+
+The line ending `-> /data/uploads` is the directory that needs to belong to
+1001, whatever the guide or your notes say.
+
+Changing `UPLOADS_HOST_DIR` changes a bind mount, so the container has to be
+recreated rather than restarted:
+
+```bash
+docker compose up -d app
+```
 
 Then turn on calendar sync. In NextCloud, sign in as `417-sys` →
 **Settings → Security → Devices & sessions → Create new app password**, name it
