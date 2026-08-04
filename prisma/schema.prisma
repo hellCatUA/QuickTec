@@ -326,7 +326,35 @@ model FormPlacement {
 
   order Int @default(0)
 
+  entries JobFormEntry[]
+
   @@index([templateId, page])
+}
+
+/// What a person typed into one box of one job's sheet.
+///
+/// The mapping fills what the app knows. The rest of a sign-off sheet is
+/// somebody's judgement — a travel time, a tick against "site not ready", a
+/// phone number we never held — and until now that meant printing the sheet
+/// and writing on it. Kept per job so a sheet regenerated after the signature
+/// is captured does not lose what was typed the first time.
+model JobFormEntry {
+  id    String @id @default(cuid())
+  jobId String
+  job   Job    @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  placementId String
+  placement   FormPlacement @relation(fields: [placementId], references: [id], onDelete: Cascade)
+
+  /// Empty means "leave this box alone", which is different from never having
+  /// been looked at — a box deliberately left blank stays blank.
+  value String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([jobId, placementId])
+  @@index([jobId])
 }
 
 /// The end brand, e.g. SBUX. Independent of Client because the same customer
@@ -669,6 +697,8 @@ model Job {
   reimbursements   Reimbursement[]
   /// The representing company's paperwork: their work order and sign-off blank.
   documents        Attachment[]             @relation("JobDocuments")
+  /// What was typed by hand into their sign-off sheet for this job.
+  formEntries      JobFormEntry[]
   mileageEntries   MileageEntry[]
   scopeChecks      JobScopeCheck[]
   changeRequests   ChangeRequest[]

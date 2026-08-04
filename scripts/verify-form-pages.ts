@@ -86,6 +86,46 @@ async function flatBlank(): Promise<Buffer> {
   return Buffer.from(await pdf.save());
 }
 
+
+/**
+ * A second job for the company, already approved — the one a new form must not
+ * reach. Created rather than looked for, so the check is never skipped.
+ */
+async function approvedJobFor(clientId: string, createdById: string): Promise<string> {
+  const existing = await db.job.findFirst({
+    where: { title: "Verify approved job" },
+    select: { id: true },
+  });
+  if (existing) {
+    await db.job.update({
+      where: { id: existing.id },
+      data: { lifecycle: "APPROVED" },
+    });
+    return existing.id;
+  }
+
+  const template = await db.job.findFirstOrThrow({
+    where: { clientId },
+    select: { customerId: true, siteId: true, projectId: true },
+  });
+
+  const created = await db.job.create({
+    data: {
+      intWoId: `VERIFY-APPROVED-${Date.now()}`,
+      intWoSequence: 9999,
+      title: "Verify approved job",
+      clientId,
+      customerId: template.customerId,
+      siteId: template.siteId,
+      projectId: template.projectId,
+      createdById,
+      lifecycle: "APPROVED",
+    },
+    select: { id: true },
+  });
+  return created.id;
+}
+
 async function main() {
   const boss = await db.user.findUniqueOrThrow({
     where: { email: "boss@417group.org" },
@@ -101,6 +141,11 @@ async function main() {
     where: { clientId: job.clientId, label: "Verify sign-off" },
   });
   await db.attachment.deleteMany({ where: { jobDocumentId: job.id } });
+
+  // A second job for the same company, already approved. Paperwork added now
+  // must not reach it.
+  const approvedId = await approvedJobFor(job.clientId, boss.id);
+  await db.attachment.deleteMany({ where: { jobDocumentId: approvedId } });
 
   const token = await encode({
     token: { sub: boss.nextcloudSub!, userId: boss.id },
@@ -165,6 +210,58 @@ async function main() {
   ok(
     "the list offers to set autofill up",
     await page.getByText("Set up autofill").first().isVisible(),
+  );
+
+  // -------------------------------------------------------------------------
+  // A form added today has to reach the job being done today.
+  // -------------------------------------------------------------------------
+  const onOpenJob = await db.attachment.count({
+    where: { jobDocumentId: job.id, sourceTemplateId: template.id },
+  });
+  check("a new form lands on the job already open", onOpenJob, 1);
+
+  // A job that has been approved already went to the company on whatever it
+  // went out on. Adding paperwork to it afterwards would rewrite a record of
+  // something that has happened.
+  const closed = await db.job.findFirst({
+    where: { clientId: job.clientId, lifecycle: "APPROVED" },
+    select: { id: true },
+  });
+  check(
+    "and not on one that is already approved",
+    closed
+      ? await db.attachment.count({
+          where: { jobDocumentId: closed.id, sourceTemplateId: template.id },
+        })
+      : "no approved job to check",
+    closed ? 0 : "no approved job to check",
+  );
+
+  // The button for everything the automatic pass cannot cover, and for pressing
+  // twice by mistake.
+  await db.attachment.deleteMany({
+    where: { jobDocumentId: job.id, sourceTemplateId: template.id },
+  });
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: "Edit", exact: true }).first().click();
+  await page.getByRole("button", { name: "Put these on open jobs" }).click();
+  await page.waitForSelector("text=/Added 1 form across 1 job/", { timeout: 20_000 });
+  check(
+    "the button puts it back",
+    await db.attachment.count({
+      where: { jobDocumentId: job.id, sourceTemplateId: template.id },
+    }),
+    1,
+  );
+
+  await page.getByRole("button", { name: "Put these on open jobs" }).click();
+  await page.waitForSelector("text=/already has them/", { timeout: 20_000 });
+  check(
+    "and pressing it again changes nothing",
+    await db.attachment.count({
+      where: { jobDocumentId: job.id, sourceTemplateId: template.id },
+    }),
+    1,
   );
 
   // -------------------------------------------------------------------------
@@ -270,45 +367,76 @@ async function main() {
   // -------------------------------------------------------------------------
   // Filling it from a job.
   // -------------------------------------------------------------------------
-  await db.attachment.deleteMany({ where: { jobDocumentId: job.id } });
+  // The blank is already on the job — put there by the rollout above, the same
+  // way it happens in use. Nothing is fabricated here.
   await db.formPlacement.updateMany({
     where: { templateId: template.id, fieldName: "Text23" },
     data: { source: null, kind: "TEXT" },
   });
-
-  const blank = await db.attachment.create({
-    data: {
-      storagePath: "",
-      originalName: "verify-signoff.pdf",
-      mimeType: "application/pdf",
-      sizeBytes: 0,
-      uploadedById: boss.id,
-      jobDocumentId: job.id,
-      jobDocumentKind: "SIGN_OFF",
-      sourceTemplateId: template.id,
-    },
-    select: { id: true },
-  });
-
-  // Give it real bytes, the way copyTemplateToJob would.
-  const source = await db.clientDocumentTemplate.findUniqueOrThrow({
-    where: { id: template.id },
-    select: { attachment: { select: { storagePath: true, sizeBytes: true } } },
-  });
-  await db.attachment.update({
-    where: { id: blank.id },
-    data: {
-      storagePath: source.attachment.storagePath,
-      sizeBytes: source.attachment.sizeBytes,
-    },
-  });
+  check(
+    "the job is holding a real copy of the blank",
+    await db.attachment.count({
+      where: {
+        jobDocumentId: job.id,
+        sourceTemplateId: template.id,
+        generated: false,
+      },
+    }),
+    1,
+  );
 
   await page.goto(`${BASE}/jobs/${job.id}`, { waitUntil: "domcontentloaded" });
 
-  const fill = page.getByRole("button", { name: "Fill it in from this job" });
-  ok("the job offers to fill the sheet in", await fill.isVisible());
-  await fill.click();
-  await page.waitForSelector("text=/Filled\\./", { timeout: 30_000 });
+  const review = page.getByRole("link", { name: /Fill it in and check it/ });
+  ok("the job offers to fill the sheet in", await review.isVisible());
+  await review.click();
+  await page.waitForURL(/\/sign-off\//, { timeout: 20_000 });
+
+  // The preview is the same document that gets attached, produced the same
+  // way. If it does not render there is nothing to review.
+  await page.waitForFunction(
+    () => {
+      const canvas = document.querySelector("canvas");
+      return Boolean(canvas && canvas.width > 100);
+    },
+    { timeout: 30_000 },
+  );
+  ok("the sheet is previewed before it is attached", true);
+
+  // Boxes the mapping covers arrive filled; the rest are empty and typeable,
+  // which is the whole reason this screen exists.
+  const ticketBox = page.getByRole("textbox", { name: "Ticket #" });
+  check("a mapped box shows its value", await ticketBox.inputValue(), "6682752");
+
+  const byHand = page.getByRole("textbox", { name: "Text23" });
+  check("an unmapped box is empty and typeable", await byHand.inputValue(), "");
+  await byHand.fill("(310) 820-4888");
+
+  // Typing over a mapped value has to win, and has to be undoable.
+  await ticketBox.fill("OVERRIDDEN-1");
+  await page
+    .getByRole("button", { name: "back to the filled value" })
+    .first()
+    .click();
+  check(
+    "handing a box back restores what the app filled",
+    await ticketBox.inputValue(),
+    "6682752",
+  );
+
+  await page.getByRole("button", { name: /Attach to the job/ }).click();
+  await page.waitForSelector("text=/Attached to the job/", { timeout: 30_000 });
+
+  check(
+    "what was typed by hand is kept",
+    (
+      await db.jobFormEntry.findFirstOrThrow({
+        where: { jobId: job.id, placement: { fieldName: "Text23" } },
+        select: { value: true },
+      })
+    ).value,
+    "(310) 820-4888",
+  );
 
   const generated = await db.attachment.findFirstOrThrow({
     where: { jobDocumentId: job.id, generated: true },
@@ -339,15 +467,15 @@ async function main() {
     !text.includes("Marshall"),
   );
   ok("nor its leftover phone number", !text.includes("346-0208"));
-  ok("nor its leftover ticket number", !text.includes("6682752"));
+  ok("what was typed by hand is on the sheet", text.includes("(310) 820-4888"));
 
   const reopened = await PDFDocument.load(bytes);
   check("the sheet is no longer editable", reopened.getForm().getFields().length, 0);
 
   // Filling again replaces rather than piles up.
   await page.reload({ waitUntil: "domcontentloaded" });
-  await page.getByRole("button", { name: "Fill it in from this job" }).click();
-  await page.waitForSelector("text=/Filled\\./", { timeout: 30_000 });
+  await page.getByRole("button", { name: /Replace the one on the job/ }).click();
+  await page.waitForSelector("text=/Attached to the job/", { timeout: 30_000 });
   check(
     "filling again replaces the previous copy",
     await db.attachment.count({
@@ -442,6 +570,7 @@ async function main() {
     where: { id: { in: [template.id, flat.id] } },
   });
   await db.attachment.deleteMany({ where: { jobDocumentId: job.id } });
+  await db.job.deleteMany({ where: { title: "Verify approved job" } });
 
   console.log(
     failures === 0

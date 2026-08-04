@@ -6,11 +6,18 @@ import { recordAudit } from "@/lib/audit";
 import { db } from "@/lib/db";
 import { flag, optionalText } from "@/lib/form";
 import { analyzeForm, type FormAnalysis } from "@/lib/forms/analyze";
-import { DOCUMENT_LABELS, storeDocument } from "@/lib/job-documents";
+import {
+  DOCUMENT_LABELS,
+  attachTemplatesToOpenJobs,
+  storeDocument,
+  type TemplateRollout,
+} from "@/lib/job-documents";
 import { requirePermission } from "@/lib/session";
 import { deleteFile } from "@/lib/storage";
 
-export type ActionResult = { ok: true; id?: string } | { ok: false; error: string };
+export type ActionResult =
+  | { ok: true; id?: string; attachedToJobs?: number }
+  | { ok: false; error: string };
 
 
 function fail(error: unknown): ActionResult {
@@ -282,9 +289,23 @@ export async function saveClientTemplate(
       detail: { who: client.name, field: DOCUMENT_LABELS[kind], to: label },
     });
 
+    // A form added today is one the crew needs on the job they are doing
+    // today. Attaching it only to jobs raised from now on is how somebody
+    // arrives on site without the sheet.
+    let rollout: TemplateRollout = { jobs: 0, copies: 0 };
+    if (isDefault) {
+      try {
+        rollout = await attachTemplatesToOpenJobs(client.id, actor.id, template.id);
+      } catch (error) {
+        // The form is saved either way; reaching the open jobs is a
+        // convenience with a button of its own to fall back on.
+        console.error("[directory] putting a new form onto open jobs failed", error);
+      }
+    }
+
     revalidatePath("/directory/clients");
     revalidatePath("/jobs/new");
-    return { ok: true, id: template.id };
+    return { ok: true, id: template.id, attachedToJobs: rollout.jobs };
   } catch (error) {
     // The bytes are on disk but nothing points at them; drop the orphan rather
     // than leaving a file nobody can reach or delete.
@@ -295,6 +316,59 @@ export async function saveClientTemplate(
       error: "That form could not be saved. The server log has the detail.",
     };
   }
+}
+
+export type RolloutResult =
+  | { ok: true; jobs: number; copies: number }
+  | { ok: false; error: string };
+
+/**
+ * Puts this company's forms onto every job of theirs that is still open.
+ *
+ * The same thing that happens when a form is added, on demand. It is here
+ * because the automatic pass cannot cover everything: a form uploaded before
+ * this existed, one that was not marked default at the time, or a job created
+ * while the copy was failing. Running it twice changes nothing.
+ */
+export async function updateOpenJobsWithForms(
+  formData: FormData,
+): Promise<RolloutResult> {
+  const actor = await requirePermission("client.manage");
+  const clientId = String(formData.get("clientId") ?? "");
+
+  const client = await db.client.findUnique({
+    where: { id: clientId },
+    select: { id: true, name: true },
+  });
+  if (!client) return { ok: false, error: "Company not found." };
+
+  let rollout: TemplateRollout;
+  try {
+    rollout = await attachTemplatesToOpenJobs(client.id, actor.id);
+  } catch (error) {
+    console.error("[directory] updating open jobs with forms failed", error);
+    return {
+      ok: false,
+      error: "The jobs could not be updated. The server log has the detail.",
+    };
+  }
+
+  if (rollout.copies > 0) {
+    await recordAudit({
+      actorId: actor.id,
+      entityType: "Client",
+      entityId: client.id,
+      action: "updated",
+      detail: {
+        field: "forms on open jobs",
+        to: `${rollout.copies} added across ${rollout.jobs} job${rollout.jobs === 1 ? "" : "s"}`,
+      },
+    });
+    revalidatePath("/jobs");
+  }
+
+  revalidatePath("/directory/clients");
+  return { ok: true, jobs: rollout.jobs, copies: rollout.copies };
 }
 
 /** Removes an attachment and its bytes after a save that did not complete. */

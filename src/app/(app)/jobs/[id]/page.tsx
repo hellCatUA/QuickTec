@@ -122,6 +122,7 @@ export default async function JobPage({
           sizeBytes: true,
           jobDocumentKind: true,
           generated: true,
+          sourceTemplateId: true,
           // A blank whose boxes somebody mapped is one the job can fill in
           // itself. Counted here so the page knows whether to offer it.
           sourceTemplate: {
@@ -731,6 +732,7 @@ export default async function JobPage({
                 sizeBytes: doc.sizeBytes,
                 generated: doc.generated,
                 fillableBoxes: doc.sourceTemplate?._count.placements ?? 0,
+                templateId: doc.sourceTemplateId,
               }))}
           />
         </CardContent>

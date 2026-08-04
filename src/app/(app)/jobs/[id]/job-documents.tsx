@@ -1,9 +1,9 @@
 "use client";
 
 import { FileText, Loader2, Upload, Wand2, X } from "lucide-react";
+import Link from "next/link";
 import * as React from "react";
 import { Button } from "@/components/ui/button";
-import { fillJobForm } from "./form-actions";
 import {
   deleteJobDocument,
   setNoWorkOrder,
@@ -21,6 +21,8 @@ export type JobDocument = {
   generated: boolean;
   /** How many of this blank's boxes the app knows how to fill. Zero means no. */
   fillableBoxes: number;
+  /** The company form it came from, which is what the review screen needs. */
+  templateId: string | null;
 };
 
 function readableSize(bytes: number) {
@@ -97,6 +99,7 @@ export function JobDocuments({
       {error ? <p className="text-sm text-danger">{error}</p> : null}
 
       <Section
+        jobId={jobId}
         title="Work order"
         hint="As the representing company issued it."
         kind="CLIENT_WORK_ORDER"
@@ -128,6 +131,7 @@ export function JobDocuments({
       />
 
       <Section
+        jobId={jobId}
         title="Sign-off sheet"
         hint="Their blank, filled in and signed on site at the end of the job."
         kind="SIGN_OFF"
@@ -143,64 +147,41 @@ export function JobDocuments({
 }
 
 /**
- * Fills the company's sheet from the job.
+ * Opens the sheet to be checked over before it goes anywhere.
  *
- * Deliberately a button somebody presses rather than something that happens
- * on its own: the values are only as complete as the job is, and it is worth
- * pressing again once the signature is captured. Whatever did not resolve is
- * named afterwards, because a gap somebody knows about gets filled in by hand
- * on site and a gap nobody mentions goes to the customer.
+ * A link rather than a button that produces the document, because what the
+ * app can fill is most of a real sign-off sheet and never all of it — the
+ * travel time, the tick against "site not ready", the phone number we never
+ * held. Those get typed there instead of written on a printout, and nothing
+ * reaches the job until somebody has looked at the page.
  */
-function FillButton({ document }: { document: JobDocument }) {
-  const [result, setResult] = React.useState<
-    { kind: "ok"; empty: string[] } | { kind: "error"; text: string } | null
-  >(null);
-  const [pending, startTransition] = React.useTransition();
-
-  function run() {
-    setResult(null);
-    startTransition(async () => {
-      const formData = new FormData();
-      formData.set("attachmentId", document.id);
-      const outcome = await fillJobForm(formData);
-      setResult(
-        outcome.ok
-          ? { kind: "ok", empty: outcome.empty }
-          : { kind: "error", text: outcome.error },
-      );
-    });
-  }
-
+function ReviewLink({
+  jobId,
+  document,
+  filled,
+}: {
+  jobId: string;
+  document: JobDocument;
+  /** Whether a filled copy is already on the job. */
+  filled: boolean;
+}) {
   return (
-    <div className="flex flex-col gap-1">
-      <Button
-        type="button"
-        size="sm"
-        variant="secondary"
-        className="self-start"
-        disabled={pending}
-        onClick={run}
-      >
-        {pending ? <Loader2 className="animate-spin" /> : <Wand2 />}
-        {pending ? "Filling" : "Fill it in from this job"}
-      </Button>
-
-      {result?.kind === "error" ? (
-        <p className="text-xs text-danger">{result.text}</p>
-      ) : null}
-
-      {result?.kind === "ok" ? (
-        <p className="text-xs text-muted-foreground">
-          {result.empty.length === 0
-            ? "Filled. Every mapped box had a value."
-            : `Filled. ${result.empty.length} box${result.empty.length === 1 ? "" : "es"} had nothing to put in ${result.empty.length === 1 ? "it" : "them"} and ${result.empty.length === 1 ? "was" : "were"} left for you: ${result.empty.slice(0, 6).join(", ")}${result.empty.length > 6 ? "…" : ""}`}
-        </p>
-      ) : null}
-    </div>
+    <Link
+      href={`/jobs/${jobId}/sign-off/${document.templateId}`}
+      className="inline-flex min-h-9 w-fit items-center gap-2 rounded-lg border border-border px-3 text-sm hover:bg-muted"
+    >
+      <Wand2 className="size-4 text-[var(--color-primary)]" />
+      {filled ? "Check it again" : "Fill it in and check it"}
+      <span className="text-xs text-muted-foreground">
+        {document.fillableBoxes} box{document.fillableBoxes === 1 ? "" : "es"} fill
+        themselves
+      </span>
+    </Link>
   );
 }
 
 function Section({
+  jobId,
   title,
   hint,
   kind,
@@ -212,6 +193,7 @@ function Section({
   onRemove,
   footer,
 }: {
+  jobId: string;
   title: string;
   hint: string;
   kind: JobDocumentKind;
@@ -276,8 +258,15 @@ function Section({
             {/* Fill it in from the job, rather than by hand in a lobby. Offered
                 only on the blank itself: the filled copy is regenerated from
                 this one, never from itself. */}
-            {canUpload && !doc.generated && doc.fillableBoxes > 0 ? (
-              <FillButton document={doc} />
+            {canUpload && !doc.generated && doc.fillableBoxes > 0 && doc.templateId ? (
+              <ReviewLink
+                jobId={jobId}
+                document={doc}
+                filled={documents.some(
+                  (other) =>
+                    other.generated && other.templateId === doc.templateId,
+                )}
+              />
             ) : null}
           </div>
         ))

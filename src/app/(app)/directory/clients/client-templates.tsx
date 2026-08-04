@@ -1,12 +1,16 @@
 "use client";
 
-import { FileText, Loader2, Upload, Wand2, X } from "lucide-react";
+import { FileText, Loader2, RefreshCw, Upload, Wand2, X } from "lucide-react";
 import Link from "next/link";
 import * as React from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Select } from "@/components/ui/field";
-import { deleteClientTemplate, saveClientTemplate } from "../actions";
+import {
+  deleteClientTemplate,
+  saveClientTemplate,
+  updateOpenJobsWithForms,
+} from "../actions";
 
 export type TemplateRecord = {
   id: string;
@@ -46,6 +50,7 @@ export function ClientTemplates({
   const [isDefault, setIsDefault] = React.useState(true);
   const [file, setFile] = React.useState<File | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  const [rollout, setRollout] = React.useState<string | null>(null);
   const [pending, startTransition] = React.useTransition();
 
   function save() {
@@ -64,6 +69,13 @@ export function ClientTemplates({
         setError(result.error);
         return;
       }
+      // Said out loud, because it changed jobs that already existed and
+      // nobody asked it to.
+      setRollout(
+        result.attachedToJobs
+          ? `Also added to ${result.attachedToJobs} open job${result.attachedToJobs === 1 ? "" : "s"}.`
+          : null,
+      );
       setFile(null);
       setLabel("");
       setAdding(false);
@@ -77,6 +89,25 @@ export function ClientTemplates({
       formData.set("id", id);
       const result = await deleteClientTemplate(formData);
       if (!result.ok) setError(result.error);
+    });
+  }
+
+  function updateJobs() {
+    setError(null);
+    setRollout(null);
+    startTransition(async () => {
+      const formData = new FormData();
+      formData.set("clientId", clientId);
+      const result = await updateOpenJobsWithForms(formData);
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      setRollout(
+        result.copies === 0
+          ? "Every open job already has them."
+          : `Added ${result.copies} form${result.copies === 1 ? "" : "s"} across ${result.jobs} job${result.jobs === 1 ? "" : "s"}.`,
+      );
     });
   }
 
@@ -139,6 +170,28 @@ export function ClientTemplates({
       )}
 
       {error ? <p className="text-sm text-danger">{error}</p> : null}
+
+      {/* Adding a form reaches the open jobs on its own. This is for
+          everything that pass cannot cover: forms uploaded before it existed,
+          ones that were not marked default at the time, or a job raised while
+          the copy was failing. */}
+      {templates.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={pending}
+            onClick={updateJobs}
+          >
+            {pending ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+            Put these on open jobs
+          </Button>
+          {rollout ? (
+            <span className="text-xs text-muted-foreground">{rollout}</span>
+          ) : null}
+        </div>
+      ) : null}
 
       {adding ? (
         <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface-raised p-3">

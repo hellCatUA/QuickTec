@@ -13,6 +13,7 @@
     "db:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio",
     "db:seed": "tsx prisma/seed.ts",
+    "fixtures": "tsx --tsconfig tsconfig.json scripts/dev-fixtures.ts",
     "verify": "tsx --tsconfig tsconfig.json scripts/verify-domain.ts",
     "verify:ui": "tsx --tsconfig tsconfig.json scripts/verify-job-page.ts",
     "verify:pay": "tsx --tsconfig tsconfig.json scripts/verify-pay-page.ts",
