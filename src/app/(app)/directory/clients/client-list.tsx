@@ -159,6 +159,9 @@ export function ClientList({ clients }: { clients: ClientRecord[] }) {
                   type="button"
                   variant="ghost"
                   size="sm"
+                  // The visible word is enough beside the name it belongs to;
+                  // read out of context it is one of a dozen identical "Edit"s.
+                  aria-label={`${editingId === client.id ? "Close" : "Edit"} ${client.name}`}
                   onClick={() =>
                     setEditingId(editingId === client.id ? null : client.id)
                   }

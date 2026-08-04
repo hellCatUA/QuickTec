@@ -64,7 +64,14 @@ const entriesSchema = z.object({
       placementId: z.string().min(1),
       // 2000 is far past anything a form box holds, and stops a paste of a
       // whole report from becoming a row nobody can render.
-      value: z.string().max(2000),
+      // Null is "not overridden"; an empty string is "deliberately blank".
+      value: z.string().max(2000).nullable(),
+      /**
+       * What the box said when it was ticked off, so an approval lapses if the
+       * value moves under it. Sent by the screen rather than recomputed here:
+       * it is the text the person was actually looking at.
+       */
+      approvedValue: z.string().max(2000).nullable(),
     }),
   ),
 });
@@ -95,7 +102,11 @@ export async function saveFormEntries(
     ).map((row) => row.id),
   );
 
-  const rows = input.entries.filter((entry) => owned.has(entry.placementId));
+  const rows = input.entries.filter(
+    (entry) =>
+      owned.has(entry.placementId) &&
+      (entry.value !== null || entry.approvedValue !== null),
+  );
 
   await db.$transaction([
     ...rows.map((entry) =>
@@ -110,13 +121,20 @@ export async function saveFormEntries(
           jobId: input.jobId,
           placementId: entry.placementId,
           value: entry.value,
+          approvedValue: entry.approvedValue,
+          approvedAt: entry.approvedValue === null ? null : new Date(),
+          approvedById: entry.approvedValue === null ? null : permission.user.id,
         },
-        update: { value: entry.value },
+        update: {
+          value: entry.value,
+          approvedValue: entry.approvedValue,
+          approvedAt: entry.approvedValue === null ? null : new Date(),
+          approvedById: entry.approvedValue === null ? null : permission.user.id,
+        },
       }),
     ),
-    // Boxes handed back to the mapping: the row is removed rather than stored
-    // empty, because empty means "deliberately blank" and has to stay
-    // distinguishable from "never touched".
+    // A box that is neither overridden nor ticked has nothing to remember, so
+    // the row goes rather than lingering with two nulls in it.
     db.jobFormEntry.deleteMany({
       where: {
         jobId: input.jobId,

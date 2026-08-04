@@ -230,11 +230,15 @@ npm run dev
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run db:migrate` | Create and apply a migration |
 | `npm run db:seed` | Seed role grants and company row (idempotent) |
+| `npm run fixtures` | Test people, company and job the browser suites run against |
 | `npm run verify` | Integration check for numbering, dates, time, money and scope |
 | `npm run verify:ui` | Drives the time clock and checkout in a real browser |
 | `npm run verify:pay` | Drives payroll approval and payment in a real browser |
 | `npm run verify:approvals` | Drives the approvals inbox, site history and crew changes in a real browser |
 | `npm run verify:auth` | Runs the OIDC handshake against a stand-in NextCloud |
+| `npm run verify:forms` | Fills a company's sign-off sheet, no database or browser needed |
+| `npm run verify:images` | Reads the pixels of a stamped photo |
+| `npm run verify:form-pages` | Drives form mapping and the sign-off review in a real browser |
 | `npm run db:studio` | Prisma Studio |
 
 The seed never rewrites a permission the database already knows about, so a
@@ -243,6 +247,22 @@ release has newly added, and deletes grants for ones it has retired.
 
 `npm run verify` is destructive — it wipes jobs and counters to test numbering —
 so it refuses to start without `QUICKTEC_ALLOW_DESTRUCTIVE_VERIFY=1`.
+
+The order matters, and only in one way: `npm run verify` deletes the job the
+browser suites drive, so run `npm run fixtures` after it and before them.
+
+```
+npm run db:seed
+QUICKTEC_ALLOW_DESTRUCTIVE_VERIFY=1 npm run verify
+QUICKTEC_ALLOW_DESTRUCTIVE_VERIFY=1 npm run fixtures
+npm run build && npm start &
+npm run verify:ui && npm run verify:pay && npm run verify:approvals && npm run verify:form-pages
+```
+
+`fixtures` writes people called things like `tech@417group.org` and belongs
+nowhere near a live database, which is why it carries the same opt-in. It is
+separate from the seed on purpose: the seed prepares a deployment somebody is
+about to use, this prepares one somebody is about to test.
 
 The browser suites need the app already running and a Chromium that matches the
 installed Playwright; set `CHROMIUM_PATH` if it is not where Playwright expects

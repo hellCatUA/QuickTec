@@ -3,6 +3,10 @@ import { loadJobForExport } from "@/lib/exports/job-data";
 import { formSource, STATIC_SOURCE } from "@/lib/forms/catalogue";
 import type { FillablePlacement } from "@/lib/forms/fill";
 import { valueFor } from "@/lib/forms/fill";
+import { boxFingerprint, type DraftBox } from "@/lib/forms/box";
+
+export { boxFingerprint };
+export type { DraftBox };
 
 /**
  * A company's sheet for one job, as it stands before anybody signs anything.
@@ -16,31 +20,6 @@ import { valueFor } from "@/lib/forms/fill";
  * the app put in it, and what a person typed instead. Nothing is attached to
  * the job until they say so.
  */
-
-export type DraftBox = {
-  placementId: string;
-  /** The blank's own name for it, where it had one. */
-  fieldName: string | null;
-  /** What the blank was carrying there, which usually says what it is for. */
-  sampleText: string | null;
-  page: number;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  kind: "TEXT" | "CHECK" | "SIGNATURE";
-  /** The catalogue entry this box is bound to, if any. */
-  source: string | null;
-  sourceLabel: string | null;
-  /** What that entry resolves to for this job. Null when it has nothing. */
-  resolved: string | null;
-  /** Whether the resolved value is an image rather than text. */
-  isImage: boolean;
-  /** What somebody typed. Null when they have not touched it. */
-  entered: string | null;
-  /** Which row of a repeating source this box wants. */
-  rowIndex: number | null;
-};
 
 export type Draft = {
   jobId: string;
@@ -148,9 +127,9 @@ export async function loadDraft(
     (
       await db.jobFormEntry.findMany({
         where: { jobId },
-        select: { placementId: true, value: true },
+        select: { placementId: true, value: true, approvedValue: true },
       })
-    ).map((entry) => [entry.placementId, entry.value]),
+    ).map((entry) => [entry.placementId, entry]),
   );
 
   const context = { data, now: new Date() };
@@ -174,7 +153,8 @@ export async function loadDraft(
       context,
     );
 
-    return {
+    const entry = entries.get(placement.id);
+    const box: DraftBox = {
       placementId: placement.id,
       fieldName: placement.fieldName,
       sampleText: placement.sampleText,
@@ -188,9 +168,18 @@ export async function loadDraft(
       sourceLabel: source?.label ?? null,
       resolved: value && "text" in value ? value.text : null,
       isImage: Boolean(source?.resolveImage),
-      entered: entries.get(placement.id) ?? null,
+      hasImage: Boolean(value && "image" in value),
+      entered: entry?.value ?? null,
+      approved: false,
       rowIndex: placement.rowIndex,
     };
+
+    box.approved =
+      entry?.approvedValue !== null &&
+      entry?.approvedValue !== undefined &&
+      entry.approvedValue === boxFingerprint(box);
+
+    return box;
   });
 
   return {

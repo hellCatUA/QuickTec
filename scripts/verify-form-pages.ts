@@ -1,10 +1,17 @@
 import "dotenv/config";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { encode } from "next-auth/jwt";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { chromium } from "playwright";
 import { db } from "@/lib/db";
 import { absolutePath } from "@/lib/storage";
+
+/** A one-pixel PNG standing in for a signature captured on site. */
+const SIGNATURE_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+  "base64",
+);
 
 /**
  * Drives the sign-off filler in a real browser.
@@ -67,6 +74,10 @@ async function blankWithFields(): Promise<Buffer> {
   const phone = form.createTextField("Text23");
   phone.setText("(818) 346-0208");
   phone.addToPage(page, { x: 116, y: 560, width: 180, height: 18, font });
+
+  // Named after a catalogue key, so it maps itself to the signature.
+  const signature = form.createTextField("signature.mod");
+  signature.addToPage(page, { x: 116, y: 480, width: 200, height: 40, font });
 
   return Buffer.from(await pdf.save());
 }
@@ -131,16 +142,39 @@ async function main() {
     where: { email: "boss@417group.org" },
   });
 
+  // The fixture job by name, not "the oldest one": other suites leave jobs
+  // behind, and picking whichever happened to be first made this fail on a
+  // company it was never looking at.
   const job = await db.job.findFirstOrThrow({
+    where: { title: "Elevator phone line" },
     select: { id: true, clientId: true, client: { select: { name: true } } },
-    orderBy: { createdAt: "asc" },
   });
 
-  // A clean slate: leftovers from an earlier run change which branch renders.
+  // A clean slate, at the start rather than only at the end. A run that dies
+  // half way leaves the job changed, and the next one then fails on state it
+  // never created — which is a morning spent reading the wrong failure.
   await db.clientDocumentTemplate.deleteMany({
-    where: { clientId: job.clientId, label: "Verify sign-off" },
+    where: { clientId: job.clientId, label: { startsWith: "Verify " } },
   });
   await db.attachment.deleteMany({ where: { jobDocumentId: job.id } });
+  await db.jobFormEntry.deleteMany({ where: { jobId: job.id } });
+  await db.signature.deleteMany({ where: { jobId: job.id } });
+
+  // Set rather than assumed: every value this suite asserts on starts here.
+  await db.job.update({
+    where: { id: job.id },
+    data: { ticketNumber: "6682752" },
+  });
+  const customerId = (
+    await db.job.findUniqueOrThrow({
+      where: { id: job.id },
+      select: { customerId: true },
+    })
+  ).customerId;
+  await db.customer.update({
+    where: { id: customerId },
+    data: { name: "TSA Housing" },
+  });
 
   // A second job for the same company, already approved. Paperwork added now
   // must not reach it.
@@ -170,8 +204,9 @@ async function main() {
   // -------------------------------------------------------------------------
   await page.goto(`${BASE}/directory/clients`, { waitUntil: "domcontentloaded" });
 
-  // The forms a company uses live inside its card, which opens on Edit.
-  await page.getByRole("button", { name: "Edit", exact: true }).first().click();
+  // The forms a company uses live inside its card, which opens on Edit. By
+  // name, because every card has one of these.
+  await page.getByRole("button", { name: `Edit ${job.client.name}` }).click();
 
   await page.getByRole("button", { name: "Add a default form" }).first().click();
   await page.locator(`#tpl-label-${job.clientId}`).fill("Verify sign-off");
@@ -200,7 +235,7 @@ async function main() {
 
   check("the blank's fields were read on upload", template.boxSource, "FIELDS");
   check("page size was recorded", `${template.pageWidth}x${template.pageHeight}`, "612x792");
-  check("a box per field", template.placements.length, 3);
+  check("a box per field", template.placements.length, 4);
   check(
     "the last job's value is kept as the hint",
     template.placements.find((p) => p.fieldName === "Text19")?.sampleText,
@@ -208,8 +243,8 @@ async function main() {
   );
 
   ok(
-    "the list offers to set autofill up",
-    await page.getByText("Set up autofill").first().isVisible(),
+    "the list says how much of the form fills itself",
+    await page.getByText(/Fills 1 of 4 boxes/).first().isVisible(),
   );
 
   // -------------------------------------------------------------------------
@@ -243,7 +278,7 @@ async function main() {
     where: { jobDocumentId: job.id, sourceTemplateId: template.id },
   });
   await page.reload({ waitUntil: "domcontentloaded" });
-  await page.getByRole("button", { name: "Edit", exact: true }).first().click();
+  await page.getByRole("button", { name: `Edit ${job.client.name}` }).click();
   await page.getByRole("button", { name: "Put these on open jobs" }).click();
   await page.waitForSelector("text=/Added 1 form across 1 job/", { timeout: 20_000 });
   check(
@@ -290,6 +325,11 @@ async function main() {
 
   const boxes = page.locator('[role="button"][aria-label^="Text"]');
   check("every box is drawn over the page", await boxes.count(), 3);
+  check(
+    "and the signature box too",
+    await page.locator('[role="button"][aria-label="signature.mod"]').count(),
+    1,
+  );
 
   // The box for Text19 must sit where the field does, not somewhere else.
   const geometry = await boxes.first().evaluate((element) => {
@@ -328,7 +368,7 @@ async function main() {
       .map((row) => `${row.fieldName}=${row.source}`)
       .sort()
       .join(","),
-    "Text18=job.ticket,Text19=customer.name",
+    "Text18=job.ticket,Text19=customer.name,signature.mod=signature.mod",
   );
   check(
     "and the box nobody mapped stays unmapped",
@@ -424,8 +464,139 @@ async function main() {
     "6682752",
   );
 
+  // Saved before anything reloads: typing is not kept until it is.
+  await page.getByRole("button", { name: "Update the preview" }).click();
+  // The "preview is behind what you have typed" note is shown while there is
+  // anything unsaved, so its going away is the save having landed.
+  await page
+    .getByText("The preview is behind what you have typed")
+    .waitFor({ state: "hidden", timeout: 20_000 });
+  check(
+    "typing is kept as soon as it is saved",
+    (
+      await db.jobFormEntry.findFirstOrThrow({
+        where: { jobId: job.id, placement: { fieldName: "Text23" } },
+        select: { value: true },
+      })
+    ).value,
+    "(310) 820-4888",
+  );
+
+  // -------------------------------------------------------------------------
+  // A signature box says what is actually in it.
+  // -------------------------------------------------------------------------
+  ok(
+    "an unsigned job says so rather than claiming the box is filled",
+    await page.getByText("Nothing signed yet").isVisible(),
+  );
+
+  // Now sign it, the way checkout does.
+  const signatureFile = path.join("verify-form-pages", "sig.png");
+  const signatureAbsolute = absolutePath(signatureFile);
+  await mkdir(path.dirname(signatureAbsolute), { recursive: true });
+  await writeFile(signatureAbsolute, SIGNATURE_PNG);
+  const signatureAttachment = await db.attachment.create({
+    data: {
+      storagePath: signatureFile,
+      originalName: "sig.png",
+      mimeType: "image/png",
+      sizeBytes: SIGNATURE_PNG.length,
+      uploadedById: boss.id,
+    },
+    select: { id: true },
+  });
+  await db.signature.create({
+    data: {
+      jobId: job.id,
+      kind: "MOD",
+      signerName: "Alyssa Carter",
+      signedAt: new Date(),
+      attachmentId: signatureAttachment.id,
+    },
+  });
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  ok(
+    "and once it is signed it says that instead",
+    await page.getByText("The signature captured on site").isVisible(),
+  );
+
+  // -------------------------------------------------------------------------
+  // Checking the sheet off, box by box.
+  // -------------------------------------------------------------------------
+  const rows = page.locator('[aria-label="Ticket #"]');
+  const firstBefore = await rows.first().getAttribute("aria-label");
+  check("the ticket box starts at the top", firstBefore, "Ticket #");
+
+  await page
+    .getByRole("button", { name: "Check off" })
+    .first()
+    .click();
+  ok(
+    "a checked box drops to the bottom",
+    await page
+      .locator("div")
+      .filter({ hasText: /Check off/ })
+      .first()
+      .isVisible(),
+  );
+  check(
+    "and one fewer is left to read",
+    await page.getByText(/left to check/).textContent(),
+    "3 of 4 left to check",
+  );
+
+  // Typing into a checked box un-checks it: the tick was for the old value.
+  await page.getByRole("button", { name: "Checked" }).first().click();
+  await ticketBox.fill("TYPED-OVER");
+  check(
+    "typing over a checked box un-checks it",
+    await page.getByText(/left to check/).textContent(),
+    "4 of 4 left to check",
+  );
+  await ticketBox.fill("6682752");
+
+  await page.getByRole("button", { name: "Check the rest off" }).click();
+  check(
+    "checking the rest off clears the list",
+    await page.getByText(/boxes checked/).textContent(),
+    "All 4 boxes checked",
+  );
+
   await page.getByRole("button", { name: /Attach to the job/ }).click();
   await page.waitForSelector("text=/Attached to the job/", { timeout: 30_000 });
+
+  check(
+    "the ticks are kept against what was read",
+    await db.jobFormEntry.count({
+      where: { jobId: job.id, approvedValue: { not: null } },
+    }),
+    4,
+  );
+
+  // A tick is of a value, not of a box. Checked on a box still taking its
+  // value from the mapping — a typed one is the person's own words and does
+  // not move when the job does, which is the whole point of typing it.
+  await db.customer.update({
+    where: { id: customerId },
+    data: { name: "Renamed Mid-Review" },
+  });
+  await page.reload({ waitUntil: "domcontentloaded" });
+  check(
+    "a tick lapses when the value moves under it",
+    await page.getByText(/left to check/).textContent(),
+    "1 of 4 left to check",
+  );
+  await db.customer.update({
+    where: { id: customerId },
+    data: { name: "TSA Housing" },
+  });
+  await page.reload({ waitUntil: "domcontentloaded" });
+  check(
+    "and comes back when it moves back",
+    await page.getByText(/boxes checked/).textContent(),
+    "All 4 boxes checked",
+  );
 
   check(
     "what was typed by hand is kept",
@@ -490,7 +661,7 @@ async function main() {
   // typing on top of it in a phone annotator.
   // -------------------------------------------------------------------------
   await page.goto(`${BASE}/directory/clients`, { waitUntil: "domcontentloaded" });
-  await page.getByRole("button", { name: "Edit", exact: true }).first().click();
+  await page.getByRole("button", { name: `Edit ${job.client.name}` }).click();
   await page.getByRole("button", { name: "Add a default form" }).first().click();
   await page.locator(`#tpl-label-${job.clientId}`).fill("Verify flat sheet");
   await page.locator('input[type="file"]').first().setInputFiles({
@@ -526,6 +697,9 @@ async function main() {
   });
 
   const box = page.locator('[role="button"][aria-label^="Box at"]').first();
+  // Coordinates from boundingBox are viewport-relative, so a box below the
+  // fold gets dragged at a point that is not on it.
+  await box.scrollIntoViewIfNeeded();
   const start = (await box.boundingBox())!;
 
   // Dragged to where it belongs on the page. Without this the box lands in
@@ -571,6 +745,11 @@ async function main() {
   });
   await db.attachment.deleteMany({ where: { jobDocumentId: job.id } });
   await db.job.deleteMany({ where: { title: "Verify approved job" } });
+  await db.signature.deleteMany({ where: { jobId: job.id } });
+  await rm(path.dirname(absolutePath(path.join("verify-form-pages", "sig.png"))), {
+    recursive: true,
+    force: true,
+  });
 
   console.log(
     failures === 0

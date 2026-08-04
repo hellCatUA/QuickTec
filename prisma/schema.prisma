@@ -98,6 +98,7 @@ model User {
   notifications         Notification[]
   raisedNotifications   Notification[]       @relation("NotificationActor")
   pmChanges             ProjectPmChange[]    @relation("PmChangedBy")
+  approvedFormEntries   JobFormEntry[]       @relation("FormEntryApprover")
   calendarEvents        CalendarEvent[]
 
   @@index([baseRole, active])
@@ -346,9 +347,22 @@ model JobFormEntry {
   placementId String
   placement   FormPlacement @relation(fields: [placementId], references: [id], onDelete: Cascade)
 
-  /// Empty means "leave this box alone", which is different from never having
-  /// been looked at — a box deliberately left blank stays blank.
-  value String
+  /// What somebody typed over the filled value. Null is "not overridden";
+  /// empty is "leave this box alone", which is a different thing — a box
+  /// deliberately cleared stays cleared rather than filling itself back in.
+  value String?
+
+  /// What the box said when it was ticked off, not merely that it was.
+  ///
+  /// A sheet is checked box by box, and the job underneath keeps moving: a
+  /// tech clocks out, a signature arrives, somebody fixes the address. An
+  /// approval that survived the value changing would be somebody vouching for
+  /// text they never saw, so it is matched against what is in the box now and
+  /// quietly lapses when they differ.
+  approvedValue String?
+  approvedAt    DateTime?
+  approvedById  String?
+  approvedBy    User?     @relation("FormEntryApprover", fields: [approvedById], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

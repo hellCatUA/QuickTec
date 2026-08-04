@@ -69,7 +69,6 @@ export default async function SignOffPage({
         <SignOffReview
           jobId={id}
           templateId={templateId}
-          templateLabel={draft.templateLabel}
           pageCount={draft.pageCount}
           pageWidth={draft.pageWidth}
           pageHeight={draft.pageHeight}

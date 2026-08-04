@@ -73,12 +73,14 @@ async function main() {
     create: { name: "Mettel", code: "MTL" },
   });
 
-  // A second representing company, picked by name where a suite needs to be
-  // sure which one it chose.
+  // A second representing company, so the planner has one to search for.
+  // Named exactly as the domain suite names its own: two rows both matching
+  // "netcom" make the picker ambiguous and the search test fails on a
+  // collision rather than on anything real.
   await db.client.upsert({
-    where: { name: "NetCom Services" },
+    where: { name: "NetCom Sub" },
     update: {},
-    create: { name: "NetCom Services", code: "NCS" },
+    create: { name: "NetCom Sub" },
   });
 
   const customer = await db.customer.upsert({

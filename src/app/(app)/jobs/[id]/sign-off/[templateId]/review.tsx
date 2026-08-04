@@ -1,24 +1,28 @@
 "use client";
 
-import { Check, Loader2, RefreshCw, Wand2 } from "lucide-react";
+import { Check, Loader2, RefreshCw, Undo2, Wand2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import * as React from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/field";
 import { PdfPage } from "@/components/pdf-page";
-import type { DraftBox } from "@/lib/forms/draft";
+import { boxFingerprint, type DraftBox } from "@/lib/forms/box";
 import { cn } from "@/lib/utils";
 import { attachFilledForm, saveFormEntries } from "./actions";
 
 /**
- * Reading the sheet before it goes anywhere.
+ * Reading the sheet before it goes anywhere, one box at a time.
  *
  * The app fills what it knows. The rest of a real sign-off sheet is somebody's
  * judgement — a travel time, a tick against "site not ready", a phone number
  * we never held — and this is where that gets typed instead of written on a
- * printout. The page beside the list is the same document that will be
- * attached, produced the same way, so what is checked is what is signed.
+ * printout.
+ *
+ * Boxes are ticked off as they are read, and a ticked box greys out and drops
+ * to the bottom. What is left at the top is what still needs looking at, which
+ * on a thirty-box form is the difference between checking it and scrolling
+ * past it.
  */
 
 const PAGE_WIDTH = 620;
@@ -28,7 +32,6 @@ type Box = DraftBox;
 export function SignOffReview({
   jobId,
   templateId,
-  templateLabel,
   pageCount,
   pageWidth,
   pageHeight,
@@ -37,7 +40,6 @@ export function SignOffReview({
 }: {
   jobId: string;
   templateId: string;
-  templateLabel: string;
   pageCount: number;
   pageWidth: number;
   pageHeight: number;
@@ -59,52 +61,73 @@ export function SignOffReview({
   const [previewKey, setPreviewKey] = React.useState(0);
 
   const scale = PAGE_WIDTH / pageWidth;
+
   const onThisPage = boxes.filter((box) => box.page === page);
+  // Ticked boxes sink. Within each half the form's own order is kept, so the
+  // list still reads down the page rather than jumping about.
+  const ordered = [
+    ...onThisPage.filter((box) => !box.approved),
+    ...onThisPage.filter((box) => box.approved),
+  ];
 
-  /** What a box will actually say. */
-  function valueOf(box: Box): string | null {
-    if (box.entered !== null) return box.entered.trim() || null;
-    return box.resolved;
-  }
+  const approved = boxes.filter((box) => box.approved).length;
+  const left = boxes.length - approved;
 
-  const filled = boxes.filter((box) => box.isImage || valueOf(box)).length;
-
-  function change(placementId: string, value: string) {
-    setDirty(true);
+  function patch(placementId: string, next: Partial<Box>) {
     setDone(null);
     setBoxes((current) =>
       current.map((box) =>
-        box.placementId === placementId ? { ...box, entered: value } : box,
+        box.placementId === placementId ? { ...box, ...next } : box,
       ),
     );
+  }
+
+  function change(placementId: string, value: string) {
+    setDirty(true);
+    // Typing into a box un-ticks it: what was approved is no longer what is
+    // there, and a tick that outlives its value is worse than no tick.
+    patch(placementId, { entered: value, approved: false });
   }
 
   /** Hands a box back to the mapping after somebody typed over it. */
   function reset(placementId: string) {
     setDirty(true);
+    patch(placementId, { entered: null, approved: false });
+  }
+
+  function toggleApproved(box: Box) {
+    setDirty(true);
+    patch(box.placementId, { approved: !box.approved });
+  }
+
+  function approveAllOnPage() {
+    setDirty(true);
     setDone(null);
     setBoxes((current) =>
-      current.map((box) =>
-        box.placementId === placementId ? { ...box, entered: null } : box,
-      ),
+      current.map((box) => (box.page === page ? { ...box, approved: true } : box)),
     );
   }
 
-  function save(then?: () => void) {
+  /** The rows as the server wants them. */
+  function payload(list: Box[]) {
+    return JSON.stringify({
+      jobId,
+      templateId,
+      entries: list
+        .filter((box) => box.entered !== null || box.approved)
+        .map((box) => ({
+          placementId: box.placementId,
+          value: box.entered,
+          approvedValue: box.approved ? boxFingerprint(box) : null,
+        })),
+    });
+  }
+
+  function save() {
     setError(null);
     startTransition(async () => {
       const formData = new FormData();
-      formData.set(
-        "payload",
-        JSON.stringify({
-          jobId,
-          templateId,
-          entries: boxes
-            .filter((box) => box.entered !== null)
-            .map((box) => ({ placementId: box.placementId, value: box.entered })),
-        }),
-      );
-
+      formData.set("payload", payload(boxes));
       const result = await saveFormEntries(null, formData);
       if (!result.ok) {
         setError(result.error);
@@ -112,7 +135,6 @@ export function SignOffReview({
       }
       setDirty(false);
       setPreviewKey((key) => key + 1);
-      then?.();
     });
   }
 
@@ -123,16 +145,7 @@ export function SignOffReview({
       // Saved first, so what is attached is what is on screen rather than what
       // was on screen the last time somebody pressed save.
       const formData = new FormData();
-      formData.set(
-        "payload",
-        JSON.stringify({
-          jobId,
-          templateId,
-          entries: boxes
-            .filter((box) => box.entered !== null)
-            .map((box) => ({ placementId: box.placementId, value: box.entered })),
-        }),
-      );
+      formData.set("payload", payload(boxes));
       const saved = await saveFormEntries(null, formData);
       if (!saved.ok) {
         setError(saved.error);
@@ -153,6 +166,7 @@ export function SignOffReview({
           ? "Attached to the job. Every box has something in it."
           : `Attached to the job. ${result.empty} box${result.empty === 1 ? "" : "es"} left blank for the site.`,
       );
+      setPreviewKey((key) => key + 1);
       router.refresh();
     });
   }
@@ -160,8 +174,10 @@ export function SignOffReview({
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2">
-        <Badge variant={filled === boxes.length ? "primary" : "neutral"}>
-          {filled} of {boxes.length} boxes have a value
+        <Badge variant={left === 0 ? "success" : "neutral"}>
+          {left === 0
+            ? `All ${boxes.length} boxes checked`
+            : `${left} of ${boxes.length} left to check`}
         </Badge>
         {attachedId ? (
           <a
@@ -191,12 +207,23 @@ export function SignOffReview({
         ) : null}
 
         <div className="ml-auto flex items-center gap-2">
+          {onThisPage.some((box) => !box.approved) ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              disabled={pending}
+              onClick={approveAllOnPage}
+            >
+              <Check /> Check the rest off
+            </Button>
+          ) : null}
           <Button
             type="button"
             size="sm"
             variant="ghost"
             disabled={pending || !dirty}
-            onClick={() => save()}
+            onClick={save}
           >
             {pending ? <Loader2 className="animate-spin" /> : <RefreshCw />}
             Update the preview
@@ -218,7 +245,7 @@ export function SignOffReview({
       ) : null}
 
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
-        <div className="relative shrink-0 overflow-auto rounded-xl border border-border">
+        <div className="relative shrink-0 self-start overflow-auto rounded-xl border border-border lg:sticky lg:top-4">
           <div className="relative" style={{ width: PAGE_WIDTH }}>
             <PdfPage
               key={previewKey}
@@ -227,7 +254,7 @@ export function SignOffReview({
               width={PAGE_WIDTH}
             />
 
-            {/* The box being edited, marked on the page. A form has thirty of
+            {/* The box being read, marked on the page. A form has thirty of
                 them and half are called "Text19". */}
             {onThisPage.map((box) =>
               box.placementId === selected ? (
@@ -248,14 +275,16 @@ export function SignOffReview({
         </div>
 
         <div className="flex min-w-0 flex-1 flex-col gap-2">
-          {onThisPage.map((box) => (
+          {ordered.map((box) => (
             <BoxRow
               key={box.placementId}
               box={box}
               selected={box.placementId === selected}
+              pending={pending}
               onSelect={() => setSelected(box.placementId)}
               onChange={(value) => change(box.placementId, value)}
               onReset={() => reset(box.placementId)}
+              onToggleApproved={() => toggleApproved(box)}
             />
           ))}
         </div>
@@ -267,15 +296,19 @@ export function SignOffReview({
 function BoxRow({
   box,
   selected,
+  pending,
   onSelect,
   onChange,
   onReset,
+  onToggleApproved,
 }: {
   box: Box;
   selected: boolean;
+  pending: boolean;
   onSelect: () => void;
   onChange: (value: string) => void;
   onReset: () => void;
+  onToggleApproved: () => void;
 }) {
   const overridden = box.entered !== null;
   const value = overridden ? (box.entered ?? "") : (box.resolved ?? "");
@@ -287,28 +320,36 @@ function BoxRow({
     box.fieldName ??
     `Box at ${Math.round(box.x)}, ${Math.round(box.y)}`;
 
+  /** What the box will actually carry, which is what the badge should say. */
+  const has = box.isImage ? box.hasImage : Boolean(value.trim());
+
   return (
     <div
       onFocus={onSelect}
       onClick={onSelect}
       className={cn(
-        "flex flex-col gap-1.5 rounded-lg border p-3",
-        selected
-          ? "border-[var(--color-primary)] bg-surface-raised"
-          : "border-border",
+        "flex flex-col gap-1.5 rounded-lg border p-3 transition-opacity",
+        box.approved
+          ? "border-border bg-muted/40 opacity-55"
+          : selected
+            ? "border-[var(--color-primary)] bg-surface-raised"
+            : "border-border",
       )}
     >
       <div className="flex flex-wrap items-baseline gap-2">
         <span className="text-sm font-medium">{name}</span>
 
-        {box.source ? (
+        {/* What the box actually holds, not merely where it would come from.
+            Saying "filled" over an empty signature is how somebody attaches a
+            sheet believing it has one. */}
+        {box.source && has ? (
           <Badge variant="neutral">
             <Wand2 className="mr-1 size-3" />
             filled
           </Badge>
+        ) : box.source ? (
+          <Badge variant="warning">nothing to fill it with yet</Badge>
         ) : (
-          // The boxes the mapping does not cover — the reason this screen
-          // exists rather than a button that just produces a PDF.
           <Badge variant="warning">by hand</Badge>
         )}
 
@@ -321,22 +362,45 @@ function BoxRow({
           </span>
         ) : null}
 
-        {overridden ? (
-          <button
+        <div className="ml-auto flex items-center gap-2">
+          {overridden ? (
+            <button
+              type="button"
+              onClick={onReset}
+              className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            >
+              back to the filled value
+            </button>
+          ) : null}
+
+          <Button
             type="button"
-            onClick={onReset}
-            className="ml-auto text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            size="sm"
+            variant={box.approved ? "ghost" : "secondary"}
+            disabled={pending}
+            onClick={(event) => {
+              event.stopPropagation();
+              onToggleApproved();
+            }}
           >
-            back to the filled value
-          </button>
-        ) : null}
+            {box.approved ? (
+              <>
+                <Undo2 /> Checked
+              </>
+            ) : (
+              <>
+                <Check /> Check off
+              </>
+            )}
+          </Button>
+        </div>
       </div>
 
       {box.isImage ? (
         <p className="text-sm text-muted-foreground">
-          {box.resolved === null
-            ? "The signature goes here once it is captured on site."
-            : "The signature captured on site."}
+          {box.hasImage
+            ? "The signature captured on site goes here."
+            : "Nothing signed yet — this box stays empty until it is."}
         </p>
       ) : long ? (
         <Textarea

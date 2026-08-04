@@ -37,12 +37,19 @@ export function PdfPage({ url, page, width, className }: PdfPageProps) {
       setLoading(true);
       setError(null);
       try {
-        const pdfjs = await import("pdfjs-dist");
+        // The legacy build, deliberately. The default one is compiled for the
+        // newest engines and reaches for proposals most browsers do not have
+        // yet — it dies on `getOrInsertComputed is not a function` in anything
+        // but a current Chrome, and node_modules are not down-levelled by the
+        // app's own build. This is an office screen used a few times a year;
+        // the extra bytes cost nothing next to it not working.
+        const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+
         // The worker is emitted as an asset of this bundle rather than pulled
         // from a CDN: the app runs behind Tailscale on a server with no
         // outbound path to one.
         pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-          "pdfjs-dist/build/pdf.worker.min.mjs",
+          "pdfjs-dist/legacy/build/pdf.worker.min.mjs",
           import.meta.url,
         ).toString();
 
@@ -83,9 +90,15 @@ export function PdfPage({ url, page, width, className }: PdfPageProps) {
       } catch (caught) {
         if (cancelled) return;
         // A render that fails is not fatal — the boxes are still listed, and
-        // the sample text is usually enough to map by.
+        // the sample text is usually enough to map by. The reason goes on
+        // screen rather than only into the console: this failed once for a
+        // whole browser family, and "could not be shown" told nobody why.
         console.error("[pdf] rendering the page failed", caught);
-        setError("This blank could not be shown. The list below still works.");
+        setError(
+          caught instanceof Error && caught.message
+            ? caught.message
+            : "Unknown error",
+        );
         setLoading(false);
       }
     }
@@ -103,7 +116,16 @@ export function PdfPage({ url, page, width, className }: PdfPageProps) {
       {loading ? (
         <p className="p-3 text-sm text-muted-foreground">Rendering the blank…</p>
       ) : null}
-      {error ? <p className="p-3 text-sm text-danger">{error}</p> : null}
+      {error ? (
+        <div className="p-3 text-sm">
+          <p className="text-danger">
+            This page could not be shown. The list beside it still works.
+          </p>
+          <p className="mt-1 break-words text-xs text-muted-foreground">
+            {error}
+          </p>
+        </div>
+      ) : null}
     </div>
   );
 }
