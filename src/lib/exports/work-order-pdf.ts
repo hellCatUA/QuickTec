@@ -7,6 +7,7 @@ import { deliverableLabel } from "@/lib/deliverables";
 import type { JobExportData } from "@/lib/exports/job-data";
 import { workSummary } from "@/lib/exports/text-report";
 import { absolutePath } from "@/lib/storage";
+import { ticketList } from "@/lib/tickets";
 
 /**
  * The company's own work order.
@@ -83,7 +84,7 @@ export async function buildWorkOrderPdf(data: JobExportData): Promise<Buffer> {
     ["Customer", job.customer.name],
     ["Site", `${data.siteName}`],
     ["Assignment ID", job.externalAssignmentId ?? "—"],
-    ["Ticket #", job.ticketNumber ?? "—"],
+    ["Ticket #", ticketList(job) ?? "—"],
     ["INC #", job.incNumber ?? "—"],
     [
       "Project",

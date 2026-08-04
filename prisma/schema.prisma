@@ -201,11 +201,34 @@ model Client {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  projects  Project[]
-  jobs      Job[]
-  payRates  PayRate[]
-  contacts  ExternalContact[]
-  templates ClientDocumentTemplate[]
+  projects         Project[]
+  jobs             Job[]
+  payRates         PayRate[]
+  contacts         ExternalContact[]
+  templates        ClientDocumentTemplate[]
+  /// Numbers to reach on any job for them — offered when one is raised.
+  dispatchContacts DispatchContact[]
+}
+
+/// A ticket number beyond the job's primary one.
+///
+/// One job routinely answers to more than one ticket: the company raises a
+/// second under a different queue, or a revisit is tracked separately and the
+/// customer wants both quoted back. `Job.ticketNumber` stays the primary — it
+/// is what every report, export and change request already means by "the
+/// ticket" — and these are the ones after it, in the order they were added.
+model JobTicket {
+  id    String @id @default(cuid())
+  jobId String
+  job   Job    @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  number String
+  /// 0 is the secondary, 1 the one after that. The primary is not in here.
+  order  Int    @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@index([jobId, order])
 }
 
 /// Which piece of paper an attachment is.
@@ -709,6 +732,9 @@ model Job {
   deliverableRules DeliverableRequirement[]
   deliverables     DeliverableItem[]
   reimbursements   Reimbursement[]
+  /// Ticket numbers after the first. `ticketNumber` above is the primary one
+  /// — the field people mean when they say "the ticket".
+  extraTickets     JobTicket[]
   /// The representing company's paperwork: their work order and sign-off blank.
   documents        Attachment[]             @relation("JobDocuments")
   /// What was typed by hand into their sign-off sheet for this job.
@@ -845,6 +871,11 @@ model DispatchContact {
   job       Job?     @relation(fields: [jobId], references: [id], onDelete: Cascade)
   projectId String?
   project   Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  /// Held against the representing company as a default, rather than against
+  /// any one job. Their NOC line is the same number on every job they send,
+  /// and retyping it forty times is how it ends up wrong on the forty-first.
+  clientId  String?
+  client    Client?  @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
   label String
   name  String?
@@ -855,6 +886,7 @@ model DispatchContact {
 
   @@index([jobId])
   @@index([projectId])
+  @@index([clientId])
 }
 
 enum ContactType {

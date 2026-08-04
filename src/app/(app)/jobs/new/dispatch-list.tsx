@@ -35,11 +35,50 @@ const EMPTY: DraftContact = {
  */
 export function DispatchList({
   inherited,
+  companyDefaults,
 }: {
   /** From the project, shown so nobody re-types what is already there. */
   inherited: { id: string; label: string; name: string | null }[];
+  /** Held against the representing company — added with one press, or all. */
+  companyDefaults: {
+    id: string;
+    label: string;
+    name: string | null;
+    phone: string | null;
+    email: string | null;
+    note: string | null;
+  }[];
 }) {
   const [contacts, setContacts] = React.useState<DraftContact[]>([]);
+
+  /**
+   * Offered rather than added on their own.
+   *
+   * A number that appeared without being asked for is one nobody reads before
+   * it goes onto a job, and a stale NOC line is worse than an absent one — the
+   * tech rings it at two in the morning and nobody picks up. One press puts
+   * them all on, and they stay editable afterwards like any other row.
+   */
+  function addCompanyDefault(
+    contact: (typeof companyDefaults)[number],
+  ): void {
+    setContacts((current) =>
+      current.some(
+        (row) => row.label === contact.label && row.phone === (contact.phone ?? ""),
+      )
+        ? current
+        : [
+            ...current,
+            {
+              label: contact.label,
+              name: contact.name ?? "",
+              phone: contact.phone ?? "",
+              email: contact.email ?? "",
+              note: contact.note ?? "",
+            },
+          ],
+    );
+  }
 
   function update(index: number, patch: Partial<DraftContact>) {
     setContacts((current) =>
@@ -65,6 +104,40 @@ export function DispatchList({
           <span className="text-xs text-muted-foreground">
             These come across on their own. Anything below is for this job only.
           </span>
+        </div>
+      ) : null}
+
+      {companyDefaults.length > 0 ? (
+        <div className="flex flex-col gap-2 rounded-lg border border-dashed border-border p-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Their usual numbers
+            </span>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="ml-auto"
+              onClick={() => companyDefaults.forEach(addCompanyDefault)}
+            >
+              <Plus /> Add them all
+            </Button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {companyDefaults.map((contact) => (
+              <Button
+                key={contact.id}
+                type="button"
+                size="sm"
+                variant="secondary"
+                onClick={() => addCompanyDefault(contact)}
+              >
+                <Plus />
+                {contact.label}
+                {contact.name ? ` · ${contact.name}` : ""}
+              </Button>
+            ))}
+          </div>
         </div>
       ) : null}
 

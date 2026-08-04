@@ -21,6 +21,10 @@ export async function loadJobForExport(jobId: string) {
       title: true,
       externalAssignmentId: true,
       ticketNumber: true,
+      extraTickets: {
+        orderBy: { order: "asc" },
+        select: { number: true, order: true },
+      },
       incNumber: true,
       scheduledStart: true,
       estimateMinutes: true,

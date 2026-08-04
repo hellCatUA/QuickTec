@@ -1,7 +1,9 @@
 "use client";
 
-import { FileText, Info, X } from "lucide-react";
+import { FileText, Info, Plus, Upload, X } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
+import * as React from "react";
 import { useActionState, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -16,6 +18,7 @@ import { Combobox } from "@/components/ui/combobox";
 import { Field, Input, Select, Textarea } from "@/components/ui/field";
 import { FormStatus, type SaveState } from "@/components/ui/form-status";
 import { HoursPicker, Stepper } from "@/components/ui/stepper";
+import { cn } from "@/lib/utils";
 import { createJob, type ActionResult } from "../actions";
 import { DispatchList } from "./dispatch-list";
 import { SitePicker, type SiteOption } from "./site-picker";
@@ -39,6 +42,16 @@ type Project = {
   dispatchContacts: { id: string; label: string; name: string | null }[];
 };
 type Tech = { id: string; name: string; baseRole: string };
+/** A number held against a representing company rather than any one job. */
+export type ClientDispatch = {
+  id: string;
+  clientId: string;
+  label: string;
+  name: string | null;
+  phone: string | null;
+  email: string | null;
+  note: string | null;
+};
 type Template = {
   id: string;
   clientId: string;
@@ -56,6 +69,7 @@ export function JobForm({
   techs,
   customers,
   templates,
+  clientDispatch,
   canSetPay,
   globalNextSequence,
   breakPaidByDefault,
@@ -68,6 +82,7 @@ export function JobForm({
   techs: Tech[];
   customers: Customer[];
   templates: Template[];
+  clientDispatch: ClientDispatch[];
   /** Setting a rate on a job is a pay decision, not a planning one. */
   canSetPay: boolean;
   globalNextSequence: number;
@@ -98,7 +113,12 @@ export function JobForm({
   const [state, formAction, pending] = useActionState<ActionResult | null, FormData>(
     async (prev, formData) => {
       const result = await createJob(prev, formData);
-      if (result.ok && result.id) router.push(`/jobs/${result.id}`);
+      // A job whose paperwork did not store stays on this screen, because
+      // navigating away would flash the reason past somebody who needs it.
+      // The job exists; the link below goes to it.
+      if (result.ok && result.id && !result.warning) {
+        router.push(`/jobs/${result.id}`);
+      }
       return result;
     },
     null,
@@ -162,6 +182,11 @@ export function JobForm({
   const clientTemplates = useMemo(
     () => templates.filter((template) => template.clientId === clientId),
     [templates, clientId],
+  );
+
+  const companyDispatch = useMemo(
+    () => clientDispatch.filter((contact) => contact.clientId === clientId),
+    [clientDispatch, clientId],
   );
 
   // Their defaults start ticked; once somebody touches the list their choice
@@ -353,9 +378,7 @@ export function JobForm({
             />
           </Field>
 
-          <Field label="Ticket #" htmlFor="ticketNumber">
-            <Input id="ticketNumber" name="ticketNumber" autoComplete="off" />
-          </Field>
+          <TicketNumbers />
 
           <Field label="INC #" htmlFor="incNumber" hint="Internal only.">
             <Input id="incNumber" name="incNumber" autoComplete="off" />
@@ -479,6 +502,25 @@ export function JobForm({
             </p>
           )}
 
+          {/* The work order usually arrives by email the evening before, so
+              whoever is raising the job is often holding it. Making them come
+              back to the job page to attach it is how it ends up attached by
+              nobody. */}
+          <FilePick
+            id="workOrderFiles"
+            name="workOrderFiles"
+            label="Their work order"
+            hint="If you have the PDF now. It can also be added from the job page later, by whoever gets it."
+            disabled={noWorkOrder}
+          />
+
+          <FilePick
+            id="signOffFiles"
+            name="signOffFiles"
+            label="A sign-off sheet just for this job"
+            hint="Only if it differs from their standing one."
+          />
+
           <label className="flex items-center gap-2 text-sm">
             <input
               type="checkbox"
@@ -599,7 +641,10 @@ export function JobForm({
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <DispatchList inherited={selectedProject?.dispatchContacts ?? []} />
+          <DispatchList
+            inherited={selectedProject?.dispatchContacts ?? []}
+            companyDefaults={companyDispatch}
+          />
         </CardContent>
       </Card>
 
@@ -696,6 +741,18 @@ export function JobForm({
         </CardContent>
       </Card>
 
+      {state?.ok && state.warning && state.id ? (
+        <div className="flex flex-col gap-2 rounded-lg bg-warning/15 p-3 text-sm text-warning ring-1 ring-inset ring-warning/30">
+          <span>{state.warning}</span>
+          <Link
+            href={`/jobs/${state.id}`}
+            className="w-fit underline underline-offset-2"
+          >
+            Open the job and try again there
+          </Link>
+        </div>
+      ) : null}
+
       {needsApproval ? (
         <div className="flex items-start gap-2 rounded-lg bg-warning/15 p-3 text-sm text-warning ring-1 ring-inset ring-warning/30">
           <Info className="mt-0.5 size-4 shrink-0" />
@@ -712,5 +769,138 @@ export function JobForm({
         size="md"
       />
     </form>
+  );
+}
+
+/**
+ * A file input that shows what was picked.
+ *
+ * The native control renders "No file chosen" and nothing else once several
+ * are selected, which on a form this long is indistinguishable from having
+ * picked nothing.
+ */
+function FilePick({
+  id,
+  name,
+  label,
+  hint,
+  disabled = false,
+}: {
+  id: string;
+  name: string;
+  label: string;
+  hint: string;
+  disabled?: boolean;
+}) {
+  const [picked, setPicked] = React.useState<string[]>([]);
+
+  return (
+    <div className="flex flex-col gap-1">
+      <label
+        htmlFor={id}
+        className={cn(
+          "flex min-h-11 items-center gap-2 rounded-lg border border-dashed border-border px-3 text-sm",
+          disabled
+            ? "cursor-not-allowed opacity-50"
+            : "cursor-pointer hover:bg-muted",
+        )}
+      >
+        <Upload className="size-4 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">
+          {picked.length === 0
+            ? label
+            : picked.length === 1
+              ? picked[0]
+              : `${picked.length} files`}
+        </span>
+        <input
+          id={id}
+          name={name}
+          type="file"
+          accept="image/*,application/pdf"
+          multiple
+          disabled={disabled}
+          className="sr-only"
+          onChange={(event) =>
+            setPicked(Array.from(event.target.files ?? []).map((file) => file.name))
+          }
+        />
+      </label>
+      <p className="text-xs text-muted-foreground">{hint}</p>
+    </div>
+  );
+}
+
+/**
+ * The ticket numbers a job answers to, entered while it is raised.
+ *
+ * The first is the primary — what every report and export means by "the
+ * ticket". The rest arrive as repeated fields, the way the dispatch rows do,
+ * and are stored in the order they were typed.
+ */
+function TicketNumbers() {
+  const [extras, setExtras] = React.useState<string[]>([]);
+
+  return (
+    <div className="flex flex-col gap-2">
+      <Field
+        label="Ticket #"
+        htmlFor="ticketNumber"
+        hint={
+          extras.length > 0
+            ? "The primary. It is the one a form with a single ticket box gets."
+            : undefined
+        }
+      >
+        <Input id="ticketNumber" name="ticketNumber" autoComplete="off" />
+      </Field>
+
+      {extras.map((value, index) => (
+        <div key={index} className="flex items-end gap-2">
+          <Field
+            label={index === 0 ? "Secondary" : `Ticket ${index + 2}`}
+            htmlFor={`extraTicket-${index}`}
+            className="flex-1"
+          >
+            <Input
+              id={`extraTicket-${index}`}
+              name="extraTickets"
+              value={value}
+              autoComplete="off"
+              onChange={(event) =>
+                setExtras((current) =>
+                  current.map((entry, position) =>
+                    position === index ? event.target.value : entry,
+                  ),
+                )
+              }
+            />
+          </Field>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label={`Remove ticket ${index + 2}`}
+            onClick={() =>
+              setExtras((current) =>
+                current.filter((_, position) => position !== index),
+              )
+            }
+          >
+            <X />
+          </Button>
+        </div>
+      ))}
+
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="self-start"
+        onClick={() => setExtras((current) => [...current, ""])}
+      >
+        <Plus /> Another ticket
+      </Button>
+    </div>
   );
 }

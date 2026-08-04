@@ -524,9 +524,11 @@ async function main() {
   // -------------------------------------------------------------------------
   // Checking the sheet off, box by box.
   // -------------------------------------------------------------------------
-  const rows = page.locator('[aria-label="Ticket #"]');
+  // The catalogue calls it "Ticket # (primary)" now that a job can carry more
+  // than one, and the review screen labels the box with the source's name.
+  const rows = page.locator('[aria-label^="Ticket #"]');
   const firstBefore = await rows.first().getAttribute("aria-label");
-  check("the ticket box starts at the top", firstBefore, "Ticket #");
+  check("the ticket box starts at the top", firstBefore, "Ticket # (primary)");
 
   await page
     .getByRole("button", { name: "Check off" })

@@ -32,6 +32,17 @@ export default async function ClientsPage() {
           placements: { select: { source: true } },
         },
       },
+      dispatchContacts: {
+        orderBy: { order: "asc" },
+        select: {
+          id: true,
+          label: true,
+          name: true,
+          phone: true,
+          email: true,
+          note: true,
+        },
+      },
     },
   });
 

@@ -2,6 +2,7 @@ import { formatAddress } from "@/lib/address";
 import { usDateInZone, usTimeInZone } from "@/lib/datetime";
 import type { JobExportData } from "@/lib/exports/job-data";
 import { returnTracking, workSummary } from "@/lib/exports/text-report";
+import { jobTickets, ticketList } from "@/lib/tickets";
 import { visitTotals } from "@/lib/time-tracking";
 
 /**
@@ -120,8 +121,14 @@ const SOURCES: FormSource[] = [
   // -------------------------------------------------------------------------
   { group: "Job", key: "job.assignmentId", label: "Assignment ID",
     resolve: (context) => context.data.job.externalAssignmentId },
-  { group: "Job", key: "job.ticket", label: "Ticket #",
+  { group: "Job", key: "job.ticket", label: "Ticket # (primary)",
     resolve: (context) => context.data.job.ticketNumber },
+  // A form with one ticket box on a job with two: which of them goes in it is
+  // the company's convention, so both are offered rather than guessed at.
+  { group: "Job", key: "job.tickets", label: "Ticket # (all, comma separated)",
+    resolve: (context) => ticketList(context.data.job) },
+  { group: "Job", key: "job.ticketSecondary", label: "Ticket # (secondary)",
+    resolve: (context) => jobTickets(context.data.job)[1] ?? null },
   { group: "Job", key: "job.intWoId", label: "Internal WO ID",
     resolve: (context) => context.data.job.intWoId },
   { group: "Job", key: "job.title", label: "Job title",

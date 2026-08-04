@@ -9,6 +9,7 @@ import { Field, Input, Textarea } from "@/components/ui/field";
 import { FormStatus, type SaveState } from "@/components/ui/form-status";
 import { EmptyState } from "@/components/ui/page-header";
 import { saveClient, type ActionResult } from "../actions";
+import { ClientDispatch, type ClientDispatchRecord } from "./client-dispatch";
 import { ClientTemplates, type TemplateRecord } from "./client-templates";
 
 type ClientRecord = {
@@ -19,6 +20,7 @@ type ClientRecord = {
   active: boolean;
   _count: { jobs: number; projects: number };
   templates: TemplateRecord[];
+  dispatchContacts: ClientDispatchRecord[];
 };
 
 function ClientForm({
@@ -174,6 +176,12 @@ export function ClientList({ clients }: { clients: ClientRecord[] }) {
             {editingId === client.id ? (
               <div className="flex flex-col gap-4 border-t border-border pt-3">
                 <ClientForm client={client} />
+                <div className="border-t border-border pt-3">
+                  <ClientDispatch
+                    clientId={client.id}
+                    contacts={client.dispatchContacts}
+                  />
+                </div>
                 <div className="border-t border-border pt-3">
                   <ClientTemplates
                     clientId={client.id}

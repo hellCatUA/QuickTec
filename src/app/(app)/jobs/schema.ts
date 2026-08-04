@@ -17,6 +17,8 @@ export const jobFormSchema = z.object({
   projectId: optionalText,
   externalAssignmentId: optionalText,
   ticketNumber: optionalText,
+  /// Ticket numbers after the primary, in the order they were typed.
+  extraTickets: z.array(z.string()).default([]),
   incNumber: optionalText,
   scheduledStart: optionalText,
   estimateMinutes: optionalInt({ min: 1, max: 60 * 24 * 30 }),

@@ -32,6 +32,7 @@ export function EditableField({
   action,
   kind = "text",
   hint,
+  optional = false,
   className,
 }: {
   jobId: string;
@@ -42,6 +43,8 @@ export function EditableField({
   action: FieldAction;
   kind?: "text" | "number" | "datetime" | "markdown";
   hint?: string;
+  /** A field a job may legitimately never have — empty is a fact, not a gap. */
+  optional?: boolean;
   className?: string;
 }) {
   const [open, setOpen] = React.useState(false);
@@ -161,10 +164,17 @@ export function EditableField({
       ) : (
         <div className="flex items-center gap-1.5 text-sm">
           {isEmpty ? (
-            <span className="flex items-center gap-1 text-warning">
-              <AlertTriangle className="size-3.5" />
-              Missing
-            </span>
+            // A warning on every job without an INC number is a warning
+            // people learn to scroll past, which costs the ones that mean
+            // something.
+            optional ? (
+              <span className="text-muted-foreground">Not provided</span>
+            ) : (
+              <span className="flex items-center gap-1 text-warning">
+                <AlertTriangle className="size-3.5" />
+                Missing
+              </span>
+            )
           ) : (
             <span className="break-words">{displayValue ?? value}</span>
           )}

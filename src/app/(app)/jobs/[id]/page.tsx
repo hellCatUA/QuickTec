@@ -20,7 +20,12 @@ import {
 } from "@/lib/datetime";
 import { db } from "@/lib/db";
 import { deliverableLabel, resolveDeliverableRules } from "@/lib/deliverables";
-import { fieldAction, JOB_FIELDS, type JobFieldName } from "@/lib/job-fields";
+import {
+  fieldAction,
+  isOptionalField,
+  JOB_FIELDS,
+  type JobFieldName,
+} from "@/lib/job-fields";
 import {
   INTERNAL_STATUS_META,
   LIFECYCLE_META,
@@ -41,6 +46,7 @@ import { DispatchPanel } from "./dispatch-panel";
 import { JobPay } from "./job-pay";
 import { BreakPay } from "./break-pay";
 import { JobDocuments } from "./job-documents";
+import { JobTickets } from "./tickets";
 import { EditableField } from "./editable-field";
 import { PointsOfContact } from "./points-of-contact";
 import { RevisitPanel } from "./revisit-panel";
@@ -84,6 +90,10 @@ export default async function JobPage({
       siteId: true,
       externalAssignmentId: true,
       ticketNumber: true,
+      extraTickets: {
+        orderBy: { order: "asc" },
+        select: { id: true, number: true, order: true },
+      },
       incNumber: true,
       scheduledStart: true,
       estimateMinutes: true,
@@ -419,6 +429,7 @@ export default async function JobPage({
         displayValue={display}
         action={actionFor(field, rawValue)}
         kind={JOB_FIELDS[field].kind}
+        optional={isOptionalField(field)}
       />
     );
   }
@@ -616,6 +627,14 @@ export default async function JobPage({
 
           {editable("externalAssignmentId", job.externalAssignmentId ?? "")}
           {editable("ticketNumber", job.ticketNumber ?? "")}
+          {/* One job routinely answers to more than one ticket. The first is
+              the field above; these are the ones after it. */}
+          <JobTickets
+            jobId={job.id}
+            primary={job.ticketNumber}
+            extras={job.extraTickets}
+            canEdit={canFillMissing}
+          />
           {editable("incNumber", job.incNumber ?? "")}
           <Static
             label="Project"

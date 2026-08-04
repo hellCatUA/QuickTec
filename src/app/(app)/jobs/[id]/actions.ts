@@ -1635,3 +1635,105 @@ export async function clearAssignmentPay(
   touch(assignment.jobId);
   return ok;
 }
+
+// ---------------------------------------------------------------------------
+// Ticket numbers beyond the first
+// ---------------------------------------------------------------------------
+
+/**
+ * Adds a ticket the job also answers to.
+ *
+ * The primary lives on the job itself and goes through the usual planned-field
+ * machinery — change requests and all. These are the ones after it, and they
+ * are added and removed outright: a second ticket is a fact somebody was told
+ * on the phone, not a value worth arguing over.
+ */
+export async function addJobTicket(formData: FormData): Promise<ActionResult> {
+  const jobId = String(formData.get("jobId") ?? "");
+  const number = String(formData.get("number") ?? "").trim();
+
+  if (!number) return fail("Enter the ticket number.");
+  if (number.length > 64) return fail("That is too long for a ticket number.");
+
+  const context = await loadContext(jobId);
+  if (!context) return fail("Job not found.");
+  const { user, job } = context;
+
+  if (!(await canOnJob(user, "job.fill_missing_field", job))) {
+    return fail("You cannot change this job's tickets.");
+  }
+
+  const existing = await db.job.findUniqueOrThrow({
+    where: { id: jobId },
+    select: {
+      ticketNumber: true,
+      extraTickets: { select: { number: true }, orderBy: { order: "desc" }, take: 1 },
+    },
+  });
+
+  // The primary is the first ticket. Somebody adding one to a job that has
+  // none meant to set the primary, not to create a secondary with no primary.
+  if (!existing.ticketNumber?.trim()) {
+    await db.job.update({ where: { id: jobId }, data: { ticketNumber: number } });
+  } else {
+    const last = await db.jobTicket.findFirst({
+      where: { jobId },
+      orderBy: { order: "desc" },
+      select: { order: true },
+    });
+    const duplicate = await db.jobTicket.findFirst({
+      where: { jobId, number },
+      select: { id: true },
+    });
+    if (duplicate || existing.ticketNumber.trim() === number) {
+      return fail("This job already has that ticket.");
+    }
+    await db.jobTicket.create({
+      data: { jobId, number, order: (last?.order ?? -1) + 1 },
+    });
+  }
+
+  await recordAudit({
+    actorId: user.id,
+    entityType: "Job",
+    entityId: jobId,
+    jobId,
+    action: "updated",
+    detail: { field: "Ticket #", to: number },
+  });
+
+  revalidatePath(`/jobs/${jobId}`);
+  return ok;
+}
+
+export async function deleteJobTicket(formData: FormData): Promise<ActionResult> {
+  const id = String(formData.get("id") ?? "");
+
+  const ticket = await db.jobTicket.findUnique({
+    where: { id },
+    select: { id: true, number: true, jobId: true },
+  });
+  if (!ticket) return fail("Not found.");
+
+  const context = await loadContext(ticket.jobId);
+  if (!context) return fail("Job not found.");
+  const { user, job } = context;
+
+  if (!(await canOnJob(user, "job.fill_missing_field", job))) {
+    return fail("You cannot change this job's tickets.");
+  }
+
+  await db.jobTicket.delete({ where: { id } });
+
+  await recordAudit({
+    actorId: user.id,
+    entityType: "Job",
+    entityId: ticket.jobId,
+    jobId: ticket.jobId,
+    action: "updated",
+    detail: { field: "Ticket #", from: ticket.number },
+  });
+
+  revalidatePath(`/jobs/${ticket.jobId}`);
+  return ok;
+}

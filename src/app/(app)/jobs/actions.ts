@@ -9,7 +9,7 @@ import { getCompanySettings } from "@/lib/company";
 import { parseDatetimeLocalInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
 import { flag, optionalText } from "@/lib/form";
-import { copyTemplateToJob } from "@/lib/job-documents";
+import { copyTemplateToJob, storeDocument } from "@/lib/job-documents";
 import {
   allocateIntWo,
   allocateRevisitIntWo,
@@ -21,7 +21,9 @@ import { can, requirePermission } from "@/lib/session";
 import { PayType } from "@prisma-client";
 import { jobFormSchema } from "./schema";
 
-export type ActionResult = { ok: true; id?: string } | { ok: false; error: string };
+export type ActionResult =
+  | { ok: true; id?: string; warning?: string }
+  | { ok: false; error: string };
 
 /** quickCreateSite also hands back the customer code, so the picker can label
  *  the row it has just added without another round trip. */
@@ -41,6 +43,7 @@ export async function createJob(
     ...Object.fromEntries(formData),
     assigneeIds: formData.getAll("assigneeIds").map(String).filter(Boolean),
     templateIds: formData.getAll("templateIds").map(String).filter(Boolean),
+    extraTickets: formData.getAll("extraTickets").map(String),
     dispatchLabel: formData.getAll("dispatchLabel").map(String),
     dispatchName: formData.getAll("dispatchName").map(String),
     dispatchPhone: formData.getAll("dispatchPhone").map(String),
@@ -203,6 +206,14 @@ export async function createJob(
         projectId: project?.id ?? null,
         externalAssignmentId: input.externalAssignmentId,
         ticketNumber: input.ticketNumber,
+        // Anything typed after the first, in order. Blank rows are somebody
+        // pressing the plus and changing their mind.
+        extraTickets: {
+          create: input.extraTickets
+            .map((number) => number.trim())
+            .filter(Boolean)
+            .map((number, order) => ({ number, order })),
+        },
         incNumber: input.incNumber,
         scheduledStart,
         estimateMinutes: input.estimateMinutes,
@@ -295,6 +306,36 @@ export async function createJob(
     }
   }
 
+  // Paperwork the planner is holding right now. The work order often arrives
+  // by email the evening before, and making them raise the job and then go
+  // back into it to attach the PDF is how it ends up attached by nobody.
+  //
+  // A file that will not store does not undo the job — it exists, it is
+  // scheduled, and the same upload is on its page waiting to be retried.
+  const documentUploads: [string, "CLIENT_WORK_ORDER" | "SIGN_OFF"][] = [
+    ["workOrderFiles", "CLIENT_WORK_ORDER"],
+    ["signOffFiles", "SIGN_OFF"],
+  ];
+  const uploadFailures: string[] = [];
+
+  for (const [field, kind] of documentUploads) {
+    const files = formData
+      .getAll(field)
+      .filter((entry): entry is File => entry instanceof File && entry.size > 0);
+
+    for (const file of files) {
+      const stored = await storeDocument(file, actor.id, job.id);
+      if ("error" in stored) {
+        uploadFailures.push(`${file.name}: ${stored.error}`);
+        continue;
+      }
+      await db.attachment.update({
+        where: { id: stored.id },
+        data: { jobDocumentId: job.id, jobDocumentKind: kind },
+      });
+    }
+  }
+
   await recordAudit({
     actorId: actor.id,
     entityType: "Job",
@@ -323,7 +364,11 @@ export async function createJob(
 
   syncJobInBackground(job.id);
   revalidatePath("/jobs");
-  return { ok: true, id: job.id };
+  // Said rather than swallowed: the job is real either way, and somebody has
+  // to know the PDF they picked is not on it.
+  return uploadFailures.length > 0
+    ? { ok: true, id: job.id, warning: `The job was created, but its paperwork was not attached — ${uploadFailures.join("; ")}` }
+    : { ok: true, id: job.id };
 }
 
 const revisitSchema = z.object({

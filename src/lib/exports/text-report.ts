@@ -1,6 +1,7 @@
 import { formatAddress } from "@/lib/address";
 import { usTimeInZone } from "@/lib/datetime";
 import type { JobExportData } from "@/lib/exports/job-data";
+import { ticketList } from "@/lib/tickets";
 
 /**
  * The client-facing text report.
@@ -161,7 +162,10 @@ export function buildTextReport(data: JobExportData): string {
 
     "NOC name": contactNames(data, "NOC").join(", ") || NOT_APPLICABLE,
 
-    "Ticket #": job.ticketNumber ?? NOT_OBTAINED,
+    // Every ticket the job answers to, comma separated: their systems paste
+    // a single field, and a second ticket left off is one nobody gets billed
+    // for.
+    "Ticket #": ticketList(job) ?? NOT_OBTAINED,
 
     "Release code": job.noReleaseCode
       ? NOT_OBTAINED

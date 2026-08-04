@@ -12,7 +12,16 @@ export default async function NewJobPage() {
   if (!user) redirect("/signin");
   if (!can(user, "job.create")) redirect("/jobs");
 
-  const [company, clients, sites, projects, customers, techs, templates] =
+  const [
+    company,
+    clients,
+    sites,
+    projects,
+    customers,
+    techs,
+    templates,
+    clientDispatch,
+  ] =
     await Promise.all([
     getCompanySettings(),
     db.client.findMany({
@@ -78,6 +87,21 @@ export default async function NewJobPage() {
         isDefault: true,
       },
     }),
+    // Numbers held against a representing company. Offered on any job for
+    // them, so their NOC line is not retyped on every one.
+    db.dispatchContact.findMany({
+      where: { clientId: { not: null } },
+      orderBy: { order: "asc" },
+      select: {
+        id: true,
+        clientId: true,
+        label: true,
+        name: true,
+        phone: true,
+        email: true,
+        note: true,
+      },
+    }),
   ]);
 
   // Without a site there is nothing to dispatch to, and the address that ends
@@ -126,6 +150,10 @@ export default async function NewJobPage() {
         techs={techs}
         customers={customers}
         templates={templates}
+        clientDispatch={clientDispatch.map((contact) => ({
+          ...contact,
+          clientId: contact.clientId!,
+        }))}
         canSetPay={can(user, "pay.edit_rates")}
         globalNextSequence={
           (await db.intWoCounter.findUnique({

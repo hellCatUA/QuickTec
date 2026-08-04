@@ -485,6 +485,21 @@ async function main() {
     await planner.locator("#clientId").click();
     await planner.locator("#clientId").fill("netcom");
     await planner.getByRole("option", { name: /NetCom/ }).click();
+
+    // A job routinely answers to more than one ticket. The first is the
+    // primary; the plus adds the ones after it.
+    await planner.locator("#ticketNumber").fill("S-1000");
+    await planner.getByRole("button", { name: "Another ticket" }).click();
+    await planner.locator("#extraTicket-0").fill("S-1001");
+    await planner.getByRole("button", { name: "Another ticket" }).click();
+    await planner.locator("#extraTicket-1").fill("S-1002");
+    check(
+      "the second one is labelled Secondary",
+      await planner.getByText("Secondary", { exact: true }).isVisible(),
+      true,
+    );
+    // Pressing the plus and changing your mind leaves nothing behind.
+    await planner.getByRole("button", { name: "Another ticket" }).click();
     check(
       "the company can be found by typing",
       (await planner.locator('input[name="clientId"]').inputValue()).length > 0,
@@ -604,11 +619,47 @@ async function main() {
     await planner.locator("#dispatch-phone-0").fill("206-555-0177");
     await planner.locator("#dispatch-note-0").fill("Ask for the duty manager");
 
+    // The company's usual numbers are one press away rather than retyped.
+    // Offered, not added on their own: a stale NOC line that appeared unasked
+    // is one the tech rings at two in the morning for nothing.
+    check(
+      "the company's own numbers are offered",
+      await planner.getByRole("button", { name: /NOC/ }).isVisible(),
+      true,
+    );
+    await planner.getByRole("button", { name: /NOC/ }).click();
+    check(
+      "and pressing one fills a row in",
+      await planner.locator("#dispatch-label-1").inputValue(),
+      "NOC",
+    );
+    // Pressing it twice does not put it on twice.
+    await planner.getByRole("button", { name: /NOC/ }).click();
+    check(
+      "pressing it again changes nothing",
+      await planner.locator('input[name="dispatchLabel"]').count(),
+      2,
+    );
+
     // What this job pays, which likewise could only be reached by changing the
     // tech's standing rate and leaking it into every other job they touch.
     await planner.locator("#payType").selectOption("FLAT");
     await planner.locator("#payRate").fill("600");
     await planner.locator("#travelReimbursement").fill("75");
+
+    // The work order usually arrives by email the evening before, so whoever
+    // raises the job is holding it. Making them come back to the job page to
+    // attach it is how it ends up attached by nobody.
+    await planner.locator("#workOrderFiles").setInputFiles({
+      name: "NetCom-WO-991100.pdf",
+      mimeType: "application/pdf",
+      buffer: Buffer.from("%PDF-1.4\n% raised with the job\n"),
+    });
+    check(
+      "the chosen file is named back",
+      await planner.getByText("NetCom-WO-991100.pdf").isVisible(),
+      true,
+    );
 
     await planner.locator("#title").fill("Built from the reworked form");
     await planner.getByRole("button", { name: "Create job" }).click();
@@ -625,13 +676,44 @@ async function main() {
     check("the crew size", made?.techsRequired, 2);
     check("and the tech on it", made?.assignments.length, 1);
 
+    const paperwork = await db.attachment.findMany({
+      where: { jobDocumentId: made!.id },
+      select: { originalName: true, jobDocumentKind: true },
+    });
+    check(
+      "the work order came with the job",
+      paperwork.find((doc) => doc.jobDocumentKind === "CLIENT_WORK_ORDER")
+        ?.originalName,
+      "NetCom-WO-991100.pdf",
+    );
+
+    check("the primary ticket is the job's own field", made?.ticketNumber, "S-1000");
+    const extras = await db.jobTicket.findMany({
+      where: { jobId: made!.id },
+      orderBy: { order: "asc" },
+      select: { number: true },
+    });
+    check(
+      "the ones after it are kept in order",
+      extras.map((ticket) => ticket.number).join(","),
+      "S-1001,S-1002",
+    );
+    // The row somebody added and left empty is not a ticket.
+    check("and an empty row is not one of them", extras.length, 2);
+
     const numbers = await db.dispatchContact.findMany({
       where: { jobId: made!.id },
       select: { label: true, phone: true, note: true },
     });
-    check("the dispatch number is on the job", numbers.length, 1);
-    check("with who to ask for", numbers[0]?.note, "Ask for the duty manager");
-    check("and the number itself", numbers[0]?.phone, "206-555-0177");
+    check("both dispatch numbers are on the job", numbers.length, 2);
+    check(
+      "the company's usual one came across",
+      numbers.find((row) => row.label === "NOC")?.phone,
+      "800-555-0100",
+    );
+    const typed = numbers.find((row) => row.label !== "NOC");
+    check("with who to ask for", typed?.note, "Ask for the duty manager");
+    check("and the number itself", typed?.phone, "206-555-0177");
 
     // Set on the job, so it applies to everybody on it rather than following
     // whatever rate each of them happens to carry.
@@ -648,8 +730,44 @@ async function main() {
       "Set on this job",
     );
 
+    // A job raised with no INC number has no incident behind it, which is a
+    // fact rather than a gap. Warning on every one of those is how people
+    // learn to scroll past the warnings that mean something.
+    await planner.goto(`${BASE}/jobs/${made!.id}`, {
+      waitUntil: "domcontentloaded",
+    });
+    check(
+      "an empty INC # reads as Not provided",
+      await planner.getByText("Not provided").first().isVisible(),
+      true,
+    );
+    check(
+      "and the ticket after the primary is shown with it",
+      await planner.getByText("S-1001", { exact: true }).isVisible(),
+      true,
+    );
+    check(
+      "labelled for what it is",
+      await planner.getByText("Secondary", { exact: true }).isVisible(),
+      true,
+    );
+    // What the customer is quoted: one field, comma separated.
+    check(
+      "and the report carries all three",
+      (await planner.locator("#text-report").inputValue())
+        .split("\n")
+        .find((line) => line.startsWith("Ticket #:")),
+      "Ticket #: S-1000, S-1001, S-1002",
+    );
+
     if (made) await db.job.delete({ where: { id: made.id } });
-    if (created) await db.site.delete({ where: { id: created.id } });
+    if (created) {
+      // Anything else this run put on the site goes first. A run that died
+      // half way leaves a job here, and the site delete then fails on a
+      // foreign key rather than on anything this suite is testing.
+      await db.job.deleteMany({ where: { siteId: created.id } });
+      await db.site.delete({ where: { id: created.id } });
+    }
   });
 
   // --- creating a job -------------------------------------------------------

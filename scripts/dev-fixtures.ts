@@ -83,6 +83,26 @@ async function main() {
     create: { name: "NetCom Sub" },
   });
 
+  // A number held against the company, offered on every job raised for them.
+  const netcom = await db.client.findUniqueOrThrow({
+    where: { name: "NetCom Sub" },
+    select: { id: true },
+  });
+  const existingDispatch = await db.dispatchContact.findFirst({
+    where: { clientId: netcom.id, label: "NOC" },
+  });
+  if (!existingDispatch) {
+    await db.dispatchContact.create({
+      data: {
+        clientId: netcom.id,
+        label: "NOC",
+        name: "Night desk",
+        phone: "800-555-0100",
+        order: 0,
+      },
+    });
+  }
+
   const customer = await db.customer.upsert({
     where: { code: "TSA" },
     update: {},

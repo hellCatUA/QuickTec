@@ -371,6 +371,98 @@ export async function updateOpenJobsWithForms(
   return { ok: true, jobs: rollout.jobs, copies: rollout.copies };
 }
 
+// ---------------------------------------------------------------------------
+// Numbers held against a representing company
+// ---------------------------------------------------------------------------
+
+const dispatchSchema = z.object({
+  clientId: z.string().min(1),
+  label: z.string().trim().min(1, "Say who they are"),
+  name: optionalText,
+  phone: optionalText,
+  email: optionalText,
+  note: optionalText,
+});
+
+/**
+ * A number to reach on any job for this company.
+ *
+ * Their NOC line and their after-hours desk are the same on every job they
+ * send. Kept here once and offered when a job is raised, rather than typed
+ * again each time — which is how the fortieth one ends up with a digit wrong.
+ */
+export async function saveClientDispatch(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  const actor = await requirePermission("client.manage");
+  const id = String(formData.get("id") ?? "");
+
+  try {
+    const data = dispatchSchema.parse(Object.fromEntries(formData));
+
+    const client = await db.client.findUnique({
+      where: { id: data.clientId },
+      select: { id: true, name: true },
+    });
+    if (!client) return { ok: false, error: "Company not found." };
+
+    const last = await db.dispatchContact.findFirst({
+      where: { clientId: client.id },
+      orderBy: { order: "desc" },
+      select: { order: true },
+    });
+
+    const contact = id
+      ? await db.dispatchContact.update({ where: { id }, data })
+      : await db.dispatchContact.create({
+          data: { ...data, order: (last?.order ?? -1) + 1 },
+        });
+
+    await recordAudit({
+      actorId: actor.id,
+      entityType: "Client",
+      entityId: client.id,
+      action: "updated",
+      detail: { who: client.name, field: "dispatch contact", to: contact.label },
+    });
+
+    revalidatePath("/directory/clients");
+    revalidatePath("/jobs/new");
+    return { ok: true, id: contact.id };
+  } catch (error) {
+    return fail(error);
+  }
+}
+
+export async function deleteClientDispatch(
+  formData: FormData,
+): Promise<ActionResult> {
+  const actor = await requirePermission("client.manage");
+  const id = String(formData.get("id") ?? "");
+
+  const contact = await db.dispatchContact.findUnique({
+    where: { id },
+    select: { id: true, label: true, clientId: true },
+  });
+  // Only ones held against a company. A job's own numbers are the job's.
+  if (!contact?.clientId) return { ok: false, error: "Not found." };
+
+  await db.dispatchContact.delete({ where: { id } });
+
+  await recordAudit({
+    actorId: actor.id,
+    entityType: "Client",
+    entityId: contact.clientId,
+    action: "updated",
+    detail: { field: "dispatch contact", from: contact.label },
+  });
+
+  revalidatePath("/directory/clients");
+  revalidatePath("/jobs/new");
+  return { ok: true };
+}
+
 /** Removes an attachment and its bytes after a save that did not complete. */
 async function deleteFileFor(attachmentId: string): Promise<void> {
   try {

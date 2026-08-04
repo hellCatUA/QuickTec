@@ -398,6 +398,152 @@ async function main() {
   );
   check("manager ALL sees everything", await countFor(boss.id, "ALL"), total);
 
+  // --- ticket numbers ------------------------------------------------------
+  const { jobTickets, ticketList, ticketRole } = await import("@/lib/tickets");
+
+  check("no ticket at all reads as nothing", ticketList({ ticketNumber: null }), null);
+  check(
+    "one ticket is just itself",
+    ticketList({ ticketNumber: "S-1", extraTickets: [] }),
+    "S-1",
+  );
+  check(
+    "two are comma separated, primary first",
+    ticketList({
+      ticketNumber: "S-1",
+      extraTickets: [{ number: "S-2", order: 0 }],
+    }),
+    "S-1, S-2",
+  );
+  check(
+    "and they keep the order they were added in, not the order they arrive",
+    ticketList({
+      ticketNumber: "S-1",
+      extraTickets: [
+        { number: "S-3", order: 1 },
+        { number: "S-2", order: 0 },
+      ],
+    }),
+    "S-1, S-2, S-3",
+  );
+  check(
+    "a blank primary does not leave a leading comma",
+    ticketList({
+      ticketNumber: "   ",
+      extraTickets: [{ number: "S-2", order: 0 }],
+    }),
+    "S-2",
+  );
+  check(
+    "the secondary is the second one",
+    jobTickets({ ticketNumber: "S-1", extraTickets: [{ number: "S-2", order: 0 }] })[1],
+    "S-2",
+  );
+  check("what they are called", `${ticketRole(0)}/${ticketRole(1)}/${ticketRole(2)}`, "Primary/Secondary/Ticket 3");
+
+
+  // --- who may raise a job, and who may wave their own through -------------
+  //
+  // The rule lives in one line of createJob: a job needs approval when its
+  // author cannot approve reports. That reads as an implementation detail and
+  // is in fact the whole policy — a tech's ad-hoc job waits for a supervisor,
+  // and anybody who could approve it afterwards may as well raise it approved.
+  const { DEFAULT_ROLE_GRANTS } = await import("@/lib/permissions");
+  const { can } = await import("@/lib/session");
+
+  function asRole(role: keyof typeof DEFAULT_ROLE_GRANTS) {
+    return {
+      id: "who",
+      grants: new Map(Object.entries(DEFAULT_ROLE_GRANTS[role])),
+      projectGrants: new Map(),
+      scopedProjectIds: [],
+    } as never;
+  }
+
+  const roles = ["TECH", "SUPERVISOR", "MANAGER", "ADMINISTRATOR"] as const;
+  for (const role of roles) {
+    const user = asRole(role);
+    const raises = can(user, "job.create");
+    const approves = can(user, "job.approve_report");
+    console.log(
+      `      ${role.padEnd(14)} create=${raises} approve=${approves} ` +
+        `-> ${approves ? "SCHEDULED" : "PENDING_APPROVAL"}`,
+    );
+  }
+
+  check("a tech may raise a job", can(asRole("TECH"), "job.create"), true);
+  check(
+    "but not wave it through — it waits for somebody",
+    can(asRole("TECH"), "job.approve_report"),
+    false,
+  );
+
+  check("a supervisor may raise a job", can(asRole("SUPERVISOR"), "job.create"), true);
+  check(
+    "and it needs no approval, because they could give it",
+    can(asRole("SUPERVISOR"), "job.approve_report"),
+    true,
+  );
+
+  check("a manager may raise a job", can(asRole("MANAGER"), "job.create"), true);
+
+  // Deliberate, and worth stating so it does not read as an oversight: the
+  // administrator role manages accounts, settings and integrations, and sees
+  // everything, but does not run work. Whoever hands out the logins is not
+  // thereby the person who dispatches the crew.
+  check(
+    "an administrator does not raise jobs",
+    can(asRole("ADMINISTRATOR"), "job.create"),
+    false,
+  );
+  check(
+    "though they can see every one",
+    can(asRole("ADMINISTRATOR"), "job.view"),
+    true,
+  );
+  check(
+    "and approve one, including their own",
+    can(asRole("MANAGER"), "job.approve_report"),
+    true,
+  );
+
+  // The same, through the rule as createJob computes it, so the two cannot
+  // drift apart without this failing.
+  const needsApproval = (role: (typeof roles)[number]) =>
+    !can(asRole(role), "job.approve_report");
+  check("a tech's job lands pending", needsApproval("TECH"), true);
+  check("a supervisor's does not", needsApproval("SUPERVISOR"), false);
+  check("nor a manager's", needsApproval("MANAGER"), false);
+
+  // Approval is of a job, not of a person: nothing stops the author being the
+  // approver, which is exactly what a manager raising their own job needs.
+  const selfApproved = await db.job.create({
+    data: {
+      intWoId: `SELF-${Date.now()}`,
+      intWoSequence: 8888,
+      title: "Raised and approved by the same person",
+      clientId: client.id,
+      customerId: customer.id,
+      siteId: site.id,
+      createdById: boss.id,
+      lifecycle: "PENDING_APPROVAL",
+    },
+    select: { id: true },
+  });
+  await db.job.update({
+    where: { id: selfApproved.id },
+    data: { lifecycle: "SCHEDULED", approvedById: boss.id, approvedAt: new Date() },
+  });
+  const reread = await db.job.findUniqueOrThrow({
+    where: { id: selfApproved.id },
+    select: { createdById: true, approvedById: true, lifecycle: true },
+  });
+  check(
+    "a manager can be both author and approver",
+    reread.createdById === reread.approvedById && reread.lifecycle === "SCHEDULED",
+    true,
+  );
+
   // --- time and earnings --------------------------------------------------
   const {
     assignmentTotals,
@@ -735,6 +881,21 @@ async function main() {
   ].join("\n");
 
   check("text report matches the template exactly", report, expected);
+
+  // A second ticket has to reach the report. Their systems paste one field,
+  // and a ticket left off is work nobody gets billed for.
+  await db.jobTicket.create({
+    data: { jobId: exportJob.id, number: "INC0099124", order: 0 },
+  });
+  const twoTickets = await loadJobForExport(exportJob.id);
+  check(
+    "every ticket reaches the report",
+    buildTextReport(twoTickets!)
+      .split("\n")
+      .find((line) => line.startsWith("Ticket #:")),
+    "Ticket #: INC0099123, INC0099124",
+  );
+  await db.jobTicket.deleteMany({ where: { jobId: exportJob.id } });
   check("hotel claims stay out of the client report", report.includes("Holiday Inn"), false);
   check("INC number stays internal", report.includes("SECRET-INTERNAL"), false);
   check(
