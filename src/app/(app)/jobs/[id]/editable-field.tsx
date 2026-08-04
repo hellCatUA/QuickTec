@@ -164,11 +164,15 @@ export function EditableField({
       ) : (
         <div className="flex items-center gap-1.5 text-sm">
           {isEmpty ? (
-            // A warning on every job without an INC number is a warning
-            // people learn to scroll past, which costs the ones that mean
-            // something.
+            // Both states carry the triangle, so an empty box is never read as
+            // a filled one. Only the colour differs: a warning on every job
+            // without an INC number is a warning people learn to scroll past,
+            // which costs the ones that mean something.
             optional ? (
-              <span className="text-muted-foreground">Not provided</span>
+              <span className="flex items-center gap-1 text-foreground">
+                <AlertTriangle className="size-3.5" />
+                Not provided
+              </span>
             ) : (
               <span className="flex items-center gap-1 text-warning">
                 <AlertTriangle className="size-3.5" />

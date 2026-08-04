@@ -9,9 +9,9 @@
  * becomes a change request.
  *
  * `optional` marks the ones a job may legitimately never have. An empty one is
- * a fact, not a gap, and it reads as "Not provided" rather than a warning —
- * flagging every job without an INC number trains people to ignore the warning
- * that means something.
+ * a fact, not a gap, and it reads as "Not provided" in the ordinary text colour
+ * rather than in the warning colour — flagging every job without an INC number
+ * trains people to ignore the warning that means something.
  */
 export const JOB_FIELDS = {
   title: { label: "Job title", kind: "text", planned: true },

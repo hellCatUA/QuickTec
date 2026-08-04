@@ -456,11 +456,17 @@ CALDAV_PASSWORD=<app password, not the login password>
 docker compose up -d app
 ```
 
-Go to **`/settings/integrations`**. It should show the system account as
-configured. Press **Sync calendars now** — it creates one calendar per tech,
-named `417-SYS: QuickTec (name@417group.org)`, shares each read-only with the
-tech and their direct supervisor, and pushes every job scheduled in the last
-week or later.
+Go to **`/settings/integrations`** and press **Check connection** first: one
+request to the system account's calendar list, which separates "QuickTec cannot
+reach NextCloud" from "there is nothing to push" before you go looking for
+either.
+
+Then press **Sync calendars now** — it creates one calendar per tech, named
+`417-SYS: QuickTec (name@417group.org)`, shares each read-only with the tech and
+their direct supervisor, and pushes every job scheduled in the last month, along
+with anything touched since and anything already in a calendar. **Rebuild from
+every job** next to it reaches work older than that; use it once after turning
+sync on, and any time a calendar has come up empty.
 
 Sync is one-way. An event edited or deleted in NextCloud comes back on the next
 push, so nobody is misled into thinking a change there meant anything.

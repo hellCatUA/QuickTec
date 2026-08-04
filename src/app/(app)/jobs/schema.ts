@@ -1,5 +1,39 @@
 import { z } from "zod";
 import { flag, optionalInt, optionalMoney, optionalText } from "@/lib/form";
+import { DeliverableCategory } from "@prisma-client";
+
+/**
+ * The deliverable sections chosen while raising the job.
+ *
+ * Sent as JSON in one field rather than as ten parallel arrays: the checklist
+ * is the same component the project and job pages use, and a row of it has five
+ * settings — repeated form fields would have to be zipped back together by
+ * position, which is exactly the kind of thing that silently misaligns.
+ */
+export const deliverableRuleSchema = z.object({
+  category: z.enum(DeliverableCategory),
+  customLabel: optionalText,
+  enabled: z.boolean(),
+  required: z.boolean(),
+  requiresPhoto: z.boolean(),
+  requiresText: z.boolean(),
+});
+
+const deliverableRules = z
+  .string()
+  .optional()
+  .transform((value, ctx) => {
+    if (!value) return null;
+    try {
+      return z.array(deliverableRuleSchema).parse(JSON.parse(value));
+    } catch {
+      ctx.addIssue({
+        code: "custom",
+        message: "The deliverable sections could not be read.",
+      });
+      return z.NEVER;
+    }
+  });
 
 /**
  * The new-job form.
@@ -42,6 +76,9 @@ export const jobFormSchema = z.object({
   noWorkOrder: flag,
   /// Blanks kept against the representing company to copy onto the job.
   templateIds: z.array(z.string()).default([]),
+  /// Null when the planner left the checklist alone, which means "whatever the
+  /// project asks for" rather than "nothing".
+  deliverableRules,
   assigneeIds: z.array(z.string()).default([]),
   leadId: optionalText,
 });

@@ -442,6 +442,92 @@ async function main() {
   check("what they are called", `${ticketRole(0)}/${ticketRole(1)}/${ticketRole(2)}`, "Primary/Secondary/Ticket 3");
 
 
+  // --- what a job has to produce -------------------------------------------
+  const { effectiveRules, resolveDeliverableRules, ruleSheet } = await import(
+    "@/lib/deliverables"
+  );
+
+  const sectionsOn = (rules: { category: string }[]) =>
+    rules.map((rule) => rule.category).join(",");
+
+  check(
+    "a job with no rules of its own follows its project",
+    sectionsOn(
+      resolveDeliverableRules(
+        [],
+        [
+          {
+            category: "PRE_INSTALL",
+            customLabel: null,
+            enabled: true,
+            required: true,
+            requiresPhoto: true,
+            requiresText: false,
+            order: 0,
+          },
+          {
+            category: "OLD_SERIALS",
+            customLabel: null,
+            enabled: true,
+            required: false,
+            requiresPhoto: false,
+            requiresText: true,
+            order: 5,
+          },
+        ],
+      ),
+    ),
+    "PRE_INSTALL,OLD_SERIALS",
+  );
+  check(
+    "a job with nothing anywhere still asks for the two that always apply",
+    sectionsOn(resolveDeliverableRules([], [])),
+    "PRE_INSTALL,POST_INSTALL",
+  );
+  check(
+    "every section is offered for editing, not just the saved ones",
+    ruleSheet([]).length,
+    10,
+  );
+  check(
+    "an untouched section is off, and carries the settings it would get",
+    (() => {
+      const serials = ruleSheet([]).find(
+        (rule) => rule.category === "NEW_SERIALS",
+      )!;
+      return `${serials.enabled}/${serials.requiresText}/${serials.requiresPhoto}`;
+    })(),
+    "false/true/false",
+  );
+
+  // The trap this guards: job rows win outright over the project's, so saving
+  // one section on its own would leave the job asking for that section and
+  // nothing else. Which is why the whole sheet is written before the first
+  // edit lands, and why this checks the sheet rather than the one row.
+  const jobSheet = ruleSheet(
+    effectiveRules(
+      [],
+      [
+        {
+          category: "PRE_INSTALL",
+          customLabel: null,
+          enabled: true,
+          required: true,
+          requiresPhoto: true,
+          requiresText: false,
+          order: 0,
+        },
+      ],
+    ).map((rule) =>
+      rule.category === "ISSUES" ? { ...rule, enabled: true } : rule,
+    ),
+  );
+  check(
+    "switching a section on for one job keeps what the project already asked for",
+    sectionsOn(resolveDeliverableRules(jobSheet, [])),
+    "PRE_INSTALL,ISSUES",
+  );
+
   // --- who may raise a job, and who may wave their own through -------------
   //
   // The rule lives in one line of createJob: a job needs approval when its
@@ -1500,9 +1586,13 @@ async function main() {
 
   // --- CalDAV against a local server --------------------------------------
   const { createServer } = await import("node:http");
-  const { calendarSlug, deleteEvent, ensureCalendar, putEvent } = await import(
-    "@/lib/calendar/caldav"
-  );
+  const {
+    calendarSlug,
+    deleteEvent,
+    describeFailure,
+    ensureCalendar,
+    putEvent,
+  } = await import("@/lib/calendar/caldav");
 
   type Recorded = {
     method: string;
@@ -1512,6 +1602,8 @@ async function main() {
   };
   const recorded: Recorded[] = [];
   let mkcalendarCalls = 0;
+  /** Paths this pretend NextCloud has actually been asked to create. */
+  const calendars = new Set<string>();
 
   const CALDAV_USER = "417-sys";
   const CALDAV_PASS = "app-password";
@@ -1533,14 +1625,30 @@ async function main() {
         res.writeHead(401).end();
         return;
       }
+      const path = req.url ?? "";
       if (req.method === "MKCALENDAR") {
         mkcalendarCalls += 1;
         // NextCloud answers 405 for a collection that already exists.
-        res.writeHead(mkcalendarCalls === 1 ? 201 : 405).end();
+        if (calendars.has(path)) {
+          res.writeHead(405).end();
+          return;
+        }
+        calendars.add(path);
+        res.writeHead(201).end();
+        return;
+      }
+      if (req.method === "PROPFIND") {
+        // The calendar home always answers; a calendar only once it is made.
+        const found = calendars.has(path) || path.endsWith("/");
+        if (!found) {
+          res.writeHead(404).end();
+          return;
+        }
+        res.writeHead(207).end("<d:multistatus xmlns:d='DAV:'/>");
         return;
       }
       if (req.method === "DELETE") {
-        res.writeHead(req.url?.includes("missing") ? 404 : 204).end();
+        res.writeHead(path.includes("missing") ? 404 : 204).end();
         return;
       }
       res.writeHead(204).end();
@@ -1601,6 +1709,36 @@ async function main() {
     "the calendar id is derived from the email",
     calendarSlug("A.Rubayko@417group.org"),
     "quicktec-a-rubayko-417group-org",
+  );
+
+  // A proxy that has never heard of MKCALENDAR answers 405 on its own account
+  // — the same status CalDAV uses for "that already exists". Believing it is
+  // how every event afterwards is written to a calendar that was never made,
+  // which looks from the outside like a sync that does nothing at all.
+  const liar = createServer((req, res) => {
+    res.writeHead(req.method === "MKCALENDAR" ? 405 : 404).end();
+  });
+  const liarPort = await new Promise<number>((resolve) => {
+    liar.listen(0, "127.0.0.1", () => {
+      const address = liar.address();
+      resolve(typeof address === "object" && address ? address.port : 0);
+    });
+  });
+  const liarResult = await ensureCalendar(
+    { ...config, baseUrl: `http://127.0.0.1:${liarPort}` },
+    "quicktec-probe",
+    "Probe",
+  );
+  liar.close();
+  check(
+    "a 405 is not taken for granted when the calendar is not there",
+    liarResult.ok,
+    false,
+  );
+  check(
+    "and the reason names MKCALENDAR rather than the event that failed later",
+    describeFailure(liarResult).includes("MKCALENDAR"),
+    true,
   );
 
   // --- job sync -----------------------------------------------------------
@@ -1811,6 +1949,29 @@ async function main() {
     `${noDate.pushed}/${noDate.skipped}`,
     "0/1",
   );
+  check(
+    "and the sweep says why, so nothing pushed is never a mystery",
+    noDate.reasons["no date and nobody on site yet"],
+    1,
+  );
+
+  // A job planned but not crewed produces nothing and used not to say so,
+  // which is the commonest reason a calendar looks empty.
+  const uncrewed = await db.job.create({
+    data: {
+      ...base,
+      title: "Nobody on it",
+      intWoId: "2026-07-0000-9003",
+      intWoSequence: 9003,
+      scheduledStart: new Date(Date.now() + 3 * 24 * 60 * 60_000),
+    },
+  });
+  const uncrewedSync = await syncJob(uncrewed.id);
+  check(
+    "a job with nobody on it is reported as such",
+    uncrewedSync.reasons["nobody assigned"],
+    1,
+  );
 
   // No estimate falls back to two hours: a zero-length event is invisible in
   // most clients, which is worse than a rough one.
@@ -1853,9 +2014,9 @@ async function main() {
 
   const sweep = await syncAll(sup.id);
   check(
-    "the sweep pushes the scheduled job and skips the undated one",
-    `${sweep.pushed}/${sweep.skipped}/${sweep.failures.length}`,
-    "1/1/0",
+    "the sweep pushes the scheduled job and skips the ones it cannot place",
+    `${sweep.pushed}/${sweep.failures.length}`,
+    "1/0",
   );
   check(
     "the sweep is audited",
@@ -1863,14 +2024,74 @@ async function main() {
     1,
   );
 
+  // Work planned two months ago and clocked since was out of reach: the window
+  // was measured against the planned date alone, so a job entered late could
+  // never be pushed at all and no button in the app could fix it.
+  const longAgo = new Date(Date.now() - 60 * 24 * 60 * 60_000);
+  const old = await db.job.create({
+    data: {
+      ...base,
+      title: "Finished last quarter",
+      intWoId: "2026-07-0000-9004",
+      intWoSequence: 9004,
+      scheduledStart: longAgo,
+      estimateMinutes: 60,
+    },
+  });
+  await db.jobAssignment.create({
+    data: { jobId: old.id, userId: tech.id, payType: "HOURLY", payRate: "45" },
+  });
+  await db.$executeRaw`UPDATE "Job" SET "updatedAt" = ${longAgo} WHERE id = ${old.id}`;
+
+  const recentOnly = await syncAll(sup.id);
+  check(
+    "a job finished months ago is outside the ordinary sweep",
+    await db.calendarEvent.count({ where: { jobId: old.id } }),
+    0,
+  );
+  check("which is not counted as a failure", recentOnly.failures.length, 0);
+
+  const everything = await syncAll(sup.id, "everything");
+  check(
+    "rebuilding from every job reaches it",
+    await db.calendarEvent.count({ where: { jobId: old.id } }),
+    1,
+  );
+  // The fingerprint is of what we last sent, not of what is on the server, so
+  // an event somebody deleted in NextCloud reads as up to date from here. A
+  // rebuild is the one thing that puts it back.
+  check(
+    "and writes every event again rather than trusting the fingerprints",
+    everything.pushed >= 2 && everything.reasons.unchanged === undefined,
+    true,
+  );
+
   // An unreachable server is a failed sync, not a crash — the events are
   // simply a few minutes behind until it comes back.
   server.close();
   await new Promise((resolve) => setTimeout(resolve, 50));
+  await db.job.update({
+    where: { id: calJob.id },
+    data: { title: "Register swap, moved" },
+  });
   const offline = await syncJob(calJob.id);
   check(
     "a CalDAV server that is down is reported per tech",
     offline.failures.length > 0 && offline.pushed === 0,
+    true,
+  );
+  // Nobody awaits a background push, so the job is where its answer has to
+  // survive — otherwise a calendar rejecting every event is silent.
+  check(
+    "the reason is kept on the job rather than only in a log",
+    Boolean(
+      (
+        await db.job.findUniqueOrThrow({
+          where: { id: calJob.id },
+          select: { calendarSyncError: true },
+        })
+      ).calendarSyncError,
+    ),
     true,
   );
 

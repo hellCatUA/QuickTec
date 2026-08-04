@@ -31,7 +31,10 @@ the client-facing report, the full job archive, and the weekly pay journal.
 - Scope of work in Markdown with tickable checklists, points of contact,
   dispatch numbers, and per-tech Work Performed that autosaves
 - Deliverables: photo upload with HEIC conversion, EXIF capture and a
-  bottom-right stamp, kept against whoever uploaded them
+  bottom-right stamp, kept against whoever uploaded them. Which sections a job
+  asks for — issues, serials, return labels, equipment left on site, a custom
+  one — and whether each is mandatory, chosen on the project, while raising the
+  job, or on the job afterwards
 - Reimbursements for materials, parking, tolls and hotels with receipts
 - Signature capture for the MOD and the tech
 - Guided checkout: missing-work review, outcome, release code, signatures,
@@ -428,8 +431,17 @@ five people for credentials.
 Sync is **one-way, app → NextCloud**. An event edited or deleted over there is
 restored on the next push, so nobody is misled into thinking a change in their
 phone's calendar meant anything. It runs in the background after a change that
-matters — crew, schedule, estimate, clock-out — and there is a button on
-`/settings/integrations` for a manual sweep.
+matters — crew, schedule, estimate, clock-in, clock-out, approval — and
+`/settings/integrations` has a manual sweep, a rebuild that reaches work older
+than the sweep's month, and a connection check that answers in one request
+whether NextCloud is reachable at all.
+
+Nobody awaits a background push, so a failure is kept on the job and shown on
+that page rather than left in a container log. A calendar that was never created
+is treated as a failure too: MKCALENDAR is not a method most proxies have heard
+of and several answer it with a 405 of their own — the same status CalDAV uses
+for "already exists" — so the collection is confirmed with a PROPFIND before
+anything is written to it.
 
 An event runs for the job's **estimate** until the tech clocks out, then for the
 real time; a job scheduled without an estimate gets two hours, because a

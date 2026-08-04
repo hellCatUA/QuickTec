@@ -1,4 +1,5 @@
 import { CircleAlert, CircleCheck } from "lucide-react";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -44,10 +45,18 @@ export default async function IntegrationsPage() {
     process.env.CALDAV_USERNAME && process.env.CALDAV_PASSWORD,
   );
 
-  const [activeUsers, provisioned, syncedJobs] = await Promise.all([
+  const [activeUsers, provisioned, syncedJobs, stuck] = await Promise.all([
     db.user.count({ where: { active: true } }),
     db.user.count({ where: { active: true, calendarUrl: { not: null } } }),
     db.job.count({ where: { calendarSyncedAt: { not: null } } }),
+    // A background push is not awaited by anybody, so this is where its answer
+    // survives. Shown without asking: the whole failure mode is silence.
+    db.job.findMany({
+      where: { calendarSyncError: { not: null } },
+      orderBy: { updatedAt: "desc" },
+      take: 5,
+      select: { id: true, intWoId: true, title: true, calendarSyncError: true },
+    }),
   ]);
 
   return (
@@ -140,6 +149,28 @@ export default async function IntegrationsPage() {
           <Status ok={syncedJobs > 0}>
             {syncedJobs} job{syncedJobs === 1 ? "" : "s"} pushed so far
           </Status>
+
+          {stuck.length > 0 ? (
+            <div className="flex flex-col gap-1 rounded-lg border border-danger/40 p-3">
+              <span className="text-sm font-medium text-danger">
+                Last push failed on {stuck.length} job
+                {stuck.length === 1 ? "" : "s"}
+              </span>
+              {stuck.map((job) => (
+                <div key={job.id} className="text-xs">
+                  <Link
+                    href={`/jobs/${job.id}`}
+                    className="font-medium underline underline-offset-2"
+                  >
+                    {job.intWoId}
+                  </Link>{" "}
+                  <span className="text-muted-foreground">
+                    {job.calendarSyncError}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : null}
 
           <p className="text-xs text-muted-foreground">
             Calendars are named{" "}

@@ -18,7 +18,7 @@ export type DeliverableRule = {
   required: boolean;
   requiresPhoto: boolean;
   requiresText: boolean;
-  customLabel?: string | null;
+  customLabel: string | null;
   order: number;
 };
 
@@ -91,6 +91,7 @@ export const PROJECT_DEFAULT_RULES: DeliverableRule[] = DELIVERABLE_ORDER.map(
 
     return {
       category,
+      customLabel: null,
       enabled: alwaysOn,
       required: alwaysOn,
       requiresPhoto: category !== "OLD_SERIALS" && category !== "NEW_SERIALS",
@@ -109,6 +110,11 @@ export const AD_HOC_DEFAULT_RULES: DeliverableRule[] =
     (rule) => rule.category === "PRE_INSTALL" || rule.category === "POST_INSTALL",
   );
 
+/**
+ * A row as it comes back from the database. `order` is ignored when the sheet
+ * is built — the running order is the one in DELIVERABLE_META — so a caller
+ * that did not select it can still pass its rows straight in.
+ */
 type StoredRule = {
   category: DeliverableCategory;
   customLabel: string | null;
@@ -116,14 +122,48 @@ type StoredRule = {
   required: boolean;
   requiresPhoto: boolean;
   requiresText: boolean;
-  order: number;
+  order?: number;
 };
 
 /**
- * The rules actually in force for a job. Job-level rows win outright — a
- * planner who switched a section off meant it, even if the project has it on.
+ * Every section as a row, whether or not it has ever been saved.
+ *
+ * The editors are checklists of the lot: a category nobody has stored yet still
+ * needs a switch to turn on, and it has to arrive carrying the settings it
+ * would get if switched on rather than a blank row. Producing the whole sheet
+ * is also what makes a job's rules safe to save — see materialiseJobRules.
  */
-export function resolveDeliverableRules(
+export function ruleSheet(stored: StoredRule[]): DeliverableRule[] {
+  const byCategory = new Map(stored.map((rule) => [rule.category, rule]));
+
+  return DELIVERABLE_ORDER.map((category) => {
+    const fallback = PROJECT_DEFAULT_RULES.find(
+      (rule) => rule.category === category,
+    )!;
+    const saved = byCategory.get(category);
+
+    return {
+      category,
+      customLabel: saved?.customLabel ?? null,
+      // Absent means off. Only what somebody switched on is on.
+      enabled: saved?.enabled ?? false,
+      required: saved?.required ?? false,
+      requiresPhoto: saved?.requiresPhoto ?? fallback.requiresPhoto,
+      requiresText: saved?.requiresText ?? fallback.requiresText,
+      order: DELIVERABLE_META[category].order,
+    };
+  });
+}
+
+/**
+ * The set a job answers to, sections that are off included.
+ *
+ * Job-level rows win outright — a planner who switched a section off meant it,
+ * even if the project has it on. That is also why the rows are all-or-nothing:
+ * saving one job rule has to save the rest with it, or the first toggle would
+ * quietly drop everything the project asked for.
+ */
+export function effectiveRules(
   jobRules: StoredRule[],
   projectRules: StoredRule[],
 ): DeliverableRule[] {
@@ -132,23 +172,17 @@ export function resolveDeliverableRules(
       ? jobRules
       : projectRules.length > 0
         ? projectRules
-        : AD_HOC_DEFAULT_RULES.map((rule) => ({
-            ...rule,
-            customLabel: null,
-          }));
+        : AD_HOC_DEFAULT_RULES;
 
-  return source
-    .filter((rule) => rule.enabled)
-    .sort((a, b) => a.order - b.order)
-    .map((rule) => ({
-      category: rule.category,
-      customLabel: rule.customLabel,
-      enabled: rule.enabled,
-      required: rule.required,
-      requiresPhoto: rule.requiresPhoto,
-      requiresText: rule.requiresText,
-      order: rule.order,
-    }));
+  return ruleSheet(source);
+}
+
+/** The sections actually shown on a job and demanded at checkout. */
+export function resolveDeliverableRules(
+  jobRules: StoredRule[],
+  projectRules: StoredRule[],
+): DeliverableRule[] {
+  return effectiveRules(jobRules, projectRules).filter((rule) => rule.enabled);
 }
 
 export function deliverableLabel(

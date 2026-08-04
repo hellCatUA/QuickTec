@@ -6,12 +6,13 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { DeliverableRules } from "@/components/deliverable-rules";
 import { PageHeader } from "@/components/ui/page-header";
 import { db } from "@/lib/db";
-import { DELIVERABLE_ORDER } from "@/lib/deliverables";
+import { ruleSheet } from "@/lib/deliverables";
 import { can, getSessionUser } from "@/lib/session";
 import { ProjectForm } from "../../project-form";
-import { DeliverableRules } from "../deliverable-rules";
+import { saveDeliverableRule } from "../../actions";
 import { DispatchContacts } from "../dispatch-contacts";
 import { JobSettingsForm } from "../job-settings-form";
 import { ProjectMembers } from "../project-members";
@@ -135,20 +136,7 @@ export default async function ProjectSettingsPage({
   if (!project) notFound();
 
   // Categories with no stored row yet still need a switch to turn on.
-  const rulesByCategory = new Map(
-    project.deliverableRules.map((rule) => [rule.category, rule]),
-  );
-  const rules = DELIVERABLE_ORDER.map((category) => {
-    const stored = rulesByCategory.get(category);
-    return {
-      category,
-      customLabel: stored?.customLabel ?? null,
-      enabled: stored?.enabled ?? false,
-      required: stored?.required ?? false,
-      requiresPhoto: stored?.requiresPhoto ?? true,
-      requiresText: stored?.requiresText ?? false,
-    };
-  });
+  const rules = ruleSheet(project.deliverableRules);
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4">
@@ -267,7 +255,11 @@ export default async function ProjectSettingsPage({
               What a tech has to produce before checkout will let them finish.
               A job can override these while it is being planned.
             </p>
-            <DeliverableRules projectId={project.id} rules={rules} />
+            <DeliverableRules
+              owner={{ field: "projectId", id: project.id }}
+              rules={rules}
+              save={saveDeliverableRule}
+            />
           </div>
         </CardContent>
       </Card>

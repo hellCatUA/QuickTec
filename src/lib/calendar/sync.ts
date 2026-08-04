@@ -35,11 +35,30 @@ export type SyncOutcome = {
   pushed: number;
   removed: number;
   skipped: number;
+  /** Why nothing was pushed, counted so "0 pushed" is never a mystery. */
+  reasons: Partial<Record<SkipReason, number>>;
   failures: { target: string; reason: string }[];
 };
 
+/**
+ * Why a job produced no event.
+ *
+ * Counted rather than swallowed: a sweep that reports "0 pushed, 0 failed" is
+ * indistinguishable from a broken one, and the answer is nearly always one of
+ * these four rather than anything going wrong.
+ */
+export type SkipReason =
+  | "unchanged"
+  | "nobody assigned"
+  | "no date and nobody on site yet";
+
 function emptyOutcome(): SyncOutcome {
-  return { pushed: 0, removed: 0, skipped: 0, failures: [] };
+  return { pushed: 0, removed: 0, skipped: 0, reasons: {}, failures: [] };
+}
+
+function skip(outcome: SyncOutcome, reason: SkipReason): void {
+  outcome.skipped += 1;
+  outcome.reasons[reason] = (outcome.reasons[reason] ?? 0) + 1;
 }
 
 /**
@@ -133,7 +152,7 @@ function eventWindow(
 export async function ensureUserCalendar(
   config: CalDavConfig,
   userId: string,
-): Promise<{ slug: string } | { error: string }> {
+): Promise<{ slug: string; shareFailures: string[] } | { error: string }> {
   const user = await db.user.findUnique({
     where: { id: userId },
     select: {
@@ -164,17 +183,40 @@ export async function ensureUserCalendar(
   }
 
   // The tech reads their own calendar; the supervisor reads their crew's.
-  // A failure here does not fail the sync — the events are still written.
-  const shareWith = [
-    user.email.split("@")[0],
-    user.directSupervisor?.email.split("@")[0],
-  ].filter((name): name is string => Boolean(name));
+  // A failure here does not fail the sync — the events are still written, and
+  // a calendar nobody can see is a better outcome than a job nobody has.
+  const shareWith = [user.email, user.directSupervisor?.email].filter(
+    (email): email is string => Boolean(email),
+  );
 
-  for (const username of shareWith) {
-    await shareCalendar(config, slug, username).catch(() => undefined);
+  const shareFailures: string[] = [];
+  for (const email of shareWith) {
+    if (!(await share(config, slug, email))) shareFailures.push(email);
   }
 
-  return { slug };
+  return { slug, shareFailures };
+}
+
+/**
+ * Shares with a NextCloud user, whose username we have to guess at.
+ *
+ * QuickTec knows people by email; NextCloud knows them by a username that is
+ * usually one of two things — the whole email, or the part before the @. Both
+ * are tried rather than picking one and leaving the other set of installs with
+ * calendars their techs cannot see.
+ */
+async function share(
+  config: CalDavConfig,
+  slug: string,
+  email: string,
+): Promise<boolean> {
+  const candidates = [email, email.split("@")[0]].filter(Boolean);
+
+  for (const username of candidates) {
+    const result = await shareCalendar(config, slug, username).catch(() => null);
+    if (result?.ok) return true;
+  }
+  return false;
 }
 
 /**
@@ -183,7 +225,10 @@ export async function ensureUserCalendar(
  * Safe to call after any change to a job — an unchanged event is recognised by
  * its hash and never re-uploaded.
  */
-export async function syncJob(jobId: string): Promise<SyncOutcome> {
+export async function syncJob(
+  jobId: string,
+  options: { force?: boolean } = {},
+): Promise<SyncOutcome> {
   const outcome = emptyOutcome();
   const config = calDavConfigFromEnv();
   if (!config) {
@@ -205,6 +250,7 @@ export async function syncJob(jobId: string): Promise<SyncOutcome> {
       createdAt: true,
       updatedAt: true,
       lifecycle: true,
+      calendarSyncError: true,
       client: { select: { name: true } },
       customer: { select: { name: true, code: true } },
       site: {
@@ -249,22 +295,20 @@ export async function syncJob(jobId: string): Promise<SyncOutcome> {
 
   const assignedIds = new Set(job.assignments.map((a) => a.userId));
 
+  // Nobody to put it in front of. Said out loud, because a job planned but not
+  // crewed is the commonest reason a calendar looks empty and the only one the
+  // person reading the sweep can do anything about.
+  if (job.assignments.length === 0 && job.calendarEvents.length === 0) {
+    skip(outcome, "nobody assigned");
+  }
+
   for (const assignment of job.assignments) {
     const span = jobSpan(assignment.visits);
     const window = eventWindow(job as JobForCalendar, span);
 
     // Nothing to put in a calendar until someone has said when it happens.
     if (!window) {
-      outcome.skipped += 1;
-      continue;
-    }
-
-    const calendar = await ensureUserCalendar(config, assignment.userId);
-    if ("error" in calendar) {
-      outcome.failures.push({
-        target: assignment.user.email,
-        reason: calendar.error,
-      });
+      skip(outcome, "no date and nobody on site yet");
       continue;
     }
 
@@ -291,9 +335,31 @@ export async function syncJob(jobId: string): Promise<SyncOutcome> {
 
     const hash = contentHash(ics);
 
-    if (existing?.contentHash === hash) {
-      outcome.skipped += 1;
+    // Decided before anything is sent, so a sweep over work that has not moved
+    // costs one query rather than a round trip for every tech on every job.
+    // The fingerprint is of what we last sent, though, not of what is on the
+    // server — so an event somebody edited or deleted in NextCloud looks
+    // unchanged from here. That is what force is for.
+    if (!options.force && existing?.contentHash === hash) {
+      skip(outcome, "unchanged");
       continue;
+    }
+
+    const calendar = await ensureUserCalendar(config, assignment.userId);
+    if ("error" in calendar) {
+      outcome.failures.push({
+        target: assignment.user.email,
+        reason: calendar.error,
+      });
+      continue;
+    }
+
+    for (const email of calendar.shareFailures) {
+      outcome.failures.push({
+        target: email,
+        reason:
+          "The calendar was written but could not be shared with them — NextCloud did not recognise that username.",
+      });
     }
 
     const fileName = eventFileName(job.id, assignment.userId);
@@ -357,11 +423,23 @@ export async function syncJob(jobId: string): Promise<SyncOutcome> {
 
   // Stamped only when something actually reached the server, so the figure on
   // the settings page counts jobs that are really in a calendar rather than
-  // jobs we have looked at.
-  if (outcome.pushed > 0 || outcome.removed > 0) {
+  // jobs we have looked at. The reason for a failure is kept on the job for
+  // the same purpose: nobody awaits a background sync, so this is the only
+  // place its answer survives.
+  if (outcome.failures.length > 0) {
     await db.job.update({
       where: { id: job.id },
-      data: { calendarSyncedAt: new Date() },
+      data: { calendarSyncError: outcome.failures[0].reason.slice(0, 500) },
+    });
+  } else if (outcome.pushed > 0 || outcome.removed > 0) {
+    await db.job.update({
+      where: { id: job.id },
+      data: { calendarSyncedAt: new Date(), calendarSyncError: null },
+    });
+  } else if (job.calendarSyncError) {
+    await db.job.update({
+      where: { id: job.id },
+      data: { calendarSyncError: null },
     });
   }
 
@@ -382,11 +460,52 @@ export function syncJobInBackground(jobId: string): void {
   });
 }
 
+/** How far back a sweep reaches. */
+export type SyncScope =
+  /** The month around today: everything anybody is looking at. */
+  | "recent"
+  /** Every job there has ever been. For filling a calendar that came up empty. */
+  | "everything";
+
+const RECENT_DAYS = 30;
+
 /**
- * Pushes every job that could plausibly still change: anything scheduled from
- * a week ago onwards. Older work is finished and its calendar entry is history.
+ * The jobs a sweep covers.
+ *
+ * A week was too short in both directions. Work finished a fortnight ago still
+ * belongs in the history a supervisor scrolls back through, and a job entered
+ * late — scheduled for last month, clocked yesterday — was never reachable at
+ * all, because the window was measured against the planned date rather than
+ * against anything that had happened since.
  */
-export async function syncAll(actorId: string | null): Promise<SyncOutcome> {
+function sweepFilter(scope: SyncScope) {
+  if (scope === "everything") return {};
+
+  const since = new Date(Date.now() - RECENT_DAYS * 24 * 60 * 60_000);
+  return {
+    OR: [
+      { scheduledStart: { gte: since } },
+      { updatedAt: { gte: since } },
+      // Anything already in a calendar stays true to the job, however old:
+      // this is what removes an event from somebody taken off the work.
+      { calendarEvents: { some: {} } },
+    ],
+  };
+}
+
+/**
+ * Pushes every job in scope.
+ *
+ * The ordinary sweep is cheap to run over a lot of jobs: an event whose content
+ * has not changed is recognised from the row we already hold and costs no
+ * request at all. A rebuild deliberately gives that up — it is the answer to
+ * calendars that are wrong, including ones somebody has edited or emptied at
+ * the NextCloud end, which nothing here can see from a fingerprint.
+ */
+export async function syncAll(
+  actorId: string | null,
+  scope: SyncScope = "recent",
+): Promise<SyncOutcome> {
   const total = emptyOutcome();
   const config = calDavConfigFromEnv();
   if (!config) {
@@ -394,23 +513,23 @@ export async function syncAll(actorId: string | null): Promise<SyncOutcome> {
     return total;
   }
 
-  const since = new Date(Date.now() - 7 * 24 * 60 * 60_000);
   const jobs = await db.job.findMany({
-    where: {
-      OR: [
-        { scheduledStart: { gte: since } },
-        { scheduledStart: null, createdAt: { gte: since } },
-      ],
-    },
+    where: sweepFilter(scope),
     select: { id: true },
   });
 
   for (const job of jobs) {
-    const outcome = await syncJob(job.id);
+    // A rebuild is what somebody presses when the calendars are wrong, so it
+    // writes every event again rather than trusting the fingerprints.
+    const outcome = await syncJob(job.id, { force: scope === "everything" });
     total.pushed += outcome.pushed;
     total.removed += outcome.removed;
     total.skipped += outcome.skipped;
     total.failures.push(...outcome.failures);
+    for (const [reason, count] of Object.entries(outcome.reasons)) {
+      const key = reason as SkipReason;
+      total.reasons[key] = (total.reasons[key] ?? 0) + count;
+    }
   }
 
   await recordAudit({
@@ -419,6 +538,7 @@ export async function syncAll(actorId: string | null): Promise<SyncOutcome> {
     entityId: "sync",
     action: "calendar_synced",
     detail: {
+      scope,
       jobs: jobs.length,
       pushed: total.pushed,
       removed: total.removed,

@@ -7,6 +7,10 @@ import * as React from "react";
 import { useActionState, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import {
+  DeliverableRules,
+  type EditableRule,
+} from "@/components/deliverable-rules";
+import {
   Card,
   CardContent,
   CardDescription,
@@ -40,6 +44,8 @@ type Project = {
   travelReimbursement: string | null;
   memberIds: string[];
   dispatchContacts: { id: string; label: string; name: string | null }[];
+  /** The whole checklist, sections that are off included. */
+  deliverableRules: EditableRule[];
 };
 type Tech = { id: string; name: string; baseRole: string };
 /** A number held against a representing company rather than any one job. */
@@ -73,6 +79,7 @@ export function JobForm({
   canSetPay,
   globalNextSequence,
   breakPaidByDefault,
+  adHocDeliverableRules,
 }: {
   canAssign: boolean;
   needsApproval: boolean;
@@ -87,6 +94,8 @@ export function JobForm({
   canSetPay: boolean;
   globalNextSequence: number;
   breakPaidByDefault: boolean;
+  /** What a job raised without a project asks for. */
+  adHocDeliverableRules: EditableRule[];
 }) {
   const router = useRouter();
 
@@ -106,6 +115,9 @@ export function JobForm({
   const [titleTouched, setTitleTouched] = useState(false);
   const [noWorkOrder, setNoWorkOrder] = useState(false);
   const [pickedTemplates, setPickedTemplates] = useState<string[] | null>(null);
+  // Null until the planner touches the checklist, which is what tells the
+  // server "as the project says" apart from "these sections, none of them".
+  const [deliverables, setDeliverables] = useState<EditableRule[] | null>(null);
   const [addedSites, setAddedSites] = useState<SiteOption[]>([]);
   const [payType, setPayType] = useState("");
   const [payRate, setPayRate] = useState("");
@@ -147,7 +159,16 @@ export function JobForm({
     if (!titleTouched && project.defaultJobTitle) {
       setTitle(project.defaultJobTitle);
     }
+    // The checklist below starts from the project's, so a different project
+    // means a different starting point. Anything ticked so far was ticked
+    // against the old one.
+    setDeliverables(null);
   }
+
+  // What the sections look like before anybody touches them: the project's
+  // sheet, or the ad-hoc defaults on a job raised without one.
+  const baseDeliverables =
+    selectedProject?.deliverableRules ?? adHocDeliverableRules;
 
   const allSites = useMemo(
     () => [...addedSites, ...sites],
@@ -535,6 +556,34 @@ export function JobForm({
             Says the company issued none, so the empty slot reads as a decision
             rather than paperwork nobody chased. Attaching one later clears it.
           </span>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Deliverables</CardTitle>
+          <CardDescription>
+            What the tech has to produce before checkout will let them finish.
+            {selectedProject
+              ? " Starts from the project's, and applies to this job alone."
+              : " These can still be changed from the job page afterwards."}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {/* Sent as one field so the server can tell an untouched checklist
+              from a deliberately empty one. */}
+          {deliverables ? (
+            <input
+              type="hidden"
+              name="deliverableRules"
+              value={JSON.stringify(deliverables)}
+            />
+          ) : null}
+
+          <DeliverableRules
+            rules={deliverables ?? baseDeliverables}
+            onChange={setDeliverables}
+          />
         </CardContent>
       </Card>
 

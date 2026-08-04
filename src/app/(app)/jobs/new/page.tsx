@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { EmptyState, PageHeader } from "@/components/ui/page-header";
 import { getCompanySettings } from "@/lib/company";
 import { db } from "@/lib/db";
+import { effectiveRules } from "@/lib/deliverables";
 import { can, getSessionUser } from "@/lib/session";
 import { JobForm } from "./job-form";
 
@@ -60,6 +61,19 @@ export default async function NewJobPage() {
         dispatchContacts: {
           orderBy: { order: "asc" },
           select: { id: true, label: true, name: true },
+        },
+        // What its jobs normally have to produce. The form starts from these
+        // and the planner can change them for this job before it exists.
+        deliverableRules: {
+          where: { jobId: null },
+          select: {
+            category: true,
+            customLabel: true,
+            enabled: true,
+            required: true,
+            requiresPhoto: true,
+            requiresText: true,
+          },
         },
         // Who normally does this work. Shown first in the crew search rather
         // than enforced: a project member is a default, not a fence.
@@ -146,7 +160,9 @@ export default async function NewJobPage() {
           travelReimbursement: project.travelReimbursement?.toString() ?? null,
           memberIds: project.members.map((member) => member.userId),
           dispatchContacts: project.dispatchContacts,
+          deliverableRules: effectiveRules([], project.deliverableRules),
         }))}
+        adHocDeliverableRules={effectiveRules([], [])}
         techs={techs}
         customers={customers}
         templates={templates}

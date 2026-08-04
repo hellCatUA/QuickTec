@@ -721,6 +721,10 @@ model Job {
   approvedAt   DateTime?
 
   calendarSyncedAt DateTime?
+  /// Why the last push failed, cleared when one succeeds. Background syncs are
+  /// not awaited by anybody, so without this a calendar that quietly rejects
+  /// every event looks exactly like a calendar with nothing to put in it.
+  calendarSyncError String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -985,6 +989,10 @@ model DeliverableRequirement {
 
   order Int @default(0)
 
+  /// One row per section per owner. Postgres counts NULLs as distinct, so the
+  /// job constraint leaves the project rows alone and the other way about.
+  @@unique([jobId, category])
+  @@unique([projectId, category])
   @@index([projectId])
   @@index([jobId])
 }

@@ -8,6 +8,7 @@ import { syncJobInBackground } from "@/lib/calendar/sync";
 import { getCompanySettings } from "@/lib/company";
 import { parseDatetimeLocalInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
+import { ruleSheet } from "@/lib/deliverables";
 import { flag, optionalText } from "@/lib/form";
 import { copyTemplateToJob, storeDocument } from "@/lib/job-documents";
 import {
@@ -183,6 +184,27 @@ export async function createJob(
       ? input.leadId
       : defaultLead;
 
+  // What the job will have to produce. The checklist on the form starts from
+  // the project's sheet, so an untouched one means "as the project says" —
+  // which is the project's own rows, not an empty list.
+  const jobRules = (
+    input.deliverableRules
+      ? ruleSheet(input.deliverableRules)
+      : project && project.deliverableRules.length > 0
+        ? ruleSheet(project.deliverableRules)
+        : // Nothing chosen and no project sheet to copy: no rows, so the job
+          // keeps following the ad-hoc defaults.
+          []
+  ).map((rule) => ({
+    category: rule.category,
+    customLabel: rule.category === "CUSTOM" ? rule.customLabel : null,
+    enabled: rule.enabled,
+    required: rule.enabled && rule.required,
+    requiresPhoto: rule.requiresPhoto,
+    requiresText: rule.requiresText,
+    order: rule.order,
+  }));
+
   const job = await db.$transaction(async (tx) => {
     const { intWoId, sequence } = await allocateIntWo(tx, {
       projectId: project?.id ?? null,
@@ -234,21 +256,13 @@ export async function createJob(
             ? "SCHEDULED"
             : "DRAFT",
         createdById: actor.id,
-        // Copy the project's deliverable rules onto the job so later edits to
-        // the project cannot silently change what a scheduled job demands.
-        deliverableRules: project
-          ? {
-              create: project.deliverableRules.map((rule) => ({
-                category: rule.category,
-                customLabel: rule.customLabel,
-                enabled: rule.enabled,
-                required: rule.required,
-                requiresPhoto: rule.requiresPhoto,
-                requiresText: rule.requiresText,
-                order: rule.order,
-              })),
-            }
-          : undefined,
+        // The job carries its own copy from the start, so later edits to the
+        // project cannot silently change what work already scheduled demands.
+        // The planner's own choices win where they made any; otherwise it is
+        // the project's sheet, and a job with no project keeps the ad-hoc
+        // defaults by having no rows at all.
+        deliverableRules:
+          jobRules.length > 0 ? { create: jobRules } : undefined,
         assignments: {
           create: rates.map(({ userId, rate, supervisorId }) => ({
             userId,
@@ -559,6 +573,11 @@ export async function approveJob(formData: FormData): Promise<ActionResult> {
     jobId,
     action: "ad_hoc_approved",
   });
+
+  // It was raised by somebody who could not approve it, so its crew were put
+  // on a job that had no standing. Now it has one, and their calendars should
+  // agree.
+  syncJobInBackground(jobId);
 
   revalidatePath("/jobs");
   revalidatePath(`/jobs/${jobId}`);

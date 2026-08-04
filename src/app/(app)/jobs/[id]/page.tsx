@@ -19,7 +19,7 @@ import {
   usTimeInZone,
 } from "@/lib/datetime";
 import { db } from "@/lib/db";
-import { deliverableLabel, resolveDeliverableRules } from "@/lib/deliverables";
+import { deliverableLabel, effectiveRules } from "@/lib/deliverables";
 import {
   fieldAction,
   isOptionalField,
@@ -53,6 +53,7 @@ import { RevisitPanel } from "./revisit-panel";
 import { ScopeOfWork } from "./scope-of-work";
 import { SiteNumberPrompt } from "./site-number";
 import { Deliverables } from "./deliverables";
+import { DeliverableSections } from "./deliverable-sections";
 import { ExportsPanel } from "./exports-panel";
 import { Reimbursements } from "./reimbursements";
 import { TimePanel } from "./time-panel";
@@ -391,10 +392,13 @@ export default async function JobPage({
   const allVisits = job.assignments.flatMap((assignment) => assignment.visits);
   const span = jobSpan(allVisits, now);
 
-  const rules = resolveDeliverableRules(
+  // The whole sheet for the planner to change; the sections that are on are
+  // what the tech is shown and what checkout asks for.
+  const sections = effectiveRules(
     job.deliverableRules,
     job.project?.deliverableRules ?? [],
   );
+  const rules = sections.filter((rule) => rule.enabled);
 
   const presentCategories = new Set(
     job.deliverables.map((item) => item.category),
@@ -919,7 +923,11 @@ export default async function JobPage({
             Assignment ID and site, and kept against whoever uploaded them.
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="flex flex-col gap-4">
+          {canEditPlanned ? (
+            <DeliverableSections jobId={job.id} rules={sections} />
+          ) : null}
+
           <Deliverables
             jobId={job.id}
             rules={rules}

@@ -20,11 +20,15 @@ export type CalDavResult = {
   ok: boolean;
   /** Zero when the request never reached the server. */
   status: number;
+  /** What the server sent back, on failure. */
   body?: string;
+  /** Our own account of it, where the status on its own would mislead. */
+  detail?: string;
 };
 
 /** A failure in a form worth showing someone: "HTTP 401", "fetch failed". */
 export function describeFailure(result: CalDavResult): string {
+  if (result.detail) return result.detail;
   if (result.status === 0) return result.body || "server unreachable";
   return `HTTP ${result.status}`;
 }
@@ -84,18 +88,54 @@ async function request(
   }
 
   // Bodies are only read on failure: a successful PUT returns nothing useful
-  // and reading it would just add a round trip.
-  const body = response.ok ? undefined : await response.text().catch(() => "");
+  // and reading it would just add a round trip. Truncated because a proxy's
+  // error page is a whole HTML document and this gets stored and displayed.
+  const body = response.ok
+    ? undefined
+    : (await response.text().catch(() => "")).slice(0, 500);
 
   return { ok: response.ok, status: response.status, body };
 }
 
 /**
+ * Asks the server whether a collection is really there.
+ *
+ * PROPFIND is a standard method every proxy passes through, which is the point:
+ * it is how a "the calendar exists" claim gets checked rather than inferred
+ * from a status code that could have come from anywhere.
+ */
+export async function collectionExists(
+  config: CalDavConfig,
+  url: string,
+): Promise<CalDavResult> {
+  const result = await request(config, "PROPFIND", url, {
+    body: `<?xml version="1.0" encoding="utf-8" ?>
+<D:propfind xmlns:D="DAV:"><D:prop><D:resourcetype/></D:prop></D:propfind>`,
+    headers: {
+      "Content-Type": "application/xml; charset=utf-8",
+      Depth: "0",
+    },
+  });
+
+  // 207 Multi-Status is the answer to a PROPFIND that found something.
+  if (result.status === 207) return { ok: true, status: 207 };
+  return { ok: false, status: result.status, body: result.body };
+}
+
+/** The system account's own calendar list. Reachable means the login works. */
+export async function checkAccess(config: CalDavConfig): Promise<CalDavResult> {
+  return collectionExists(config, `${calendarHome(config)}/`);
+}
+
+/**
  * Creates the calendar if it is not already there.
  *
- * MKCALENDAR answers 405 when the collection exists, which is success as far
- * as provisioning is concerned — this runs on every sync and must be cheap and
- * idempotent.
+ * MKCALENDAR is not a method most proxies have heard of, and several answer it
+ * with 405 of their own accord — the same status a CalDAV server sends to mean
+ * "that collection already exists". Taking 405 at its word is how a calendar
+ * that was never created comes to be treated as ready, after which every event
+ * written to it fails on its own. Anything other than an outright success is
+ * therefore checked with a PROPFIND before it is believed.
  */
 export async function ensureCalendar(
   config: CalDavConfig,
@@ -121,10 +161,20 @@ export async function ensureCalendar(
     headers: { "Content-Type": "application/xml; charset=utf-8" },
   });
 
-  if (result.ok || result.status === 405) {
-    return { ok: true, status: result.status };
-  }
-  return result;
+  if (result.ok) return result;
+
+  const present = await collectionExists(config, url);
+  if (present.ok) return { ok: true, status: result.status };
+
+  // Said in full, because the two causes need opposite fixes: a rejected
+  // MKCALENDAR is a permissions or account problem on NextCloud, and a
+  // rejected MKCALENDAR the server never saw is the proxy in front of it.
+  return {
+    ok: false,
+    status: result.status,
+    body: result.body,
+    detail: `MKCALENDAR answered ${describeFailure(result)} and the calendar is still not there (PROPFIND: ${describeFailure(present)}). A 405 from a proxy rather than from NextCloud reads the same as "it already exists" — check that MKCALENDAR is passed through.`,
+  };
 }
 
 export async function putEvent(

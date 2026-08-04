@@ -8,6 +8,8 @@ import { getCompanySettings } from "@/lib/company";
 import { parseDatetimeLocalInZone, roundToInterval } from "@/lib/datetime";
 import { db } from "@/lib/db";
 import { deliverableLabel, resolveDeliverableRules } from "@/lib/deliverables";
+import { flag, optionalText } from "@/lib/form";
+import { saveJobRule } from "@/lib/job-deliverables";
 import { isJobField, JOB_FIELDS, type JobFieldName } from "@/lib/job-fields";
 import { resolvePayRate } from "@/lib/pay-rates";
 import { notify } from "@/lib/notifications";
@@ -16,6 +18,7 @@ import { getSessionUser, permissionScope, type SessionUser } from "@/lib/session
 import { adjustmentMinutes } from "@/lib/time-tracking";
 import {
   ContactType,
+  DeliverableCategory,
   JobOutcome,
   PayType as JobPayType,
   type Prisma,
@@ -167,6 +170,10 @@ export async function clockIn(formData: FormData): Promise<ActionResult> {
       data: { lifecycle: "IN_PROGRESS" },
     });
   });
+
+  // The event has been sitting on the planned time; it now knows when the day
+  // actually started, which is what a supervisor's day view is for.
+  syncJobInBackground(jobId);
 
   await recordAudit({
     actorId: user.id,
@@ -1735,5 +1742,80 @@ export async function deleteJobTicket(formData: FormData): Promise<ActionResult>
   });
 
   revalidatePath(`/jobs/${ticket.jobId}`);
+  return ok;
+}
+
+// ---------------------------------------------------------------------------
+// What this job has to produce
+// ---------------------------------------------------------------------------
+
+const jobRuleSchema = z.object({
+  jobId: z.string().min(1),
+  category: z.enum(DeliverableCategory),
+  customLabel: optionalText,
+  enabled: flag,
+  required: flag,
+  requiresPhoto: flag,
+  requiresText: flag,
+});
+
+/**
+ * Switches a deliverable section on or off for this job alone.
+ *
+ * The project's sheet is a default. A job that needs old serials recorded when
+ * the project never asks for them, or one where the customer waives the
+ * post-install photos, is planning rather than an exception — so it is decided
+ * here and stays with the job.
+ */
+export async function saveJobDeliverableRule(
+  formData: FormData,
+): Promise<ActionResult> {
+  const parsed = jobRuleSchema.safeParse({
+    ...Object.fromEntries(formData),
+    enabled: formData.get("enabled") === "true",
+    required: formData.get("required") === "true",
+    requiresPhoto: formData.get("requiresPhoto") === "true",
+    requiresText: formData.get("requiresText") === "true",
+  });
+  if (!parsed.success) return fail(z.prettifyError(parsed.error));
+
+  const { jobId, category, ...rule } = parsed.data;
+
+  const context = await loadContext(jobId);
+  if (!context) return fail("Job not found.");
+
+  const { user, job } = context;
+  if (!(await canOnJob(user, "job.edit_planned_fields", job))) {
+    return fail("You cannot change what this job has to produce.");
+  }
+
+  // A section that is off cannot also be mandatory; letting both be true would
+  // block checkout on something the tech is never shown.
+  const normalised = {
+    ...rule,
+    customLabel: category === "CUSTOM" ? rule.customLabel : null,
+    required: rule.enabled && rule.required,
+  };
+
+  await saveJobRule(jobId, { category, ...normalised });
+
+  await recordAudit({
+    actorId: user.id,
+    entityType: "Job",
+    entityId: jobId,
+    jobId,
+    projectId: job.projectId,
+    action: "updated",
+    detail: {
+      field: `Deliverables — ${deliverableLabel(category, normalised.customLabel)}`,
+      to: normalised.enabled
+        ? normalised.required
+          ? "required"
+          : "optional"
+        : "off",
+    },
+  });
+
+  touch(jobId);
   return ok;
 }

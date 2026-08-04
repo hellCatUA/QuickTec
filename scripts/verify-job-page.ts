@@ -1222,6 +1222,72 @@ async function main() {
     await db.jobAssignment.delete({ where: { id: joined.id } });
   });
 
+  // --- the sections this job asks for ---------------------------------------
+  // Old Serials, Return Labels and the rest existed in the model and on the
+  // project, but there was nowhere to switch them on for one job — so a
+  // customer who wants serials recorded on this visit alone could not be
+  // answered without changing the project for everybody.
+  await bossPage(browser, bossToken, async (planner) => {
+    await planner.goto(url, { waitUntil: "load" });
+    await planner.waitForTimeout(1000);
+
+    check(
+      "the sections are folded away until somebody wants them",
+      await planner.getByRole("button", { name: /Sections/ }).isVisible(),
+      true,
+    );
+
+    await planner.getByRole("button", { name: /Sections/ }).click();
+    await planner.waitForTimeout(300);
+
+    await planner
+      .getByRole("checkbox", { name: "Old Serials" })
+      .check({ force: true });
+    await planner.waitForTimeout(2000);
+
+    const rules = await db.deliverableRequirement.findMany({
+      where: { jobId: assignment.jobId },
+      select: { category: true, enabled: true, required: true },
+    });
+    const on = rules
+      .filter((rule) => rule.enabled)
+      .map((rule) => rule.category)
+      .sort();
+
+    check("switching one on saves it against this job", on.includes("OLD_SERIALS"), true);
+    // The trap: job rules win outright over the project's, so writing one row
+    // on its own would leave the job asking for that row and nothing else.
+    check(
+      "and what the project already asked for is still there",
+      on.includes("PRE_INSTALL") && on.includes("POST_INSTALL"),
+      true,
+    );
+    check("the whole sheet is written, not one row", rules.length, 10);
+
+    await planner
+      .locator('[data-section="OLD_SERIALS"]')
+      .getByRole("checkbox", { name: "Required", exact: true })
+      .check({ force: true });
+    await planner.waitForTimeout(2000);
+    check(
+      "and that section on its own can be made mandatory",
+      (
+        await db.deliverableRequirement.findFirstOrThrow({
+          where: { jobId: assignment.jobId, category: "OLD_SERIALS" },
+        })
+      ).required,
+      true,
+    );
+
+    await planner.reload({ waitUntil: "domcontentloaded" });
+    await planner.waitForTimeout(500);
+    check(
+      "the tech is now shown the section",
+      await planner.getByRole("button", { name: "Add to Old Serials" }).isVisible(),
+      true,
+    );
+  });
+
   // --- the crew picker ------------------------------------------------------
   await bossPage(browser, bossToken, async (planner) => {
     await planner.goto(url, { waitUntil: "load" });
