@@ -75,6 +75,13 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 
+# The font the photo stamp is drawn in. This image installs none of its own,
+# and text with no font to render it in draws nothing at all — the stamp's
+# background appears and the date and site number do not, which is a photo
+# nobody can tie to a job. Carried rather than assumed, so the same bytes are
+# used here and in development.
+COPY --from=builder --chown=nextjs:nodejs /app/assets ./assets
+
 # Photos and generated exports live on a bind mount; create the path so the
 # first write does not fail on a fresh host.
 RUN mkdir -p /data/uploads && chown -R nextjs:nodejs /data

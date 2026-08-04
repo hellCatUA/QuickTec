@@ -1,3 +1,4 @@
+import path from "node:path";
 import exifReader from "exif-reader";
 import sharp from "sharp";
 
@@ -125,6 +126,25 @@ function escapeXml(text: string): string {
 }
 
 /**
+ * The font the stamp is drawn in, shipped with the app.
+ *
+ * Not a system font. The runtime image is Debian slim, which installs none at
+ * all, and an SVG <text> with nothing to render it in draws exactly nothing —
+ * the box appears, the label does not, and a photo goes into the record
+ * without the one thing that says which job and which day it belongs to. That
+ * is not something a person notices while working, so the dependency is
+ * carried rather than assumed.
+ */
+const STAMP_FONT_FILE = path.join(
+  process.cwd(),
+  "assets",
+  "fonts",
+  "DejaVuSansMono.ttf",
+);
+/** The family name inside that file — pango needs both. */
+const STAMP_FONT_FAMILY = "DejaVu Sans Mono";
+
+/**
  * Bottom-right stamp: 2026-07-28-887766-SBUX-#24541
  *
  * Drawn as an SVG the same size as the image and composited, so the text sits
@@ -132,26 +152,77 @@ function escapeXml(text: string): string {
  * to the image so it stays legible on a 4032px photo and does not swamp a
  * small one.
  */
-function watermarkSvg(text: string, width: number, height: number): Buffer {
-  const fontSize = Math.max(16, Math.round(width / 48));
-  const padding = Math.round(fontSize * 0.6);
+export type StampLayer = {
+  input: Buffer;
+  top: number;
+  left: number;
+};
+
+/**
+ * The two layers of the stamp: a dark plate, and the label on top of it.
+ *
+ * Split because they are rendered by different things. Shapes are geometry and
+ * an SVG draws them anywhere; text needs a font, and the only way to be sure
+ * which one is to hand the file over rather than name a family and hope.
+ */
+export async function stampLayers(
+  text: string,
+  width: number,
+  height: number,
+): Promise<StampLayer[]> {
+  let fontSize = Math.max(16, Math.round(width / 48));
   const margin = Math.round(fontSize * 0.9);
-  const boxHeight = fontSize + padding * 2;
-  // Roughly the advance width of the monospace digits and dashes used here.
-  const boxWidth = Math.round(text.length * fontSize * 0.62) + padding * 2;
 
-  const x = Math.max(margin, width - boxWidth - margin);
-  const y = Math.max(margin, height - boxHeight - margin);
+  /**
+   * Rendered before the plate rather than after: its real size is what the
+   * plate is drawn to fit, so the plate cannot come out too small for the
+   * label or too wide for the corner. The old code guessed the width from the
+   * character count and a fudge factor.
+   *
+   * dpi is 72 so that a point is a pixel and the size asked for is the size
+   * drawn — pango scales by dpi/72, and anything else silently multiplies it.
+   */
+  async function render(size: number) {
+    return sharp({
+      text: {
+        text: `<span foreground="#ffffff">${escapeXml(text)}</span>`,
+        font: `${STAMP_FONT_FAMILY} ${size}`,
+        fontfile: STAMP_FONT_FILE,
+        rgba: true,
+        dpi: 72,
+      },
+    })
+      .png()
+      .toBuffer({ resolveWithObject: true });
+  }
 
-  return Buffer.from(`
-    <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
-      <rect x="${x}" y="${y}" width="${boxWidth}" height="${boxHeight}"
-            rx="${Math.round(fontSize * 0.3)}" fill="rgba(0,0,0,0.55)" />
-      <text x="${x + padding}" y="${y + padding + fontSize * 0.8}"
-            font-family="monospace" font-size="${fontSize}"
-            fill="#ffffff">${escapeXml(text)}</text>
-    </svg>
-  `);
+  let label = await render(fontSize);
+
+  // A long assignment id on a narrow photo. Shrink to the width actually
+  // available rather than letting the stamp run off the edge of the picture.
+  const available = width - margin * 2;
+  const wanted = label.info.width + Math.round(fontSize * 0.6) * 2;
+  if (wanted > available) {
+    fontSize = Math.max(8, Math.floor((fontSize * available) / wanted));
+    label = await render(fontSize);
+  }
+
+  const padding = Math.round(fontSize * 0.6);
+  const boxWidth = Math.min(width, label.info.width + padding * 2);
+  const boxHeight = Math.min(height, label.info.height + padding * 2);
+  const x = Math.max(0, width - boxWidth - margin);
+  const y = Math.max(0, height - boxHeight - margin);
+
+  const plate = Buffer.from(
+    `<svg width="${boxWidth}" height="${boxHeight}" xmlns="http://www.w3.org/2000/svg">` +
+      `<rect x="0" y="0" width="${boxWidth}" height="${boxHeight}" ` +
+      `rx="${Math.round(fontSize * 0.3)}" fill="rgba(0,0,0,0.55)" /></svg>`,
+  );
+
+  return [
+    { input: plate, left: x, top: y },
+    { input: label.data, left: x + padding, top: y + padding },
+  ];
 }
 
 export async function processImage(
@@ -195,9 +266,9 @@ export async function processImage(
   const { width, height } = rotated.info;
 
   if (watermark) {
-    pipeline = sharp(rotated.data).composite([
-      { input: watermarkSvg(watermark, width, height), top: 0, left: 0 },
-    ]);
+    pipeline = sharp(rotated.data).composite(
+      await stampLayers(watermark, width, height),
+    );
   }
 
   const data = await pipeline.jpeg({ quality: JPEG_QUALITY, mozjpeg: true }).toBuffer();

@@ -19,7 +19,8 @@
     "verify:approvals": "tsx --tsconfig tsconfig.json scripts/verify-approvals-page.ts",
     "verify:auth": "tsx --tsconfig tsconfig.json scripts/verify-auth.ts",
     "verify:forms": "tsx --tsconfig tsconfig.json scripts/verify-forms.ts",
-    "verify:form-pages": "tsx --tsconfig tsconfig.json scripts/verify-form-pages.ts"
+    "verify:form-pages": "tsx --tsconfig tsconfig.json scripts/verify-form-pages.ts",
+    "verify:images": "tsx --tsconfig tsconfig.json scripts/verify-images.ts"
   },
   "repository": {
     "type": "git",
