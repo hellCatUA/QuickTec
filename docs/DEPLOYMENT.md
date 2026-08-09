@@ -623,6 +623,26 @@ An old `oidc` app without PKCE support. Update the app from the App Store.
 directory is not owned by 1001:1001 (step 2). `docker compose logs app` tells
 the two apart: a `413` never reaches the app, an `EACCES` does.
 
+**Every photo is refused, whatever it is**
+Look at **Photo pipeline** on `/settings/integrations` first. It puts a picture
+through the real pipeline on every load and names what broke, which separates
+the three causes that look identical from the field:
+
+- *The image library did not load* — sharp's native binary is built for a
+  different architecture than the container runs on. Rebuild the image on the
+  machine that will run it, or build with the matching `--platform`.
+- *The HEIC fallback decoder did not load* — photos from an iPhone cannot be
+  decoded. Rebuild; the dependency is in `package.json`.
+- *The stamp will be an empty box* — the font at `assets/fonts` was not copied
+  into the image. Photos still store, without their provenance label.
+
+The upload itself now distinguishes a file that is not a picture from a server
+that could not process one, and logs the real error either way:
+
+```bash
+docker compose logs app | grep '\[upload\]'
+```
+
 **A page shows `ERROR` and an eight-digit number**
 That is a Next.js error digest. Production hides the real error from the
 browser on purpose and prints it in the server log under the same number:

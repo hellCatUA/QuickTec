@@ -56,6 +56,32 @@ export function isPdf(mimeType: string, data: Buffer): boolean {
 }
 
 /**
+ * Whether these bytes are a picture at all, judged by the magic number.
+ *
+ * Worth knowing separately from whether the pipeline succeeded. "That file
+ * could not be read as a photo" is true and useful when somebody attached a
+ * .mov; said about a perfectly good JPEG that failed for a reason on our side,
+ * it sends a tech back out to retake a photo that was never the problem.
+ */
+export function looksLikeImage(data: Buffer): boolean {
+  if (data.length < 12) return false;
+
+  const jpeg = data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff;
+  const png = data.subarray(0, 8).toString("latin1") === "\x89PNG\r\n\x1a\n";
+  const gif = data.subarray(0, 3).toString("latin1") === "GIF";
+  const webp =
+    data.subarray(0, 4).toString("latin1") === "RIFF" &&
+    data.subarray(8, 12).toString("latin1") === "WEBP";
+  const tiff =
+    data.subarray(0, 4).toString("latin1") === "II*\0" ||
+    data.subarray(0, 4).toString("latin1") === "MM\0*";
+
+  return (
+    jpeg || png || gif || webp || tiff || isHeic("application/octet-stream", data)
+  );
+}
+
+/**
  * [degrees, minutes, seconds] plus a hemisphere letter -> signed decimal.
  * Exported so the conversion can be tested directly: sharp cannot write a GPS
  * IFD, so there is no way to round-trip a geotagged file in a test.
@@ -262,16 +288,23 @@ export async function processImage(
     });
 
   // Dimensions after rotation, which is what the watermark has to be placed on.
-  const rotated = await pipeline.clone().jpeg().toBuffer({ resolveWithObject: true });
+  // Encoded at the final quality so a photo with no stamp is compressed once
+  // rather than twice.
+  const rotated = await pipeline
+    .clone()
+    .jpeg({ quality: JPEG_QUALITY, mozjpeg: true })
+    .toBuffer({ resolveWithObject: true });
   const { width, height } = rotated.info;
 
-  if (watermark) {
-    pipeline = sharp(rotated.data).composite(
-      await stampLayers(watermark, width, height),
-    );
-  }
+  const finished = watermark
+    ? await drawStamp(rotated.data, watermark, width, height)
+    : { data: rotated.data, stamped: false };
 
-  const data = await pipeline.jpeg({ quality: JPEG_QUALITY, mozjpeg: true }).toBuffer();
+  const data = finished.stamped
+    ? await sharp(finished.data)
+        .jpeg({ quality: JPEG_QUALITY, mozjpeg: true })
+        .toBuffer()
+    : finished.data;
 
   return {
     data,
@@ -281,8 +314,57 @@ export async function processImage(
     capturedAt: facts.capturedAt,
     gpsLat: facts.gpsLat,
     gpsLng: facts.gpsLng,
-    watermarked: Boolean(watermark),
+    watermarked: finished.stamped,
   };
+}
+
+/**
+ * Puts the stamp on a photo, or hands the photo back without one.
+ *
+ * The stamp is provenance and provenance is worth a lot — but not the picture
+ * itself. Drawing text needs a font, pango and fontconfig, none of which the
+ * photo needs; a libvips built without pango throws here and would otherwise
+ * take the upload down with it. A tech standing in a server room with the only
+ * photo of what they found there must not be told to take it again because a
+ * corner label could not be drawn.
+ *
+ * The renderer is a parameter so this decision can be exercised directly: the
+ * failure it exists for cannot be provoked through sharp on a build where text
+ * happens to work.
+ */
+export async function drawStamp(
+  photo: Buffer,
+  text: string,
+  width: number,
+  height: number,
+  render: typeof stampLayers = stampLayers,
+): Promise<{ data: Buffer; stamped: boolean }> {
+  try {
+    const layers = await render(text, width, height);
+    return { data: await sharp(photo).composite(layers).toBuffer(), stamped: true };
+  } catch (error) {
+    console.error("[images] the stamp could not be drawn", error);
+    return { data: photo, stamped: false };
+  }
+}
+
+/**
+ * Whether the stamp comes out with any ink in it.
+ *
+ * The failure this catches has happened: with no font to render it, the plate
+ * was drawn and the label was not, so every photo went into the record
+ * carrying a black rectangle where the job and the date should be. Nothing
+ * errored, nothing looked wrong until somebody opened a photo. Counting the
+ * pixels is the only way to tell that apart from a stamp that worked.
+ */
+export async function stampHasInk(text = "PROBE-0000"): Promise<boolean> {
+  const layers = await stampLayers(text, 1600, 1200);
+  const label = layers[layers.length - 1]?.input;
+  if (!label) return false;
+
+  const { channels } = await sharp(label).stats();
+  const alpha = channels[channels.length - 1];
+  return Boolean(alpha && alpha.max > 0);
 }
 
 /**
@@ -301,6 +383,105 @@ export function watermarkText(input: {
     input.customerCode,
     `#${input.siteNumber}`,
   ].join("-");
+}
+
+export type PipelineProbe = {
+  /** False when no photo can be uploaded at all. */
+  ok: boolean;
+  /** The one thing to fix, or "working". */
+  detail: string;
+  /** Everything else worth knowing, fatal or not. */
+  notes: string[];
+};
+
+/**
+ * Runs a picture through the real pipeline and reports what happened.
+ *
+ * "I cannot upload any photo" has several causes that look identical from the
+ * field — sharp's native binary built for the wrong architecture, a missing
+ * font, a libvips without an HEVC decoder — and the only place they are
+ * distinguishable is here, on the server, with something to compare against.
+ * A synthetic image rather than a fixture on disk, so this cannot itself fail
+ * for want of a file.
+ */
+export async function probeImagePipeline(): Promise<PipelineProbe> {
+  const notes: string[] = [];
+
+  let sample: Buffer;
+  try {
+    sample = await sharp({
+      create: { width: 64, height: 48, channels: 3, background: "#3a6ea5" },
+    })
+      .jpeg()
+      .toBuffer();
+  } catch (error) {
+    return {
+      ok: false,
+      detail: `The image library did not load: ${message(error)}`,
+      notes: [
+        "Nothing can be uploaded until this is fixed. It is almost always sharp's native binary built for a different architecture than the one the container runs on — rebuild the image on the machine that will run it, or with the right --platform.",
+      ],
+    };
+  }
+
+  try {
+    const processed = await processImage(sample, "image/jpeg", "PROBE-0000");
+    if (processed.width === null) notes.push("Dimensions were not read back.");
+    if (!processed.watermarked) {
+      notes.push(
+        "Photos will store, but with no stamp at all — text rendering threw. Check the server log for “the stamp could not be drawn”.",
+      );
+    } else if (!(await stampHasInk())) {
+      notes.push(
+        `Photos will store, but their stamp will be an empty box: no font could be loaded, so the label renders blank. The font ships at ${STAMP_FONT_FILE} — check it was copied into the image.`,
+      );
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      detail: `A photo could not be processed: ${message(error)}`,
+      notes,
+    };
+  }
+
+  // iPhones are the entire input path for this app, and their photos can
+  // arrive as HEIC. When libvips has no HEVC decoder the code falls back to a
+  // pure-JS one that is loaded on demand — so a build that dropped it looks
+  // perfectly healthy right up until the first photo from a phone.
+  let libvipsDecodesHeic = true;
+  try {
+    await sharp({
+      create: { width: 8, height: 8, channels: 3, background: "#000" },
+    })
+      .heif({ compression: "av1" })
+      .toBuffer();
+  } catch {
+    libvipsDecodesHeic = false;
+  }
+
+  try {
+    await import("heic-convert");
+    if (!libvipsDecodesHeic) {
+      notes.push(
+        "This libvips has no HEVC decoder, so photos from an iPhone take the slower pure-JS path. Uploads still work.",
+      );
+    }
+  } catch (error) {
+    const how = libvipsDecodesHeic
+      ? "libvips can decode them, so most will still work, but anything it chokes on will fail"
+      : "and libvips cannot decode them either, so every photo from an iPhone will fail";
+    notes.push(`The HEIC fallback decoder did not load (${message(error)}) — ${how}.`);
+  }
+
+  return {
+    ok: true,
+    detail: notes.length > 0 ? "Working, with notes" : "Working",
+    notes,
+  };
+}
+
+function message(error: unknown): string {
+  return error instanceof Error ? error.message.split("\n")[0] : String(error);
 }
 
 /** Signatures are drawn on a transparent canvas; PNG keeps them crisp. */

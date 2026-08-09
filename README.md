@@ -333,13 +333,24 @@ a counter frozen at zero, which reads as a failed tap.
 **Photos** — everything becomes JPEG, capped at 2400px on the long edge. HEIC
 from an iPhone is decoded by libvips where the build supports it and by a
 pure-JS libheif otherwise, because that format is the entire input path and
-cannot be allowed to fail on a platform quirk. EXIF is read before conversion
-strips it: the timestamp and GPS fix are the only evidence a photo was taken on
-site. The stamp goes bottom-right:
+cannot be allowed to fail on a platform quirk. That fallback is loaded on
+demand, which meant tracing never saw it and the standalone build shipped
+without it — so `outputFileTracingIncludes` names it, and the font, explicitly.
+EXIF is read before conversion strips it: the timestamp and GPS fix are the
+only evidence a photo was taken on site. The stamp goes bottom-right:
 
 ```
 2026-07-28-887766-SBUX-#24541
 ```
+
+A photo is never lost to its stamp. Drawing the label needs a font, pango and
+fontconfig; the picture needs none of them, so a stamp that cannot be drawn
+leaves an unstamped photo rather than an upload that failed. And an upload that
+does fail says which kind of failure it was — a file that is not a picture, or
+a server that could not process one — because telling a tech to retake a photo
+that was never the problem sends them back out for nothing.
+`/settings/integrations` runs the real pipeline on every load and names what
+broke.
 
 **Exports** — three, with different audiences.
 

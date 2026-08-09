@@ -10,6 +10,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { calendarDisplayName } from "@/lib/calendar/sync";
+import { probeImagePipeline } from "@/lib/images";
 import { db } from "@/lib/db";
 import { GROUP_TO_ROLE } from "@/lib/nextcloud-groups";
 import { can, getSessionUser } from "@/lib/session";
@@ -44,6 +45,11 @@ export default async function IntegrationsPage() {
   const hasCalDav = Boolean(
     process.env.CALDAV_USERNAME && process.env.CALDAV_PASSWORD,
   );
+
+  // Run for real rather than reported from config: every cause of "I cannot
+  // upload any photo" lives in the native libraries, and the only way to know
+  // which one is to put a picture through them.
+  const photos = await probeImagePipeline();
 
   const [activeUsers, provisioned, syncedJobs, stuck] = await Promise.all([
     db.user.count({ where: { active: true } }),
@@ -125,6 +131,25 @@ export default async function IntegrationsPage() {
             When a user is in several groups, Manager wins, then Administrator,
             Supervisor, Accountant, Tech.
           </p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Photo pipeline</CardTitle>
+          <CardDescription>
+            Checked by putting a picture through it on every load, because
+            every way this breaks is in a native library and none of them show
+            up in the configuration.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <Status ok={photos.ok}>{photos.detail}</Status>
+          {photos.notes.map((note, index) => (
+            <p key={index} className="text-xs text-muted-foreground">
+              {note}
+            </p>
+          ))}
         </CardContent>
       </Card>
 

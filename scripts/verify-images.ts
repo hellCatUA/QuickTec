@@ -1,6 +1,14 @@
 import "dotenv/config";
 import sharp from "sharp";
-import { processImage, stampLayers, watermarkText } from "@/lib/images";
+import {
+  drawStamp,
+  looksLikeImage,
+  probeImagePipeline,
+  processImage,
+  stampHasInk,
+  stampLayers,
+  watermarkText,
+} from "@/lib/images";
 
 /**
  * Checks that a photo comes out of the pipeline carrying its stamp.
@@ -139,6 +147,52 @@ async function main() {
     (plate.width ?? 0) < 640 && (plate.height ?? 0) < 480,
   );
   ok("sitting inside the frame", smallLayers[0].left >= 0 && smallLayers[0].top >= 0);
+
+  console.log("\n--- a photo is never lost to its stamp ---");
+  //
+  // A libvips built without pango throws where the label is drawn. That took
+  // the whole upload down with it, and told the tech to retake a photo that
+  // was never the problem. The renderer is injected because that failure
+  // cannot be provoked through sharp on a build where text works.
+  const original = await photo(1600, 1200);
+  const fallback = await drawStamp(original, text, 1600, 1200, async () => {
+    throw new Error("pango: no font could be loaded");
+  });
+  check("the photo survives a stamp that cannot be drawn", fallback.data.equals(original), true);
+  // And says so, rather than claiming a stamp that is not on the picture.
+  check("and is not recorded as stamped", fallback.stamped, false);
+
+  const drawn = await drawStamp(original, text, 1600, 1200);
+  check("while a stamp that can be drawn still is", drawn.stamped, true);
+  ok("and changes the picture", !drawn.data.equals(original));
+
+  console.log("\n--- telling a bad file from a bad server ---");
+
+  ok("a JPEG is recognised from its bytes", looksLikeImage(await photo(64, 48)));
+  ok(
+    "a QuickTime video is not",
+    !looksLikeImage(
+      Buffer.concat([Buffer.alloc(4), Buffer.from("ftypqt  ", "latin1")]),
+    ),
+  );
+  ok("nor is a text file", !looksLikeImage(Buffer.from("hello there")));
+  // An iPhone sending application/octet-stream still has to be let through.
+  ok(
+    "a HEIC is, whatever it calls itself",
+    looksLikeImage(
+      Buffer.concat([Buffer.alloc(4), Buffer.from("ftypheic", "latin1"), Buffer.alloc(8)]),
+    ),
+  );
+
+  // The bug that shipped once: the plate drew, the label did not, and every
+  // photo went into the record with a black box where the job should be.
+  ok("the stamp comes out with ink in it", await stampHasInk());
+
+  const probe = await probeImagePipeline();
+  check("the pipeline reports itself working here", probe.ok, true);
+  // Printed rather than asserted: what libvips was built with varies by
+  // machine, and none of it stops a photo storing.
+  for (const note of probe.notes) console.log(`      note: ${note}`);
 
   console.log("\n--- what must not be stamped ---");
 

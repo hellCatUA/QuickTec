@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { processImage } from "@/lib/images";
+import { isPdf, looksLikeImage, processImage } from "@/lib/images";
 import { copyFile, storeFile, storageErrorMessage } from "@/lib/storage";
 import type { JobDocumentKind } from "@prisma-client";
 
@@ -40,8 +40,16 @@ export async function storeDocument(
   try {
     // No watermark: their document, unaltered.
     processed = await processImage(input, file.type, null);
-  } catch {
-    return { error: "That file could not be read as a photo or a PDF." };
+  } catch (error) {
+    console.error(`[upload] processing ${file.name || "a document"} failed`, error);
+
+    if (!looksLikeImage(input) && !isPdf(file.type, input)) {
+      return { error: "That file could not be read as a photo or a PDF." };
+    }
+    return {
+      error:
+        "The file reached the server but could not be processed there. Check Photo pipeline under Settings → Integrations.",
+    };
   }
 
   let stored;

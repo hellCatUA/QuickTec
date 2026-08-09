@@ -7,7 +7,13 @@ import { getCompanySettings } from "@/lib/company";
 import { isoDateInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
 import { deliverableLabel } from "@/lib/deliverables";
-import { processImage, processSignature, watermarkText } from "@/lib/images";
+import {
+  isPdf,
+  looksLikeImage,
+  processImage,
+  processSignature,
+  watermarkText,
+} from "@/lib/images";
 import { DOCUMENT_LABELS, storeDocument } from "@/lib/job-documents";
 import { canOnJob } from "@/lib/scope";
 import { getSessionUser, type SessionUser } from "@/lib/session";
@@ -133,10 +139,28 @@ async function storeUpload(
   let processed;
   try {
     processed = await processImage(input, file.type, stamp);
-  } catch {
+  } catch (error) {
+    // Swallowing this is how "I cannot upload any photo" became unanswerable:
+    // one message blamed the picture whatever had actually gone wrong, and
+    // nothing was written down anywhere.
+    console.error(
+      `[upload] processing ${file.name || "a photo"} failed`,
+      error,
+    );
+
+    // A file that is not a picture is the tech's to fix. Anything else is
+    // ours, and telling them to retake the photo would send them back out for
+    // nothing.
+    if (!looksLikeImage(input) && !isPdf(file.type, input)) {
+      return {
+        error:
+          "That file could not be read as a photo or PDF. Try taking the picture again.",
+      };
+    }
+
     return {
       error:
-        "That file could not be read as a photo or PDF. Try taking the picture again.",
+        "The photo reached the server but could not be processed there. This is not something retaking it will fix — send this to whoever runs the server, and check Photo pipeline under Settings → Integrations.",
     };
   }
 
