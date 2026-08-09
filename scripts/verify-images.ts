@@ -213,6 +213,50 @@ async function main() {
   check("a 12MP photo comes out at 2400px", `${processed.width}x${processed.height}`, "2400x1800");
   ok(`and takes ${took.toFixed(0)} ms, not seconds`, took < 1000);
 
+  console.log("\n--- a photo the phone shrank before sending ---");
+  //
+  // The browser re-encodes to the size the server would have kept anyway,
+  // which drops the EXIF with the pixels. The timestamp and the GPS fix are
+  // the only evidence a photo was taken on site rather than in a car park
+  // afterwards, so the head of the original travels with it and is read here.
+  const original = await sharp({
+    create: { width: 4000, height: 3000, channels: 3, background: "#456" },
+  })
+    .withExif({ IFD2: { DateTimeOriginal: "2026:08:09 11:55:03" } })
+    .jpeg({ quality: 90 })
+    .toBuffer();
+
+  // What the browser sends: no metadata at all.
+  const shrunk = await sharp(original)
+    .resize({ width: 2400 })
+    .jpeg({ quality: 85 })
+    .toBuffer();
+  check(
+    "the shrunk photo carries no EXIF of its own",
+    (await sharp(shrunk).metadata()).exif === undefined,
+    true,
+  );
+
+  const withoutHead = await processImage(shrunk, "image/jpeg", null);
+  check("so on its own the capture time is lost", withoutHead.capturedAt, null);
+
+  const head = original.subarray(0, 64 * 1024);
+  const withHead = await processImage(shrunk, "image/jpeg", null, head);
+  check(
+    "and comes back when the head of the original comes too",
+    withHead.capturedAt?.toISOString().slice(0, 10),
+    "2026-08-09",
+  );
+
+  // The original still answers for itself; the head is only a fallback.
+  check(
+    "a full-size original still reads its own",
+    (await processImage(original, "image/jpeg", null)).capturedAt
+      ?.toISOString()
+      .slice(0, 10),
+    "2026-08-09",
+  );
+
   console.log("\n--- what must not be stamped ---");
 
   const pdf = Buffer.from("%PDF-1.4\n%stub\n");

@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Textarea } from "@/components/ui/field";
 import { DELIVERABLE_META, type DeliverableRule } from "@/lib/deliverables";
+import { prepareForUpload } from "@/lib/photo-upload";
 import type { DeliverableCategory } from "@prisma-client";
 import { deleteDeliverableItem, saveDeliverable } from "./upload-actions";
 
@@ -207,23 +208,71 @@ function UploadForm({
   const [text, setText] = React.useState("");
   const [customLabel, setCustomLabel] = React.useState(rule.customLabel ?? "");
   const [pending, setPending] = React.useState(false);
+  const [done, setDone] = React.useState(0);
 
+  /**
+   * One request per photo.
+   *
+   * Ten in a single request is 35 MB that has to arrive whole before anything
+   * happens — minutes on a site's LTE, past the request size limit at the end
+   * of it, with no sign of progress and all ten lost if the signal drops on
+   * the last one. Each photo is also shrunk to what the server would have kept
+   * anyway before it is sent, which is most of the wait.
+   */
   async function submit() {
     onError(null);
     setPending(true);
+    setDone(0);
 
-    const formData = new FormData();
-    formData.set("jobId", jobId);
-    formData.set("category", rule.category);
-    if (customLabel) formData.set("customLabel", customLabel);
-    if (text) formData.set("textValue", text);
-    for (const file of files) formData.append("files", file);
+    // The section is made by the first request and joined by the rest, so the
+    // photos land together however many there are.
+    let itemId: string | undefined;
 
-    const result = await saveDeliverable(null, formData);
+    for (const [index, original] of files.entries()) {
+      const prepared = await prepareForUpload(original);
+
+      const formData = new FormData();
+      formData.set("jobId", jobId);
+      formData.set("category", rule.category);
+      if (customLabel) formData.set("customLabel", customLabel);
+      // Text belongs to the section, so it goes with the request that makes it.
+      if (text && index === 0) formData.set("textValue", text);
+      if (itemId) formData.set("itemId", itemId);
+      formData.append("files", prepared.file);
+      if (prepared.exif) formData.append("exif", prepared.exif, "exif.bin");
+
+      const result = await saveDeliverable(null, formData);
+      if (!result.ok) {
+        setPending(false);
+        // Named, because the ones before it are already saved and retrying
+        // should not mean starting again.
+        onError(
+          `${original.name}: ${result.error}` +
+            (index > 0 ? ` (${index} already saved)` : ""),
+        );
+        return;
+      }
+
+      itemId ??= result.id;
+      setDone(index + 1);
+    }
+
+    // Text on its own, with no photos to carry it.
+    if (files.length === 0) {
+      const formData = new FormData();
+      formData.set("jobId", jobId);
+      formData.set("category", rule.category);
+      if (customLabel) formData.set("customLabel", customLabel);
+      if (text) formData.set("textValue", text);
+
+      const result = await saveDeliverable(null, formData);
+      setPending(false);
+      if (!result.ok) return onError(result.error);
+      return onDone();
+    }
+
     setPending(false);
-
-    if (!result.ok) onError(result.error);
-    else onDone();
+    onDone();
   }
 
   return (
@@ -296,7 +345,13 @@ function UploadForm({
           onClick={submit}
         >
           {pending ? <Loader2 className="animate-spin" /> : null}
-          {pending ? "Uploading" : "Save"}
+          {/* Counted, because a spinner on a two-minute upload is
+              indistinguishable from one that has stopped. */}
+          {pending
+            ? files.length > 1
+              ? `Uploading ${done + 1} of ${files.length}`
+              : "Uploading"
+            : "Save"}
         </Button>
         <Button
           type="button"

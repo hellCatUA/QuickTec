@@ -131,6 +131,21 @@ function readExif(raw: Buffer | undefined): ExifFacts {
   }
 }
 
+/**
+ * The raw EXIF block, or nothing.
+ *
+ * Tolerant of a truncated file on purpose: the head of a photo is enough for
+ * this, and it is deliberately all that gets sent when the phone shrank the
+ * picture itself.
+ */
+async function exifOf(data: Buffer): Promise<Buffer | undefined> {
+  try {
+    return (await sharp(data, { failOn: "none" }).metadata()).exif;
+  } catch {
+    return undefined;
+  }
+}
+
 async function heicToJpeg(data: Buffer): Promise<Buffer> {
   try {
     // Fast path. Whether this works depends on the HEVC decoder in the
@@ -263,6 +278,15 @@ export async function processImage(
   input: Buffer,
   mimeType: string,
   watermark?: string | null,
+  /**
+   * Where to read the EXIF from, when it is not in `input`.
+   *
+   * A phone shrinks its photo before sending it, which drops the timestamp and
+   * the GPS fix along with the pixels nobody wanted — so it sends the head of
+   * the original alongside, and the facts are read from that instead. Same
+   * reader either way.
+   */
+  exifSource?: Buffer | null,
 ): Promise<ProcessedImage> {
   // PDFs are documents the client sent us; they pass through untouched.
   if (isPdf(mimeType, input)) {
@@ -281,7 +305,7 @@ export async function processImage(
   const decoded = isHeic(mimeType, input) ? await heicToJpeg(input) : input;
 
   const facts = readExif(
-    (await sharp(decoded, { failOn: "none" }).metadata()).exif,
+    (await exifOf(decoded)) ?? (exifSource ? await exifOf(exifSource) : undefined),
   );
 
   /**

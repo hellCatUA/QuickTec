@@ -343,6 +343,16 @@ only evidence a photo was taken on site. The stamp goes bottom-right:
 2026-07-28-887766-SBUX-#24541
 ```
 
+**Photos go up one per request, shrunk on the phone first.** Ten in one request
+was 35 MB that had to arrive whole before anything happened: minutes on a
+site's LTE, past the 25 MB request limit at the end of it, no sign of progress,
+and all ten lost if the signal dropped on the last one. The browser now scales
+each photo to the same 2400px the server was going to keep — about 600 KB
+instead of 3.5 MB — and sends them one at a time with a count. Re-encoding
+drops the EXIF, so the first 64 KB of the original travels with it and the
+timestamp and GPS fix are read from that by the same code as always. Any
+browser that cannot decode the file sends it untouched.
+
 One decode, one encode. A 12MP photo took three and a half seconds, and most of
 that was a JPEG nobody ever saw: the resized image was compressed once to learn
 its dimensions, decoded again to draw the stamp on, and compressed a second

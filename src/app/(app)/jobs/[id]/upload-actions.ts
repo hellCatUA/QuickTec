@@ -146,7 +146,7 @@ async function storeUpload(
   job: JobForUpload,
   user: SessionUser,
   file: File,
-  options: { watermark: boolean },
+  options: { watermark: boolean; exif?: Buffer | null },
 ): Promise<{ attachmentId: string } | { error: string }> {
   if (file.size === 0) return { error: "That file is empty." };
   if (file.size > MAX_UPLOAD_BYTES) {
@@ -168,7 +168,7 @@ async function storeUpload(
 
   let processed;
   try {
-    processed = await processImage(input, file.type, stamp);
+    processed = await processImage(input, file.type, stamp, options.exif);
   } catch (error) {
     // Swallowing this is how "I cannot upload any photo" became unanswerable:
     // one message blamed the picture whatever had actually gone wrong, and
@@ -235,6 +235,15 @@ const deliverableSchema = z.object({
   category: z.enum(DeliverableCategory),
   customLabel: z.string().trim().max(80).optional(),
   textValue: z.string().trim().max(4000).optional(),
+  /**
+   * The section these photos join, when it already exists.
+   *
+   * Photos go up one request each: ten in one request is 35 MB that has to
+   * arrive whole before anything happens, exceeds the request limit, shows no
+   * progress, and loses all ten if the signal drops on the last one. One at a
+   * time means the tech sees them land, and a failure costs one photo.
+   */
+  itemId: z.string().optional(),
 });
 
 export async function saveDeliverable(
@@ -246,6 +255,7 @@ export async function saveDeliverable(
     category: formData.get("category"),
     customLabel: formData.get("customLabel") ?? undefined,
     textValue: formData.get("textValue") ?? undefined,
+    itemId: formData.get("itemId") ?? undefined,
   });
   if (!parsed.success) return fail(z.prettifyError(parsed.error));
 
@@ -285,20 +295,39 @@ export async function saveDeliverable(
 
   // Deliverables are attributed per tech so the ZIP can be foldered by
   // category and then by who took the photos.
-  const item = await db.deliverableItem.create({
-    data: {
-      jobId: job.id,
-      assignmentId: assignment?.id ?? null,
-      category,
-      customLabel: customLabel || null,
-      textValue: textValue || null,
-    },
-    select: { id: true },
-  });
+  //
+  // Scoped to the job when it is being joined rather than made: the id comes
+  // from the browser, and a section on somebody else's job is not this
+  // caller's to add to.
+  const item = parsed.data.itemId
+    ? await db.deliverableItem.findFirst({
+        where: { id: parsed.data.itemId, jobId: job.id },
+        select: { id: true },
+      })
+    : await db.deliverableItem.create({
+        data: {
+          jobId: job.id,
+          assignmentId: assignment?.id ?? null,
+          category,
+          customLabel: customLabel || null,
+          textValue: textValue || null,
+        },
+        select: { id: true },
+      });
+
+  if (!item) return fail("That section is no longer on this job.");
+
+  // Sent only when the phone shrank the photo itself, and then only for the
+  // one photo in this request.
+  const exifHead = formData.get("exif");
+  const exif =
+    files.length === 1 && exifHead instanceof File && exifHead.size > 0
+      ? Buffer.from(await exifHead.arrayBuffer())
+      : null;
 
   const failures: string[] = [];
   const results = await inBatches(files, UPLOAD_CONCURRENCY, (file) =>
-    storeUpload(job, user, file, { watermark: true }),
+    storeUpload(job, user, file, { watermark: true, exif }),
   );
 
   for (const [index, result] of results.entries()) {
@@ -322,18 +351,21 @@ export async function saveDeliverable(
     return fail(failures.join("; ") || "Nothing was saved.");
   }
 
-  await recordAudit({
-    actorId: user.id,
-    entityType: "DeliverableItem",
-    entityId: item.id,
-    jobId: job.id,
-    action: "deliverable_added",
-    detail: {
-      category,
-      label: deliverableLabel(category, customLabel),
-      photos: stored,
-    },
-  });
+  // Once per section, not once per photo: a tech saving ten of them made one
+  // entry on the timeline before this went photo-at-a-time, and should still.
+  if (!parsed.data.itemId) {
+    await recordAudit({
+      actorId: user.id,
+      entityType: "DeliverableItem",
+      entityId: item.id,
+      jobId: job.id,
+      action: "deliverable_added",
+      detail: {
+        category,
+        label: deliverableLabel(category, customLabel),
+      },
+    });
+  }
 
   touch(job.id);
   return failures.length > 0 ? fail(failures.join("; ")) : ok(item.id);
