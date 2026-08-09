@@ -1,7 +1,7 @@
 import "dotenv/config";
 import sharp from "sharp";
 import {
-  drawStamp,
+  stampOrNothing,
   looksLikeImage,
   probeImagePipeline,
   processImage,
@@ -154,17 +154,13 @@ async function main() {
   // the whole upload down with it, and told the tech to retake a photo that
   // was never the problem. The renderer is injected because that failure
   // cannot be provoked through sharp on a build where text works.
-  const original = await photo(1600, 1200);
-  const fallback = await drawStamp(original, text, 1600, 1200, async () => {
+  const refused = await stampOrNothing(text, 1600, 1200, async () => {
     throw new Error("pango: no font could be loaded");
   });
-  check("the photo survives a stamp that cannot be drawn", fallback.data.equals(original), true);
-  // And says so, rather than claiming a stamp that is not on the picture.
-  check("and is not recorded as stamped", fallback.stamped, false);
-
-  const drawn = await drawStamp(original, text, 1600, 1200);
-  check("while a stamp that can be drawn still is", drawn.stamped, true);
-  ok("and changes the picture", !drawn.data.equals(original));
+  check("a stamp that cannot be drawn is nothing, not a throw", refused, null);
+  // The photo is composited only when there are layers, so nothing is lost and
+  // nothing claims a stamp that is not on the picture.
+  ok("while one that can be drawn comes back", (await stampOrNothing(text, 1600, 1200)) !== null);
 
   console.log("\n--- telling a bad file from a bad server ---");
 
@@ -193,6 +189,29 @@ async function main() {
   // Printed rather than asserted: what libvips was built with varies by
   // machine, and none of it stops a photo storing.
   for (const note of probe.notes) console.log(`      note: ${note}`);
+
+  console.log("\n--- how long a tech waits ---");
+  //
+  // A 12MP photo used to take three and a half seconds here, most of it spent
+  // encoding a JPEG that was immediately thrown away: the resize was compressed
+  // once to learn its dimensions, decoded again to draw the stamp on, and
+  // compressed a second time. It is now decoded once and compressed once.
+  //
+  // The bound is loose on purpose — this runs on whatever machine happens to
+  // be to hand — but a second per photo is far enough above what it costs to
+  // catch the double encode coming back, and far below what a person notices.
+  const big = await sharp({
+    create: { width: 4032, height: 3024, channels: 3, background: "#3a6ea5" },
+  })
+    .jpeg({ quality: 90 })
+    .toBuffer();
+
+  const started = performance.now();
+  const processed = await processImage(big, "image/jpeg", text);
+  const took = performance.now() - started;
+
+  check("a 12MP photo comes out at 2400px", `${processed.width}x${processed.height}`, "2400x1800");
+  ok(`and takes ${took.toFixed(0)} ms, not seconds`, took < 1000);
 
   console.log("\n--- what must not be stamped ---");
 

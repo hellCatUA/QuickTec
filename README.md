@@ -343,6 +343,18 @@ only evidence a photo was taken on site. The stamp goes bottom-right:
 2026-07-28-887766-SBUX-#24541
 ```
 
+One decode, one encode. A 12MP photo took three and a half seconds, and most of
+that was a JPEG nobody ever saw: the resized image was compressed once to learn
+its dimensions, decoded again to draw the stamp on, and compressed a second
+time. Working in raw pixels until the end takes it to about 270 ms. Photos are
+also processed three at a time rather than one after another, so a tech who
+picks six does not wait six times as long — 20 seconds became under one.
+
+mozjpeg is off. It is worth roughly 10-19% on file size and costs 3.5× the
+encode time, and somebody is standing on a site waiting for it. Storage is
+cheaper than their afternoon; turning it back on is one word in
+`src/lib/images.ts` if that ever stops being true.
+
 A photo is never lost to its stamp. Drawing the label needs a font, pango and
 fontconfig; the picture needs none of them, so a stamp that cannot be drawn
 leaves an unstamped photo rather than an upload that failed. And an upload that

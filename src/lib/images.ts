@@ -17,6 +17,14 @@ import sharp from "sharp";
 
 /** Longest edge. Large enough to read a serial number, small enough to upload. */
 const MAX_EDGE = 2400;
+/**
+ * Encoded with libjpeg-turbo rather than mozjpeg.
+ *
+ * mozjpeg was worth 10-19% on file size and cost three and a half times the
+ * encode — a second per photo, with a tech standing on a site waiting for it.
+ * Storage is cheaper than their afternoon. Add `mozjpeg: true` back at the one
+ * call site if that ever stops being true.
+ */
 const JPEG_QUALITY = 82;
 
 export type ProcessedImage = {
@@ -272,11 +280,20 @@ export async function processImage(
 
   const decoded = isHeic(mimeType, input) ? await heicToJpeg(input) : input;
 
-  const source = sharp(decoded, { failOn: "none" });
-  const metadata = await source.metadata();
-  const facts = readExif(metadata.exif);
+  const facts = readExif(
+    (await sharp(decoded, { failOn: "none" }).metadata()).exif,
+  );
 
-  let pipeline = sharp(decoded, { failOn: "none" })
+  /**
+   * Decoded and resized, but not compressed.
+   *
+   * The stamp has to be placed against real dimensions, and the only way to
+   * know them is to run the resize. Asking for JPEG here would mean encoding
+   * the photo, decoding it again to draw on it, and encoding a second time —
+   * two thirds of the work in this function went on a JPEG nobody ever saw.
+   * Pixels cost 13 MB for a moment and nothing in time.
+   */
+  const pixels = await sharp(decoded, { failOn: "none" })
     // Bakes in the EXIF orientation, so a portrait photo is not sideways in
     // the report once the metadata is stripped.
     .rotate()
@@ -285,26 +302,20 @@ export async function processImage(
       height: MAX_EDGE,
       fit: "inside",
       withoutEnlargement: true,
-    });
-
-  // Dimensions after rotation, which is what the watermark has to be placed on.
-  // Encoded at the final quality so a photo with no stamp is compressed once
-  // rather than twice.
-  const rotated = await pipeline
-    .clone()
-    .jpeg({ quality: JPEG_QUALITY, mozjpeg: true })
+    })
+    .raw()
     .toBuffer({ resolveWithObject: true });
-  const { width, height } = rotated.info;
 
-  const finished = watermark
-    ? await drawStamp(rotated.data, watermark, width, height)
-    : { data: rotated.data, stamped: false };
+  const { width, height, channels } = pixels.info;
 
-  const data = finished.stamped
-    ? await sharp(finished.data)
-        .jpeg({ quality: JPEG_QUALITY, mozjpeg: true })
-        .toBuffer()
-    : finished.data;
+  const stamp = watermark
+    ? await stampOrNothing(watermark, width, height)
+    : null;
+
+  const image = sharp(pixels.data, { raw: { width, height, channels } });
+  const data = await (stamp ? image.composite(stamp) : image)
+    .jpeg({ quality: JPEG_QUALITY })
+    .toBuffer();
 
   return {
     data,
@@ -314,12 +325,12 @@ export async function processImage(
     capturedAt: facts.capturedAt,
     gpsLat: facts.gpsLat,
     gpsLng: facts.gpsLng,
-    watermarked: finished.stamped,
+    watermarked: stamp !== null,
   };
 }
 
 /**
- * Puts the stamp on a photo, or hands the photo back without one.
+ * The stamp layers, or nothing when they cannot be drawn.
  *
  * The stamp is provenance and provenance is worth a lot — but not the picture
  * itself. Drawing text needs a font, pango and fontconfig, none of which the
@@ -332,19 +343,17 @@ export async function processImage(
  * failure it exists for cannot be provoked through sharp on a build where text
  * happens to work.
  */
-export async function drawStamp(
-  photo: Buffer,
+export async function stampOrNothing(
   text: string,
   width: number,
   height: number,
   render: typeof stampLayers = stampLayers,
-): Promise<{ data: Buffer; stamped: boolean }> {
+): Promise<StampLayer[] | null> {
   try {
-    const layers = await render(text, width, height);
-    return { data: await sharp(photo).composite(layers).toBuffer(), stamped: true };
+    return await render(text, width, height);
   } catch (error) {
     console.error("[images] the stamp could not be drawn", error);
-    return { data: photo, stamped: false };
+    return null;
   }
 }
 

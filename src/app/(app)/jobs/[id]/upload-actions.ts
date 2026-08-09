@@ -32,6 +32,36 @@ const fail = (error: string): ActionResult => ({ ok: false, error });
 /** 20 MB. A 48-megapixel HEIC is about 5 MB, so this leaves plenty of room. */
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 
+/**
+ * How many photos are processed at once.
+ *
+ * A tech selects the whole section's worth in one go, and one at a time made
+ * six photos take six times as long while three cores sat idle. Bounded rather
+ * than unbounded because each one holds its decoded pixels in memory for the
+ * moment it is being worked on, and a phone can hand over twenty.
+ */
+const UPLOAD_CONCURRENCY = 3;
+
+/**
+ * Runs a job over each item, a few at a time, keeping the results in order.
+ *
+ * Order matters: the failures reported back name their file, and photos read
+ * better in the order they were picked.
+ */
+async function inBatches<T, R>(
+  items: T[],
+  limit: number,
+  run: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = [];
+  for (let start = 0; start < items.length; start += limit) {
+    results.push(
+      ...(await Promise.all(items.slice(start, start + limit).map(run))),
+    );
+  }
+  return results;
+}
+
 type JobForUpload = {
   id: string;
   projectId: string | null;
@@ -267,10 +297,13 @@ export async function saveDeliverable(
   });
 
   const failures: string[] = [];
-  for (const file of files) {
-    const result = await storeUpload(job, user, file, { watermark: true });
+  const results = await inBatches(files, UPLOAD_CONCURRENCY, (file) =>
+    storeUpload(job, user, file, { watermark: true }),
+  );
+
+  for (const [index, result] of results.entries()) {
     if ("error" in result) {
-      failures.push(`${file.name}: ${result.error}`);
+      failures.push(`${files[index].name}: ${result.error}`);
       continue;
     }
     await db.attachment.update({
@@ -401,10 +434,13 @@ export async function uploadJobDocument(
   const failures: string[] = [];
   let stored = 0;
 
-  for (const file of files) {
-    const result = await storeDocument(file, user.id, job.id);
+  const documents = await inBatches(files, UPLOAD_CONCURRENCY, (file) =>
+    storeDocument(file, user.id, job.id),
+  );
+
+  for (const [index, result] of documents.entries()) {
     if ("error" in result) {
-      failures.push(`${file.name}: ${result.error}`);
+      failures.push(`${files[index].name}: ${result.error}`);
       continue;
     }
     await db.attachment.update({

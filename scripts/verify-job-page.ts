@@ -63,6 +63,13 @@ async function main() {
   await db.reimbursement.deleteMany({ where: { jobId: assignment.jobId } });
   await db.attachment.deleteMany({ where: { jobDocumentId: assignment.jobId } });
   await db.auditEvent.deleteMany({ where: { jobId: assignment.jobId } });
+  // The sections block later on switches Old Serials on and makes it required.
+  // Job rules outrank the project's, so leaving them behind means the next run
+  // starts with a requirement nothing satisfies and checkout refuses — a
+  // failure about the run before it, not about the code.
+  await db.deliverableRequirement.deleteMany({
+    where: { jobId: assignment.jobId },
+  });
   await db.job.update({
     where: { id: assignment.jobId },
     data: {
