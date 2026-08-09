@@ -23,6 +23,14 @@ const nextConfig: NextConfig = {
       "./node_modules/heic-convert/**",
       "./node_modules/libheif-js/**",
       "./assets/fonts/**",
+      // sharp loads libvips through a .so that nothing imports, so tracing
+      // copied the package's JavaScript and left the library behind. Loading
+      // the native binding then failed and sharp fell back to its WebAssembly
+      // build — which has no pango, so drawing the stamp threw "class text not
+      // found" and took every photo upload with it. Nothing in the app said
+      // so: sharp reports the same version either way.
+      "./node_modules/@img/**",
+      "./node_modules/sharp/**",
     ],
   },
 

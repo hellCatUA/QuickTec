@@ -424,12 +424,21 @@ export async function probeImagePipeline(): Promise<PipelineProbe> {
     };
   }
 
+  // sharp falls back to a WebAssembly build when its native binding cannot be
+  // loaded, and says nothing about it — same API, same reported version. That
+  // build has no pango, so the stamp cannot be drawn at all. Worth naming
+  // rather than leaving somebody to wonder why a working install stopped
+  // stamping.
+  const wasm = "emscripten" in sharp.versions;
+
   try {
     const processed = await processImage(sample, "image/jpeg", "PROBE-0000");
     if (processed.width === null) notes.push("Dimensions were not read back.");
     if (!processed.watermarked) {
       notes.push(
-        "Photos will store, but with no stamp at all — text rendering threw. Check the server log for “the stamp could not be drawn”.",
+        wasm
+          ? "Photos store, but never stamped: sharp is running its WebAssembly build, which has no text engine. The native binding could not be loaded — usually its libvips .so is missing from the image."
+          : "Photos will store, but with no stamp at all — text rendering threw. Check the server log for “the stamp could not be drawn”.",
       );
     } else if (!(await stampHasInk())) {
       notes.push(
