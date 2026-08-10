@@ -134,9 +134,13 @@ type StoredRule = {
  * is also what makes a job's rules safe to save — see materialiseJobRules.
  */
 export function ruleSheet(stored: StoredRule[]): DeliverableRule[] {
-  const byCategory = new Map(stored.map((rule) => [rule.category, rule]));
+  const byCategory = new Map(
+    stored.filter((rule) => rule.category !== "CUSTOM").map((rule) => [rule.category, rule]),
+  );
 
-  return DELIVERABLE_ORDER.map((category) => {
+  const fixed = DELIVERABLE_ORDER.filter(
+    (category) => category !== "CUSTOM",
+  ).map((category) => {
     const fallback = PROJECT_DEFAULT_RULES.find(
       (rule) => rule.category === category,
     )!;
@@ -144,7 +148,7 @@ export function ruleSheet(stored: StoredRule[]): DeliverableRule[] {
 
     return {
       category,
-      customLabel: saved?.customLabel ?? null,
+      customLabel: null,
       // Absent means off. Only what somebody switched on is on.
       enabled: saved?.enabled ?? false,
       required: saved?.required ?? false,
@@ -153,6 +157,40 @@ export function ruleSheet(stored: StoredRule[]): DeliverableRule[] {
       order: DELIVERABLE_META[category].order,
     };
   });
+
+  /*
+   * Custom sections are not one switch but a list. A job needs somewhere to
+   * put the rack elevation and somewhere else for the cable route, and there
+   * was only ever room for one of them — the sheet held a single CUSTOM row,
+   * so the second name overwrote the first.
+   *
+   * They exist only once somebody has made them, so unlike the nine above
+   * there is no row here for one nobody asked for.
+   */
+  const custom = stored
+    .filter((rule) => rule.category === "CUSTOM" && rule.customLabel)
+    .sort((a, b) => (a.customLabel ?? "").localeCompare(b.customLabel ?? ""))
+    .map((rule) => ({
+      category: "CUSTOM" as const,
+      customLabel: rule.customLabel,
+      enabled: rule.enabled,
+      required: rule.required,
+      requiresPhoto: rule.requiresPhoto,
+      requiresText: rule.requiresText,
+      order: DELIVERABLE_META.CUSTOM.order,
+    }));
+
+  return [...fixed, ...custom];
+}
+
+/** What identifies a row: the category, or for a custom section its name. */
+export function ruleKey(rule: {
+  category: DeliverableCategory;
+  customLabel?: string | null;
+}): string {
+  return rule.category === "CUSTOM"
+    ? `CUSTOM:${rule.customLabel ?? ""}`
+    : rule.category;
 }
 
 /**

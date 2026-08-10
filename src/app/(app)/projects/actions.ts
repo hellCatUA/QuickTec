@@ -343,6 +343,8 @@ const ruleSchema = z.object({
   required: flag,
   requiresPhoto: flag,
   requiresText: flag,
+  /** Custom sections are taken away rather than switched off. */
+  remove: flag,
 });
 
 export async function saveDeliverableRule(
@@ -356,19 +358,42 @@ export async function saveDeliverableRule(
     required: formData.get("required") === "true",
     requiresPhoto: formData.get("requiresPhoto") === "true",
     requiresText: formData.get("requiresText") === "true",
+    remove: formData.get("remove") === "true",
   });
   if (!parsed.success) {
     return { ok: false, error: z.prettifyError(parsed.error) };
   }
 
-  const { projectId, category, ...rule } = parsed.data;
+  const { projectId, category, remove, ...rule } = parsed.data;
+
+  // A project may hold several custom sections, so the category alone no
+  // longer names one of them.
+  const where = {
+    projectId,
+    category,
+    jobId: null,
+    ...(category === "CUSTOM" ? { customLabel: rule.customLabel } : {}),
+  };
+
+  if (remove) {
+    if (category !== "CUSTOM" || !rule.customLabel) {
+      return { ok: false, error: "Only a custom section can be removed." };
+    }
+    await db.deliverableRequirement.deleteMany({ where });
+    revalidatePath(`/projects/${projectId}`);
+    return { ok: true };
+  }
+
+  if (category === "CUSTOM" && !rule.customLabel) {
+    return { ok: false, error: "Give the section a name." };
+  }
 
   // A section that is off cannot also be mandatory; letting both be true would
   // block checkout on something the tech is never shown.
   const normalised = { ...rule, required: rule.enabled && rule.required };
 
   const existing = await db.deliverableRequirement.findFirst({
-    where: { projectId, category, jobId: null },
+    where,
     select: { id: true },
   });
 

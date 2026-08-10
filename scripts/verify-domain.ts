@@ -471,9 +471,8 @@ async function main() {
 
 
   // --- what a job has to produce -------------------------------------------
-  const { effectiveRules, resolveDeliverableRules, ruleSheet } = await import(
-    "@/lib/deliverables"
-  );
+  const { effectiveRules, resolveDeliverableRules, ruleKey, ruleSheet } =
+    await import("@/lib/deliverables");
 
   const sectionsOn = (rules: { category: string }[]) =>
     rules.map((rule) => rule.category).join(",");
@@ -512,10 +511,47 @@ async function main() {
     sectionsOn(resolveDeliverableRules([], [])),
     "PRE_INSTALL,POST_INSTALL",
   );
+  // Nine fixed sections are always offered; a custom one exists only once
+  // somebody has made it, and a job may hold several.
   check(
-    "every section is offered for editing, not just the saved ones",
+    "every fixed section is offered for editing, not just the saved ones",
     ruleSheet([]).length,
-    10,
+    9,
+  );
+
+  const twoCustom = ruleSheet([
+    {
+      category: "CUSTOM",
+      customLabel: "Rack elevation",
+      enabled: true,
+      required: false,
+      requiresPhoto: true,
+      requiresText: false,
+    },
+    {
+      category: "CUSTOM",
+      customLabel: "Cable route",
+      enabled: true,
+      required: true,
+      requiresPhoto: true,
+      requiresText: false,
+    },
+  ]);
+  // The bug this fixes: there was room for one, so the second name overwrote
+  // the first and a job could never ask for both.
+  check("a job can hold several custom sections", twoCustom.length, 11);
+  check(
+    "each keeping its own name and its own settings",
+    twoCustom
+      .filter((rule) => rule.category === "CUSTOM")
+      .map((rule) => `${rule.customLabel}:${rule.required}`)
+      .join(", "),
+    "Cable route:true, Rack elevation:false",
+  );
+  check(
+    "and they are told apart by name, not by category",
+    ruleKey({ category: "CUSTOM", customLabel: "Cable route" }),
+    "CUSTOM:Cable route",
   );
   check(
     "an untouched section is off, and carries the settings it would get",

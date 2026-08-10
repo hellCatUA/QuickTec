@@ -1277,7 +1277,9 @@ async function main() {
       on.includes("PRE_INSTALL") && on.includes("POST_INSTALL"),
       true,
     );
-    check("the whole sheet is written, not one row", rules.length, 10);
+    // The nine fixed sections. A custom one is not among them until somebody
+    // makes it, because it has no meaning without the name they give it.
+    check("the whole sheet is written, not one row", rules.length, 9);
 
     await planner
       .locator('[data-section="OLD_SERIALS"]')

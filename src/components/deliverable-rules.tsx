@@ -1,10 +1,11 @@
 "use client";
 
-import { Loader2 } from "lucide-react";
+import { Loader2, Plus, X } from "lucide-react";
 import * as React from "react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/field";
-import { DELIVERABLE_META } from "@/lib/deliverables";
+import { DELIVERABLE_META, ruleKey } from "@/lib/deliverables";
 import type { DeliverableCategory } from "@prisma-client";
 
 /**
@@ -53,7 +54,9 @@ export function DeliverableRules({
    */
   canRequire?: boolean;
 }) {
-  const [saving, setSaving] = React.useState<DeliverableCategory | null>(null);
+  const [saving, setSaving] = React.useState<string | null>(null);
+  const [naming, setNaming] = React.useState(false);
+  const [newName, setNewName] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
   const [override, setOverride] = React.useState<EditableRule[] | null>(null);
   const [, startTransition] = React.useTransition();
@@ -67,8 +70,41 @@ export function DeliverableRules({
     else setOverride(next);
   }
 
-  function update(category: DeliverableCategory, patch: Partial<EditableRule>) {
-    const current = shown.find((rule) => rule.category === category);
+  /**
+   * Rows are addressed by key rather than by category: a job may hold several
+   * custom sections and "CUSTOM" no longer names one of them.
+   */
+  function write(rule: EditableRule, applied: EditableRule[], remove = false) {
+    const key = ruleKey(rule);
+    apply(applied);
+    setError(null);
+
+    if (!save || !owner) return;
+    setSaving(key);
+
+    startTransition(async () => {
+      const formData = new FormData();
+      formData.set(owner.field, owner.id);
+      formData.set("category", rule.category);
+      formData.set("customLabel", rule.customLabel ?? "");
+      formData.set("enabled", String(rule.enabled));
+      formData.set("required", String(rule.required));
+      formData.set("requiresPhoto", String(rule.requiresPhoto));
+      formData.set("requiresText", String(rule.requiresText));
+      if (remove) formData.set("remove", "true");
+
+      const result = await save(formData);
+      setSaving(null);
+
+      if (!result.ok) {
+        setError(result.error);
+        apply(shown);
+      }
+    });
+  }
+
+  function update(key: string, patch: Partial<EditableRule>) {
+    const current = shown.find((rule) => ruleKey(rule) === key);
     if (!current) return;
 
     const next = { ...current, ...patch };
@@ -76,33 +112,48 @@ export function DeliverableRules({
     // as "required but hidden" and block checkout on something invisible.
     if (!next.enabled) next.required = false;
 
-    const applied = shown.map((rule) =>
-      rule.category === category ? next : rule,
+    write(
+      next,
+      shown.map((rule) => (ruleKey(rule) === key ? next : rule)),
     );
-    apply(applied);
-    setError(null);
+  }
 
-    if (!save || !owner) return;
-    setSaving(category);
+  /**
+   * A new custom section.
+   *
+   * Named when it is made and not renamed afterwards: the name is what tells
+   * one from another and what the photos already filed under it are matched
+   * on, so changing it would orphan them. Somebody who picked the wrong name
+   * removes it and adds another, which costs nothing before anything is in it.
+   */
+  function addCustom() {
+    const label = newName.trim();
+    if (!label) return;
 
-    startTransition(async () => {
-      const formData = new FormData();
-      formData.set(owner.field, owner.id);
-      formData.set("category", category);
-      formData.set("customLabel", next.customLabel ?? "");
-      formData.set("enabled", String(next.enabled));
-      formData.set("required", String(next.required));
-      formData.set("requiresPhoto", String(next.requiresPhoto));
-      formData.set("requiresText", String(next.requiresText));
+    if (shown.some((rule) => rule.category === "CUSTOM" && rule.customLabel === label)) {
+      setError("There is already a section called that.");
+      return;
+    }
 
-      const result = await save(formData);
-      setSaving(null);
+    const rule: EditableRule = {
+      category: "CUSTOM",
+      customLabel: label,
+      enabled: true,
+      required: false,
+      requiresPhoto: true,
+      requiresText: false,
+    };
+    setNewName("");
+    setNaming(false);
+    write(rule, [...shown, rule]);
+  }
 
-      if (!result.ok) {
-        setError(result.error);
-        apply(applied.map((rule) => (rule.category === category ? current : rule)));
-      }
-    });
+  function removeCustom(rule: EditableRule) {
+    write(
+      rule,
+      shown.filter((item) => ruleKey(item) !== ruleKey(rule)),
+      true,
+    );
   }
 
   return (
@@ -111,10 +162,12 @@ export function DeliverableRules({
 
       {shown.map((rule) => {
         const meta = DELIVERABLE_META[rule.category];
+        const key = ruleKey(rule);
+        const custom = rule.category === "CUSTOM";
         return (
           <div
-            key={rule.category}
-            data-section={rule.category}
+            key={key}
+            data-section={key}
             className="flex flex-col gap-2 rounded-lg border border-border p-3"
           >
             <div className="flex flex-wrap items-center gap-2">
@@ -124,49 +177,41 @@ export function DeliverableRules({
                   checked={rule.enabled}
                   disabled={!canEdit || (rule.enabled && !canRequire)}
                   onChange={(event) =>
-                    update(rule.category, { enabled: event.target.checked })
+                    update(key, { enabled: event.target.checked })
                   }
                   className="size-5 accent-[var(--color-primary)]"
                 />
-                {meta.label}
+                {custom ? rule.customLabel : meta.label}
               </label>
 
               {rule.enabled && rule.required ? (
                 <Badge variant="warning">Required</Badge>
               ) : null}
 
-              {saving === rule.category ? (
+              {saving === key ? (
                 <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+              ) : null}
+
+              {custom && canEdit && canRequire ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="ml-auto"
+                  aria-label={`Remove ${rule.customLabel}`}
+                  onClick={() => removeCustom(rule)}
+                >
+                  <X />
+                </Button>
               ) : null}
             </div>
 
-            <p className="text-xs text-muted-foreground">{meta.description}</p>
+            {custom ? null : (
+              <p className="text-xs text-muted-foreground">{meta.description}</p>
+            )}
 
             {rule.enabled ? (
               <div className="flex flex-col gap-2">
-                {rule.category === "CUSTOM" ? (
-                  <Input
-                    value={rule.customLabel ?? ""}
-                    disabled={!canEdit}
-                    aria-label="Name of the custom section"
-                    placeholder="What to call this section"
-                    onChange={(event) =>
-                      // Typed locally, written once the field is left: a save
-                      // per keystroke would be a request per keystroke.
-                      apply(
-                        shown.map((item) =>
-                          item.category === "CUSTOM"
-                            ? { ...item, customLabel: event.target.value }
-                            : item,
-                        ),
-                      )
-                    }
-                    onBlur={(event) =>
-                      update("CUSTOM", { customLabel: event.target.value })
-                    }
-                  />
-                ) : null}
-
                 <div className="flex flex-wrap gap-x-4 gap-y-2 text-xs">
                   <label
                     className="flex items-center gap-1.5"
@@ -177,7 +222,7 @@ export function DeliverableRules({
                       checked={rule.required}
                       disabled={!canEdit}
                       onChange={(event) =>
-                        update(rule.category, { required: event.target.checked })
+                        update(key, { required: event.target.checked })
                       }
                       className="size-4 accent-[var(--color-primary)]"
                     />
@@ -189,7 +234,7 @@ export function DeliverableRules({
                       checked={rule.requiresPhoto}
                       disabled={!canEdit}
                       onChange={(event) =>
-                        update(rule.category, {
+                        update(key, {
                           requiresPhoto: event.target.checked,
                         })
                       }
@@ -203,7 +248,7 @@ export function DeliverableRules({
                       checked={rule.requiresText}
                       disabled={!canEdit}
                       onChange={(event) =>
-                        update(rule.category, {
+                        update(key, {
                           requiresText: event.target.checked,
                         })
                       }
@@ -217,6 +262,59 @@ export function DeliverableRules({
           </div>
         );
       })}
+
+      {/* One job often wants several: somewhere for the rack elevation and
+          somewhere else for the cable route. There used to be room for one,
+          and the second name overwrote the first. */}
+      {canEdit ? (
+        naming ? (
+          <div className="flex items-end gap-2">
+            <Input
+              value={newName}
+              autoFocus
+              aria-label="Name of the new section"
+              placeholder="Rack elevation"
+              onChange={(event) => setNewName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  addCustom();
+                }
+              }}
+            />
+            <Button
+              type="button"
+              size="sm"
+              disabled={newName.trim() === ""}
+              onClick={addCustom}
+            >
+              Add
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setNaming(false);
+                setNewName("");
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
+        ) : (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="self-start"
+            onClick={() => setNaming(true)}
+          >
+            <Plus />
+            Another section
+          </Button>
+        )
+      ) : null}
     </div>
   );
 }

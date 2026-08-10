@@ -989,10 +989,11 @@ model DeliverableRequirement {
 
   order Int @default(0)
 
-  /// One row per section per owner. Postgres counts NULLs as distinct, so the
-  /// job constraint leaves the project rows alone and the other way about.
-  @@unique([jobId, category])
-  @@unique([projectId, category])
+  /// One row per section per owner — except Custom Field, which a job may have
+  /// several of, each with its own name. Enforced by partial unique indexes
+  /// that Prisma cannot express, so they live in the migration: the fixed nine
+  /// are unique on (owner, category), and custom sections on (owner, category,
+  /// customLabel) so one job cannot hold two called the same thing.
   @@index([projectId])
   @@index([jobId])
 }

@@ -9,7 +9,11 @@ import { parseDatetimeLocalInZone, roundToInterval } from "@/lib/datetime";
 import { db } from "@/lib/db";
 import { deliverableLabel, resolveDeliverableRules } from "@/lib/deliverables";
 import { flag, optionalText } from "@/lib/form";
-import { jobRuleSheet, saveJobRule } from "@/lib/job-deliverables";
+import {
+  jobRuleSheet,
+  removeJobCustomRule,
+  saveJobRule,
+} from "@/lib/job-deliverables";
 import { isJobField, JOB_FIELDS, type JobFieldName } from "@/lib/job-fields";
 import { resolvePayRate } from "@/lib/pay-rates";
 import { notify } from "@/lib/notifications";
@@ -1767,6 +1771,8 @@ const jobRuleSchema = z.object({
   required: flag,
   requiresPhoto: flag,
   requiresText: flag,
+  /** Custom sections are taken away rather than switched off. */
+  remove: flag,
 });
 
 /**
@@ -1786,10 +1792,11 @@ export async function saveJobDeliverableRule(
     required: formData.get("required") === "true",
     requiresPhoto: formData.get("requiresPhoto") === "true",
     requiresText: formData.get("requiresText") === "true",
+    remove: formData.get("remove") === "true",
   });
   if (!parsed.success) return fail(z.prettifyError(parsed.error));
 
-  const { jobId, category, ...rule } = parsed.data;
+  const { jobId, category, remove, ...rule } = parsed.data;
 
   const context = await loadContext(jobId);
   if (!context) return fail("Job not found.");
@@ -1809,14 +1816,42 @@ export async function saveJobDeliverableRule(
 
   if (!mayRequire) {
     const current = (await jobRuleSheet(jobId))?.find(
-      (item) => item.category === category,
+      (item) =>
+        item.category === category &&
+        (category !== "CUSTOM" || item.customLabel === rule.customLabel),
     );
     if (rule.required) {
       return fail("Only a supervisor or the job's lead can make a section required.");
     }
-    if (current?.enabled && !rule.enabled) {
+    if (remove || (current?.enabled && !rule.enabled)) {
       return fail("Only a supervisor or the job's lead can remove a section.");
     }
+  }
+
+  if (remove) {
+    if (category !== "CUSTOM" || !rule.customLabel) {
+      // The fixed nine are switched off, not deleted: "off" should stay a
+      // decision somebody made rather than a row that happens to be missing.
+      return fail("Only a custom section can be removed.");
+    }
+    await removeJobCustomRule(jobId, rule.customLabel);
+
+    await recordAudit({
+      actorId: user.id,
+      entityType: "Job",
+      entityId: jobId,
+      jobId,
+      projectId: job.projectId,
+      action: "updated",
+      detail: { field: `Deliverables — ${rule.customLabel}`, to: "removed" },
+    });
+
+    touch(jobId);
+    return ok;
+  }
+
+  if (category === "CUSTOM" && !rule.customLabel) {
+    return fail("Give the section a name.");
   }
 
   // A section that is off cannot also be mandatory; letting both be true would

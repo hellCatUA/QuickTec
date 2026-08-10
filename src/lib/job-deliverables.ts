@@ -25,6 +25,7 @@ const RULE_FIELDS = {
 
 export type JobRuleInput = {
   category: DeliverableCategory;
+  /** Names a custom section, and is what tells two of them apart. */
   customLabel: string | null;
   enabled: boolean;
   required: boolean;
@@ -79,21 +80,70 @@ export async function materialiseJobRules(jobId: string): Promise<void> {
   });
 }
 
-/** Writes one section's settings, after the sheet is safely in place. */
+/**
+ * Writes one section's settings, after the sheet is safely in place.
+ *
+ * Matched on the label as well as the category, because a job may hold several
+ * custom sections and the category alone no longer names one of them. Not an
+ * upsert on a compound key: the uniqueness is partial — the nine fixed
+ * categories are one to an owner, custom sections are one per name — and
+ * Prisma cannot express that, so it lives in the migration and the lookup is
+ * done here.
+ */
 export async function saveJobRule(
   jobId: string,
   rule: JobRuleInput,
 ): Promise<void> {
   await materialiseJobRules(jobId);
 
-  await db.deliverableRequirement.update({
-    where: { jobId_category: { jobId, category: rule.category } },
+  const where = {
+    jobId,
+    category: rule.category,
+    ...(rule.category === "CUSTOM" ? { customLabel: rule.customLabel } : {}),
+  };
+
+  const existing = await db.deliverableRequirement.findFirst({
+    where,
+    select: { id: true },
+  });
+
+  const data = {
+    customLabel: rule.customLabel,
+    enabled: rule.enabled,
+    required: rule.required,
+    requiresPhoto: rule.requiresPhoto,
+    requiresText: rule.requiresText,
+  };
+
+  if (existing) {
+    await db.deliverableRequirement.update({ where: { id: existing.id }, data });
+    return;
+  }
+
+  // A custom section being made for the first time. The fixed nine are always
+  // there by now, because materialising the sheet wrote them.
+  await db.deliverableRequirement.create({
     data: {
-      customLabel: rule.customLabel,
-      enabled: rule.enabled,
-      required: rule.required,
-      requiresPhoto: rule.requiresPhoto,
-      requiresText: rule.requiresText,
+      jobId,
+      category: rule.category,
+      order: 9,
+      ...data,
     },
+  });
+}
+
+/**
+ * Takes a custom section away.
+ *
+ * Only ever a custom one: the fixed nine are switched off rather than deleted,
+ * so that "off" stays a decision somebody made rather than a row that happens
+ * to be missing.
+ */
+export async function removeJobCustomRule(
+  jobId: string,
+  customLabel: string,
+): Promise<void> {
+  await db.deliverableRequirement.deleteMany({
+    where: { jobId, category: "CUSTOM", customLabel },
   });
 }
