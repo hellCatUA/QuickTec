@@ -47,10 +47,20 @@ export function JobDocuments({
   noWorkOrder,
   canUpload,
   canDeclare,
+  only,
 }: {
   jobId: string;
   documents: JobDocument[];
   noWorkOrder: boolean;
+  /**
+   * Which of the two to render, when they are wanted in different places.
+   *
+   * The work order belongs with the job it answers to; the sign-off sheet is
+   * one of the deliverables and belongs with them. They used to share a card
+   * because they arrive from the same company, which is the least useful thing
+   * about either of them.
+   */
+  only?: JobDocumentKind;
   /** On the job: allowed to attach, and to remove their own upload. */
   canUpload: boolean;
   /** Allowed to assert that there is no work order at all. */
@@ -98,6 +108,7 @@ export function JobDocuments({
     <div className="flex flex-col gap-4">
       {error ? <p className="text-sm text-danger">{error}</p> : null}
 
+      {only === "SIGN_OFF" ? null : (
       <Section
         jobId={jobId}
         title="Work order"
@@ -129,7 +140,9 @@ export function JobDocuments({
           ) : null
         }
       />
+      )}
 
+      {only === "CLIENT_WORK_ORDER" ? null : (
       <Section
         jobId={jobId}
         title="Sign-off sheet"
@@ -142,6 +155,7 @@ export function JobDocuments({
         onUpload={upload}
         onRemove={remove}
       />
+      )}
     </div>
   );
 }

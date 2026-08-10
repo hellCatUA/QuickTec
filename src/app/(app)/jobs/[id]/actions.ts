@@ -9,7 +9,7 @@ import { parseDatetimeLocalInZone, roundToInterval } from "@/lib/datetime";
 import { db } from "@/lib/db";
 import { deliverableLabel, resolveDeliverableRules } from "@/lib/deliverables";
 import { flag, optionalText } from "@/lib/form";
-import { saveJobRule } from "@/lib/job-deliverables";
+import { jobRuleSheet, saveJobRule } from "@/lib/job-deliverables";
 import { isJobField, JOB_FIELDS, type JobFieldName } from "@/lib/job-fields";
 import { resolvePayRate } from "@/lib/pay-rates";
 import { notify } from "@/lib/notifications";
@@ -38,6 +38,13 @@ type JobContext = {
     breakPaid: boolean;
     lifecycle: string;
     assigneeIds: string[];
+    /**
+     * Whether the caller is leading this job.
+     *
+     * The lead is on site and answerable for what it records, so several
+     * decisions that are otherwise a supervisor's are theirs too.
+     */
+    isLead: boolean;
     /** The site's zone: what a planner means when they type a time. */
     timeZone: string;
   };
@@ -57,7 +64,7 @@ async function loadContext(jobId: string): Promise<JobContext | null> {
       breakPaid: true,
       lifecycle: true,
       site: { select: { timeZone: true } },
-      assignments: { select: { userId: true } },
+      assignments: { select: { userId: true, isLead: true } },
     },
   });
   if (!job) return null;
@@ -73,6 +80,9 @@ async function loadContext(jobId: string): Promise<JobContext | null> {
       breakPaid: job.breakPaid,
       lifecycle: job.lifecycle,
       assigneeIds: job.assignments.map((assignment) => assignment.userId),
+      isLead: job.assignments.some(
+        (assignment) => assignment.userId === user.id && assignment.isLead,
+      ),
       timeZone: job.site.timeZone ?? company.defaultTimeZone,
     },
   };
@@ -1785,8 +1795,28 @@ export async function saveJobDeliverableRule(
   if (!context) return fail("Job not found.");
 
   const { user, job } = context;
-  if (!(await canOnJob(user, "job.edit_planned_fields", job))) {
+
+  // Turning a section on is adding somewhere to put what is in front of you,
+  // and anyone who can upload to the job can want that. Demanding one, or
+  // removing one that was planned, decides what checkout will refuse — that
+  // stays with a supervisor or the person leading the job.
+  if (!(await canOnJob(user, "deliverable.upload", job))) {
     return fail("You cannot change what this job has to produce.");
+  }
+
+  const mayRequire =
+    job.isLead || (await canOnJob(user, "job.edit_planned_fields", job));
+
+  if (!mayRequire) {
+    const current = (await jobRuleSheet(jobId))?.find(
+      (item) => item.category === category,
+    );
+    if (rule.required) {
+      return fail("Only a supervisor or the job's lead can make a section required.");
+    }
+    if (current?.enabled && !rule.enabled) {
+      return fail("Only a supervisor or the job's lead can remove a section.");
+    }
   }
 
   // A section that is off cannot also be mandatory; letting both be true would

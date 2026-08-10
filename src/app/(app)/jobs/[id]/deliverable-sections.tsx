@@ -17,9 +17,19 @@ import { saveJobDeliverableRule } from "./actions";
 export function DeliverableSections({
   jobId,
   rules,
+  canRequire = true,
 }: {
   jobId: string;
   rules: EditableRule[];
+  /**
+   * Whether this person may also demand a section, or take one away.
+   *
+   * A tech turns one on because the job in front of them needs somewhere to
+   * put serials. Deciding that a section is mandatory — or that one somebody
+   * planned is not needed — is a supervisor's call, and it is checkout that
+   * enforces it.
+   */
+  canRequire?: boolean;
 }) {
   const [open, setOpen] = React.useState(false);
 
@@ -49,6 +59,7 @@ export function DeliverableSections({
           owner={{ field: "jobId", id: jobId }}
           rules={rules}
           save={saveJobDeliverableRule}
+          canRequire={canRequire}
         />
       ) : null}
     </div>

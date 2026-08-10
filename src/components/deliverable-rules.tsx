@@ -35,6 +35,7 @@ export function DeliverableRules({
   save,
   onChange,
   canEdit = true,
+  canRequire = true,
 }: {
   /** Which column the row hangs off, and the id to put in it. Saved rows only. */
   owner?: { field: "projectId" | "jobId"; id: string };
@@ -43,6 +44,14 @@ export function DeliverableRules({
   /** Told about every change, for a caller holding the list itself. */
   onChange?: (rules: EditableRule[]) => void;
   canEdit?: boolean;
+  /**
+   * Whether a section may be demanded, or switched back off.
+   *
+   * Turning one on is adding somewhere to put what is in front of you, and
+   * anyone on the job can want that. Making it mandatory, or removing one that
+   * was planned, decides what checkout will refuse — a different act.
+   */
+  canRequire?: boolean;
 }) {
   const [saving, setSaving] = React.useState<DeliverableCategory | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -113,7 +122,7 @@ export function DeliverableRules({
                 <input
                   type="checkbox"
                   checked={rule.enabled}
-                  disabled={!canEdit}
+                  disabled={!canEdit || (rule.enabled && !canRequire)}
                   onChange={(event) =>
                     update(rule.category, { enabled: event.target.checked })
                   }
@@ -159,7 +168,10 @@ export function DeliverableRules({
                 ) : null}
 
                 <div className="flex flex-wrap gap-x-4 gap-y-2 text-xs">
-                  <label className="flex items-center gap-1.5">
+                  <label
+                    className="flex items-center gap-1.5"
+                    hidden={!canRequire}
+                  >
                     <input
                       type="checkbox"
                       checked={rule.required}

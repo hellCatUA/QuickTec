@@ -719,6 +719,7 @@ export default async function JobPage({
 
             <JobDocuments
               jobId={job.id}
+              only="CLIENT_WORK_ORDER"
               noWorkOrder={job.noWorkOrder}
               canUpload={canUpload}
               canDeclare={canEditPlanned}
@@ -857,7 +858,6 @@ export default async function JobPage({
             }
           />
 
-          {editable("releaseCode", job.releaseCode ?? "")}
           {editable("returnTrackingNumber", job.returnTrackingNumber ?? "")}
           <BreakPay
             jobId={job.id}
@@ -946,11 +946,43 @@ export default async function JobPage({
       <Card>
         <CardHeader>
           <CardTitle>Deliverables</CardTitle>
+          {canUpload ? (
+            <DeliverableSections
+              jobId={job.id}
+              rules={sections}
+              canRequire={canManageJob}
+            />
+          ) : null}
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
-          {canEditPlanned ? (
-            <DeliverableSections jobId={job.id} rules={sections} />
-          ) : null}
+          {/* Their sheet is one of the deliverables and the last thing signed,
+              so it sits with them rather than in a paperwork block of its own.
+              First, because it is what the customer is standing there for. */}
+          <JobDocuments
+            jobId={job.id}
+            only="SIGN_OFF"
+            noWorkOrder={job.noWorkOrder}
+            canUpload={canUpload}
+            canDeclare={canEditPlanned}
+            documents={job.documents
+              .filter((doc) => doc.jobDocumentKind !== null)
+              .map((doc) => ({
+                id: doc.id,
+                kind: doc.jobDocumentKind as "CLIENT_WORK_ORDER" | "SIGN_OFF",
+                originalName: doc.originalName,
+                sizeBytes: doc.sizeBytes,
+                generated: doc.generated,
+                fillableBoxes: doc.sourceTemplate?._count.placements ?? 0,
+                templateId: doc.sourceTemplateId,
+              }))}
+          />
+
+          {/* Often known before anybody starts checking out — dispatch gives it
+              on the call. Recorded where the tech already is rather than found
+              again three blocks up at the end of the day. */}
+          <div className="border-t border-border pt-4">
+            {editable("releaseCode", job.releaseCode ?? "")}
+          </div>
 
           <Deliverables
             jobId={job.id}
