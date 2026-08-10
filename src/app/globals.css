@@ -134,3 +134,18 @@
     font-feature-settings: "tnum";
   }
 }
+
+@layer utilities {
+  /*
+   * A pencil per field, fifteen fields to a block, on a screen the width of a
+   * hand. The pencils on fields that already hold a value wait behind the one
+   * in the block's corner; a blank field keeps its plus, because filling a gap
+   * is the commonest thing anybody does here.
+   *
+   * Done in CSS rather than by passing a flag down because the fields are
+   * rendered on the server and the toggle is not.
+   */
+  [data-block-editing="off"] [data-edit-trigger="reveal"] {
+    display: none;
+  }
+}

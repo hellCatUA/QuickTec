@@ -1045,6 +1045,11 @@ async function main() {
     await planner.goto(url, { waitUntil: "load" });
     await planner.waitForTimeout(1000);
 
+    // A pencil beside each of fifteen fields is most of what made this page
+    // heavy on a phone, so they wait behind the one in the block's corner.
+    await planner
+      .getByRole("button", { name: "Edit assignment details" })
+      .click();
     await planner.getByRole("button", { name: "Edit Scheduled start" }).click();
     check(
       "the scheduled time is shown in the site's zone",

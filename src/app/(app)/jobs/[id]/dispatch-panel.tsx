@@ -33,10 +33,14 @@ export function DispatchPanel({
   jobId,
   contacts,
   canEdit,
+  canAdd = canEdit,
 }: {
   jobId: string;
   contacts: DispatchEntry[];
+  /** Change or remove a number somebody else is already dialling. */
   canEdit: boolean;
+  /** Add one. A number picked up mid-job is worth having from whoever finds it. */
+  canAdd?: boolean;
 }) {
   const [adding, setAdding] = React.useState(false);
   const [draft, setDraft] = React.useState({
@@ -139,7 +143,7 @@ export function DispatchPanel({
 
       {error ? <p className="text-sm text-danger">{error}</p> : null}
 
-      {canEdit ? (
+      {canAdd ? (
         adding ? (
           <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface-raised p-3">
             <Field label="Who they are" htmlFor="dispatch-add-label">

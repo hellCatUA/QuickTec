@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, MessageSquarePlus, Pencil } from "lucide-react";
+import { AlertTriangle, MessageSquarePlus, Pencil, Plus } from "lucide-react";
 import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/field";
@@ -33,6 +33,7 @@ export function EditableField({
   kind = "text",
   hint,
   optional = false,
+  hideValue = false,
   className,
 }: {
   jobId: string;
@@ -45,6 +46,14 @@ export function EditableField({
   hint?: string;
   /** A field a job may legitimately never have — empty is a fact, not a gap. */
   optional?: boolean;
+  /**
+   * Render the control alone, with no label and no value.
+   *
+   * For a field already shown properly somewhere else — the scope of work is
+   * rendered Markdown below, and printing its source above it was the same
+   * text twice, once unreadably.
+   */
+  hideValue?: boolean;
   className?: string;
 }) {
   const [open, setOpen] = React.useState(false);
@@ -83,9 +92,11 @@ export function EditableField({
   return (
     <div className={cn("flex flex-col gap-1", className)}>
       <div className="flex items-center gap-2">
-        <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          {label}
-        </span>
+        {hideValue ? null : (
+          <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            {label}
+          </span>
+        )}
 
         {action !== "none" && !open ? (
           <button
@@ -94,13 +105,28 @@ export function EditableField({
               setDraft(value);
               setOpen(true);
             }}
+            /*
+             * A blank field is offering to be filled, and says so with a plus
+             * — that is a different act from changing something already there,
+             * and on a phone the difference is worth an icon. Filling stays
+             * available to anyone on the job; the pencil on a field that
+             * already holds a value hides until somebody asks to edit the
+             * block, which is most of what made this page feel heavy.
+             */
+            data-edit-trigger={isEmpty ? "always" : "reveal"}
             className="text-muted-foreground transition-colors hover:text-primary"
             aria-label={
-              suggesting ? `Suggest a change to ${label}` : `Edit ${label}`
+              isEmpty
+                ? `Add ${label}`
+                : suggesting
+                  ? `Suggest a change to ${label}`
+                  : `Edit ${label}`
             }
-            title={suggesting ? "Suggest change" : "Edit"}
+            title={isEmpty ? "Add" : suggesting ? "Suggest change" : "Edit"}
           >
-            {suggesting ? (
+            {isEmpty ? (
+              <Plus className="size-3.5" />
+            ) : suggesting ? (
               <MessageSquarePlus className="size-3.5" />
             ) : (
               <Pencil className="size-3.5" />
@@ -161,7 +187,7 @@ export function EditableField({
             </Button>
           </div>
         </div>
-      ) : (
+      ) : hideValue ? null : (
         <div className="flex items-center gap-1.5 text-sm">
           {isEmpty ? (
             // Both states carry the triangle, so an empty box is never read as

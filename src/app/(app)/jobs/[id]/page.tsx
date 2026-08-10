@@ -1,4 +1,4 @@
-import { CircleCheck, Mail, MapPin, Phone } from "lucide-react";
+import { CircleCheck, Mail, MapPin, Phone, Printer } from "lucide-react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
@@ -47,6 +47,7 @@ import { JobPay } from "./job-pay";
 import { BreakPay } from "./break-pay";
 import { JobDocuments } from "./job-documents";
 import { JobTickets } from "./tickets";
+import { EditableBlock } from "./editable-block";
 import { EditableField } from "./editable-field";
 import { PointsOfContact } from "./points-of-contact";
 import { RevisitPanel } from "./revisit-panel";
@@ -438,6 +439,11 @@ export default async function JobPage({
     );
   }
 
+  // "A supervisor or above, or the person leading this job." The lead is on
+  // site and answerable for what the job records, so the corner pencils follow
+  // them as well as the rank.
+  const canManageJob = canEditPlanned || Boolean(mine?.isLead);
+
   // The tech's own supervisor always heads the dispatch block — the one number
   // they are most likely to need and least likely to have to hand.
   const supervisor = mine?.user.directSupervisor;
@@ -602,87 +608,150 @@ export default async function JobPage({
       ) : null}
 
       <Card>
-        <CardHeader>
+        <CardHeader className="flex-row items-start justify-between gap-2">
           <CardTitle>Assignment details</CardTitle>
-          <CardDescription>
-            Planned fields are read-only. Blank ones can be completed by anyone
-            on the job; changing a filled one goes to a supervisor.
-          </CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-4 text-sm sm:grid-cols-2">
-          <Static label="Company" value={job.client.name} />
-          <Static label="Customer" value={job.customer.name} />
-          <div>
-            <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Site ID
-            </div>
-            {job.site.numberPending ? (
-              <SiteNumberPrompt jobId={job.id} canSet={canClockHere} />
-            ) : (
-              <Link
-                href={`/sites/${job.siteId}`}
-                className="text-primary underline-offset-4 hover:underline"
-              >
-                {siteLabel(job.customer.code, job.site.siteNumber)}
-              </Link>
-            )}
-          </div>
-          <Static label={intWoFieldLabel(company)} value={job.intWoId} mono />
+        <CardContent>
+          <EditableBlock label="assignment details" canEdit={canManageJob}>
+            <div className="grid gap-4 text-sm sm:grid-cols-2">
+              <Static label="Company" value={job.client.name} />
+              <Static label="Customer" value={job.customer.name} />
 
-          {editable("externalAssignmentId", job.externalAssignmentId ?? "")}
-          {editable("ticketNumber", job.ticketNumber ?? "")}
-          {/* One job routinely answers to more than one ticket. The first is
-              the field above; these are the ones after it. */}
-          <JobTickets
-            jobId={job.id}
-            primary={job.ticketNumber}
-            extras={job.extraTickets}
-            canEdit={canFillMissing}
-          />
-          {editable("incNumber", job.incNumber ?? "")}
-          <Static
-            label="Project"
-            value={
-              job.project
-                ? `${job.project.name}${job.project.externalProjectId ? ` (${job.project.externalProjectId})` : ""}`
-                : "No project"
-            }
-          />
+              {/* Where it is, in the order somebody driving there wants it:
+                  which site, then the address, then when they are due. */}
+              <div>
+                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Site ID
+                </div>
+                {job.site.numberPending ? (
+                  <SiteNumberPrompt jobId={job.id} canSet={canClockHere} />
+                ) : (
+                  <Link
+                    href={`/sites/${job.siteId}`}
+                    className="text-primary underline-offset-4 hover:underline"
+                  >
+                    {siteLabel(job.customer.code, job.site.siteNumber)}
+                  </Link>
+                )}
+              </div>
+              <Static label={intWoFieldLabel(company)} value={job.intWoId} mono />
 
-          <div className="sm:col-span-2">
-            <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Address
+              <div className="sm:col-span-2">
+                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Address
+                </div>
+                <a
+                  href={mapsUrl(job.site)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-0.5 flex items-center gap-1 text-primary underline-offset-4 hover:underline"
+                >
+                  <MapPin className="size-3.5 shrink-0" />
+                  {formatAddress(job.site)}
+                </a>
+                {job.site.notes ? (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {job.site.notes}
+                  </p>
+                ) : null}
+              </div>
+
+              {editable(
+                "scheduledStart",
+                job.scheduledStart
+                  ? toDatetimeLocalInZone(job.scheduledStart, zone)
+                  : "",
+                job.scheduledStart
+                  ? usDateTimeInZone(job.scheduledStart, zone)
+                  : undefined,
+              )}
+              {editable(
+                "estimateMinutes",
+                job.estimateMinutes ? String(job.estimateMinutes) : "",
+                job.estimateMinutes
+                  ? `${(job.estimateMinutes / 60).toFixed(2)} hrs`
+                  : undefined,
+              )}
+
+              {editable("externalAssignmentId", job.externalAssignmentId ?? "")}
+              {editable("ticketNumber", job.ticketNumber ?? "")}
+              {/* One job routinely answers to more than one ticket. The first
+                  is the field above; these are the ones after it, and the plus
+                  stays offered even once there is one — a second turns up
+                  mid-job often enough. */}
+              <JobTickets
+                jobId={job.id}
+                primary={job.ticketNumber}
+                extras={job.extraTickets}
+                canEdit={canFillMissing}
+              />
+              {editable("incNumber", job.incNumber ?? "")}
+              <Static
+                label="Project"
+                value={
+                  job.project
+                    ? `${job.project.name}${job.project.externalProjectId ? ` (${job.project.externalProjectId})` : ""}`
+                    : "No project"
+                }
+              />
             </div>
-            <a
-              href={mapsUrl(job.site)}
-              target="_blank"
-              rel="noreferrer"
-              className="mt-0.5 flex items-center gap-1 text-primary underline-offset-4 hover:underline"
-            >
-              <MapPin className="size-3.5 shrink-0" />
-              {formatAddress(job.site)}
-            </a>
-            {job.site.notes ? (
-              <p className="mt-1 text-xs text-muted-foreground">
-                {job.site.notes}
-              </p>
+          </EditableBlock>
+
+          {/* The paperwork the job answers to, with the job it belongs to
+              rather than in a block of its own further down the scroll. */}
+          <div className="mt-4 flex flex-col gap-3 border-t border-border pt-4">
+            {canExportPdf ? (
+              <div className="flex flex-col gap-1">
+                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  {company.intWoLabel} work order
+                </div>
+                <a
+                  href={`/api/jobs/${job.id}/export/pdf?inline=1`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center gap-1.5 text-sm text-primary underline-offset-4 hover:underline"
+                >
+                  <Printer className="size-3.5 shrink-0" />
+                  {job.intWoId}.pdf
+                </a>
+              </div>
             ) : null}
+
+            <JobDocuments
+              jobId={job.id}
+              noWorkOrder={job.noWorkOrder}
+              canUpload={canUpload}
+              canDeclare={canEditPlanned}
+              documents={job.documents
+                .filter((doc) => doc.jobDocumentKind !== null)
+                .map((doc) => ({
+                  id: doc.id,
+                  kind: doc.jobDocumentKind as "CLIENT_WORK_ORDER" | "SIGN_OFF",
+                  originalName: doc.originalName,
+                  sizeBytes: doc.sizeBytes,
+                  generated: doc.generated,
+                  fillableBoxes: doc.sourceTemplate?._count.placements ?? 0,
+                  templateId: doc.sourceTemplateId,
+                }))}
+            />
           </div>
         </CardContent>
       </Card>
 
-      {dispatch.length > 0 || canEditPlanned ? (
+      {dispatch.length > 0 || canFillMissing ? (
         <Card>
-          <CardHeader>
+          <CardHeader className="flex-row items-start justify-between gap-2">
             <CardTitle>Dispatch info</CardTitle>
-            <CardDescription>
-              Numbers to reach mid-job. Tap to dial.
-            </CardDescription>
           </CardHeader>
           <CardContent>
+            {/* A number picked up mid-job is worth having whoever finds it, so
+                anyone on the job may add one. Changing or removing one that is
+                already there is a different matter — that is the number the
+                rest of the crew is dialling. */}
             <DispatchPanel
               jobId={job.id}
-              canEdit={canEditPlanned}
+              canEdit={canManageJob}
+              canAdd={canFillMissing}
               contacts={dispatch}
             />
           </CardContent>
@@ -690,35 +759,22 @@ export default async function JobPage({
       ) : null}
 
       <Card>
-        <CardHeader>
-          <CardTitle>Points of contact</CardTitle>
-          <CardDescription>
-            Recorded on site as you go. MOD is required to close the job.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <PointsOfContact
-            jobId={job.id}
-            contacts={job.pointsOfContact}
-            canEdit={canFillMissing}
-          />
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
+        <CardHeader className="flex-row items-start justify-between gap-2">
           <CardTitle>Scope of work</CardTitle>
-          {actionFor("scopeOfWork", job.scopeOfWork ?? "") !== "none" ? (
-            <CardDescription>
-              <EditableField
-                jobId={job.id}
-                field="scopeOfWork"
-                label="Edit scope"
-                value={job.scopeOfWork ?? ""}
-                action={actionFor("scopeOfWork", job.scopeOfWork ?? "")}
-                kind="markdown"
-              />
-            </CardDescription>
+          {/* The editor holds Markdown, which is worth writing and not worth
+              reading: it used to sit above the rendered scope showing the same
+              text with its punctuation still in. */}
+          {canManageJob &&
+          actionFor("scopeOfWork", job.scopeOfWork ?? "") !== "none" ? (
+            <EditableField
+              jobId={job.id}
+              field="scopeOfWork"
+              label="scope of work"
+              value={job.scopeOfWork ?? ""}
+              action={actionFor("scopeOfWork", job.scopeOfWork ?? "")}
+              kind="markdown"
+              hideValue
+            />
           ) : null}
         </CardHeader>
         <CardContent>
@@ -734,29 +790,13 @@ export default async function JobPage({
 
       <Card>
         <CardHeader>
-          <CardTitle>{job.client.name} paperwork</CardTitle>
-          <CardDescription>
-            Their work order and their sign-off sheet. Either can be added now
-            or when it turns up, by whoever has it.
-          </CardDescription>
+          <CardTitle>Points of contact</CardTitle>
         </CardHeader>
         <CardContent>
-          <JobDocuments
+          <PointsOfContact
             jobId={job.id}
-            noWorkOrder={job.noWorkOrder}
-            canUpload={canUpload}
-            canDeclare={canEditPlanned}
-            documents={job.documents
-              .filter((doc) => doc.jobDocumentKind !== null)
-              .map((doc) => ({
-                id: doc.id,
-                kind: doc.jobDocumentKind as "CLIENT_WORK_ORDER" | "SIGN_OFF",
-                originalName: doc.originalName,
-                sizeBytes: doc.sizeBytes,
-                generated: doc.generated,
-                fillableBoxes: doc.sourceTemplate?._count.placements ?? 0,
-                templateId: doc.sourceTemplateId,
-              }))}
+            contacts={job.pointsOfContact}
+            canEdit={canFillMissing}
           />
         </CardContent>
       </Card>
@@ -790,20 +830,8 @@ export default async function JobPage({
           <CardTitle>Time &amp; schedule</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-4 text-sm sm:grid-cols-3">
-          {editable(
-            "scheduledStart",
-            job.scheduledStart ? toDatetimeLocalInZone(job.scheduledStart, zone) : "",
-            job.scheduledStart
-              ? usDateTimeInZone(job.scheduledStart, zone)
-              : undefined,
-          )}
-          {editable(
-            "estimateMinutes",
-            job.estimateMinutes ? String(job.estimateMinutes) : "",
-            job.estimateMinutes
-              ? `${(job.estimateMinutes / 60).toFixed(2)} hrs`
-              : undefined,
-          )}
+          {/* When it was planned for now sits with the address, where somebody
+              on their way there is already looking. */}
           {editable("techsRequired", String(job.techsRequired))}
 
           <Static
@@ -918,10 +946,6 @@ export default async function JobPage({
       <Card>
         <CardHeader>
           <CardTitle>Deliverables</CardTitle>
-          <CardDescription>
-            Photos are converted to JPEG, stamped bottom-right with the date,
-            Assignment ID and site, and kept against whoever uploaded them.
-          </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           {canEditPlanned ? (
@@ -944,6 +968,25 @@ export default async function JobPage({
               attachments: item.attachments,
             }))}
           />
+
+          {job.signatures.length > 0 ? (
+            <div className="flex flex-col gap-2 border-t border-border pt-4">
+              <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Signatures
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                {job.signatures.map((signature) => (
+                  <Badge
+                    key={signature.id}
+                    variant={signature.skipped ? "warning" : "success"}
+                  >
+                    {signature.kind} · {signature.signerName}
+                    {signature.skipped ? " · not signed" : ""}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 
@@ -988,25 +1031,6 @@ export default async function JobPage({
               canZip={canExportZip}
               canPdf={canExportPdf}
             />
-          </CardContent>
-        </Card>
-      ) : null}
-
-      {job.signatures.length > 0 ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Signatures</CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-wrap gap-1.5">
-            {job.signatures.map((signature) => (
-              <Badge
-                key={signature.id}
-                variant={signature.skipped ? "warning" : "success"}
-              >
-                {signature.kind} · {signature.signerName}
-                {signature.skipped ? " · not signed" : ""}
-              </Badge>
-            ))}
           </CardContent>
         </Card>
       ) : null}
