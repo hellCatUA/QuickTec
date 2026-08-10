@@ -112,7 +112,10 @@ async function main() {
     true,
   );
 
+  // Clocking in asks when, rather than assuming now and hiding "actually I
+  // started at half past" behind a second, quieter button.
   await page.getByRole("button", { name: "Clock in", exact: true }).click();
+  await page.locator("button:has-text('now')").first().click();
   await page.waitForSelector("text=On site since", { timeout: 15_000 });
 
   const visit = await db.visit.findFirstOrThrow({

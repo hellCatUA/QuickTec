@@ -3,6 +3,7 @@
 import { Info, Mail, Phone } from "lucide-react";
 import * as React from "react";
 import { Button } from "@/components/ui/button";
+import { formatPhone, telHref } from "@/lib/phone";
 import { Combobox } from "@/components/ui/combobox";
 import { Field, Input } from "@/components/ui/field";
 import { createExternalContact } from "../actions";
@@ -197,10 +198,10 @@ export function PmContactPicker({
           {selected.title ? <span>{selected.title}</span> : null}
           {selected.phone ? (
             <a
-              href={`tel:${selected.phone}`}
+              href={telHref(selected.phone)}
               className="flex items-center gap-1 text-primary underline-offset-4 hover:underline"
             >
-              <Phone className="size-3.5" /> {selected.phone}
+              <Phone className="size-3.5" /> {formatPhone(selected.phone)}
             </a>
           ) : null}
           {selected.email ? (

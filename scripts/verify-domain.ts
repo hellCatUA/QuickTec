@@ -398,6 +398,34 @@ async function main() {
   );
   check("manager ALL sees everything", await countFor(boss.id, "ALL"), total);
 
+  // --- phone numbers -------------------------------------------------------
+  const { formatPhone, formatPhoneAsTyped, telHref } = await import("@/lib/phone");
+
+  check("ten digits get their dashes", formatPhone("5551234567"), "555-123-4567");
+  check(
+    "however they were typed",
+    formatPhone(" (555) 123 4567 "),
+    "555-123-4567",
+  );
+  check(
+    "a country code survives in front",
+    formatPhone("15551234567"),
+    "1-555-123-4567",
+  );
+  // Reshaping these would lose something. An extension is not punctuation.
+  check("an extension is left alone", formatPhone("555-123-4567 x203"), "555-123-4567 x203");
+  check("an international number is left alone", formatPhone("+380671234567"), "+380671234567");
+  check("and so is anything too short to be a number", formatPhone("911"), "911");
+  check("nothing is nothing", formatPhone(null), "");
+
+  // Typing: the dashes appear once there is enough to place them, so they do
+  // not fight the thumb on the first three digits.
+  check("no dashes until there are enough digits", formatPhoneAsTyped("55512"), "55512");
+  check("then they appear", formatPhoneAsTyped("5551234567"), "555-123-4567");
+
+  check("a phone dials the digits, not the dashes", telHref("555-123-4567"), "tel:5551234567");
+  check("and keeps a plus where there is one", telHref("+380671234567"), "tel:+380671234567");
+
   // --- ticket numbers ------------------------------------------------------
   const { jobTickets, ticketList, ticketRole } = await import("@/lib/tickets");
 

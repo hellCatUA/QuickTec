@@ -5,7 +5,11 @@ import { Button } from "@/components/ui/button";
 import { clockOptions } from "@/lib/time-tracking";
 
 /**
- * "Clock in/out early or later".
+ * When the clock started or stopped.
+ *
+ * Shown by Clock in and Clock out rather than sitting behind a second button
+ * of its own: "now" is the first option and the usual answer, and a tech who
+ * started twenty minutes ago no longer has to spot a quieter control to say so.
  *
  * Offsets are measured from the *snapped* current time, so at 09:57 with
  * five-minute rounding the row reads 09:50 / 09:55 / 10:00 / 10:05 / 10:10

@@ -8,6 +8,7 @@ import {
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
+import { formatPhone, telHref } from "@/lib/phone";
 import { buttonVariants } from "@/components/ui/button";
 import {
   Card,
@@ -421,10 +422,10 @@ export default async function DashboardPage() {
             <span className="font-medium">{supervisor.name}</span>
             {supervisor.phone ? (
               <a
-                href={`tel:${supervisor.phone}`}
+                href={telHref(supervisor.phone)}
                 className="text-primary underline-offset-4 hover:underline"
               >
-                {supervisor.phone}
+                {formatPhone(supervisor.phone)}
               </a>
             ) : null}
             <a

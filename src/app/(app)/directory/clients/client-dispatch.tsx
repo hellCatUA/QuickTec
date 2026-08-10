@@ -3,6 +3,7 @@
 import { Loader2, Phone, Plus, X } from "lucide-react";
 import * as React from "react";
 import { Button } from "@/components/ui/button";
+import { formatPhone, telHref } from "@/lib/phone";
 import { Field, Input } from "@/components/ui/field";
 import { deleteClientDispatch, saveClientDispatch } from "../actions";
 
@@ -95,10 +96,10 @@ export function ClientDispatch({
             ) : null}
             {contact.phone ? (
               <a
-                href={`tel:${contact.phone}`}
+                href={telHref(contact.phone)}
                 className="underline-offset-2 hover:underline"
               >
-                {contact.phone}
+                {formatPhone(contact.phone)}
               </a>
             ) : null}
             {contact.email ? (

@@ -2,6 +2,7 @@ import { Mail, MapPin, Phone, Plus, Settings } from "lucide-react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
+import { formatPhone, telHref } from "@/lib/phone";
 import { buttonVariants } from "@/components/ui/button";
 import {
   Card,
@@ -257,10 +258,10 @@ export default async function ProjectPage({
               ) : null}
               {project.pmContact.phone ? (
                 <a
-                  href={`tel:${project.pmContact.phone}`}
+                  href={telHref(project.pmContact.phone)}
                   className="flex items-center gap-1 text-primary underline-offset-4 hover:underline"
                 >
-                  <Phone className="size-3.5" /> {project.pmContact.phone}
+                  <Phone className="size-3.5" /> {formatPhone(project.pmContact.phone)}
                 </a>
               ) : null}
               {project.pmContact.email ? (
@@ -402,10 +403,10 @@ export default async function ProjectPage({
                 ) : null}
                 {contact.phone ? (
                   <a
-                    href={`tel:${contact.phone}`}
+                    href={telHref(contact.phone)}
                     className="flex items-center gap-1 text-primary underline-offset-4 hover:underline"
                   >
-                    <Phone className="size-3.5" /> {contact.phone}
+                    <Phone className="size-3.5" /> {formatPhone(contact.phone)}
                   </a>
                 ) : null}
                 {contact.email ? (

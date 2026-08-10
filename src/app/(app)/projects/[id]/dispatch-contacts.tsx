@@ -3,6 +3,7 @@
 import { Mail, Phone, Plus, X } from "lucide-react";
 import { useActionState, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
+import { formatPhone, telHref } from "@/lib/phone";
 import { Field, Input } from "@/components/ui/field";
 import { FormStatus, type SaveState } from "@/components/ui/form-status";
 import {
@@ -66,11 +67,11 @@ export function DispatchContacts({
             <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs">
               {contact.phone ? (
                 <a
-                  href={`tel:${contact.phone}`}
+                  href={telHref(contact.phone)}
                   className="flex items-center gap-1 text-primary underline-offset-4 hover:underline"
                 >
                   <Phone className="size-3" />
-                  {contact.phone}
+                  {formatPhone(contact.phone)}
                 </a>
               ) : null}
               {contact.email ? (

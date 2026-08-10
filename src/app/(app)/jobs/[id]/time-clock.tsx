@@ -179,71 +179,50 @@ export function TimeClock({
             onCancel={() => setPicker(null)}
           />
         ) : openVisit ? (
-          <div className="flex flex-col gap-2">
-            <div className="flex gap-2">
-              <Button
-                type="button"
-                variant={onBreak ? "success" : "secondary"}
-                size="lg"
-                className="flex-1"
-                disabled={pending}
-                onClick={() => {
-                  const formData = new FormData();
-                  formData.set("jobId", jobId);
-                  run(() => toggleBreak(formData));
-                }}
-              >
-                {onBreak ? <Play /> : <Coffee />}
-                {onBreak ? "End break" : "Break"}
-              </Button>
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant={onBreak ? "success" : "secondary"}
+              size="lg"
+              className="flex-1"
+              disabled={pending}
+              onClick={() => {
+                const formData = new FormData();
+                formData.set("jobId", jobId);
+                run(() => toggleBreak(formData));
+              }}
+            >
+              {onBreak ? <Play /> : <Coffee />}
+              {onBreak ? "End break" : "Break"}
+            </Button>
 
-              <Button
-                type="button"
-                variant="danger"
-                size="lg"
-                className="flex-1"
-                disabled={pending}
-                onClick={() =>
-                  onRequestCheckout ? onRequestCheckout() : submit("out")
-                }
-              >
-                <LogOut /> Clock out
-              </Button>
-            </div>
-
-            {!onRequestCheckout ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                disabled={pending}
-                onClick={() => setPicker("out")}
-              >
-                Clock out early or later
-              </Button>
-            ) : null}
+            <Button
+              type="button"
+              variant="danger"
+              size="lg"
+              className="flex-1"
+              disabled={pending}
+              onClick={() =>
+                onRequestCheckout ? onRequestCheckout() : setPicker("out")
+              }
+            >
+              <LogOut /> Clock out
+            </Button>
           </div>
         ) : (
-          <div className="flex flex-col gap-2">
-            <Button
-              type="button"
-              size="lg"
-              block
-              disabled={pending}
-              onClick={() => submit("in")}
-            >
-              <LogIn /> Clock in
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              disabled={pending}
-              onClick={() => setPicker("in")}
-            >
-              Clock in early or later
-            </Button>
-          </div>
+          // The time is asked for rather than assumed. "Now" is the first
+          // button in the picker and the common answer, so the extra tap costs
+          // nothing — and the tech who started twenty minutes ago no longer has
+          // to notice a second, quieter button to say so.
+          <Button
+            type="button"
+            size="lg"
+            block
+            disabled={pending}
+            onClick={() => setPicker("in")}
+          >
+            <LogIn /> Clock in
+          </Button>
         )}
       </CardContent>
     </Card>

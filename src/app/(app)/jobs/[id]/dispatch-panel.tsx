@@ -3,6 +3,7 @@
 import { Loader2, Mail, Phone, Plus, X } from "lucide-react";
 import * as React from "react";
 import { Button } from "@/components/ui/button";
+import { formatPhone, formatPhoneAsTyped, telHref } from "@/lib/phone";
 import { Field, Input } from "@/components/ui/field";
 import {
   addJobDispatchContact,
@@ -97,11 +98,11 @@ export function DispatchPanel({
           ) : null}
           {contact.phone ? (
             <a
-              href={`tel:${contact.phone}`}
+              href={telHref(contact.phone)}
               className="flex items-center gap-1 text-xs text-primary underline-offset-4 hover:underline"
             >
               <Phone className="size-3" />
-              {contact.phone}
+              {formatPhone(contact.phone)}
             </a>
           ) : null}
           {contact.email ? (
@@ -177,7 +178,7 @@ export function DispatchPanel({
                   onChange={(event) =>
                     setDraft((current) => ({
                       ...current,
-                      phone: event.target.value,
+                      phone: formatPhoneAsTyped(event.target.value),
                     }))
                   }
                 />

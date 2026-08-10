@@ -4,6 +4,7 @@ import { AlertTriangle, Mail, Phone, Plus, X } from "lucide-react";
 import * as React from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { formatPhone, formatPhoneAsTyped, telHref } from "@/lib/phone";
 import { Field, Input, Select } from "@/components/ui/field";
 import type { ContactType } from "@prisma-client";
 import { addPointOfContact, deletePointOfContact } from "./actions";
@@ -102,11 +103,11 @@ export function PointsOfContact({
 
                 {contact.phone ? (
                   <a
-                    href={`tel:${contact.phone}`}
+                    href={telHref(contact.phone)}
                     className="flex items-center gap-1 text-xs text-primary underline-offset-4 hover:underline"
                   >
                     <Phone className="size-3" />
-                    {contact.phone}
+                    {formatPhone(contact.phone)}
                   </a>
                 ) : null}
 
@@ -193,7 +194,7 @@ function ContactForm({
             id={`poc-phone-${type}`}
             type="tel"
             value={phone}
-            onChange={(event) => setPhone(event.target.value)}
+            onChange={(event) => setPhone(formatPhoneAsTyped(event.target.value))}
             autoComplete="off"
           />
         </Field>
