@@ -16,8 +16,9 @@ import {
   allocateRevisitIntWo,
   revisitAssignmentId,
 } from "@/lib/int-wo";
+import { notify } from "@/lib/notifications";
 import { resolvePayRate } from "@/lib/pay-rates";
-import { resolveJobSupervisor } from "@/lib/scope";
+import { canOnJob, resolveJobSupervisor } from "@/lib/scope";
 import { can, requirePermission } from "@/lib/session";
 import { PayType } from "@prisma-client";
 import { jobFormSchema } from "./schema";
@@ -542,16 +543,47 @@ export async function createRevisit(
   return { ok: true, id: job.id };
 }
 
-export async function approveJob(formData: FormData): Promise<ActionResult> {
+/**
+ * Whether this person may sign off this particular job.
+ *
+ * Holding job.approve_report is not the question — a supervisor holds it at
+ * project scope, and the id in a form is whatever was posted. Both approvals
+ * below go through here so that reach is checked against the job in hand.
+ */
+async function approverFor(jobId: string) {
   const actor = await requirePermission("job.approve_report");
-  const jobId = String(formData.get("jobId") ?? "");
-  if (!jobId) return { ok: false, error: "Missing job" };
 
   const job = await db.job.findUnique({
     where: { id: jobId },
-    select: { lifecycle: true, scheduledStart: true },
+    select: {
+      lifecycle: true,
+      scheduledStart: true,
+      projectId: true,
+      createdById: true,
+      assignments: { select: { userId: true } },
+    },
   });
-  if (!job) return { ok: false, error: "Job not found" };
+  if (!job) return { ok: false, error: "Job not found" } as const;
+
+  const allowed = await canOnJob(actor, "job.approve_report", {
+    projectId: job.projectId,
+    assigneeIds: job.assignments.map((assignment) => assignment.userId),
+    createdById: job.createdById,
+  });
+  if (!allowed) {
+    return { ok: false, error: "This job is not yours to approve." } as const;
+  }
+
+  return { ok: true, actor, job } as const;
+}
+
+export async function approveJob(formData: FormData): Promise<ActionResult> {
+  const jobId = String(formData.get("jobId") ?? "");
+  if (!jobId) return { ok: false, error: "Missing job" };
+
+  const found = await approverFor(jobId);
+  if (!found.ok) return { ok: false, error: found.error };
+  const { actor, job } = found;
 
   if (job.lifecycle !== "PENDING_APPROVAL") {
     return { ok: false, error: "This job is not waiting for approval." };
@@ -581,6 +613,80 @@ export async function approveJob(formData: FormData): Promise<ActionResult> {
 
   revalidatePath("/jobs");
   revalidatePath(`/jobs/${jobId}`);
+  revalidatePath("/approvals");
+  return { ok: true };
+}
+
+/**
+ * The final read-through: the job is finished and the report stands.
+ *
+ * Checking out puts a job in PENDING_REVIEW and, until now, nothing took it
+ * out again — every job the company had ever finished sat waiting on a button
+ * that did not exist. This is that button.
+ *
+ * It is deliberately not a second gate on the work: checkout already refused
+ * to finish without what the job asked for. What a reviewer is saying here is
+ * "this is what we send the client and what we pay against". Anything they
+ * disagree with, they can still change on the page before signing it off —
+ * they hold the rights to — and the timeline records both.
+ *
+ * Approving your own job is allowed. The alternative deadlocks the case this
+ * company actually has: a manager who is also on the crew, whose reports would
+ * otherwise wait forever on somebody senior to them who does not exist. Who
+ * signed it off is recorded either way, which is the part that matters.
+ */
+export async function approveReport(formData: FormData): Promise<ActionResult> {
+  const jobId = String(formData.get("jobId") ?? "");
+  if (!jobId) return { ok: false, error: "Missing job" };
+
+  const found = await approverFor(jobId);
+  if (!found.ok) return { ok: false, error: found.error };
+  const { actor, job } = found;
+
+  if (job.lifecycle !== "PENDING_REVIEW") {
+    return {
+      ok: false,
+      error:
+        job.lifecycle === "APPROVED"
+          ? "This report has already been approved."
+          : "This job has not been checked out yet.",
+    };
+  }
+
+  await db.job.update({
+    where: { id: jobId },
+    data: {
+      lifecycle: "APPROVED",
+      approvedById: actor.id,
+      approvedAt: new Date(),
+    },
+  });
+
+  await recordAudit({
+    actorId: actor.id,
+    entityType: "Job",
+    entityId: jobId,
+    jobId,
+    action: "report_approved",
+  });
+
+  // The crew are told, because it happened rather than because they must do
+  // anything: their week can be run once the jobs in it are signed off, and
+  // "still waiting on my supervisor" is otherwise invisible to them.
+  for (const assignment of job.assignments) {
+    await notify({
+      userId: assignment.userId,
+      actorId: actor.id,
+      kind: "report_approved",
+      title: "Report approved",
+      href: `/jobs/${jobId}`,
+      jobId,
+    });
+  }
+
+  revalidatePath("/jobs");
+  revalidatePath(`/jobs/${jobId}`);
+  revalidatePath("/approvals");
   return { ok: true };
 }
 

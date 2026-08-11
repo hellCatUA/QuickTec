@@ -39,7 +39,7 @@ import { loadJobForExport } from "@/lib/exports/job-data";
 import { buildTextReport } from "@/lib/exports/text-report";
 import { jobSpan } from "@/lib/time-tracking";
 import { Timeline } from "@/components/timeline";
-import { approveJob } from "../actions";
+import { approveJob, approveReport } from "../actions";
 import { ChangeRequests } from "./change-requests";
 import { CrewPanel } from "./crew-panel";
 import { DispatchPanel } from "./dispatch-panel";
@@ -561,7 +561,10 @@ export default async function JobPage({
         description={`${intWoFieldLabel(company)}: ${job.intWoId}`}
         actions={
           <>
-            {job.lifecycle === "PENDING_APPROVAL" && canApproveJob ? (
+            {/* Two different approvals, and the job is only ever waiting on
+                one of them: that the ad-hoc job should exist at all, or that
+                the finished report stands. */}
+            {canApproveJob && job.lifecycle === "PENDING_APPROVAL" ? (
               <form
                 action={async (formData: FormData) => {
                   "use server";
@@ -570,7 +573,21 @@ export default async function JobPage({
               >
                 <input type="hidden" name="jobId" value={job.id} />
                 <Button type="submit" size="sm" variant="success">
-                  <CircleCheck /> Approve
+                  <CircleCheck /> Approve job
+                </Button>
+              </form>
+            ) : null}
+
+            {canApproveJob && job.lifecycle === "PENDING_REVIEW" ? (
+              <form
+                action={async (formData: FormData) => {
+                  "use server";
+                  await approveReport(formData);
+                }}
+              >
+                <input type="hidden" name="jobId" value={job.id} />
+                <Button type="submit" size="sm" variant="success">
+                  <CircleCheck /> Approve report
                 </Button>
               </form>
             ) : null}

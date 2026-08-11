@@ -2,6 +2,7 @@ import { ArrowRight, CircleCheck, Clock, FileQuestion, Wallet } from "lucide-rea
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -17,6 +18,7 @@ import { JOB_FIELDS, isJobField } from "@/lib/job-fields";
 import { formatMoney } from "@/lib/money";
 import { jobScopeWhere, reportIds } from "@/lib/scope";
 import { getSessionUser, permissionScope } from "@/lib/session";
+import { approveReport } from "../jobs/actions";
 import { DecidedList, fieldKind, type DecidedRow } from "./decided";
 import { NotificationsPanel } from "./notifications-panel";
 import {
@@ -461,22 +463,41 @@ export default async function ApprovalsPage({
           </CardHeader>
           <CardContent className="flex flex-col gap-2">
             {pendingReview.map((job) => (
-              <Link
+              <div
                 key={job.id}
-                href={`/jobs/${job.id}`}
-                className="flex flex-wrap items-center gap-2 rounded-lg border border-border p-2 text-sm transition-colors hover:border-primary/50"
+                className="flex flex-wrap items-center gap-2 rounded-lg border border-border p-2 text-sm"
               >
-                <span className="font-medium">{job.title}</span>
-                <span className="tabular text-xs text-muted-foreground">
-                  {job.intWoId}
-                </span>
-                {job.outcome ? (
-                  <Badge variant="neutral">{job.outcome}</Badge>
-                ) : null}
-                <span className="text-xs text-muted-foreground">
-                  {job.assignments.map((a) => a.user.name).join(", ")}
-                </span>
-              </Link>
+                <Link
+                  href={`/jobs/${job.id}`}
+                  className="flex min-w-0 flex-1 flex-wrap items-center gap-2 underline-offset-4 hover:underline"
+                >
+                  <span className="font-medium">{job.title}</span>
+                  <span className="tabular text-xs text-muted-foreground">
+                    {job.intWoId}
+                  </span>
+                  {job.outcome ? (
+                    <Badge variant="neutral">{job.outcome}</Badge>
+                  ) : null}
+                  <span className="text-xs text-muted-foreground">
+                    {job.assignments.map((a) => a.user.name).join(", ")}
+                  </span>
+                </Link>
+
+                {/* Signed off from here as well as from the job. Somebody
+                    clearing a Monday backlog of a dozen reports they have
+                    already read should not have to open each one again. */}
+                <form
+                  action={async (formData: FormData) => {
+                    "use server";
+                    await approveReport(formData);
+                  }}
+                >
+                  <input type="hidden" name="jobId" value={job.id} />
+                  <Button type="submit" size="sm" variant="success">
+                    <CircleCheck /> Approve
+                  </Button>
+                </form>
+              </div>
             ))}
           </CardContent>
         </Card>

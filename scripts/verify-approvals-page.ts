@@ -543,6 +543,73 @@ async function main() {
     true,
   );
 
+  // --- signing off a finished report ----------------------------------------
+  // Checking out puts a job in PENDING_REVIEW, and for a long time nothing
+  // took it out again: the queue listed reports and linked to a job page whose
+  // only Approve button was for ad-hoc jobs, so every finished job the company
+  // had ever done sat there. This is the transition that was missing.
+  await supPage.goto(`${BASE}/approvals`, { waitUntil: "domcontentloaded" });
+  await supPage.waitForTimeout(500);
+
+  check(
+    "the report is waiting on the supervisor",
+    await supPage.getByText("Site history job").isVisible(),
+    true,
+  );
+
+  await supPage
+    .getByRole("button", { name: "Approve", exact: true })
+    .first()
+    .click();
+  await supPage.waitForTimeout(2500);
+
+  const signedOff = await db.job.findUniqueOrThrow({
+    where: { id: visited.id },
+    select: { lifecycle: true, approvedById: true, approvedAt: true },
+  });
+  check("it can be signed off from the queue", signedOff.lifecycle, "APPROVED");
+  check("by whoever pressed it", signedOff.approvedById, sup.user.id);
+  check("with when", signedOff.approvedAt !== null, true);
+
+  check(
+    "and it leaves the queue",
+    await supPage.getByText("Site history job").count(),
+    0,
+  );
+
+  check(
+    "the crew are told, because they have been waiting on it",
+    await db.notification.count({
+      where: { jobId: visited.id, kind: "report_approved", userId: tech.user.id },
+    }),
+    1,
+  );
+
+  check(
+    "and it is on the job's timeline",
+    await db.auditEvent.count({
+      where: { jobId: visited.id, action: "report_approved" },
+    }),
+    1,
+  );
+
+  // The job page offers it too, and stops offering it once it is done — there
+  // is nothing left to press, and a second press would rewrite who signed it.
+  await supPage.goto(`${BASE}/jobs/${visited.id}`, {
+    waitUntil: "domcontentloaded",
+  });
+  await supPage.waitForTimeout(500);
+  check(
+    "an approved report is not offered for approval again",
+    await supPage.getByRole("button", { name: /Approve report/ }).count(),
+    0,
+  );
+  check(
+    "and the job says so",
+    await supPage.getByText("Approved", { exact: true }).first().isVisible(),
+    true,
+  );
+
   // --- project manager handover ---------------------------------------------
   // Being handed a project is exactly the kind of thing to find out about now
   // rather than by noticing the project moved.

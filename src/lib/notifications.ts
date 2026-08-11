@@ -19,6 +19,9 @@ export const NOTIFICATION_KINDS = {
   job_lead: "Made lead on a job",
   project_pm: "Project coordinator changed",
   project_manager: "Made project manager",
+  // Not a decision for them either: it is the answer to one they have been
+  // waiting on, and nothing else tells a tech their week can now be run.
+  report_approved: "Report approved",
 } as const;
 
 export type NotificationKind = keyof typeof NOTIFICATION_KINDS;
