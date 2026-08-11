@@ -29,7 +29,11 @@ export const optionalText = z
   .optional()
   .transform((value): string | null => {
     if (value === undefined || value === null) return null;
-    const trimmed = String(value).trim();
+    // A browser normalises every line break in a form value to CRLF on the way
+    // out, so anything multi-line arrives with carriage returns nobody typed
+    // and nothing here wants. They survive into the database, and then into a
+    // comparison that looks like it should hold and does not.
+    const trimmed = String(value).replace(/\r\n?/g, "\n").trim();
     return trimmed === "" ? null : trimmed;
   });
 

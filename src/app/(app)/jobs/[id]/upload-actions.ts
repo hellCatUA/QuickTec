@@ -234,7 +234,14 @@ const deliverableSchema = z.object({
   jobId: z.string().min(1),
   category: z.enum(DeliverableCategory),
   customLabel: z.string().trim().max(80).optional(),
-  textValue: z.string().trim().max(4000).optional(),
+  // Return Labels holds one tracking number per line, and a browser sends
+  // every line break in a form value as CRLF. The carriage returns nobody
+  // typed reach the database and then the report, so they come off here.
+  textValue: z
+    .string()
+    .max(4000)
+    .transform((value) => value.replace(/\r\n?/g, "\n").trim())
+    .optional(),
   /**
    * The section these photos join, when it already exists.
    *
@@ -562,57 +569,6 @@ export async function deleteJobDocument(
   return ok();
 }
 
-/**
- * Records that the representing company issued no work order.
- *
- * An empty slot and a deliberate "there isn't one" look identical on screen,
- * and the difference decides whether anybody chases it. Only somebody who can
- * change the planned fields may assert it; a tech who finds there is in fact a
- * WO clears it by attaching one.
- */
-export async function setNoWorkOrder(
-  formData: FormData,
-): Promise<ActionResult> {
-  const jobId = String(formData.get("jobId") ?? "");
-  const none = String(formData.get("none") ?? "") === "true";
-
-  const user = await getSessionUser();
-  if (!user) return fail("Not signed in.");
-
-  const job = await loadJob(jobId);
-  if (!job) return fail("Job not found.");
-
-  if (!(await canOnJob(user, "job.edit_planned_fields", job))) {
-    return fail("You cannot change this.");
-  }
-
-  if (none) {
-    const filed = await db.attachment.count({
-      where: { jobDocumentId: jobId, jobDocumentKind: "CLIENT_WORK_ORDER" },
-    });
-    if (filed > 0) {
-      return fail("There is a work order attached — remove it first.");
-    }
-  }
-
-  await db.job.update({ where: { id: jobId }, data: { noWorkOrder: none } });
-
-  await recordAudit({
-    actorId: user.id,
-    entityType: "Job",
-    entityId: jobId,
-    jobId,
-    action: "field_edited",
-    detail: {
-      field: "Work order",
-      from: none ? "expected" : "none issued",
-      to: none ? "none issued" : "expected",
-    },
-  });
-
-  touch(jobId);
-  return ok();
-}
 
 // ---------------------------------------------------------------------------
 // Reimbursements

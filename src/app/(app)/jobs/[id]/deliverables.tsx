@@ -136,7 +136,28 @@ export function Deliverables({
                 </div>
 
                 {item.textValue ? (
-                  <p className="whitespace-pre-wrap text-sm">{item.textValue}</p>
+                  item.category === "RETURN_LABELS" ? (
+                    // One box, one number, one row. A pile of them run together
+                    // in a paragraph is unreadable and unquotable.
+                    <div className="flex flex-col gap-1">
+                      {item.textValue
+                        .split("\n")
+                        .map((line) => line.trim())
+                        .filter(Boolean)
+                        .map((line) => (
+                          <span
+                            key={line}
+                            className="tabular w-fit rounded border border-border px-2 py-0.5 text-sm"
+                          >
+                            {line}
+                          </span>
+                        ))}
+                    </div>
+                  ) : (
+                    <p className="whitespace-pre-wrap text-sm">
+                      {item.textValue}
+                    </p>
+                  )
                 ) : null}
 
                 {item.attachments.length > 0 ? (
@@ -210,6 +231,23 @@ function UploadForm({
   const [pending, setPending] = React.useState(false);
   const [done, setDone] = React.useState(0);
 
+  // A return usually goes back in more than one box, and the numbers are long
+  // enough that typing them into one field separated by something is how a
+  // digit gets lost. One field each, added as needed.
+  const asTracking = rule.category === "RETURN_LABELS";
+  const [numbers, setNumbers] = React.useState<
+    { id: number; value: string }[]
+  >([{ id: 0, value: "" }]);
+  const nextId = React.useRef(1);
+
+  const textValue = asTracking
+    ? numbers
+        .map((entry) => entry.value.trim())
+        .filter(Boolean)
+        // Stored one per line; the report joins them with commas.
+        .join("\n")
+    : text;
+
   /**
    * One request per photo.
    *
@@ -236,7 +274,7 @@ function UploadForm({
       formData.set("category", rule.category);
       if (customLabel) formData.set("customLabel", customLabel);
       // Text belongs to the section, so it goes with the request that makes it.
-      if (text && index === 0) formData.set("textValue", text);
+      if (textValue && index === 0) formData.set("textValue", textValue);
       if (itemId) formData.set("itemId", itemId);
       formData.append("files", prepared.file);
       if (prepared.exif) formData.append("exif", prepared.exif, "exif.bin");
@@ -263,7 +301,7 @@ function UploadForm({
       formData.set("jobId", jobId);
       formData.set("category", rule.category);
       if (customLabel) formData.set("customLabel", customLabel);
-      if (text) formData.set("textValue", text);
+      if (textValue) formData.set("textValue", textValue);
 
       const result = await saveDeliverable(null, formData);
       setPending(false);
@@ -290,22 +328,77 @@ function UploadForm({
       ) : null}
 
       {rule.requiresText ? (
-        <Field
-          label="Details"
-          htmlFor="deliverable-text"
-          hint={
-            rule.category === "RETURN_LABELS"
-              ? "Tracking numbers go into “Return track #” on the report."
-              : undefined
-          }
-        >
-          <Textarea
-            id="deliverable-text"
-            value={text}
-            rows={3}
-            onChange={(event) => setText(event.target.value)}
-          />
-        </Field>
+        asTracking ? (
+          <div className="flex flex-col gap-2">
+            <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Tracking numbers
+            </span>
+
+            {numbers.map((entry, index) => (
+              <div key={entry.id} className="flex items-center gap-2">
+                <Input
+                  aria-label={`Tracking number ${index + 1}`}
+                  value={entry.value}
+                  autoComplete="off"
+                  inputMode="text"
+                  onChange={(event) =>
+                    setNumbers((was) =>
+                      was.map((row) =>
+                        row.id === entry.id
+                          ? { ...row, value: event.target.value }
+                          : row,
+                      ),
+                    )
+                  }
+                />
+                {numbers.length > 1 ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-label={`Remove tracking number ${index + 1}`}
+                    onClick={() =>
+                      setNumbers((was) =>
+                        was.filter((row) => row.id !== entry.id),
+                      )
+                    }
+                  >
+                    <X />
+                  </Button>
+                ) : null}
+              </div>
+            ))}
+
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="self-start"
+              onClick={() =>
+                setNumbers((was) => [
+                  ...was,
+                  { id: nextId.current++, value: "" },
+                ])
+              }
+            >
+              <Plus /> Another tracking number
+            </Button>
+
+            <p className="text-xs text-muted-foreground">
+              They reach “Return track #” on the report as one list, separated
+              by commas.
+            </p>
+          </div>
+        ) : (
+          <Field label="Details" htmlFor="deliverable-text">
+            <Textarea
+              id="deliverable-text"
+              value={text}
+              rows={3}
+              onChange={(event) => setText(event.target.value)}
+            />
+          </Field>
+        )
       ) : null}
 
       {rule.requiresPhoto ? (
@@ -341,7 +434,7 @@ function UploadForm({
         <Button
           type="button"
           size="sm"
-          disabled={pending || (files.length === 0 && !text)}
+          disabled={pending || (files.length === 0 && !textValue)}
           onClick={submit}
         >
           {pending ? <Loader2 className="animate-spin" /> : null}

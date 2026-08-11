@@ -49,7 +49,7 @@ import { VisitTimes } from "./visit-times";
 import { BreakPay } from "./break-pay";
 import { JobDocuments } from "./job-documents";
 import { JobTickets } from "./tickets";
-import { EditableBlock } from "./editable-block";
+import { BlockBody, BlockEditToggle, EditableBlock } from "./editable-block";
 import { EditableField } from "./editable-field";
 import { PointsOfContact } from "./points-of-contact";
 import { RevisitPanel } from "./revisit-panel";
@@ -721,11 +721,13 @@ export default async function JobPage({
       ) : null}
 
       <Card>
+        <EditableBlock label="assignment details" canEdit={canManageJob}>
         <CardHeader className="flex-row items-start justify-between gap-2">
           <CardTitle>Assignment details</CardTitle>
+          <BlockEditToggle />
         </CardHeader>
         <CardContent>
-          <EditableBlock label="assignment details" canEdit={canManageJob}>
+          <BlockBody>
             <div className="grid gap-4 text-sm sm:grid-cols-2">
               <Static label="Company" value={job.client.name} />
               <Static label="Customer" value={job.customer.name} />
@@ -808,7 +810,7 @@ export default async function JobPage({
                 }
               />
             </div>
-          </EditableBlock>
+          </BlockBody>
 
           {/* The paperwork the job answers to, with the job it belongs to
               rather than in a block of its own further down the scroll. */}
@@ -833,9 +835,7 @@ export default async function JobPage({
             <JobDocuments
               jobId={job.id}
               only="CLIENT_WORK_ORDER"
-              noWorkOrder={job.noWorkOrder}
               canUpload={canUpload}
-              canDeclare={canEditPlanned}
               documents={job.documents
                 .filter((doc) => doc.jobDocumentKind !== null)
                 .map((doc) => ({
@@ -850,6 +850,7 @@ export default async function JobPage({
             />
           </div>
         </CardContent>
+        </EditableBlock>
       </Card>
 
       {dispatch.length > 0 || canFillMissing ? (
@@ -971,7 +972,10 @@ export default async function JobPage({
             }
           />
 
-          {editable("returnTrackingNumber", job.returnTrackingNumber ?? "")}
+          {/* Return tracking is not here any more. It is recorded against the
+              Return Labels deliverable, with the photo of the label beside it,
+              which is where somebody standing at the box already is. The
+              report still reads "Return track #" from either. */}
           <BreakPay
             jobId={job.id}
             paid={job.breakPaid}
@@ -1047,9 +1051,7 @@ export default async function JobPage({
           <JobDocuments
             jobId={job.id}
             only="SIGN_OFF"
-            noWorkOrder={job.noWorkOrder}
             canUpload={canUpload}
-            canDeclare={canEditPlanned}
             documents={job.documents
               .filter((doc) => doc.jobDocumentKind !== null)
               .map((doc) => ({

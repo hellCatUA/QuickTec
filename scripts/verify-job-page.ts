@@ -4,6 +4,8 @@ import { encode } from "next-auth/jwt";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { db } from "@/lib/db";
+import { loadJobForExport } from "@/lib/exports/job-data";
+import { buildTextReport } from "@/lib/exports/text-report";
 import { absolutePath } from "@/lib/storage";
 
 /**
@@ -827,7 +829,7 @@ async function main() {
 
     check(
       "the WO has somewhere to go",
-      await planner.getByText("Not attached yet.", { exact: false }).first().isVisible(),
+      await planner.getByText("No WO for this job.").first().isVisible(),
       true,
     );
     check(
@@ -885,20 +887,28 @@ async function main() {
       0,
     );
 
-    // "There isn't one" and "nobody has chased it" look identical on screen,
-    // and only one of them is a decision.
-    await planner.getByRole("button", { name: "No WO for this job" }).click();
-    await planner.waitForTimeout(2000);
+    // Nothing attached says so, and there is no button asking anybody to
+    // declare it — the great majority of jobs simply never get one, and the
+    // ones that do get theirs by somebody attaching it.
     check(
-      "no WO can be recorded as a decision",
-      (
-        await db.job.findUniqueOrThrow({
-          where: { id: assignment.jobId },
-          select: { noWorkOrder: true },
-        })
-      ).noWorkOrder,
+      "an empty slot says there is no work order",
+      await planner.getByText("No WO for this job.").isVisible(),
       true,
     );
+    check(
+      "and nobody is asked to declare it",
+      await planner
+        .getByRole("button", { name: "No WO for this job" })
+        .count(),
+      0,
+    );
+  });
+
+  // Raised as "no work order", which is still asked at creation. One turning
+  // up afterwards answers it.
+  await db.job.update({
+    where: { id: assignment.jobId },
+    data: { noWorkOrder: true },
   });
 
   // The PDF often lands in the tech's inbox at eight in the morning, long
@@ -1047,6 +1057,27 @@ async function main() {
 
     // A pencil beside each of fifteen fields is most of what made this page
     // heavy on a phone, so they wait behind the one in the block's corner.
+    // Which is the card's corner, beside the title — it used to sit inside the
+    // content, floating above the first field with nothing to relate it to.
+    const titleBox = await planner
+      .getByRole("heading", { name: "Assignment details" })
+      .boundingBox();
+    const pencilBox = await planner
+      .getByRole("button", { name: "Edit assignment details" })
+      .boundingBox();
+    check(
+      "the block's pencil sits in the corner, on the title's line",
+      Boolean(
+        titleBox &&
+          pencilBox &&
+          pencilBox.x > titleBox.x + titleBox.width &&
+          Math.abs(
+            pencilBox.y + pencilBox.height / 2 - (titleBox.y + titleBox.height / 2),
+          ) < 24,
+      ),
+      true,
+    );
+
     await planner
       .getByRole("button", { name: "Edit assignment details" })
       .click();
@@ -1484,6 +1515,61 @@ async function main() {
       true,
     );
   });
+
+  // --- a return that goes back in more than one box -------------------------
+  // The number used to be a single field in Time & schedule, three blocks away
+  // from the label the tech is holding, and there was one of it. It is now
+  // recorded beside the photo of the label, one field per box.
+  await db.deliverableRequirement.updateMany({
+    where: { jobId: assignment.jobId, category: "RETURN_LABELS" },
+    data: { enabled: true, required: false, requiresText: true },
+  });
+  await db.deliverableItem.deleteMany({
+    where: { jobId: assignment.jobId, category: "RETURN_LABELS" },
+  });
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(1000);
+
+  check(
+    "return tracking is no longer a field of its own in Time & schedule",
+    await page.getByText("Return tracking #").count(),
+    0,
+  );
+
+  await page.getByRole("button", { name: "Add to Return Labels" }).click();
+  // By role as well as name: each row's remove button is labelled after the
+  // number it removes, so "Tracking number 2" alone matches two elements.
+  await page
+    .getByRole("textbox", { name: "Tracking number 1", exact: true })
+    .fill("1Z999AA10123456784");
+  await page
+    .getByRole("button", { name: "Another tracking number" })
+    .click();
+  await page
+    .getByRole("textbox", { name: "Tracking number 2", exact: true })
+    .fill("1Z999AA10123456791");
+  await page.getByRole("button", { name: "Save", exact: true }).first().click();
+  await page.waitForTimeout(2500);
+
+  check(
+    "each box's number is kept on its own",
+    (
+      await db.deliverableItem.findFirstOrThrow({
+        where: { jobId: assignment.jobId, category: "RETURN_LABELS" },
+        select: { textValue: true },
+      })
+    ).textValue,
+    "1Z999AA10123456784\n1Z999AA10123456791",
+  );
+
+  check(
+    "and the client reads them as one list",
+    buildTextReport((await loadJobForExport(assignment.jobId))!)
+      .split("\n")
+      .find((line) => line.startsWith("Return track #:")),
+    "Return track #: 1Z999AA10123456784, 1Z999AA10123456791",
+  );
 
   // --- the crew picker ------------------------------------------------------
   await bossPage(browser, bossToken, async (planner) => {

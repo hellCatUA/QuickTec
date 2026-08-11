@@ -1138,6 +1138,52 @@ async function main() {
     "Ticket #: INC0099123, INC0099124",
   );
   await db.jobTicket.deleteMany({ where: { jobId: exportJob.id } });
+
+  // A return goes back in as many boxes as it goes back in, and each box has
+  // its own number. They are recorded one per line against Return Labels,
+  // beside the photo of the label, and the client reads one list.
+  await db.deliverableItem.updateMany({
+    where: { jobId: exportJob.id, category: "RETURN_LABELS" },
+    data: { textValue: "1Z999AA10123456784\n1Z999AA10123456791" },
+  });
+  // Still set, and no longer what wins: the numbers beside the label are the
+  // ones somebody actually read off the boxes.
+  await db.job.update({
+    where: { id: exportJob.id },
+    data: { returnTrackingNumber: "TYPED-LONG-AGO" },
+  });
+  check(
+    "every box going back reaches the report, comma separated",
+    buildTextReport((await loadJobForExport(exportJob.id))!)
+      .split("\n")
+      .find((line) => line.startsWith("Return track #:")),
+    "Return track #: 1Z999AA10123456784, 1Z999AA10123456791",
+  );
+
+  // Jobs raised before the numbers moved to the deliverable still have theirs.
+  // Emptied rather than deleted: the section itself is what the ZIP export is
+  // checked on further down, and a suite that removes it fails there instead.
+  await db.deliverableItem.updateMany({
+    where: { jobId: exportJob.id, category: "RETURN_LABELS" },
+    data: { textValue: null },
+  });
+  check(
+    "and the old job field is still read when nothing was recorded there",
+    buildTextReport((await loadJobForExport(exportJob.id))!)
+      .split("\n")
+      .find((line) => line.startsWith("Return track #:")),
+    "Return track #: TYPED-LONG-AGO",
+  );
+
+  await db.deliverableItem.updateMany({
+    where: { jobId: exportJob.id, category: "RETURN_LABELS" },
+    data: { textValue: "1Z999AA10123456784" },
+  });
+  await db.job.update({
+    where: { id: exportJob.id },
+    data: { returnTrackingNumber: null },
+  });
+
   check("hotel claims stay out of the client report", report.includes("Holiday Inn"), false);
   check("INC number stays internal", report.includes("SECRET-INTERNAL"), false);
   check(

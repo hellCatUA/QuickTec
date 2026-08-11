@@ -4,11 +4,7 @@ import { FileText, Loader2, Upload, Wand2, X } from "lucide-react";
 import Link from "next/link";
 import * as React from "react";
 import { Button } from "@/components/ui/button";
-import {
-  deleteJobDocument,
-  setNoWorkOrder,
-  uploadJobDocument,
-} from "./upload-actions";
+import { deleteJobDocument, uploadJobDocument } from "./upload-actions";
 
 export type JobDocumentKind = "CLIENT_WORK_ORDER" | "SIGN_OFF";
 
@@ -44,14 +40,11 @@ function readableSize(bytes: number) {
 export function JobDocuments({
   jobId,
   documents,
-  noWorkOrder,
   canUpload,
-  canDeclare,
   only,
 }: {
   jobId: string;
   documents: JobDocument[];
-  noWorkOrder: boolean;
   /**
    * Which of the two to render, when they are wanted in different places.
    *
@@ -63,8 +56,6 @@ export function JobDocuments({
   only?: JobDocumentKind;
   /** On the job: allowed to attach, and to remove their own upload. */
   canUpload: boolean;
-  /** Allowed to assert that there is no work order at all. */
-  canDeclare: boolean;
 }) {
   const [error, setError] = React.useState<string | null>(null);
   const [pending, startTransition] = React.useTransition();
@@ -93,17 +84,6 @@ export function JobDocuments({
     });
   }
 
-  function declare(none: boolean) {
-    setError(null);
-    startTransition(async () => {
-      const formData = new FormData();
-      formData.set("jobId", jobId);
-      formData.set("none", String(none));
-      const result = await setNoWorkOrder(formData);
-      if (!result.ok) setError(result.error);
-    });
-  }
-
   return (
     <div className="flex flex-col gap-4">
       {error ? <p className="text-sm text-danger">{error}</p> : null}
@@ -117,28 +97,15 @@ export function JobDocuments({
         documents={documents.filter(
           (doc) => doc.kind === "CLIENT_WORK_ORDER",
         )}
-        empty={
-          noWorkOrder
-            ? "Marked as no work order issued for this job."
-            : "Not attached yet. Whoever has the PDF can add it — the planner now, or the tech when it arrives."
-        }
+        // Nothing attached says so plainly, rather than asking somebody to
+        // declare it. Plenty of jobs never get a work order at all, and the
+        // ones that do get theirs by somebody attaching it — which the button
+        // below is already for.
+        empty="No WO for this job."
         canUpload={canUpload}
         pending={pending}
         onUpload={upload}
         onRemove={remove}
-        footer={
-          canDeclare ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              disabled={pending}
-              onClick={() => declare(!noWorkOrder)}
-            >
-              {noWorkOrder ? "There is one after all" : "No WO for this job"}
-            </Button>
-          ) : null
-        }
       />
       )}
 
@@ -205,7 +172,6 @@ function Section({
   pending,
   onUpload,
   onRemove,
-  footer,
 }: {
   jobId: string;
   title: string;
@@ -217,7 +183,6 @@ function Section({
   pending: boolean;
   onUpload: (kind: JobDocumentKind, files: File[]) => void;
   onRemove: (id: string) => void;
-  footer?: React.ReactNode;
 }) {
   const inputRef = React.useRef<HTMLInputElement>(null);
 
@@ -310,11 +275,8 @@ function Section({
               }}
             />
           </label>
-          {footer}
         </div>
-      ) : (
-        footer
-      )}
+      ) : null}
     </div>
   );
 }

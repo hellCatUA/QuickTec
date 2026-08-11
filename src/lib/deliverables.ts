@@ -65,7 +65,7 @@ export const DELIVERABLE_META: Record<
   RETURN_LABELS: {
     label: "Return Labels",
     description:
-      "Return tracking numbers and a photo of the label. The tracking number flows into “Return track #” on the report.",
+      "A tracking number per box going back, and a photo of the label. They reach “Return track #” on the report as one comma-separated list.",
     order: 7,
   },
   EQUIPMENT_LEFT_ON_SITE: {

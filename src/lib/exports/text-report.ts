@@ -83,19 +83,25 @@ export function workSummary(data: JobExportData): string | null {
 }
 
 /**
- * Return tracking comes from the job field when someone typed it there, and
- * otherwise from whatever was entered against the Return Labels deliverable.
+ * Return tracking comes from the Return Labels deliverable, where the numbers
+ * are recorded one per line beside the photo of the label, and falls back to
+ * the job field for jobs raised before it was recorded there.
+ *
+ * However many boxes go back, the client reads one comma-separated list.
  */
 export function returnTracking(data: JobExportData): string | null {
-  if (data.job.returnTrackingNumber?.trim()) {
-    return data.job.returnTrackingNumber.trim();
-  }
-
   const fromDeliverable = data.job.deliverables
     .filter((item) => item.category === "RETURN_LABELS" && item.textValue?.trim())
-    .map((item) => item.textValue!.trim());
+    .flatMap((item) =>
+      item
+        .textValue!.split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean),
+    );
 
-  return fromDeliverable.length > 0 ? fromDeliverable.join(", ") : null;
+  if (fromDeliverable.length > 0) return fromDeliverable.join(", ");
+
+  return data.job.returnTrackingNumber?.trim() || null;
 }
 
 export function buildTextReport(data: JobExportData): string {
