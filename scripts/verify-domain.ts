@@ -769,6 +769,79 @@ async function main() {
     true,
   );
 
+  // --- why a punch was touched ---------------------------------------------
+  // Free text produced "fixed", "per John", and forty spellings of "forgot to
+  // clock out": unreadable a month later and unaddable-up ever.
+  const {
+    reasonsFor,
+    punchReasonProblem,
+    noteRequired,
+    describeReason,
+    reasonLabel,
+  } = await import("@/lib/punch-reasons");
+
+  check("adjusting offers twelve reasons", reasonsFor("adjust").length, 12);
+  check("removing offers eighteen", reasonsFor("remove").length, 18);
+  check("and adding offers four", reasonsFor("add").length, 4);
+  check(
+    "the lists are not the same one three times",
+    reasonsFor("add").some((entry) => entry.code.includes("Job Cancelled")),
+    false,
+  );
+
+  check(
+    "a reason from the right list is accepted",
+    punchReasonProblem("adjust", "QuickTec/Forgot to punch", null),
+    null,
+  );
+  check(
+    "one from another list is not",
+    punchReasonProblem("adjust", "QuickTec/Job Cancelled", null) !== null,
+    true,
+  );
+  check(
+    "and neither is something somebody made up",
+    punchReasonProblem("remove", "because", null) !== null,
+    true,
+  );
+  check(
+    "no reason at all is refused",
+    punchReasonProblem("adjust", "", "a note"),
+    "Choose a reason.",
+  );
+
+  // Other says none of the reasons fit, so the note is the only record of what
+  // did — without it the list has bought nothing.
+  check("Other needs a note", noteRequired("Client/Other"), true);
+  check("and the named ones do not", noteRequired("Client/Unapproved OE"), false);
+  check(
+    "Other without one is refused",
+    punchReasonProblem("remove", "Client/Other", "   ") !== null,
+    true,
+  );
+  check(
+    "Other with one is fine",
+    punchReasonProblem("remove", "Client/Other", "Site flooded"),
+    null,
+  );
+
+  check(
+    "a reason and its note read as one line",
+    describeReason("Client/Other", "Site flooded"),
+    "Client/Other — Site flooded",
+  );
+  check(
+    "and a reason on its own reads as itself",
+    describeReason("QuickTec/Forgot to punch", null),
+    "QuickTec/Forgot to punch",
+  );
+  // The company renames itself; the stored codes must not follow.
+  check(
+    "the picker shows the company's own name",
+    reasonLabel(reasonsFor("adjust")[0], "417 Group"),
+    "417 Group · Adjust to time worked",
+  );
+
   // --- phone numbers -------------------------------------------------------
   const { formatPhone, formatPhoneAsTyped, telHref } = await import("@/lib/phone");
 

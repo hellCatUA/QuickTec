@@ -15,6 +15,7 @@ import { parseDatetimeLocalInZone, roundToInterval } from "@/lib/datetime";
 import { db } from "@/lib/db";
 import { deliverableLabel, resolveDeliverableRules } from "@/lib/deliverables";
 import { flag, optionalText } from "@/lib/form";
+import { describeReason, punchReasonProblem } from "@/lib/punch-reasons";
 import {
   jobRuleSheet,
   removeJobCustomRule,
@@ -2029,7 +2030,9 @@ const visitTimeSchema = z.object({
   field: z.enum(["clockIn", "clockOut"]),
   /** A datetime-local from the browser, read in the site's zone. */
   at: z.string().min(1),
-  reason: optionalText,
+  /** One of the codes in punch-reasons.ts, not free text. */
+  reasonCode: z.string().trim().min(1),
+  note: optionalText,
 });
 
 /**
@@ -2046,7 +2049,12 @@ export async function adjustVisitTime(
   const parsed = visitTimeSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return fail(z.prettifyError(parsed.error));
 
-  const { visitId, field, reason } = parsed.data;
+  const { visitId, field, reasonCode, note } = parsed.data;
+
+  const badReason = punchReasonProblem("adjust", reasonCode, note);
+  if (badReason) return fail(badReason);
+
+  const reason = describeReason(reasonCode, note);
 
   const visit = await db.visit.findUnique({
     where: { id: visitId },
@@ -2194,6 +2202,11 @@ export async function removeVisit(formData: FormData): Promise<ActionResult> {
   const visitId = String(formData.get("visitId") ?? "");
   if (!visitId) return fail("Missing punch.");
 
+  const reasonCode = String(formData.get("reasonCode") ?? "").trim();
+  const note = String(formData.get("note") ?? "").trim() || null;
+  const badReason = punchReasonProblem("remove", reasonCode, note);
+  if (badReason) return fail(badReason);
+
   const visit = await db.visit.findUnique({
     where: { id: visitId },
     select: {
@@ -2254,6 +2267,7 @@ export async function removeVisit(formData: FormData): Promise<ActionResult> {
       who: visit.assignment.user.name,
       from: visit.clockInAt.toISOString(),
       to: visit.clockOutAt?.toISOString() ?? null,
+      reason: describeReason(reasonCode, note),
     },
   });
 
@@ -2279,6 +2293,8 @@ const newPunchSchema = z.object({
   assignmentId: z.string().min(1),
   clockIn: z.string().min(1),
   clockOut: optionalText,
+  reasonCode: z.string().trim().min(1),
+  note: optionalText,
 });
 
 /**
@@ -2297,7 +2313,10 @@ export async function addVisit(formData: FormData): Promise<ActionResult> {
   const parsed = newPunchSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return fail(z.prettifyError(parsed.error));
 
-  const { assignmentId, clockOut } = parsed.data;
+  const { assignmentId, clockOut, reasonCode, note } = parsed.data;
+
+  const badReason = punchReasonProblem("add", reasonCode, note);
+  if (badReason) return fail(badReason);
 
   const assignment = await db.jobAssignment.findUnique({
     where: { id: assignmentId },
@@ -2370,6 +2389,7 @@ export async function addVisit(formData: FormData): Promise<ActionResult> {
   const visit = await db.visit.create({
     data: {
       assignmentId,
+      addedManually: true,
       clockInAt: snappedIn,
       clockInSource: "ADJUSTED",
       ...(snappedOut
@@ -2395,10 +2415,79 @@ export async function addVisit(formData: FormData): Promise<ActionResult> {
       who: assignment.user.name,
       from: snappedIn.toISOString(),
       to: snappedOut?.toISOString() ?? null,
+      reason: describeReason(reasonCode, note),
     },
   });
 
   syncJobInBackground(job.id);
+  touch(job.id);
+  return ok;
+}
+
+/**
+ * Accepts a late start or an overrun, or takes the acceptance back.
+ *
+ * Both stay on the record whatever happens — they happened. What changes is
+ * whether the screen keeps shouting about them: a reviewer who has decided the
+ * site let the crew in an hour late has answered the question, and a warning
+ * that cannot be answered is one people stop reading. The one nobody excused
+ * keeps its colour, which is the whole point of greying the other.
+ */
+export async function acceptTimeFlag(
+  formData: FormData,
+): Promise<ActionResult> {
+  const visitId = String(formData.get("visitId") ?? "");
+  const kind = String(formData.get("kind") ?? "");
+  const accept = String(formData.get("accept") ?? "true") === "true";
+
+  if (kind !== "late" && kind !== "over") return fail("Unknown flag.");
+
+  const visit = await db.visit.findUnique({
+    where: { id: visitId },
+    select: {
+      id: true,
+      assignment: {
+        select: { jobId: true, user: { select: { name: true } } },
+      },
+    },
+  });
+  if (!visit) return fail("That punch is no longer here.");
+
+  const context = await loadContext(visit.assignment.jobId);
+  if (!context) return fail("Job not found.");
+  const { user, job } = context;
+
+  // The same right as signing the job off: this is part of that reading.
+  if (!(await canOnJob(user, "job.approve_report", job))) {
+    return fail("That is not yours to accept.");
+  }
+
+  await db.visit.update({
+    where: { id: visitId },
+    data:
+      kind === "late"
+        ? {
+            lateAcceptedAt: accept ? new Date() : null,
+            lateAcceptedById: accept ? user.id : null,
+          }
+        : {
+            overAcceptedAt: accept ? new Date() : null,
+            overAcceptedById: accept ? user.id : null,
+          },
+  });
+
+  await recordAudit({
+    actorId: user.id,
+    entityType: "Visit",
+    entityId: visitId,
+    jobId: job.id,
+    action: accept ? "time_flag_accepted" : "time_flag_reopened",
+    detail: {
+      who: visit.assignment.user.name,
+      field: kind === "late" ? "Late check-in" : "Over estimate",
+    },
+  });
+
   touch(job.id);
   return ok;
 }

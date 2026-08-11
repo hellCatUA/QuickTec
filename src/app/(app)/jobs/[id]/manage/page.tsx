@@ -15,6 +15,7 @@ import {
 } from "@/lib/datetime";
 import { db } from "@/lib/db";
 import { LATE_START_MINUTES } from "@/lib/job-review";
+import { timelineMeta } from "@/lib/timeline";
 import { canOnJob } from "@/lib/scope";
 import { getSessionUser, permissionScope } from "@/lib/session";
 import { JobPay } from "../job-pay";
@@ -79,6 +80,9 @@ export default async function ManagePage({
               id: true,
               clockInAt: true,
               clockOutAt: true,
+              addedManually: true,
+              lateAcceptedAt: true,
+              overAcceptedAt: true,
               breaks: {
                 orderBy: { startAt: "asc" },
                 select: { startAt: true, endAt: true, paid: true },
@@ -99,11 +103,33 @@ export default async function ManagePage({
 
   if (!(await canOnJob(user, "job.view", jobRef))) notFound();
 
-  const [canAdjustTime, canEditPlanned, canEditRates] = await Promise.all([
-    canOnJob(user, "job.adjust_time", jobRef),
-    canOnJob(user, "job.edit_planned_fields", jobRef),
-    canOnJob(user, "pay.edit_rates", jobRef),
-  ]);
+  const [canAdjustTime, canEditPlanned, canEditRates, canApprove] =
+    await Promise.all([
+      canOnJob(user, "job.adjust_time", jobRef),
+      canOnJob(user, "job.edit_planned_fields", jobRef),
+      canOnJob(user, "pay.edit_rates", jobRef),
+      canOnJob(user, "job.approve_report", jobRef),
+    ]);
+
+  // Everything that has happened to each punch, which is a question about the
+  // punch rather than about the job — so it is read here and shown in the
+  // block rather than sending somebody to the job's timeline to search.
+  const events = await db.auditEvent.findMany({
+    where: {
+      jobId: job.id,
+      entityType: "Visit",
+    },
+    orderBy: { createdAt: "desc" },
+    take: 200,
+    select: {
+      id: true,
+      entityId: true,
+      action: true,
+      detail: true,
+      createdAt: true,
+      actor: { select: { name: true } },
+    },
+  });
 
   const company = await getCompanySettings();
   const zone = job.site.timeZone ?? company.defaultTimeZone;
@@ -173,10 +199,35 @@ export default async function ManagePage({
 
     const totalBreak = breaks.reduce((sum, entry) => sum + entry.minutes, 0);
 
+    const history = visit
+      ? events
+          .filter((event) => event.entityId === visit.id)
+          .map((event) => {
+            const detail = event.detail as
+              | { reason?: string | null; field?: string; from?: string; to?: string }
+              | null;
+            return {
+              id: event.id,
+              what: timelineMeta(event.action).label,
+              who: event.actor?.name ?? "the system",
+              when: usDateTimeInZone(event.createdAt, zone),
+              detail:
+                detail?.reason ??
+                (detail?.field ? `${detail.field}` : null) ??
+                null,
+            };
+          })
+      : [];
+
     return {
       assignmentId: assignment.id,
       who: assignment.user.name,
       visitId: visit?.id ?? null,
+      manual: visit?.addedManually ?? false,
+      lateAccepted: visit?.lateAcceptedAt !== null && visit?.lateAcceptedAt !== undefined,
+      overAccepted: visit?.overAcceptedAt !== null && visit?.overAcceptedAt !== undefined,
+      canAccept: canApprove && visit !== null,
+      history,
       clockIn: visit
         ? {
             value: toDatetimeLocalInZone(visit.clockInAt, zone),
@@ -227,7 +278,7 @@ export default async function ManagePage({
             <CardTitle>TimeClock Punches</CardTitle>
           </CardHeader>
           <CardContent>
-            <Punches punches={punches} />
+            <Punches punches={punches} companyName={company.name} />
           </CardContent>
         </Card>
       ) : null}

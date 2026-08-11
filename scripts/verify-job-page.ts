@@ -1414,10 +1414,7 @@ async function main() {
   );
 
   // Downwards without limit: this can only ever give time back.
-  await sheet.locator('[data-clock="clockOut"]').click();
-  await sheet.locator('input[type="datetime-local"]').fill("2026-07-28T13:00");
-  await sheet.getByPlaceholder("Why?").fill("Crew left at one, logged late");
-  await sheet.getByRole("button", { name: "Save", exact: true }).click();
+  await editPunch(page, sheet, "Edit CO", "2026-07-28T13:00", "Forgot to punch");
   await page.waitForTimeout(2500);
 
   check(
@@ -1430,10 +1427,7 @@ async function main() {
   await plantClock();
   await openPortal(page, assignment.jobId);
 
-  await sheet.locator('[data-clock="clockOut"]').click();
-  await sheet.locator('input[type="datetime-local"]').fill("2026-07-28T19:00");
-  await sheet.getByPlaceholder("Why?").fill("We stayed on for the cutover");
-  await sheet.getByRole("button", { name: "Save", exact: true }).click();
+  await editPunch(page, sheet, "Edit CO", "2026-07-28T19:00", "Adjust to time worked");
   await page.waitForTimeout(2500);
 
   check(
@@ -1462,10 +1456,7 @@ async function main() {
 
   // Pressing Save again with a different reason must not put a second copy in
   // somebody's queue.
-  await sheet.locator('[data-clock="clockOut"]').click();
-  await sheet.locator('input[type="datetime-local"]').fill("2026-07-28T20:00");
-  await sheet.getByPlaceholder("Why?").fill("Actually it was eight");
-  await sheet.getByRole("button", { name: "Save", exact: true }).click();
+  await editPunch(page, sheet, "Edit CO", "2026-07-28T20:00", "Adjust to time worked");
   await page.waitForTimeout(2500);
   check(
     "and asking twice does not queue it twice",
@@ -1486,10 +1477,7 @@ async function main() {
   );
 
   // Within the hour, either way, is theirs.
-  await sheet.locator('[data-clock="clockIn"]').click();
-  await sheet.locator('input[type="datetime-local"]').fill("2026-07-28T08:30");
-  await sheet.getByPlaceholder("Why?").fill("Arrived before I logged it");
-  await sheet.getByRole("button", { name: "Save", exact: true }).click();
+  await editPunch(page, sheet, "Edit CI", "2026-07-28T08:30", "Forgot to punch");
   await page.waitForTimeout(2500);
   check(
     "half an hour on a clock-in is within reach",
@@ -1508,10 +1496,7 @@ async function main() {
     await openPortal(planner, assignment.jobId);
 
     const menu = planner.locator("[data-punch]").first();
-    await menu.locator('[data-clock="clockIn"]').click();
-    await menu.locator('input[type="datetime-local"]').fill("2026-07-28T06:00");
-    await menu.getByPlaceholder("Why?").fill("Started at the depot");
-    await menu.getByRole("button", { name: "Save", exact: true }).click();
+    await editPunch(planner, menu, "Edit CI", "2026-07-28T06:00", "Adjust to time worked");
     await planner.waitForTimeout(2500);
 
     check(
@@ -1529,7 +1514,7 @@ async function main() {
           })
         ).detail as { reason?: string } | null
       )?.reason,
-      "Started at the depot",
+      "QuickTec/Adjust to time worked",
     );
   });
 
@@ -1777,9 +1762,12 @@ async function main() {
       2,
     );
 
-    await planner
-      .getByRole("button", { name: new RegExp(`Remove ${second.name}`) })
+    const theirs = planner.locator(`[data-punch]`).nth(1);
+    await theirs
+      .getByRole("button", { name: `Punch actions for ${second.name}` })
       .click();
+    await planner.getByRole("button", { name: "Remove punch" }).click();
+    await pickReason(planner, "Job Cancelled");
     await planner.getByRole("button", { name: "Remove", exact: true }).click();
     await planner.waitForTimeout(2500);
 
@@ -1798,12 +1786,25 @@ async function main() {
     await planner.reload({ waitUntil: "load" });
     await planner.waitForTimeout(800);
     await planner
-      .getByRole("button", { name: `Add a punch for ${second.name}` })
+      .getByRole("button", { name: `Punch actions for ${second.name}` })
       .click();
+    await planner.getByRole("button", { name: "Add a punch" }).click();
     await planner.locator(`#add-in-${extra.id}`).fill("2026-07-28T10:00");
     await planner.locator(`#add-out-${extra.id}`).fill("2026-07-28T15:00");
+    await pickReason(planner, "Forgot to punch");
     await planner.getByRole("button", { name: "Save punch" }).click();
     await planner.waitForTimeout(2500);
+
+    check(
+      "and it is marked as written by hand rather than pressed",
+      (
+        await db.visit.findFirstOrThrow({
+          where: { assignmentId: extra.id },
+          select: { addedManually: true },
+        })
+      ).addedManually,
+      true,
+    );
 
     check(
       "and a day nobody recorded can be written",
@@ -2150,6 +2151,34 @@ async function openJobMenu(page: import("playwright").Page) {
   await page
     .getByRole("dialog", { name: "Job settings" })
     .waitFor({ timeout: 15_000 });
+}
+
+/**
+ * Chooses a reason in the smart-search field, whichever pane is open.
+ *
+ * The picker is a button until it is opened and an input after — the same id
+ * on both — so it takes a click before it takes any typing.
+ */
+async function pickReason(page: import("playwright").Page, what: string) {
+  const field = page.locator('[id$="-reason"]').last();
+  await field.click();
+  await page.locator('input[role="combobox"]').last().fill(what);
+  await page.getByRole("option", { name: new RegExp(what) }).first().click();
+}
+
+/** Opens one punch's menu, edits a clock, and says why. */
+async function editPunch(
+  page: import("playwright").Page,
+  block: import("playwright").Locator,
+  action: string,
+  at: string,
+  reason: string,
+) {
+  await block.getByRole("button", { name: /^Punch actions for/ }).click();
+  await page.getByRole("button", { name: action, exact: true }).click();
+  await block.locator('input[type="datetime-local"]').fill(at);
+  await pickReason(page, reason);
+  await block.getByRole("button", { name: "Save", exact: true }).click();
 }
 
 /** Straight to the portal, which is where punches and pay went. */

@@ -883,6 +883,26 @@ model Visit {
   clockOutSource ClockSource?
   clockOutRawAt  DateTime?
 
+  /// Written by hand rather than by somebody pressing a button on site.
+  ///
+  /// Not the same as ADJUSTED, which also covers a real punch corrected
+  /// afterwards. This one was never made: a dead phone, a subcontractor added
+  /// to the crew after the day, a job run without the app open. Worth saying
+  /// on screen, because it is the difference between a record and a
+  /// reconstruction.
+  addedManually Boolean @default(false)
+
+  /// Which of this visit's review flags somebody has looked at and accepted.
+  ///
+  /// A late start and an overrun stay on the record either way — they happened
+  /// — but once a reviewer has said "yes, that was the site's fault" the
+  /// warning has done its job and should stop shouting. An unexcused one keeps
+  /// its colour.
+  lateAcceptedAt  DateTime?
+  lateAcceptedById String?
+  overAcceptedAt  DateTime?
+  overAcceptedById String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
