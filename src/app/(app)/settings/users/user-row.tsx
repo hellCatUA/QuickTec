@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Field, Input, Select } from "@/components/ui/field";
 import { updateUser, type ActionResult } from "../actions";
+import { ResetPassword } from "./reset-password";
 
 const TIME_ZONES = [
   "America/Los_Angeles",
@@ -42,6 +43,8 @@ export function UserRow({
     phone: string | null;
     directSupervisorId: string | null;
     lastLoginAt: string | null;
+    signInMethod: string;
+    hasPassword: boolean;
   };
   supervisorOptions: { id: string; name: string }[];
 }) {
@@ -63,6 +66,11 @@ export function UserRow({
                 {user.email}
               </div>
             </div>
+            {user.signInMethod === "LOCAL" ? (
+              <Badge variant="warning">
+                {user.hasPassword ? "Outside" : "Invited"}
+              </Badge>
+            ) : null}
             <Badge
               variant={ROLE_VARIANT[user.baseRole] ?? "neutral"}
               className="ml-auto"
@@ -70,6 +78,12 @@ export function UserRow({
               {user.baseRole}
             </Badge>
           </div>
+
+          {/* Only for accounts whose password this app actually holds. A
+              NextCloud one is answered in NextCloud. */}
+          {user.signInMethod === "LOCAL" ? (
+            <ResetPassword userId={user.id} />
+          ) : null}
 
           <div className="grid gap-4 sm:grid-cols-3">
             <Field

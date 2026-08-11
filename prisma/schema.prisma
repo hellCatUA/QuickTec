@@ -23,9 +23,19 @@ datasource db {
 // People, roles, permissions
 // ---------------------------------------------------------------------------
 
+/// Where a person's identity comes from.
+enum SignInMethod {
+  /// NextCloud, through OIDC. Role follows their quicktec-* groups.
+  SSO
+  /// A password held here. Role is set by an administrator, because there are
+  /// no groups to read it from.
+  LOCAL
+}
+
 /// Mapped hard from NextCloud groups on every login (quicktec-admin,
-/// quicktec-manager, quicktec-supervisor, quicktec-tech, quicktec-accountant).
-/// A user in none of those groups is refused entry.
+/// quicktec-manager, quicktec-supervisor, quicktec-tech, quicktec-accountant)
+/// for SSO accounts. Set by an administrator for LOCAL ones, which have no
+/// groups to read.
 enum BaseRole {
   ADMINISTRATOR
   MANAGER
@@ -55,6 +65,26 @@ model User {
   name         String
   phone        String?
   avatarUrl    String?
+
+  /// How this person proves who they are.
+  ///
+  /// Most of the company is in NextCloud and arrives through it. Some people
+  /// are not — a client's coordinator, a subcontractor, somebody who needs to
+  /// see their own jobs and nothing else — and creating a NextCloud account
+  /// for them would put them inside the organisation to solve a problem
+  /// outside it. Those sign in here, against a password this app holds.
+  signInMethod SignInMethod @default(SSO)
+
+  /// scrypt, with its parameters and salt in the string. Only ever set for
+  /// LOCAL accounts; an SSO account has no password here to steal.
+  passwordHash String?
+  /// A password somebody else chose is a password somebody else knows.
+  mustChangePassword Boolean @default(false)
+
+  /// Wrong-password attempts since the last success, and how long the account
+  /// is closed for. Reset on every successful sign-in.
+  failedSignIns Int       @default(0)
+  lockedUntil   DateTime?
 
   baseRole BaseRole
   active   Boolean  @default(true)
@@ -100,9 +130,32 @@ model User {
   pmChanges             ProjectPmChange[]    @relation("PmChangedBy")
   approvedFormEntries   JobFormEntry[]       @relation("FormEntryApprover")
   calendarEvents        CalendarEvent[]
+  passwordSetupTokens   PasswordSetupToken[]
 
   @@index([baseRole, active])
   @@index([directSupervisorId])
+}
+
+/// A single-use link that lets somebody choose their own password.
+///
+/// There is no mail server here, so the link is shown to the administrator
+/// once and passed on however they like. Only its hash is stored: a stolen
+/// database does not hand anybody a working link, and the plaintext exists
+/// nowhere after the page that displayed it.
+model PasswordSetupToken {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// SHA-256 of the token in the URL.
+  tokenHash String   @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+
+  createdById String
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
 }
 
 /// Editable permission matrix. Seeded with defaults, then owned by Managers.

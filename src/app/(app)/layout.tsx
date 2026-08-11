@@ -27,6 +27,10 @@ export default async function AppLayout({
   const user = await getSessionUser();
   if (!user) redirect("/signin");
 
+  // A password an administrator typed is a password they still know. Nothing
+  // else in the app until it has been replaced.
+  if (user.mustChangePassword) redirect("/set-password");
+
   const company = await db.companySettings.findUnique({
     where: { id: "singleton" },
     select: { name: true, logoUrl: true, showCompanyNameInHeader: true },

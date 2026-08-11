@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
 import { db } from "@/lib/db";
 import { can, getSessionUser } from "@/lib/session";
+import { OutsideAccount } from "./outside-account";
 import { UserRow } from "./user-row";
 
 export const metadata = { title: "Users" };
@@ -23,6 +24,8 @@ export default async function UsersSettingsPage() {
       phone: true,
       directSupervisorId: true,
       lastLoginAt: true,
+      signInMethod: true,
+      passwordHash: true,
     },
   });
 
@@ -37,11 +40,15 @@ export default async function UsersSettingsPage() {
       <div>
         <h1 className="text-lg font-semibold">Users</h1>
         <p className="text-sm text-muted-foreground">
-          Roles are read from NextCloud groups on every sign-in and cannot be
-          changed here. What is set here is the direct supervisor — the person
-          who approves and pays this tech, whatever project they work on.
+          Staff roles are read from NextCloud groups on every sign-in and cannot
+          be changed here. What is set here is the direct supervisor — the
+          person who approves and pays this tech, whatever project they work on.
+          Outside accounts are different: they have no groups, so their role is
+          whatever it was created with.
         </p>
       </div>
+
+      <OutsideAccount />
 
       {users.length === 0 ? (
         <Card>
@@ -58,6 +65,10 @@ export default async function UsersSettingsPage() {
               user={{
                 ...user,
                 lastLoginAt: user.lastLoginAt?.toISOString() ?? null,
+                // The hash never leaves the server; whether there is one does,
+                // because "invited and never signed in" reads differently from
+                // "forgotten it".
+                hasPassword: user.passwordHash !== null,
               }}
               supervisorOptions={supervisorOptions.filter(
                 (option) => option.id !== user.id,

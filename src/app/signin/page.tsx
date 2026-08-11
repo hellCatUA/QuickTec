@@ -1,4 +1,5 @@
 import { AlertCircle } from "lucide-react";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { callbackUri, discoveryUrl, signIn, SIGNIN_ERRORS } from "@/auth";
 import { CompanyMark } from "@/components/company-mark";
@@ -8,6 +9,21 @@ import { brandLine } from "@/lib/company";
 import { db } from "@/lib/db";
 import { probeDiscovery, reportConfigProblems } from "@/lib/env";
 import { getSessionUser } from "@/lib/session";
+import { PasswordSignIn } from "./password-form";
+
+/** Keeps where they were going, and which fork they are on, across a click. */
+function signInHref(params: {
+  callbackUrl?: string;
+  reauth?: string;
+  method?: string;
+}): string {
+  const query = new URLSearchParams();
+  if (params.callbackUrl) query.set("callbackUrl", params.callbackUrl);
+  if (params.reauth === "1") query.set("reauth", "1");
+  if (params.method) query.set("method", params.method);
+  const search = query.toString();
+  return `/signin${search ? `?${search}` : ""}`;
+}
 
 export const metadata = { title: "Sign in" };
 
@@ -38,23 +54,25 @@ export default async function SignInPage({
     error?: string;
     callbackUrl?: string;
     reauth?: string;
+    method?: string;
   }>;
 }) {
   const user = await getSessionUser();
   if (user) redirect("/dashboard");
 
-  const { error, callbackUrl, reauth } = await searchParams;
+  const { error, callbackUrl, reauth, method } = await searchParams;
   const message = errorMessage(error);
 
   // A missing NEXTCLOUD_* variable otherwise presents as a sign-in button that
   // silently does nothing, so say so plainly instead.
   const configProblems = reportConfigProblems();
 
-  // Nothing to decide: NextCloud is the only way in, so go there. The page
-  // itself is only rendered when there is something to say — a failure to
-  // explain, or a configuration to fix — which is also what stops a redirect
-  // loop when sign-in keeps failing.
-  if (!error && configProblems.length === 0) {
+  // Not everybody who signs in here works here. A client's coordinator or a
+  // subcontractor has no NextCloud account and never will, so the page asks
+  // which of the two this is rather than assuming and redirecting. Answering
+  // "yes" hands straight over to NextCloud, which is the only thing that page
+  // used to do.
+  if (method === "sso" && configProblems.length === 0 && !error) {
     const params = new URLSearchParams();
     if (callbackUrl) params.set("callbackUrl", callbackUrl);
     if (reauth === "1") params.set("reauth", "1");
@@ -154,30 +172,56 @@ export default async function SignInPage({
             </div>
           ) : null}
 
-          <form
-            action={async () => {
-              "use server";
-              await signIn("nextcloud", {
-                redirectTo: callbackUrl ?? "/dashboard",
-              });
-            }}
-          >
-            {/* Only ever seen after a failure — an ordinary visit never gets
-                this far, it is redirected straight to NextCloud. */}
-            <Button
-              type="submit"
-              size="lg"
-              block
-              disabled={configProblems.length > 0}
-            >
-              Try signing in again
-            </Button>
-          </form>
+          {method === "password" ? (
+            <>
+              <PasswordSignIn callbackUrl={callbackUrl ?? "/dashboard"} />
 
-          <p className="text-center text-xs text-muted-foreground">
-            Access is granted through NextCloud group membership. If you cannot
-            sign in, ask a manager to add you to the right group.
-          </p>
+              <Link
+                href={signInHref({ callbackUrl, reauth })}
+                className="text-center text-xs text-muted-foreground underline-offset-4 hover:underline"
+              >
+                Back
+              </Link>
+            </>
+          ) : (
+            <>
+              <p className="text-center text-sm">
+                Do you have a{" "}
+                <strong>{company?.name ?? "company"}</strong> SSO account?
+              </p>
+
+              <form
+                action={async () => {
+                  "use server";
+                  await signIn("nextcloud", {
+                    redirectTo: callbackUrl ?? "/dashboard",
+                  });
+                }}
+              >
+                <Button
+                  type="submit"
+                  size="lg"
+                  block
+                  disabled={configProblems.length > 0}
+                >
+                  Yes — sign in with SSO
+                </Button>
+              </form>
+
+              <Link
+                href={signInHref({ callbackUrl, reauth, method: "password" })}
+                className="flex min-h-11 w-full items-center justify-center rounded-lg border border-border px-4 text-sm font-medium hover:bg-muted"
+              >
+                No — I have a QuickTec password
+              </Link>
+
+              <p className="text-center text-xs text-muted-foreground">
+                Staff sign in through NextCloud, where group membership decides
+                what they can see. Everyone else uses an account an
+                administrator created here.
+              </p>
+            </>
+          )}
         </CardContent>
       </Card>
     </div>

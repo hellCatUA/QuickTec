@@ -5,6 +5,12 @@ import { z } from "zod";
 import { diffFields, recordAudit } from "@/lib/audit";
 import { db } from "@/lib/db";
 import { flag, optionalText } from "@/lib/form";
+import {
+  hashPassword,
+  newSetupToken,
+  passwordProblem,
+  SETUP_TOKEN_HOURS,
+} from "@/lib/password";
 import { PERMISSION_KEYS, type Permission } from "@/lib/permissions";
 import { requirePermission } from "@/lib/session";
 import { BaseRole, PermissionScope } from "@prisma-client";
@@ -205,4 +211,162 @@ export async function updateRoleGrant(
 
   revalidatePath("/settings/roles");
   return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Accounts for people who are not in NextCloud
+// ---------------------------------------------------------------------------
+
+export type LinkResult =
+  | { ok: true; link?: string }
+  | { ok: false; error: string };
+
+const outsideUserSchema = z.object({
+  name: z.string().trim().min(1, "Name is required"),
+  email: z.string().trim().toLowerCase().pipe(z.email("That is not an email address")),
+  baseRole: z.enum(BaseRole),
+  timeZone: z.string().trim().min(1),
+  /** Blank means issue a link instead and let them choose their own. */
+  password: optionalText,
+});
+
+/** The address somebody opens to choose a password. */
+function setupLink(token: string): string {
+  const base = (process.env.AUTH_URL ?? "").trim().replace(/\/+$/, "");
+  return `${base}/set-password?token=${token}`;
+}
+
+async function issueToken(userId: string, actorId: string): Promise<string> {
+  // Anything outstanding stops working: two live links means two people can
+  // take the account.
+  await db.passwordSetupToken.updateMany({
+    where: { userId, usedAt: null },
+    data: { usedAt: new Date() },
+  });
+
+  const { token, tokenHash } = newSetupToken();
+  await db.passwordSetupToken.create({
+    data: {
+      userId,
+      tokenHash,
+      createdById: actorId,
+      expiresAt: new Date(Date.now() + SETUP_TOKEN_HOURS * 3600_000),
+    },
+  });
+
+  return setupLink(token);
+}
+
+/**
+ * Creates an account for somebody outside the organisation.
+ *
+ * Their role is set here rather than read from a group, because there is no
+ * group to read: that is the whole difference between these accounts and the
+ * rest. Which means the person creating one is choosing what a non-employee
+ * can see, and it is worth their while to choose Tech unless they have a
+ * reason not to.
+ */
+export async function createOutsideUser(
+  _prev: LinkResult | null,
+  formData: FormData,
+): Promise<LinkResult> {
+  const actor = await requirePermission("users.manage");
+
+  const parsed = outsideUserSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) {
+    return { ok: false, error: z.prettifyError(parsed.error) };
+  }
+
+  const { name, email, baseRole, timeZone, password } = parsed.data;
+
+  if (password) {
+    const problem = passwordProblem(password);
+    if (problem) return { ok: false, error: problem };
+  }
+
+  const taken = await db.user.findUnique({
+    where: { email },
+    select: { id: true },
+  });
+  if (taken) {
+    return { ok: false, error: "Somebody already uses that address." };
+  }
+
+  const user = await db.user.create({
+    data: {
+      name,
+      email,
+      baseRole,
+      timeZone,
+      signInMethod: "LOCAL",
+      // A password the administrator typed is one they still know, so it is
+      // good for exactly one sign-in.
+      passwordHash: password ? await hashPassword(password) : null,
+      mustChangePassword: Boolean(password),
+    },
+    select: { id: true },
+  });
+
+  await recordAudit({
+    actorId: actor.id,
+    entityType: "User",
+    entityId: user.id,
+    action: "outside_account_created",
+    detail: { who: name, field: "Sign-in", to: password ? "password set" : "link issued" },
+  });
+
+  revalidatePath("/settings/users");
+
+  if (password) return { ok: true };
+  return { ok: true, link: await issueToken(user.id, actor.id) };
+}
+
+/**
+ * A new link for an account that already exists.
+ *
+ * The same button answers a forgotten password and a first sign-in that never
+ * happened, because they are the same thing: nobody currently holds a working
+ * password for this account and somebody needs to choose one.
+ */
+export async function resetOutsidePassword(
+  formData: FormData,
+): Promise<LinkResult> {
+  const actor = await requirePermission("users.manage");
+  const userId = String(formData.get("userId") ?? "");
+
+  const user = await db.user.findUnique({
+    where: { id: userId },
+    select: { id: true, name: true, signInMethod: true },
+  });
+  if (!user) return { ok: false, error: "No such account." };
+
+  if (user.signInMethod !== "LOCAL") {
+    return {
+      ok: false,
+      error: "This account signs in through NextCloud, so its password is there.",
+    };
+  }
+
+  // The old one stops working now rather than when the new link is used: an
+  // account being reset is one somebody may already have the password to.
+  await db.user.update({
+    where: { id: userId },
+    data: {
+      passwordHash: null,
+      mustChangePassword: false,
+      failedSignIns: 0,
+      lockedUntil: null,
+    },
+  });
+
+  await recordAudit({
+    actorId: actor.id,
+    entityType: "User",
+    entityId: userId,
+    action: "password_reset_issued",
+    detail: { who: user.name },
+  });
+
+  revalidatePath("/settings/users");
+  return { ok: true, link: await issueToken(userId, actor.id) };
 }

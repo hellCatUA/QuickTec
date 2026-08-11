@@ -15,6 +15,8 @@ export type SessionUser = {
   avatarUrl: string | null;
   baseRole: BaseRole;
   timeZone: string;
+  /** Signed in on a password somebody else chose. Nothing else until it changes. */
+  mustChangePassword: boolean;
   directSupervisorId: string | null;
   /** permission -> scope, already merged from role grants and overrides. */
   grants: Map<Permission, PermissionScope>;
@@ -47,6 +49,7 @@ export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
       baseRole: true,
       active: true,
       timeZone: true,
+      mustChangePassword: true,
       directSupervisorId: true,
       permissionOverrides: {
         select: {
@@ -117,6 +120,7 @@ export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
     avatarUrl: user.avatarUrl,
     baseRole: user.baseRole,
     timeZone: user.timeZone,
+    mustChangePassword: user.mustChangePassword,
     directSupervisorId: user.directSupervisorId,
     grants,
     projectGrants,

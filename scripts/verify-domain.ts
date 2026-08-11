@@ -647,6 +647,80 @@ async function main() {
     0,
   );
 
+  // --- passwords for the people who are not in NextCloud -------------------
+  const {
+    hashPassword,
+    verifyPassword,
+    needsRehash,
+    passwordProblem,
+    newSetupToken,
+    hashSetupToken,
+    lockoutUntil,
+    lockRemaining,
+    MAX_FAILED_SIGN_INS,
+  } = await import("@/lib/password");
+
+  const secret = "correct horse battery staple";
+  const hashed = await hashPassword(secret);
+
+  check("a hash carries its own parameters", hashed.startsWith("scrypt$32768$8$1$"), true);
+  check("the right password verifies", await verifyPassword(secret, hashed), true);
+  check(
+    "a wrong one does not",
+    await verifyPassword("correct horse battery stapl", hashed),
+    false,
+  );
+  check("and neither does nothing at all", await verifyPassword(secret, null), false);
+  // Two people choosing the same password must not be visible as such in the
+  // database, which is what the salt is for.
+  check(
+    "the same password hashes differently every time",
+    (await hashPassword(secret)) === hashed,
+    false,
+  );
+  check("today's parameters need no rehash", needsRehash(hashed), false);
+  check(
+    "yesterday's do",
+    needsRehash(hashed.replace("scrypt$32768", "scrypt$16384")),
+    true,
+  );
+  check(
+    "a hash from something else entirely is refused rather than trusted",
+    await verifyPassword(secret, "$2b$10$notascrypthashatall"),
+    false,
+  );
+
+  check("a short password is refused", passwordProblem("hunter2") !== null, true);
+  check("a long one is not", passwordProblem(secret), null);
+
+  const issued = newSetupToken();
+  check(
+    "a link is stored only as its hash",
+    issued.tokenHash === hashSetupToken(issued.token) && issued.tokenHash !== issued.token,
+    true,
+  );
+  check(
+    "and the hash gives nothing back",
+    issued.tokenHash.includes(issued.token.slice(0, 8)),
+    false,
+  );
+
+  check(
+    "a few wrong answers do not lock anybody out",
+    lockoutUntil(MAX_FAILED_SIGN_INS - 1),
+    null,
+  );
+  check(
+    "enough of them do",
+    lockRemaining(lockoutUntil(MAX_FAILED_SIGN_INS)) > 0,
+    true,
+  );
+  check(
+    "and a lock that has passed is not a lock",
+    lockRemaining(new Date(Date.now() - 60_000)),
+    0,
+  );
+
   // --- phone numbers -------------------------------------------------------
   const { formatPhone, formatPhoneAsTyped, telHref } = await import("@/lib/phone");
 

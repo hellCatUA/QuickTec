@@ -1,6 +1,18 @@
-import NextAuth, { customFetch, type NextAuthConfig } from "next-auth";
+import NextAuth, {
+  CredentialsSignin,
+  customFetch,
+  type NextAuthConfig,
+} from "next-auth";
+import Credentials from "next-auth/providers/credentials";
 import { db } from "@/lib/db";
 import { extractGroups, resolveBaseRole } from "@/lib/nextcloud-groups";
+import {
+  hashPassword,
+  lockRemaining,
+  lockoutUntil,
+  needsRehash,
+  verifyPassword,
+} from "@/lib/password";
 
 /**
  * Sign-in rejection reasons surfaced on /signin.
@@ -14,6 +26,10 @@ export const SIGNIN_ERRORS = {
   NoSubject:
     "NextCloud did not identify the account in the token it returned. This is a configuration problem, not something you can fix by retrying.",
   Inactive: "This account has been deactivated in QuickTec.",
+  LocalAccount:
+    "An account with this address already signs in with a QuickTec password. An administrator has to join the two before SSO will work for it.",
+  SsoAccount:
+    "This email belongs to a company account. Sign in with SSO instead.",
 } as const;
 
 // The trailing slash matters: it is compared against the `issuer` in the
@@ -41,6 +57,17 @@ export function callbackUri(): string {
 }
 
 const SPEC_WELL_KNOWN = "/.well-known/openid-configuration";
+
+/**
+ * A real hash of a password nobody has.
+ *
+ * Verified against when the address is unknown, so that answering "no" costs
+ * the same whether or not the account exists. Without it the response time is
+ * a membership test.
+ */
+const DECOY_HASH =
+  "scrypt$32768$8$1$AAAAAAAAAAAAAAAAAAAAAA==$" +
+  "Ym90aGluZ3Rvc2VlaGVyZWJvdGhpbmd0b3NlZWhlcmVib3RoaW5ndG9zZWVoZXJlYm90aA==";
 
 /**
  * Sends the discovery request where NextCloud actually keeps the document.
@@ -151,6 +178,87 @@ export const authConfig: NextAuthConfig = {
   },
 
   providers: [
+    /**
+     * The people who are not in NextCloud.
+     *
+     * Everything about being turned away is deliberately uniform: a wrong
+     * password, an unknown address, an SSO account typed into the wrong form
+     * and a deactivated account all come back as the same sentence, because
+     * the difference between them is exactly what somebody working through a
+     * list of addresses wants to learn. The one exception is a locked account,
+     * which is said plainly — otherwise the person waits out fifteen minutes
+     * without knowing they are waiting.
+     */
+    Credentials({
+      id: "password",
+      name: "QuickTec password",
+      credentials: {
+        email: { label: "Email", type: "email" },
+        password: { label: "Password", type: "password" },
+      },
+      async authorize(credentials) {
+        const email = String(credentials?.email ?? "")
+          .trim()
+          .toLowerCase();
+        const password = String(credentials?.password ?? "");
+        if (!email || !password) return null;
+
+        const user = await db.user.findUnique({
+          where: { email },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            active: true,
+            signInMethod: true,
+            passwordHash: true,
+            failedSignIns: true,
+            lockedUntil: true,
+          },
+        });
+
+        // Still spend the time hashing when there is no account. Answering an
+        // unknown address in a millisecond and a known one in a hundred is a
+        // list of who works here.
+        if (!user || user.signInMethod !== "LOCAL" || !user.active) {
+          await verifyPassword(password, DECOY_HASH);
+          return null;
+        }
+
+        const locked = lockRemaining(user.lockedUntil);
+        if (locked > 0) {
+          throw new CredentialsSignin(`Locked:${locked}`);
+        }
+
+        if (!(await verifyPassword(password, user.passwordHash))) {
+          const failures = user.failedSignIns + 1;
+          await db.user.update({
+            where: { id: user.id },
+            data: { failedSignIns: failures, lockedUntil: lockoutUntil(failures) },
+          });
+          return null;
+        }
+
+        // Their password is good, so it is in hand for the one moment it can
+        // be re-hashed with today's parameters.
+        const rehash = needsRehash(user.passwordHash)
+          ? await hashPassword(password)
+          : undefined;
+
+        await db.user.update({
+          where: { id: user.id },
+          data: {
+            failedSignIns: 0,
+            lockedUntil: null,
+            lastLoginAt: new Date(),
+            ...(rehash ? { passwordHash: rehash } : {}),
+          },
+        });
+
+        return { id: user.id, name: user.name, email: user.email };
+      },
+    }),
+
     {
       id: "nextcloud",
       name: "NextCloud",
@@ -187,6 +295,12 @@ export const authConfig: NextAuthConfig = {
      * all", which depends on their NextCloud groups.
      */
     async signIn({ profile, account }) {
+      // This callback is shared by every provider, and the password one has
+      // already done its own deciding in `authorize` — there is no ID token
+      // here to read a subject or a group out of. Without this, signing in
+      // with a password was refused as "the token carries no subject".
+      if (account?.provider !== "nextcloud") return true;
+
       const claims: Record<string, unknown> = { ...profile };
       const fromIdToken = Object.keys(claims);
 
@@ -247,10 +361,20 @@ export const authConfig: NextAuthConfig = {
 
       const existing = await db.user.findFirst({
         where: { OR: [{ nextcloudSub: sub }, { email }] },
-        select: { id: true, active: true },
+        select: { id: true, active: true, signInMethod: true, nextcloudSub: true },
       });
 
       if (existing && !existing.active) return `/signin?error=Inactive`;
+
+      // An outside account carrying the same address is not this person until
+      // somebody says so. Matching on email alone would let anybody who can
+      // get a NextCloud account with the right address inherit a local one,
+      // and an administrator switching them to SSO is the deliberate act that
+      // should join the two.
+      if (existing && existing.signInMethod === "LOCAL" && !existing.nextcloudSub) {
+        explain("an outside account already uses this address");
+        return `/signin?error=LocalAccount`;
+      }
 
       if (existing) {
         await db.user.update({
@@ -280,7 +404,11 @@ export const authConfig: NextAuthConfig = {
       return true;
     },
 
-    async jwt({ token, profile }) {
+    async jwt({ token, user, profile }) {
+      // The password provider has no profile: it hands back the row it just
+      // checked, and that id is the whole of what the session needs.
+      if (user?.id) token.userId = user.id;
+
       if (profile?.sub) {
         const user = await db.user.findUnique({
           where: { nextcloudSub: profile.sub },
