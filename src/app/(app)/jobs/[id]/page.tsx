@@ -31,20 +31,27 @@ import {
   LIFECYCLE_META,
   OUTCOME_META,
 } from "@/lib/job-status";
+import {
+  reviewDeliverables,
+  reviewReimbursements,
+  reviewTimes,
+  reviewWork,
+} from "@/lib/job-review";
 import { formatRate } from "@/lib/money";
 import { canOnJob } from "@/lib/scope";
 import { loadTimeline } from "@/lib/timeline-data";
-import { can, getSessionUser } from "@/lib/session";
+import { can, getSessionUser, permissionScope } from "@/lib/session";
 import { loadJobForExport } from "@/lib/exports/job-data";
 import { buildTextReport } from "@/lib/exports/text-report";
-import { jobSpan } from "@/lib/time-tracking";
+import { jobSpan, visitTotals } from "@/lib/time-tracking";
 import { Timeline } from "@/components/timeline";
-import { approveJob, approveReport } from "../actions";
+import { approveJob } from "../actions";
 import { ChangeRequests } from "./change-requests";
 import { CrewPanel } from "./crew-panel";
 import { DispatchPanel } from "./dispatch-panel";
 import { JobMenu, JobMenuSection } from "./job-menu";
 import { JobPay } from "./job-pay";
+import { JobReview, type ReviewStep } from "./job-review";
 import { VisitTimes } from "./visit-times";
 import { BreakPay } from "./break-pay";
 import { JobDocuments } from "./job-documents";
@@ -466,6 +473,11 @@ export default async function JobPage({
   );
   const paysForThis = isDirectSupervisor || isProjectManager;
 
+  // The same test clock-limits.ts calls "unbounded": whoever the time is
+  // charged to. Deleting a punch is theirs; the job's lead may only move one.
+  const canRemovePunch =
+    permissionScope(user, "job.adjust_time") === "ALL" || paysForThis;
+
   // A rate is the job's own money: their supervisor, the project's manager, or
   // whoever raised it and negotiated the number in the first place.
   const canSetPay =
@@ -553,6 +565,133 @@ export default async function JobPage({
 
   const timeline = await loadTimeline({ jobId: job.id }, zone);
 
+  // What a reviewer is shown before signing the job off. Built here rather
+  // than in the panel so the flags come from the same numbers the page does.
+  const reviewSteps: ReviewStep[] =
+    job.lifecycle === "PENDING_REVIEW" && canApproveJob
+      ? buildReview()
+      : [];
+
+  function buildReview(): ReviewStep[] {
+    const perTech = job!.assignments.map((assignment) => {
+      const totals = assignment.visits.map((visit) =>
+        visitTotals(
+          {
+            clockInAt: visit.clockInAt,
+            clockOutAt: visit.clockOutAt,
+            breaks: visit.breaks,
+          },
+          now,
+        ),
+      );
+      const first = assignment.visits[0];
+
+      return {
+        who: assignment.user.name,
+        clockInAt: first?.clockInAt ?? null,
+        clockOutAt: first?.clockOutAt ?? null,
+        paidMinutes: totals.reduce((sum, one) => sum + one.paidMinutes, 0),
+      };
+    });
+
+    const worked = perTech.filter((entry) => entry.clockInAt !== null);
+
+    const sections = rules.map((rule) => ({
+      label: deliverableLabel(rule.category, rule.customLabel),
+      required: rule.required,
+      filled: job!.deliverables.some(
+        (item) =>
+          item.category === rule.category &&
+          (rule.category !== "CUSTOM" || item.customLabel === rule.customLabel),
+      ),
+    }));
+
+    const claims = job!.reimbursements.map((entry) => ({
+      label: entry.label ?? entry.type,
+      amount: Number(entry.amount),
+      hasReceipt: entry.attachments.length > 0,
+    }));
+
+    const written = job!.assignments.map((assignment) => ({
+      who: assignment.user.name,
+      text: assignment.workPerformed,
+    }));
+
+    return [
+      {
+        key: "times",
+        title: "Times",
+        rows: [
+          {
+            label: "Scheduled",
+            value: job!.scheduledStart
+              ? usDateTimeInZone(job!.scheduledStart, zone)
+              : "Not scheduled",
+          },
+          {
+            label: "Estimate",
+            value: job!.estimateMinutes
+              ? `${(job!.estimateMinutes / 60).toFixed(2)} hrs`
+              : "None",
+          },
+          ...worked.map((entry) => ({
+            label: entry.who,
+            value: `${usTimeInZone(entry.clockInAt!, zone)} – ${
+              entry.clockOutAt ? usTimeInZone(entry.clockOutAt, zone) : "still on"
+            } · ${(entry.paidMinutes / 60).toFixed(2)} hrs`,
+          })),
+        ],
+        flags: reviewTimes({
+          scheduledStart: job!.scheduledStart,
+          estimateMinutes: job!.estimateMinutes,
+          visits: worked.map((entry) => ({
+            who: entry.who,
+            clockInAt: entry.clockInAt!,
+            clockOutAt: entry.clockOutAt,
+            paidMinutes: entry.paidMinutes,
+          })),
+        }),
+      },
+      {
+        key: "deliverables",
+        title: "Deliverables",
+        rows: sections.map((section) => ({
+          label: section.label,
+          value: section.filled ? "Recorded" : "Empty",
+        })),
+        flags: reviewDeliverables({
+          sections,
+          photoCount,
+          hasSignOff: job!.documents.some(
+            (doc) => doc.jobDocumentKind === "SIGN_OFF",
+          ),
+        }),
+      },
+      {
+        key: "reimbursements",
+        title: "Reimbursements",
+        rows: claims.map((claim) => ({
+          label: claim.label,
+          value: `$${claim.amount.toFixed(2)}${claim.hasReceipt ? "" : " · no receipt"}`,
+        })),
+        flags: reviewReimbursements({ entries: claims }),
+      },
+      {
+        key: "work",
+        title: "Work performed",
+        rows: job!.workPerformedMerged
+          ? [{ label: "To the client", value: job!.workPerformedMerged }]
+          : written
+              .filter((entry) => entry.text?.trim())
+              .map((entry) => ({ label: entry.who, value: entry.text! })),
+        flags: reviewWork({
+          merged: job!.workPerformedMerged,
+          entries: written,
+        }),
+      },
+    ];
+  }
+
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4">
       <PageHeader
@@ -578,19 +717,9 @@ export default async function JobPage({
               </form>
             ) : null}
 
-            {canApproveJob && job.lifecycle === "PENDING_REVIEW" ? (
-              <form
-                action={async (formData: FormData) => {
-                  "use server";
-                  await approveReport(formData);
-                }}
-              >
-                <input type="hidden" name="jobId" value={job.id} />
-                <Button type="submit" size="sm" variant="success">
-                  <CircleCheck /> Approve report
-                </Button>
-              </form>
-            ) : null}
+            {/* A finished report is not approved from the header. It is
+                approved at the bottom of a read-through, which is the panel
+                below. */}
 
             {showMenu ? (
               <JobMenu>
@@ -599,7 +728,7 @@ export default async function JobPage({
                     title="Clock times"
                     hint="A crew that forgot to clock out is the usual reason. Anything past your limit becomes a request for whoever pays for the time."
                   >
-                    <VisitTimes visits={editableVisits} />
+                    <VisitTimes visits={editableVisits} canRemove={canRemovePunch} />
                   </JobMenuSection>
                 ) : null}
 
@@ -642,6 +771,10 @@ export default async function JobPage({
           </>
         }
       />
+
+      {reviewSteps.length > 0 ? (
+        <JobReview jobId={job.id} steps={reviewSteps} />
+      ) : null}
 
       <div className="flex flex-wrap gap-1.5">
         <Badge variant={LIFECYCLE_META[job.lifecycle].variant}>

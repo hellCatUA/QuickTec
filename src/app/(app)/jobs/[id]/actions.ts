@@ -157,11 +157,22 @@ export async function clockIn(formData: FormData): Promise<ActionResult> {
   });
   if (!assignment) return fail("You are not assigned to this job.");
 
-  const open = await db.visit.findFirst({
-    where: { assignmentId: assignment.id, clockOutAt: null },
-    select: { id: true },
+  // One job, one tech, one arrival. Clocking in used to be refused only while
+  // a visit was still open, so clocking out and back in opened a second one —
+  // never because there were two trips, always because somebody mis-tapped or
+  // was trying to fix a wrong clock-out with the only button they had. Both
+  // now have a proper answer, and the message says which.
+  const already = await db.visit.findFirst({
+    where: { assignmentId: assignment.id },
+    select: { id: true, clockOutAt: true },
   });
-  if (open) return fail("You are already clocked in.");
+  if (already) {
+    return fail(
+      already.clockOutAt
+        ? "You have already worked this job. A wrong time is corrected in the job's settings menu; coming back another day is a revisit."
+        : "You are already clocked in.",
+    );
+  }
 
   const resolved = await resolveClockTime(
     user,
@@ -2035,6 +2046,104 @@ export async function adjustVisitTime(
   });
 
   // The event has been telling a supervisor's day view the old time.
+  syncJobInBackground(job.id);
+  touch(job.id);
+  return ok;
+}
+
+/**
+ * Removes a punch entirely.
+ *
+ * The case this exists for is a tech clocking in on the wrong job — two lines
+ * apart in a list, tapped on a phone in a van — and the wrong job then carrying
+ * hours nobody worked. Adjusting the time cannot answer that; there should be
+ * no time there at all.
+ *
+ * Deliberately narrower than adjusting one. A lead may move a clock and may not
+ * delete a day: moving it leaves a record that says what it used to be, and
+ * deleting it leaves the audit event and nothing else. Only the people who pay
+ * for the time can do that.
+ */
+export async function removeVisit(formData: FormData): Promise<ActionResult> {
+  const visitId = String(formData.get("visitId") ?? "");
+  if (!visitId) return fail("Missing punch.");
+
+  const visit = await db.visit.findUnique({
+    where: { id: visitId },
+    select: {
+      id: true,
+      clockInAt: true,
+      clockOutAt: true,
+      assignment: {
+        select: {
+          jobId: true,
+          supervisorId: true,
+          user: { select: { name: true, directSupervisorId: true } },
+        },
+      },
+    },
+  });
+  if (!visit) return fail("That punch is no longer here.");
+
+  const context = await loadContext(visit.assignment.jobId);
+  if (!context) return fail("Job not found.");
+  const { user, job } = context;
+
+  if (!(await canOnJob(user, "job.adjust_time", job))) {
+    return fail("You cannot change clock times on this job.");
+  }
+
+  const project = job.projectId
+    ? await db.project.findUnique({
+        where: { id: job.projectId },
+        select: { managerId: true },
+      })
+    : null;
+
+  const authority = clockAuthority({
+    scope: permissionScope(user, "job.adjust_time"),
+    isDirectSupervisor:
+      visit.assignment.supervisorId === user.id ||
+      visit.assignment.user.directSupervisorId === user.id,
+    isProjectManager: project?.managerId === user.id,
+    isLead: job.isLead,
+    isSupervisor: user.baseRole !== "TECH",
+  });
+
+  if (authority !== "unbounded") {
+    return fail(
+      "Deleting a punch is for whoever pays for the time. Ask them, or correct the times instead.",
+    );
+  }
+
+  await db.visit.delete({ where: { id: visitId } });
+
+  await recordAudit({
+    actorId: user.id,
+    entityType: "Visit",
+    entityId: visitId,
+    jobId: job.id,
+    action: "time_removed",
+    detail: {
+      who: visit.assignment.user.name,
+      from: visit.clockInAt.toISOString(),
+      to: visit.clockOutAt?.toISOString() ?? null,
+    },
+  });
+
+  // A job with no time on it has not been worked, whatever checking out said.
+  // Left as it was, it would sit in the review queue asking somebody to sign
+  // off a day that no longer exists.
+  const left = await db.visit.count({
+    where: { assignment: { jobId: job.id } },
+  });
+  if (left === 0) {
+    await db.job.updateMany({
+      where: { id: job.id, lifecycle: { in: ["IN_PROGRESS", "PENDING_REVIEW"] } },
+      data: { lifecycle: "SCHEDULED" },
+    });
+  }
+
   syncJobInBackground(job.id);
   touch(job.id);
   return ok;

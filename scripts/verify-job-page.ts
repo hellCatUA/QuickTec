@@ -302,6 +302,23 @@ async function main() {
     .getByRole("button", { name: "Clock in", exact: true })
     .waitFor({ timeout: 30_000 });
 
+  // One job, one tech, one arrival. Clocking in used to be refused only while
+  // a visit was open, so this opened a second one — never because there were
+  // two trips, always a mis-tap or somebody trying to fix a wrong clock-out.
+  await page.getByRole("button", { name: "Clock in", exact: true }).click();
+  await page.locator("button:has-text('now')").first().click();
+  await page.waitForTimeout(2500);
+  check(
+    "clocking in a second time is refused",
+    await db.visit.count({ where: { assignmentId: assignment.id } }),
+    1,
+  );
+  check(
+    "and says where to go instead",
+    await page.getByText(/already worked this job/i).isVisible(),
+    true,
+  );
+
   const closed = await db.visit.findFirstOrThrow({
     where: { assignmentId: assignment.id },
     orderBy: { clockInAt: "asc" },
@@ -1624,6 +1641,76 @@ async function main() {
       "the crew is picked by searching too, not from a wheel",
       await planner.locator('input[role="combobox"]#crew-add').isVisible(),
       true,
+    );
+  });
+
+  // --- the read-through before signing off ----------------------------------
+  // One button asked somebody to vouch for a day they did not see, and the only
+  // possible answer was yes.
+  await bossPage(browser, bossToken, async (planner) => {
+    await db.job.update({
+      where: { id: assignment.jobId },
+      data: { lifecycle: "PENDING_REVIEW", estimateMinutes: 60 },
+    });
+
+    await planner.goto(url, { waitUntil: "load" });
+    await planner.waitForTimeout(1000);
+
+    check(
+      "the reviewer gets a read-through, not a button",
+      await planner.getByText("Review before approving").isVisible(),
+      true,
+    );
+
+    for (const [step, next] of [
+      ["times", "Deliverables"],
+      ["deliverables", "Reimbursements"],
+      ["reimbursements", "Work performed"],
+    ] as const) {
+      check(
+        `the ${step} step is shown`,
+        await planner.locator(`[data-review-step="${step}"]`).isVisible(),
+        true,
+      );
+      check(
+        `and ${next} is waiting behind it`,
+        await planner.getByRole("button", { name: next }).isVisible(),
+        true,
+      );
+      await planner.getByRole("button", { name: "Looks right" }).click();
+      await planner.waitForTimeout(300);
+    }
+
+    check(
+      "the last step is what the client will read",
+      await planner.locator('[data-review-step="work"]').isVisible(),
+      true,
+    );
+
+    // The day ran well past an hour, which is exactly the thing a reviewer
+    // would otherwise have to work out from two timestamps.
+    await planner.getByRole("button", { name: "Times" }).click();
+    await planner.waitForTimeout(300);
+    check(
+      "a day well past the estimate is put in front of them",
+      await planner.getByText(/against an estimate of/).isVisible(),
+      true,
+    );
+
+    await planner.getByRole("button", { name: "Work performed" }).click();
+    await planner.waitForTimeout(300);
+    await planner.getByRole("button", { name: "Approve report" }).click();
+    await planner.waitForTimeout(2500);
+
+    check(
+      "and approving at the end of it signs the job off",
+      (
+        await db.job.findUniqueOrThrow({
+          where: { id: assignment.jobId },
+          select: { lifecycle: true },
+        })
+      ).lifecycle,
+      "APPROVED",
     );
   });
 

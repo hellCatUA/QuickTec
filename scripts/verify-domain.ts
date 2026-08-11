@@ -490,6 +490,163 @@ async function main() {
     "none",
   );
 
+  // --- what a reviewer is shown --------------------------------------------
+  // A single Approve button asks somebody to vouch for a day they did not see,
+  // and the only possible answer is yes. These are the things that make it a
+  // real question.
+  const {
+    reviewTimes,
+    reviewDeliverables,
+    reviewReimbursements,
+    reviewWork,
+    worst,
+  } = await import("@/lib/job-review");
+
+  const nine = new Date("2026-08-11T16:00:00Z");
+  const onTime = {
+    who: "Terry Tech",
+    clockInAt: nine,
+    clockOutAt: new Date("2026-08-11T22:00:00Z"),
+    paidMinutes: 360,
+  };
+
+  check(
+    "a job that ran to plan has nothing to say",
+    reviewTimes({
+      scheduledStart: nine,
+      estimateMinutes: 360,
+      visits: [onTime],
+    }).length,
+    0,
+  );
+
+  check(
+    "arriving half an hour late is worth saying",
+    reviewTimes({
+      scheduledStart: nine,
+      estimateMinutes: 360,
+      visits: [{ ...onTime, clockInAt: new Date("2026-08-11T16:35:00Z") }],
+    })[0]?.text,
+    "Terry Tech checked in 35 minutes after the scheduled start.",
+  );
+  check(
+    "ten minutes is not",
+    reviewTimes({
+      scheduledStart: nine,
+      estimateMinutes: 360,
+      visits: [{ ...onTime, clockInAt: new Date("2026-08-11T16:10:00Z") }],
+    }).length,
+    0,
+  );
+
+  check(
+    "a day well past the estimate is flagged",
+    reviewTimes({
+      scheduledStart: nine,
+      estimateMinutes: 360,
+      visits: [{ ...onTime, paidMinutes: 540 }],
+    }).some((flag) => flag.text.includes("against an estimate")),
+    true,
+  );
+  // The trap: two techs on a six-hour job book twelve hours between them, and
+  // summing them would report every two-hander as overrunning.
+  check(
+    "two techs on a six-hour job are not over it",
+    reviewTimes({
+      scheduledStart: nine,
+      estimateMinutes: 360,
+      visits: [onTime, { ...onTime, who: "Sam Super" }],
+    }).length,
+    0,
+  );
+
+  check(
+    "somebody still clocked in is the reviewer's problem now",
+    reviewTimes({
+      scheduledStart: nine,
+      estimateMinutes: 360,
+      visits: [{ ...onTime, clockOutAt: null }],
+    })[0]?.text,
+    "Terry Tech is still clocked in.",
+  );
+  check(
+    "and a job nobody worked cannot be signed off blind",
+    reviewTimes({ scheduledStart: nine, estimateMinutes: 360, visits: [] })[0]
+      ?.level,
+    "warn",
+  );
+
+  check(
+    "a required section left empty is a warning",
+    worst(
+      reviewDeliverables({
+        sections: [{ label: "Post Install", required: true, filled: false }],
+        photoCount: 3,
+        hasSignOff: true,
+      }),
+    ),
+    "warn",
+  );
+  check(
+    "an optional one is worth mentioning and no more",
+    worst(
+      reviewDeliverables({
+        sections: [{ label: "Old Serials", required: false, filled: false }],
+        photoCount: 3,
+        hasSignOff: true,
+      }),
+    ),
+    "note",
+  );
+  check(
+    "a job with no photos at all is a warning",
+    reviewDeliverables({
+      sections: [{ label: "Post Install", required: true, filled: true }],
+      photoCount: 0,
+      hasSignOff: true,
+    }).some((flag) => flag.level === "warn"),
+    true,
+  );
+
+  check(
+    "money claimed with no receipt is named",
+    reviewReimbursements({
+      entries: [
+        { label: "Parking", amount: 12, hasReceipt: false },
+        { label: "Cat 6A", amount: 3, hasReceipt: true },
+      ],
+    })[0]?.text,
+    "No receipt: Parking.",
+  );
+
+  check(
+    "an empty report is the one thing that must not go out",
+    reviewWork({ merged: null, entries: [{ who: "Terry Tech", text: "  " }] })[0]
+      ?.text,
+    "Nothing written. The client report would go out empty.",
+  );
+  check(
+    "one tech writing nothing is mentioned once the others have",
+    worst(
+      reviewWork({
+        merged: null,
+        entries: [
+          { who: "Terry Tech", text: "Swapped the switch." },
+          { who: "Sam Super", text: null },
+        ],
+      }),
+    ),
+    "note",
+  );
+  check(
+    "and a merged summary settles it",
+    reviewWork({
+      merged: "Swapped the switch and relabelled the leads.",
+      entries: [{ who: "Sam Super", text: null }],
+    }).length,
+    0,
+  );
+
   // --- phone numbers -------------------------------------------------------
   const { formatPhone, formatPhoneAsTyped, telHref } = await import("@/lib/phone");
 

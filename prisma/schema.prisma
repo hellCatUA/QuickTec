@@ -827,6 +827,11 @@ model Visit {
 
   breaks BreakPeriod[]
 
+  /// One visit per assignment — one job, one tech, one arrival. A genuine
+  /// second trip is a revisit job with its own number and its own invoice
+  /// line. Enforced by a unique index in the migration rather than here:
+  /// marking the column unique would make Prisma read this as one-to-one and
+  /// rename the relation across the app for no gain.
   @@index([assignmentId])
   @@index([clockInAt])
 }

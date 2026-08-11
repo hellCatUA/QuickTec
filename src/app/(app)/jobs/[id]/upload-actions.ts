@@ -829,3 +829,115 @@ export async function saveSignature(
   touch(job.id);
   return ok(signature.id);
 }
+
+const moveDeliverableSchema = z.object({
+  itemId: z.string().min(1),
+  category: z.enum(DeliverableCategory),
+  customLabel: z.string().trim().max(80).optional(),
+});
+
+/**
+ * Puts a photo in the section it belonged in.
+ *
+ * Ten photos taken standing in a comms room go into whichever section was open
+ * on the phone, and two of them are of the old switch rather than the new one.
+ * Until now the only fix was to delete and re-upload — over the site's LTE,
+ * from a phone that may have cleared the originals — which is why the wrong
+ * ones simply stayed where they were and the client's report carried them.
+ *
+ * The photo moves, not a copy of it: the file on disk is untouched and the same
+ * attachment row follows the item, so nothing is re-encoded or re-stamped.
+ */
+export async function moveDeliverable(
+  formData: FormData,
+): Promise<ActionResult> {
+  const parsed = moveDeliverableSchema.safeParse({
+    itemId: formData.get("itemId"),
+    category: formData.get("category"),
+    customLabel: formData.get("customLabel") ?? undefined,
+  });
+  if (!parsed.success) return fail(z.prettifyError(parsed.error));
+
+  const { itemId, category, customLabel } = parsed.data;
+  if (category === "CUSTOM" && !customLabel) {
+    return fail("Say which custom section.");
+  }
+
+  const item = await db.deliverableItem.findUnique({
+    where: { id: itemId },
+    select: {
+      id: true,
+      jobId: true,
+      category: true,
+      customLabel: true,
+      assignmentId: true,
+      assignment: { select: { userId: true } },
+    },
+  });
+  if (!item) return fail("Not found.");
+
+  const user = await getSessionUser();
+  if (!user) return fail("Not signed in.");
+
+  const job = await loadJob(item.jobId);
+  if (!job) return fail("Job not found.");
+
+  // Same test as removing one: your own is yours to sort out, somebody else's
+  // needs the person who signs the report off.
+  const isOwn = item.assignment?.userId === user.id;
+  const allowed = isOwn
+    ? await canOnJob(user, "deliverable.upload", job)
+    : (await canOnJob(user, "deliverable.upload", job)) &&
+      (await canOnJob(user, "job.approve_report", job));
+  if (!allowed) return fail("You cannot move this one.");
+
+  const from = deliverableLabel(item.category, item.customLabel);
+  const to = deliverableLabel(category, customLabel ?? null);
+  if (from === to) return ok();
+
+  // The section it is going to may already exist and hold photos of its own —
+  // then this joins it rather than making a second one with the same name.
+  const destination = await db.deliverableItem.findFirst({
+    where: {
+      jobId: item.jobId,
+      category,
+      ...(category === "CUSTOM" ? { customLabel } : {}),
+      id: { not: item.id },
+      assignmentId: item.assignmentId,
+    },
+    select: { id: true },
+  });
+
+  if (destination) {
+    await db.attachment.updateMany({
+      where: { deliverableItemId: item.id },
+      data: { deliverableItemId: destination.id },
+    });
+    // Whatever text it carried belongs with the photos; an emptied shell left
+    // behind reads as a section somebody filled in and then abandoned.
+    const emptied = await db.deliverableItem.findUniqueOrThrow({
+      where: { id: item.id },
+      select: { textValue: true, _count: { select: { attachments: true } } },
+    });
+    if (!emptied.textValue && emptied._count.attachments === 0) {
+      await db.deliverableItem.delete({ where: { id: item.id } });
+    }
+  } else {
+    await db.deliverableItem.update({
+      where: { id: item.id },
+      data: { category, customLabel: category === "CUSTOM" ? customLabel : null },
+    });
+  }
+
+  await recordAudit({
+    actorId: user.id,
+    entityType: "DeliverableItem",
+    entityId: item.id,
+    jobId: item.jobId,
+    action: "deliverable_moved",
+    detail: { field: "Section", from, to },
+  });
+
+  touch(item.jobId);
+  return ok();
+}

@@ -1,14 +1,26 @@
 "use client";
 
-import { AlertTriangle, FileText, Loader2, Plus, Upload, X } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowRightLeft,
+  FileText,
+  Loader2,
+  Plus,
+  Upload,
+  X,
+} from "lucide-react";
 import * as React from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Field, Input, Textarea } from "@/components/ui/field";
+import { Field, Input, Select, Textarea } from "@/components/ui/field";
 import { DELIVERABLE_META, type DeliverableRule } from "@/lib/deliverables";
 import { prepareForUpload } from "@/lib/photo-upload";
 import type { DeliverableCategory } from "@prisma-client";
-import { deleteDeliverableItem, saveDeliverable } from "./upload-actions";
+import {
+  deleteDeliverableItem,
+  moveDeliverable,
+  saveDeliverable,
+} from "./upload-actions";
 
 export type DeliverableItemView = {
   id: string;
@@ -19,6 +31,11 @@ export type DeliverableItemView = {
   isOwn: boolean;
   attachments: { id: string; mimeType: string; originalName: string }[];
 };
+
+/** How one section is named in a list of them. Matches the map key above. */
+function sectionKey(rule: DeliverableRule): string {
+  return rule.customLabel ? `${rule.category}:${rule.customLabel}` : rule.category;
+}
 
 export function Deliverables({
   jobId,
@@ -36,10 +53,25 @@ export function Deliverables({
   photoLimit: number;
 }) {
   const [openCategory, setOpenCategory] = React.useState<string | null>(null);
+  const [moving, setMoving] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [pending, startTransition] = React.useTransition();
 
   const remaining = photoLimit - photoCount;
+
+  function move(itemId: string, target: DeliverableRule) {
+    setError(null);
+    startTransition(async () => {
+      const formData = new FormData();
+      formData.set("itemId", itemId);
+      formData.set("category", target.category);
+      if (target.customLabel) formData.set("customLabel", target.customLabel);
+
+      const result = await moveDeliverable(formData);
+      if (!result.ok) return setError(result.error);
+      setMoving(null);
+    });
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -50,9 +82,7 @@ export function Deliverables({
       </p>
 
       {rules.map((rule) => {
-        const key = rule.customLabel
-          ? `${rule.category}:${rule.customLabel}`
-          : rule.category;
+        const key = sectionKey(rule);
 
         const mine = items.filter(
           (item) =>
@@ -112,12 +142,31 @@ export function Deliverables({
                   <span className="text-xs text-muted-foreground">
                     {item.uploadedBy ?? "unattributed"}
                   </span>
+                  {/* Photos land in whichever section was open on the phone,
+                      and two of ten are of the old switch rather than the new
+                      one. Deleting and re-uploading over a site's LTE is why
+                      the wrong ones used to just stay put. */}
+                  {(item.isOwn || canUpload) && rules.length > 1 && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="ml-auto"
+                      aria-label={`Move from ${label}`}
+                      disabled={pending}
+                      onClick={() =>
+                        setMoving(moving === item.id ? null : item.id)
+                      }
+                    >
+                      <ArrowRightLeft /> Move
+                    </Button>
+                  )}
                   {(item.isOwn || canUpload) && (
                     <Button
                       type="button"
                       variant="ghost"
                       size="icon"
-                      className="ml-auto"
+                      className={rules.length > 1 ? "" : "ml-auto"}
                       aria-label="Remove"
                       disabled={pending}
                       onClick={() => {
@@ -134,6 +183,47 @@ export function Deliverables({
                     </Button>
                   )}
                 </div>
+
+                {moving === item.id ? (
+                  <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-raised p-2">
+                    <Select
+                      aria-label="Move to section"
+                      defaultValue=""
+                      disabled={pending}
+                      onChange={(event) => {
+                        const target = rules.find(
+                          (option) => sectionKey(option) === event.target.value,
+                        );
+                        if (target) move(item.id, target);
+                      }}
+                    >
+                      <option value="" disabled>
+                        Move to…
+                      </option>
+                      {rules
+                        .filter((option) => sectionKey(option) !== key)
+                        .map((option) => (
+                          <option
+                            key={sectionKey(option)}
+                            value={sectionKey(option)}
+                          >
+                            {option.category === "CUSTOM" && option.customLabel
+                              ? option.customLabel
+                              : DELIVERABLE_META[option.category].label}
+                          </option>
+                        ))}
+                    </Select>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      disabled={pending}
+                      onClick={() => setMoving(null)}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                ) : null}
 
                 {item.textValue ? (
                   item.category === "RETURN_LABELS" ? (
