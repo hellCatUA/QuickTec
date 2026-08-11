@@ -11,6 +11,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { useRouter } from "next/navigation";
 import type { ReviewFlag } from "@/lib/job-review";
 import { approveReport } from "../actions";
 
@@ -43,6 +44,7 @@ export function JobReview({
   jobId: string;
   steps: ReviewStep[];
 }) {
+  const router = useRouter();
   const [index, setIndex] = React.useState(0);
   const [error, setError] = React.useState<string | null>(null);
   const [pending, startTransition] = React.useTransition();
@@ -57,7 +59,10 @@ export function JobReview({
       formData.set("jobId", jobId);
 
       const result = await approveReport(formData);
-      if (!result.ok) setError(result.error);
+      if (!result.ok) return setError(result.error);
+      // Back to the job, which now says Approved. Staying here would show a
+      // read-through of something already decided.
+      router.push(`/jobs/${jobId}`);
     });
   }
 

@@ -2274,3 +2274,131 @@ export async function removeVisit(formData: FormData): Promise<ActionResult> {
   touch(job.id);
   return ok;
 }
+
+const newPunchSchema = z.object({
+  assignmentId: z.string().min(1),
+  clockIn: z.string().min(1),
+  clockOut: optionalText,
+});
+
+/**
+ * Records a punch for somebody who never made one.
+ *
+ * A tech whose phone was dead, a subcontractor who worked the day and was
+ * added to the crew afterwards, a job somebody ran without ever opening the
+ * app. Until now the only way to get their time on the record was to have been
+ * there with a working phone.
+ *
+ * Only the people who pay for the time may do it, and only where there is no
+ * punch already: correcting one that exists is adjustVisitTime's job, and one
+ * job means one arrival per person.
+ */
+export async function addVisit(formData: FormData): Promise<ActionResult> {
+  const parsed = newPunchSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return fail(z.prettifyError(parsed.error));
+
+  const { assignmentId, clockOut } = parsed.data;
+
+  const assignment = await db.jobAssignment.findUnique({
+    where: { id: assignmentId },
+    select: {
+      id: true,
+      jobId: true,
+      supervisorId: true,
+      user: { select: { name: true, directSupervisorId: true } },
+      _count: { select: { visits: true } },
+    },
+  });
+  if (!assignment) return fail("That person is not on this job.");
+
+  const context = await loadContext(assignment.jobId);
+  if (!context) return fail("Job not found.");
+  const { user, job } = context;
+
+  if (!(await canOnJob(user, "job.adjust_time", job))) {
+    return fail("You cannot change clock times on this job.");
+  }
+
+  const project = job.projectId
+    ? await db.project.findUnique({
+        where: { id: job.projectId },
+        select: { managerId: true },
+      })
+    : null;
+
+  const authority = clockAuthority({
+    scope: permissionScope(user, "job.adjust_time"),
+    isDirectSupervisor:
+      assignment.supervisorId === user.id ||
+      assignment.user.directSupervisorId === user.id,
+    isProjectManager: project?.managerId === user.id,
+    isLead: job.isLead,
+    isSupervisor: user.baseRole !== "TECH",
+  });
+
+  // Writing a day that nobody recorded is further than moving one that exists,
+  // so it stops where the limits stop: whoever the time is charged to.
+  if (authority !== "unbounded") {
+    return fail(
+      "Only whoever pays for the time can add a punch that was never made.",
+    );
+  }
+
+  if (assignment._count.visits > 0) {
+    return fail(
+      "There is already a punch for them. Correct that one instead — one job is one arrival.",
+    );
+  }
+
+  const company = await getCompanySettings();
+  const inAt = parseDatetimeLocalInZone(parsed.data.clockIn, job.timeZone);
+  if (!inAt) return fail("That is not a valid clock-in time.");
+
+  const outAt = clockOut
+    ? parseDatetimeLocalInZone(clockOut, job.timeZone)
+    : null;
+  if (clockOut && !outAt) return fail("That is not a valid clock-out time.");
+
+  const snappedIn = roundToInterval(inAt, company.timeRoundingMinutes);
+  const snappedOut = outAt
+    ? roundToInterval(outAt, company.timeRoundingMinutes)
+    : null;
+
+  const ordering = clockOrderProblem(snappedIn, snappedOut);
+  if (ordering) return fail(ordering);
+
+  const visit = await db.visit.create({
+    data: {
+      assignmentId,
+      clockInAt: snappedIn,
+      clockInSource: "ADJUSTED",
+      ...(snappedOut
+        ? { clockOutAt: snappedOut, clockOutSource: "ADJUSTED" as const }
+        : {}),
+    },
+    select: { id: true },
+  });
+
+  // The job has time on it now, so it is no longer waiting to be started.
+  await db.job.updateMany({
+    where: { id: job.id, lifecycle: { in: ["SCHEDULED", "DRAFT"] } },
+    data: { lifecycle: snappedOut ? "PENDING_REVIEW" : "IN_PROGRESS" },
+  });
+
+  await recordAudit({
+    actorId: user.id,
+    entityType: "Visit",
+    entityId: visit.id,
+    jobId: job.id,
+    action: "time_added",
+    detail: {
+      who: assignment.user.name,
+      from: snappedIn.toISOString(),
+      to: snappedOut?.toISOString() ?? null,
+    },
+  });
+
+  syncJobInBackground(job.id);
+  touch(job.id);
+  return ok;
+}

@@ -1,22 +1,36 @@
 "use client";
 
-import { MoreHorizontal, X } from "lucide-react";
+import { CircleCheck, MoreHorizontal, Repeat, SlidersHorizontal, X } from "lucide-react";
+import Link from "next/link";
 import * as React from "react";
 import { Button } from "@/components/ui/button";
 
+export type JobMenuItem = {
+  href: string;
+  label: string;
+  hint: string;
+  icon: "portal" | "revisit" | "approval";
+};
+
+const ICONS = {
+  portal: SlidersHorizontal,
+  revisit: Repeat,
+  approval: CircleCheck,
+} as const;
+
 /**
- * The things done to a job rather than on it.
+ * Where the things done *to* a job are chosen from.
  *
- * Pay, a revisit and correcting a clock are all rare, all consequential, and
- * none of them belong in the scroll a tech reads standing on site — they had a
- * card each, between the work and the photos. One menu, opened by the people
- * who ever need it.
- *
- * Each item carries its own right: leading a job is enough to fix a clock and
- * not enough to change what it pays.
+ * It used to be the drawer that held them, and on a phone the page behind it
+ * scrolled as often as the drawer did — an overlay over a long page is a fight
+ * between two scroll containers, and the finger usually loses. So this is now a
+ * short list of destinations and nothing else: everything it points at is a
+ * page, with its own address and a Back that works.
  */
-export function JobMenu({ children }: { children: React.ReactNode }) {
+export function JobMenu({ items }: { items: JobMenuItem[] }) {
   const [open, setOpen] = React.useState(false);
+
+  if (items.length === 0) return null;
 
   return (
     <>
@@ -41,9 +55,8 @@ export function JobMenu({ children }: { children: React.ReactNode }) {
             if (event.target === event.currentTarget) setOpen(false);
           }}
         >
-          {/* Anchored to the bottom on a phone, where a thumb is, and centred
-              on anything wider. */}
-          <div className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-t-2xl border border-border bg-surface p-4 sm:rounded-2xl">
+          {/* Short enough that it never scrolls, which is the whole point. */}
+          <div className="w-full max-w-lg rounded-t-2xl border border-border bg-surface p-4 sm:rounded-2xl">
             <div className="mb-3 flex items-center justify-between gap-2">
               <h2 className="text-base font-semibold">Job settings</h2>
               <Button
@@ -57,33 +70,32 @@ export function JobMenu({ children }: { children: React.ReactNode }) {
               </Button>
             </div>
 
-            <div className="flex flex-col gap-4">{children}</div>
+            <div className="flex flex-col gap-2">
+              {items.map((item) => {
+                const Icon = ICONS[item.icon];
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className="flex items-start gap-3 rounded-lg border border-border p-3 hover:border-primary/50"
+                    onClick={() => setOpen(false)}
+                  >
+                    <Icon className="mt-0.5 size-4 shrink-0 text-[var(--color-primary)]" />
+                    <span className="min-w-0">
+                      <span className="block text-sm font-medium">
+                        {item.label}
+                      </span>
+                      <span className="block text-xs text-muted-foreground">
+                        {item.hint}
+                      </span>
+                    </span>
+                  </Link>
+                );
+              })}
+            </div>
           </div>
         </div>
       ) : null}
     </>
-  );
-}
-
-/** One titled thing inside the menu, so the sections read apart. */
-export function JobMenuSection({
-  title,
-  hint,
-  children,
-}: {
-  title: string;
-  hint?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="flex flex-col gap-2 border-t border-border pt-3 first:border-t-0 first:pt-0">
-      <div>
-        <h3 className="text-sm font-medium">{title}</h3>
-        {hint ? (
-          <p className="text-xs text-muted-foreground">{hint}</p>
-        ) : null}
-      </div>
-      {children}
-    </section>
   );
 }

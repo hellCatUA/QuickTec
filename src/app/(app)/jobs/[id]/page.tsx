@@ -49,17 +49,13 @@ import { approveJob } from "../actions";
 import { ChangeRequests } from "./change-requests";
 import { CrewPanel } from "./crew-panel";
 import { DispatchPanel } from "./dispatch-panel";
-import { JobMenu, JobMenuSection } from "./job-menu";
-import { JobPay } from "./job-pay";
-import { JobReview, type ReviewStep } from "./job-review";
-import { VisitTimes } from "./visit-times";
+import { JobMenu } from "./job-menu";
 import { BreakPay } from "./break-pay";
 import { JobDocuments } from "./job-documents";
 import { JobTickets } from "./tickets";
 import { BlockBody, BlockEditToggle, EditableBlock } from "./editable-block";
 import { EditableField } from "./editable-field";
 import { PointsOfContact } from "./points-of-contact";
-import { RevisitPanel } from "./revisit-panel";
 import { ScopeOfWork } from "./scope-of-work";
 import { SiteNumberPrompt } from "./site-number";
 import { Deliverables } from "./deliverables";
@@ -536,11 +532,41 @@ export default async function JobPage({
   // theirs.
   const canFixClocks = canAdjustTime && (canManageJob || paysForThis);
 
-  // The menu opens if any one of its sections does. Requiring canManageJob on
-  // top of that shut it entirely for a direct supervisor who is neither the
-  // lead nor able to edit planned fields — the very person the clock requests
-  // are addressed to.
-  const showMenu = [canFixClocks, canSetPay, canRevisit].some(Boolean);
+  // Three destinations rather than three drawers. Everything the menu points
+  // at is a page of its own, because a sheet over a long page on a phone is
+  // two scroll containers fighting over one finger.
+  const menuItems = [
+    ...(canFixClocks || canSetPay
+      ? [
+          {
+            href: `/jobs/${job.id}/manage`,
+            label: "Manager Portal",
+            hint: "Punches, and what the job pays.",
+            icon: "portal" as const,
+          },
+        ]
+      : []),
+    ...(canRevisit
+      ? [
+          {
+            href: `/jobs/${job.id}/revisit`,
+            label: "Schedule a revisit",
+            hint: "A new job for the return trip, carrying this one's number.",
+            icon: "revisit" as const,
+          },
+        ]
+      : []),
+    ...(canApproveJob && job.lifecycle === "PENDING_REVIEW"
+      ? [
+          {
+            href: `/jobs/${job.id}/review`,
+            label: "Job approval",
+            hint: "Read the times, deliverables, money and report, then sign it off.",
+            icon: "approval" as const,
+          },
+        ]
+      : []),
+  ];
 
   // The tech's own supervisor always heads the dispatch block — the one number
   // they are most likely to need and least likely to have to hand.
@@ -588,133 +614,6 @@ export default async function JobPage({
 
   const timeline = await loadTimeline({ jobId: job.id }, zone);
 
-  // What a reviewer is shown before signing the job off. Built here rather
-  // than in the panel so the flags come from the same numbers the page does.
-  const reviewSteps: ReviewStep[] =
-    job.lifecycle === "PENDING_REVIEW" && canApproveJob
-      ? buildReview()
-      : [];
-
-  function buildReview(): ReviewStep[] {
-    const perTech = job!.assignments.map((assignment) => {
-      const totals = assignment.visits.map((visit) =>
-        visitTotals(
-          {
-            clockInAt: visit.clockInAt,
-            clockOutAt: visit.clockOutAt,
-            breaks: visit.breaks,
-          },
-          now,
-        ),
-      );
-      const first = assignment.visits[0];
-
-      return {
-        who: assignment.user.name,
-        clockInAt: first?.clockInAt ?? null,
-        clockOutAt: first?.clockOutAt ?? null,
-        paidMinutes: totals.reduce((sum, one) => sum + one.paidMinutes, 0),
-      };
-    });
-
-    const worked = perTech.filter((entry) => entry.clockInAt !== null);
-
-    const sections = rules.map((rule) => ({
-      label: deliverableLabel(rule.category, rule.customLabel),
-      required: rule.required,
-      filled: job!.deliverables.some(
-        (item) =>
-          item.category === rule.category &&
-          (rule.category !== "CUSTOM" || item.customLabel === rule.customLabel),
-      ),
-    }));
-
-    const claims = job!.reimbursements.map((entry) => ({
-      label: entry.label ?? entry.type,
-      amount: Number(entry.amount),
-      hasReceipt: entry.attachments.length > 0,
-    }));
-
-    const written = job!.assignments.map((assignment) => ({
-      who: assignment.user.name,
-      text: assignment.workPerformed,
-    }));
-
-    return [
-      {
-        key: "times",
-        title: "Times",
-        rows: [
-          {
-            label: "Scheduled",
-            value: job!.scheduledStart
-              ? usDateTimeInZone(job!.scheduledStart, zone)
-              : "Not scheduled",
-          },
-          {
-            label: "Estimate",
-            value: job!.estimateMinutes
-              ? `${(job!.estimateMinutes / 60).toFixed(2)} hrs`
-              : "None",
-          },
-          ...worked.map((entry) => ({
-            label: entry.who,
-            value: `${usTimeInZone(entry.clockInAt!, zone)} – ${
-              entry.clockOutAt ? usTimeInZone(entry.clockOutAt, zone) : "still on"
-            } · ${(entry.paidMinutes / 60).toFixed(2)} hrs`,
-          })),
-        ],
-        flags: reviewTimes({
-          scheduledStart: job!.scheduledStart,
-          estimateMinutes: job!.estimateMinutes,
-          visits: worked.map((entry) => ({
-            who: entry.who,
-            clockInAt: entry.clockInAt!,
-            clockOutAt: entry.clockOutAt,
-            paidMinutes: entry.paidMinutes,
-          })),
-        }),
-      },
-      {
-        key: "deliverables",
-        title: "Deliverables",
-        rows: sections.map((section) => ({
-          label: section.label,
-          value: section.filled ? "Recorded" : "Empty",
-        })),
-        flags: reviewDeliverables({
-          sections,
-          photoCount,
-          hasSignOff: job!.documents.some(
-            (doc) => doc.jobDocumentKind === "SIGN_OFF",
-          ),
-        }),
-      },
-      {
-        key: "reimbursements",
-        title: "Reimbursements",
-        rows: claims.map((claim) => ({
-          label: claim.label,
-          value: `$${claim.amount.toFixed(2)}${claim.hasReceipt ? "" : " · no receipt"}`,
-        })),
-        flags: reviewReimbursements({ entries: claims }),
-      },
-      {
-        key: "work",
-        title: "Work performed",
-        rows: job!.workPerformedMerged
-          ? [{ label: "To the client", value: job!.workPerformedMerged }]
-          : written
-              .filter((entry) => entry.text?.trim())
-              .map((entry) => ({ label: entry.who, value: entry.text! })),
-        flags: reviewWork({
-          merged: job!.workPerformedMerged,
-          entries: written,
-        }),
-      },
-    ];
-  }
-
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4">
       <PageHeader
@@ -744,60 +643,10 @@ export default async function JobPage({
                 approved at the bottom of a read-through, which is the panel
                 below. */}
 
-            {showMenu ? (
-              <JobMenu>
-                {canFixClocks ? (
-                  <JobMenuSection
-                    title="Clock times"
-                    hint="A crew that forgot to clock out is the usual reason. Anything past your limit becomes a request for whoever pays for the time."
-                  >
-                    <VisitTimes visits={editableVisits} />
-                  </JobMenuSection>
-                ) : null}
-
-                {canSetPay ? (
-                  <JobMenuSection
-                    title="Pay"
-                    hint="What this job pays, for everybody on it. Normally inherited from the tech, the project or the company — set it here when this job is none of those."
-                  >
-                    <JobPay
-                      jobId={job.id}
-                      canEdit={canSetPay}
-                      payType={job.payType ?? "HOURLY"}
-                      payRate={job.payRate?.toString() ?? ""}
-                      travelReimbursement={
-                        job.travelReimbursement?.toString() ?? null
-                      }
-                      note={
-                        job.payType
-                          ? "Applies to everybody on this job, including anybody added later. Somebody put on their own rate keeps it."
-                          : "Not set — everybody keeps their own rate, or the project's default where they have none."
-                      }
-                    />
-                  </JobMenuSection>
-                ) : null}
-
-                {canRevisit ? (
-                  <JobMenuSection
-                    title="Revisit"
-                    hint="Creates a new job carrying the same internal number with an -R suffix, in the month the revisit happens. Site, scope and deliverable rules are copied across."
-                  >
-                    <RevisitPanel
-                      jobId={job.id}
-                      jobTitle={job.title}
-                      externalAssignmentId={job.externalAssignmentId}
-                    />
-                  </JobMenuSection>
-                ) : null}
-              </JobMenu>
-            ) : null}
+            <JobMenu items={menuItems} />
           </>
         }
       />
-
-      {reviewSteps.length > 0 ? (
-        <JobReview jobId={job.id} steps={reviewSteps} />
-      ) : null}
 
       <div className="flex flex-wrap gap-1.5">
         <Badge variant={LIFECYCLE_META[job.lifecycle].variant}>

@@ -1205,7 +1205,7 @@ async function main() {
       0,
     );
 
-    await openJobMenu(planner);
+    await openPortal(planner, assignment.jobId);
     await planner.locator("#job-pay-type").selectOption("FLAT");
     await planner.locator("#job-pay-rate").fill("450");
     await planner.locator("#job-pay-travel").fill("30");
@@ -1213,7 +1213,8 @@ async function main() {
       .getByRole("button", { name: "Apply to everybody on this job" })
       .click();
     await planner.waitForTimeout(2500);
-    await closeJobMenu(planner);
+    await planner.goto(url, { waitUntil: "load" });
+    await planner.waitForTimeout(800);
 
     const paid = await db.jobAssignment.findMany({
       where: { jobId: assignment.jobId },
@@ -1287,13 +1288,14 @@ async function main() {
 
     // Setting the job's pay again leaves them alone, which is the whole point
     // of having said they are different.
-    await openJobMenu(planner);
+    await openPortal(planner, assignment.jobId);
     await planner.locator("#job-pay-rate").fill("500");
     await planner
       .getByRole("button", { name: "Apply to everybody on this job" })
       .click();
     await planner.waitForTimeout(2500);
-    await closeJobMenu(planner);
+    await planner.goto(url, { waitUntil: "load" });
+    await planner.waitForTimeout(800);
 
     check(
       "changing the job's pay leaves a deliberate exception alone",
@@ -1393,16 +1395,21 @@ async function main() {
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.waitForTimeout(800);
 
-  await openJobMenu(page);
-  const sheet = page.getByRole("dialog", { name: "Job settings" });
+  await openPortal(page, assignment.jobId);
+  const sheet = page.locator(`[data-punch]`).first();
   check(
-    "leading it opens the menu",
-    await sheet.getByRole("heading", { name: "Clock times" }).isVisible(),
+    "leading it opens the portal",
+    await page.getByRole("heading", { name: "TimeClock Punches" }).isVisible(),
     true,
   );
   check(
+    "with a block of their own per person",
+    await page.locator("[data-punch]").count(),
+    1,
+  );
+  check(
     "but the rate is not the lead's to set",
-    await sheet.locator("#job-pay-type").count(),
+    await page.locator("#job-pay-type").count(),
     0,
   );
 
@@ -1421,9 +1428,7 @@ async function main() {
 
   // Upwards past the hour is the one somebody would write if it were not true.
   await plantClock();
-  await page.reload({ waitUntil: "domcontentloaded" });
-  await page.waitForTimeout(800);
-  await openJobMenu(page);
+  await openPortal(page, assignment.jobId);
 
   await sheet.locator('[data-clock="clockOut"]').click();
   await sheet.locator('input[type="datetime-local"]').fill("2026-07-28T19:00");
@@ -1451,7 +1456,7 @@ async function main() {
   );
   check(
     "and the lead is told, rather than left thinking it saved",
-    await sheet.getByText(/goes to whoever pays/i).isVisible(),
+    await page.getByText(/goes to whoever pays/i).isVisible(),
     true,
   );
 
@@ -1476,7 +1481,7 @@ async function main() {
 
   check(
     "and says so rather than repeating the first answer",
-    await sheet.getByText(/already waiting on whoever pays/i).isVisible(),
+    await page.getByText(/already waiting on whoever pays/i).isVisible(),
     true,
   );
 
@@ -1500,11 +1505,9 @@ async function main() {
   });
 
   await bossPage(browser, bossToken, async (planner) => {
-    await planner.goto(url, { waitUntil: "load" });
-    await planner.waitForTimeout(1000);
-    await openJobMenu(planner);
+    await openPortal(planner, assignment.jobId);
 
-    const menu = planner.getByRole("dialog", { name: "Job settings" });
+    const menu = planner.locator("[data-punch]").first();
     await menu.locator('[data-clock="clockIn"]').click();
     await menu.locator('input[type="datetime-local"]').fill("2026-07-28T06:00");
     await menu.getByPlaceholder("Why?").fill("Started at the depot");
@@ -1612,7 +1615,7 @@ async function main() {
     where: { jobId: assignment.jobId, category: "RETURN_LABELS" },
   });
 
-  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.goto(url, { waitUntil: "load" });
   await page.waitForTimeout(1000);
 
   check(
@@ -1678,7 +1681,9 @@ async function main() {
       data: { lifecycle: "PENDING_REVIEW", estimateMinutes: 60 },
     });
 
-    await planner.goto(url, { waitUntil: "load" });
+    await planner.goto(`${BASE}/jobs/${assignment.jobId}/review`, {
+      waitUntil: "load",
+    });
     await planner.waitForTimeout(1000);
 
     check(
@@ -1739,6 +1744,81 @@ async function main() {
     );
   });
 
+  // --- one person's punch, not the crew's ------------------------------------
+  // The flat list this replaces mixed two techs' rows into one column, so a
+  // Remove button meant for one read as one that would take everybody's day.
+  await bossPage(browser, bossToken, async (planner) => {
+    const second = await db.user.findFirstOrThrow({
+      where: { email: "sup@417group.org" },
+      select: { id: true, name: true },
+    });
+    const extra = await db.jobAssignment.create({
+      data: {
+        jobId: assignment.jobId,
+        userId: second.id,
+        payType: "HOURLY",
+        payRate: "40",
+      },
+      select: { id: true },
+    });
+    await db.visit.create({
+      data: {
+        assignmentId: extra.id,
+        clockInAt: new Date("2026-07-28T17:00:00Z"),
+        clockOutAt: new Date("2026-07-28T22:00:00Z"),
+      },
+    });
+    await plantClock();
+
+    await openPortal(planner, assignment.jobId);
+    check(
+      "each person gets a block of their own",
+      await planner.locator("[data-punch]").count(),
+      2,
+    );
+
+    await planner
+      .getByRole("button", { name: new RegExp(`Remove ${second.name}`) })
+      .click();
+    await planner.getByRole("button", { name: "Remove", exact: true }).click();
+    await planner.waitForTimeout(2500);
+
+    check(
+      "removing one takes only theirs",
+      await db.visit.count({ where: { assignmentId: extra.id } }),
+      0,
+    );
+    check(
+      "and leaves the rest of the crew's alone",
+      await db.visit.count({ where: { assignmentId: assignment.id } }),
+      1,
+    );
+
+    // A punch that was never made can be written by whoever pays for the time.
+    await planner.reload({ waitUntil: "load" });
+    await planner.waitForTimeout(800);
+    await planner
+      .getByRole("button", { name: `Add a punch for ${second.name}` })
+      .click();
+    await planner.locator(`#add-in-${extra.id}`).fill("2026-07-28T10:00");
+    await planner.locator(`#add-out-${extra.id}`).fill("2026-07-28T15:00");
+    await planner.getByRole("button", { name: "Save punch" }).click();
+    await planner.waitForTimeout(2500);
+
+    check(
+      "and a day nobody recorded can be written",
+      (
+        await db.visit.findFirstOrThrow({
+          where: { assignmentId: extra.id },
+          select: { clockInAt: true },
+        })
+      ).clockInAt.toISOString(),
+      "2026-07-28T17:00:00.000Z",
+    );
+
+    await db.jobAssignment.delete({ where: { id: extra.id } });
+  });
+
   // --- booking the return trip answers the flag -----------------------------
   // A queue that only ever grows is one people stop opening, so the job leaves
   // it when the revisit it asked for exists.
@@ -1752,9 +1832,12 @@ async function main() {
     await planner.waitForTimeout(1000);
 
     await openJobMenu(planner);
-    const menu = planner.getByRole("dialog", { name: "Job settings" });
-    await menu.getByRole("button", { name: "Schedule a revisit" }).click();
-    await menu.getByRole("button", { name: "Create revisit" }).click();
+    await planner
+      .getByRole("link", { name: /Schedule a revisit/ })
+      .click();
+    await planner.waitForTimeout(1500);
+    await planner.getByRole("button", { name: "Schedule a revisit" }).click();
+    await planner.getByRole("button", { name: "Create revisit" }).click();
 
     // Not waitForURL: the page is already on a job URL, so the pattern matches
     // before anything has happened and the check below reads the old state.
@@ -2061,7 +2144,7 @@ async function main() {
 }
 
 /** Runs a block in a fresh manager session, then closes it. */
-/** The "…" in the page header, where the things done *to* a job now live. */
+/** The "…" in the page header, which now chooses between three pages. */
 async function openJobMenu(page: import("playwright").Page) {
   await page.getByRole("button", { name: "Job settings", exact: true }).click();
   await page
@@ -2069,9 +2152,10 @@ async function openJobMenu(page: import("playwright").Page) {
     .waitFor({ timeout: 15_000 });
 }
 
-async function closeJobMenu(page: import("playwright").Page) {
-  await page.getByRole("button", { name: "Close job settings" }).click();
-  await page.waitForTimeout(400);
+/** Straight to the portal, which is where punches and pay went. */
+async function openPortal(page: import("playwright").Page, jobId: string) {
+  await page.goto(`${BASE}/jobs/${jobId}/manage`, { waitUntil: "load" });
+  await page.waitForTimeout(800);
 }
 
 async function bossPage(

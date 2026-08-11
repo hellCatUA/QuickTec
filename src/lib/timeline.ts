@@ -118,6 +118,7 @@ export const TIMELINE_META: Record<string, TimelineMeta> = {
   break_end: { label: "Break ended", icon: Play, tone: "neutral", groups: true },
   time_adjusted: { label: "Clock time adjusted", icon: ArrowRightLeft, tone: "warning" },
   time_removed: { label: "Punch removed", icon: Ban, tone: "danger" },
+  time_added: { label: "Punch added", icon: Play, tone: "warning" },
   checkout_completed: { label: "Checkout completed", icon: CircleCheck, tone: "success" },
   outcome_set: { label: "Outcome recorded", icon: Flag, tone: "neutral" },
   report_changed: { label: "Report edited", icon: FileText, tone: "warning", groups: true },
