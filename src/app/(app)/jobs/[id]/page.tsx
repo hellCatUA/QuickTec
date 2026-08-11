@@ -43,7 +43,9 @@ import { approveJob } from "../actions";
 import { ChangeRequests } from "./change-requests";
 import { CrewPanel } from "./crew-panel";
 import { DispatchPanel } from "./dispatch-panel";
+import { JobMenu, JobMenuSection } from "./job-menu";
 import { JobPay } from "./job-pay";
+import { VisitTimes } from "./visit-times";
 import { BreakPay } from "./break-pay";
 import { JobDocuments } from "./job-documents";
 import { JobTickets } from "./tickets";
@@ -164,6 +166,9 @@ export default async function JobPage({
           id: true,
           name: true,
           externalProjectId: true,
+          // Who runs the project answers for what it pays, so the settings
+          // menu opens for them whatever their rank elsewhere.
+          managerId: true,
           generalScopeOfWork: true,
           dispatchContacts: {
             orderBy: { order: "asc" },
@@ -294,11 +299,13 @@ export default async function JobPage({
               id: true,
               name: true,
               baseRole: true,
+              directSupervisorId: true,
               directSupervisor: {
                 select: { name: true, phone: true, email: true },
               },
             },
           },
+          supervisorId: true,
           supervisor: { select: { name: true } },
           visits: {
             orderBy: { clockInAt: "asc" },
@@ -349,11 +356,13 @@ export default async function JobPage({
     canOnJob(user, "job.approve_report", jobRef),
   ]);
 
-  const [canAssign, canReassign, canEditRates] = await Promise.all([
-    canOnJob(user, "job.assign", jobRef),
-    canOnJob(user, "job.reassign", jobRef),
-    canOnJob(user, "pay.edit_rates", jobRef),
-  ]);
+  const [canAssign, canReassign, canEditRates, canAdjustTime] =
+    await Promise.all([
+      canOnJob(user, "job.assign", jobRef),
+      canOnJob(user, "job.reassign", jobRef),
+      canOnJob(user, "pay.edit_rates", jobRef),
+      canOnJob(user, "job.adjust_time", jobRef),
+    ]);
 
   // Only fetched for someone who can actually act on it, so a tech's job page
   // never carries the staff list.
@@ -444,6 +453,60 @@ export default async function JobPage({
   // them as well as the rank.
   const canManageJob = canEditPlanned || Boolean(mine?.isLead);
 
+  // What sits behind the settings menu is not answered by rank. Whoever pays
+  // for the time is either the crew's own supervisor or the manager of the
+  // project it was booked under, and that is who each item below asks for.
+  const isDirectSupervisor = job.assignments.some(
+    (assignment) =>
+      assignment.supervisorId === user.id ||
+      assignment.user.directSupervisorId === user.id,
+  );
+  const isProjectManager = Boolean(
+    job.project && job.project.managerId === user.id,
+  );
+  const paysForThis = isDirectSupervisor || isProjectManager;
+
+  // A rate is the job's own money: their supervisor, the project's manager, or
+  // whoever raised it and negotiated the number in the first place.
+  const canSetPay =
+    canEditRates && (paysForThis || job.createdById === user.id);
+
+  // A revisit is a new job on somebody's calendar, so it stops at the people
+  // who schedule: the same two, or a manager.
+  const canRevisit =
+    can(user, "job.create") &&
+    (paysForThis ||
+      user.baseRole === "MANAGER" ||
+      user.baseRole === "ADMINISTRATOR");
+
+  // Every clock on the job, not only the reader's own — a lead fixes the
+  // crew's, and correcting your own from the panel above stops at your limit.
+  const editableVisits = job.assignments.flatMap((assignment) =>
+    assignment.visits.map((visit, index) => ({
+      id: visit.id,
+      who:
+        assignment.visits.length > 1
+          ? `${assignment.user.name} · visit ${index + 1}`
+          : assignment.user.name,
+      clockIn: {
+        value: toDatetimeLocalInZone(visit.clockInAt, zone),
+        text: usDateTimeInZone(visit.clockInAt, zone),
+      },
+      clockOut: visit.clockOutAt
+        ? {
+            value: toDatetimeLocalInZone(visit.clockOutAt, zone),
+            text: usDateTimeInZone(visit.clockOutAt, zone),
+          }
+        : null,
+    })),
+  );
+
+  // The menu itself stops at a supervisor or the job's lead. A tech may adjust
+  // their own clock, but from the time panel they are already looking at —
+  // this is the place the crew's times are changed, and that is not theirs.
+  const showMenu =
+    canManageJob && [canAdjustTime, canSetPay, canRevisit].some(Boolean);
+
   // The tech's own supervisor always heads the dispatch block — the one number
   // they are most likely to need and least likely to have to hand.
   const supervisor = mine?.user.directSupervisor;
@@ -497,19 +560,69 @@ export default async function JobPage({
         backHref="/jobs"
         description={`${intWoFieldLabel(company)}: ${job.intWoId}`}
         actions={
-          job.lifecycle === "PENDING_APPROVAL" && canApproveJob ? (
-            <form
-              action={async (formData: FormData) => {
-                "use server";
-                await approveJob(formData);
-              }}
-            >
-              <input type="hidden" name="jobId" value={job.id} />
-              <Button type="submit" size="sm" variant="success">
-                <CircleCheck /> Approve
-              </Button>
-            </form>
-          ) : null
+          <>
+            {job.lifecycle === "PENDING_APPROVAL" && canApproveJob ? (
+              <form
+                action={async (formData: FormData) => {
+                  "use server";
+                  await approveJob(formData);
+                }}
+              >
+                <input type="hidden" name="jobId" value={job.id} />
+                <Button type="submit" size="sm" variant="success">
+                  <CircleCheck /> Approve
+                </Button>
+              </form>
+            ) : null}
+
+            {showMenu ? (
+              <JobMenu>
+                {canAdjustTime ? (
+                  <JobMenuSection
+                    title="Clock times"
+                    hint="A crew that forgot to clock out is the usual reason. Anything past your limit becomes a request for whoever pays for the time."
+                  >
+                    <VisitTimes visits={editableVisits} />
+                  </JobMenuSection>
+                ) : null}
+
+                {canSetPay ? (
+                  <JobMenuSection
+                    title="Pay"
+                    hint="What this job pays, for everybody on it. Normally inherited from the tech, the project or the company — set it here when this job is none of those."
+                  >
+                    <JobPay
+                      jobId={job.id}
+                      canEdit={canSetPay}
+                      payType={job.payType ?? "HOURLY"}
+                      payRate={job.payRate?.toString() ?? ""}
+                      travelReimbursement={
+                        job.travelReimbursement?.toString() ?? null
+                      }
+                      note={
+                        job.payType
+                          ? "Applies to everybody on this job, including anybody added later. Somebody put on their own rate keeps it."
+                          : "Not set — everybody keeps their own rate, or the project's default where they have none."
+                      }
+                    />
+                  </JobMenuSection>
+                ) : null}
+
+                {canRevisit ? (
+                  <JobMenuSection
+                    title="Revisit"
+                    hint="Creates a new job carrying the same internal number with an -R suffix, in the month the revisit happens. Site, scope and deliverable rules are copied across."
+                  >
+                    <RevisitPanel
+                      jobId={job.id}
+                      jobTitle={job.title}
+                      externalAssignmentId={job.externalAssignmentId}
+                    />
+                  </JobMenuSection>
+                ) : null}
+              </JobMenu>
+            ) : null}
+          </>
         }
       />
 
@@ -916,33 +1029,6 @@ export default async function JobPage({
         </CardContent>
       </Card>
 
-      {canEditRates ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Pay</CardTitle>
-            <CardDescription>
-              What this job pays, for everybody on it. Normally inherited from
-              the tech, the project or the company — set it here when this job
-              is none of those.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <JobPay
-              jobId={job.id}
-              canEdit={canEditRates}
-              payType={job.payType ?? "HOURLY"}
-              payRate={job.payRate?.toString() ?? ""}
-              travelReimbursement={job.travelReimbursement?.toString() ?? null}
-              note={
-                job.payType
-                  ? "Applies to everybody on this job, including anybody added later. Somebody put on their own rate keeps it."
-                  : "Not set — everybody keeps their own rate, or the project's default where they have none."
-              }
-            />
-          </CardContent>
-        </Card>
-      ) : null}
-
       <Card>
         <CardHeader>
           <CardTitle>Deliverables</CardTitle>
@@ -1093,14 +1179,6 @@ export default async function JobPage({
             ))}
           </CardContent>
         </Card>
-      ) : null}
-
-      {can(user, "job.create") ? (
-        <RevisitPanel
-          jobId={job.id}
-          jobTitle={job.title}
-          externalAssignmentId={job.externalAssignmentId}
-        />
       ) : null}
 
       <Card>

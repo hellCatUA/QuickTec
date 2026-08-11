@@ -1107,6 +1107,15 @@ async function main() {
       0,
     );
 
+    // Pay is not on the page any more. It is one of three things done *to* a
+    // job rather than on it, and they all live behind the corner menu now.
+    check(
+      "the rate is not in the scroll a tech reads on site",
+      await planner.locator("#job-pay-type").count(),
+      0,
+    );
+
+    await openJobMenu(planner);
     await planner.locator("#job-pay-type").selectOption("FLAT");
     await planner.locator("#job-pay-rate").fill("450");
     await planner.locator("#job-pay-travel").fill("30");
@@ -1114,6 +1123,7 @@ async function main() {
       .getByRole("button", { name: "Apply to everybody on this job" })
       .click();
     await planner.waitForTimeout(2500);
+    await closeJobMenu(planner);
 
     const paid = await db.jobAssignment.findMany({
       where: { jobId: assignment.jobId },
@@ -1187,11 +1197,13 @@ async function main() {
 
     // Setting the job's pay again leaves them alone, which is the whole point
     // of having said they are different.
+    await openJobMenu(planner);
     await planner.locator("#job-pay-rate").fill("500");
     await planner
       .getByRole("button", { name: "Apply to everybody on this job" })
       .click();
     await planner.waitForTimeout(2500);
+    await closeJobMenu(planner);
 
     check(
       "changing the job's pay leaves a deliberate exception alone",
@@ -1236,6 +1248,174 @@ async function main() {
 
     await db.jobAssignment.delete({ where: { id: joined.id } });
   });
+
+  // --- how far each role may move a clock -----------------------------------
+  // The one calculation in the app that settles what somebody is paid. A crew
+  // that forgot to clock out until the morning is the case it exists for, and
+  // "we were there another hour" is the case it exists to stop.
+  //
+  // Site time is UTC-7 here, so 16:00Z reads as 09:00 and 23:00Z as 16:00.
+  const clockVisit = await db.visit.findFirstOrThrow({
+    where: { assignmentId: assignment.id },
+    orderBy: { clockInAt: "asc" },
+    select: { id: true },
+  });
+  const plantedIn = new Date("2026-07-28T16:00:00.000Z");
+  const plantedOut = new Date("2026-07-28T23:00:00.000Z");
+
+  async function plantClock() {
+    await db.visit.update({
+      where: { id: clockVisit.id },
+      data: { clockInAt: plantedIn, clockOutAt: plantedOut },
+    });
+    await db.changeRequest.deleteMany({
+      where: { jobId: assignment.jobId, fieldPath: { startsWith: "visit." } },
+    });
+  }
+
+  async function visitNow() {
+    return db.visit.findUniqueOrThrow({
+      where: { id: clockVisit.id },
+      select: { clockInAt: true, clockOutAt: true },
+    });
+  }
+
+  await plantClock();
+  await db.jobAssignment.update({
+    where: { id: assignment.id },
+    data: { isLead: false },
+  });
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(800);
+  check(
+    "a tech who is not leading the job has no settings menu",
+    await page.getByRole("button", { name: "Job settings", exact: true }).count(),
+    0,
+  );
+
+  // Leading the job is enough to fix a clock and not enough to change what the
+  // job pays, so the same menu opens with one section in it rather than three.
+  await db.jobAssignment.update({
+    where: { id: assignment.id },
+    data: { isLead: true },
+  });
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(800);
+
+  await openJobMenu(page);
+  const sheet = page.getByRole("dialog", { name: "Job settings" });
+  check(
+    "leading it opens the menu",
+    await sheet.getByRole("heading", { name: "Clock times" }).isVisible(),
+    true,
+  );
+  check(
+    "but the rate is not the lead's to set",
+    await sheet.locator("#job-pay-type").count(),
+    0,
+  );
+
+  // Downwards without limit: this can only ever give time back.
+  await sheet.locator('[data-clock="clockOut"]').click();
+  await sheet.locator('input[type="datetime-local"]').fill("2026-07-28T13:00");
+  await sheet.getByPlaceholder("Why?").fill("Crew left at one, logged late");
+  await sheet.getByRole("button", { name: "Save", exact: true }).click();
+  await page.waitForTimeout(2500);
+
+  check(
+    "the lead may pull a clock-out back as far as it needs to go",
+    (await visitNow()).clockOutAt?.toISOString(),
+    "2026-07-28T20:00:00.000Z",
+  );
+
+  // Upwards past the hour is the one somebody would write if it were not true.
+  await plantClock();
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(800);
+  await openJobMenu(page);
+
+  await sheet.locator('[data-clock="clockOut"]').click();
+  await sheet.locator('input[type="datetime-local"]').fill("2026-07-28T19:00");
+  await sheet.getByPlaceholder("Why?").fill("We stayed on for the cutover");
+  await sheet.getByRole("button", { name: "Save", exact: true }).click();
+  await page.waitForTimeout(2500);
+
+  check(
+    "adding three hours is not written",
+    (await visitNow()).clockOutAt?.toISOString(),
+    plantedOut.toISOString(),
+  );
+  check(
+    "it goes to whoever pays for the time instead",
+    (
+      await db.changeRequest.findFirstOrThrow({
+        where: {
+          jobId: assignment.jobId,
+          fieldPath: `visit.${clockVisit.id}.clockOut`,
+        },
+        select: { newValue: true, status: true },
+      })
+    ).newValue,
+    "2026-07-29T02:00:00.000Z",
+  );
+  check(
+    "and the lead is told, rather than left thinking it saved",
+    await sheet.getByText(/goes to whoever pays/i).isVisible(),
+    true,
+  );
+
+  // Within the hour, either way, is theirs.
+  await sheet.locator('[data-clock="clockIn"]').click();
+  await sheet.locator('input[type="datetime-local"]').fill("2026-07-28T08:30");
+  await sheet.getByPlaceholder("Why?").fill("Arrived before I logged it");
+  await sheet.getByRole("button", { name: "Save", exact: true }).click();
+  await page.waitForTimeout(2500);
+  check(
+    "half an hour on a clock-in is within reach",
+    (await visitNow()).clockInAt?.toISOString(),
+    "2026-07-28T15:30:00.000Z",
+  );
+
+  // Whoever pays for the time has no bounds — they are the ones who answer the
+  // request above.
+  await plantClock();
+  await db.auditEvent.deleteMany({
+    where: { jobId: assignment.jobId, action: "time_adjusted" },
+  });
+
+  await bossPage(browser, bossToken, async (planner) => {
+    await planner.goto(url, { waitUntil: "load" });
+    await planner.waitForTimeout(1000);
+    await openJobMenu(planner);
+
+    const menu = planner.getByRole("dialog", { name: "Job settings" });
+    await menu.locator('[data-clock="clockIn"]').click();
+    await menu.locator('input[type="datetime-local"]').fill("2026-07-28T06:00");
+    await menu.getByPlaceholder("Why?").fill("Started at the depot");
+    await menu.getByRole("button", { name: "Save", exact: true }).click();
+    await planner.waitForTimeout(2500);
+
+    check(
+      "a manager moves a clock three hours without asking anybody",
+      (await visitNow()).clockInAt?.toISOString(),
+      "2026-07-28T13:00:00.000Z",
+    );
+    check(
+      "and it is on the record with who and why",
+      (
+        (
+          await db.auditEvent.findFirstOrThrow({
+            where: { jobId: assignment.jobId, action: "time_adjusted" },
+            select: { detail: true },
+          })
+        ).detail as { reason?: string } | null
+      )?.reason,
+      "Started at the depot",
+    );
+  });
+
+  await plantClock();
 
   // --- the sections this job asks for ---------------------------------------
   // Old Serials, Return Labels and the rest existed in the model and on the
@@ -1589,6 +1769,19 @@ async function main() {
 }
 
 /** Runs a block in a fresh manager session, then closes it. */
+/** The "…" in the page header, where the things done *to* a job now live. */
+async function openJobMenu(page: import("playwright").Page) {
+  await page.getByRole("button", { name: "Job settings", exact: true }).click();
+  await page
+    .getByRole("dialog", { name: "Job settings" })
+    .waitFor({ timeout: 15_000 });
+}
+
+async function closeJobMenu(page: import("playwright").Page) {
+  await page.getByRole("button", { name: "Close job settings" }).click();
+  await page.waitForTimeout(400);
+}
+
 async function bossPage(
   browser: import("playwright").Browser,
   token: string,

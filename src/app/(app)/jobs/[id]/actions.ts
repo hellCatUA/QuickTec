@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { recordAudit } from "@/lib/audit";
 import { syncJobInBackground } from "@/lib/calendar/sync";
+import { clockAuthority, judgeClockEdit } from "@/lib/clock-limits";
 import { getCompanySettings } from "@/lib/company";
 import { parseDatetimeLocalInZone, roundToInterval } from "@/lib/datetime";
 import { db } from "@/lib/db";
@@ -1882,5 +1883,142 @@ export async function saveJobDeliverableRule(
   });
 
   touch(jobId);
+  return ok;
+}
+
+// ---------------------------------------------------------------------------
+// Moving a clock that is already recorded
+// ---------------------------------------------------------------------------
+
+const visitTimeSchema = z.object({
+  visitId: z.string().min(1),
+  field: z.enum(["clockIn", "clockOut"]),
+  /** A datetime-local from the browser, read in the site's zone. */
+  at: z.string().min(1),
+  reason: optionalText,
+});
+
+/**
+ * Corrects a clock-in or clock-out after the fact.
+ *
+ * How far anybody may move one is decided in clock-limits.ts, away from here,
+ * because it is the calculation that settles what a person is paid. This does
+ * the three things that follow from its answer: write it, send it to whoever
+ * pays for the time, or refuse.
+ */
+export async function adjustVisitTime(
+  formData: FormData,
+): Promise<ActionResult> {
+  const parsed = visitTimeSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return fail(z.prettifyError(parsed.error));
+
+  const { visitId, field, reason } = parsed.data;
+
+  const visit = await db.visit.findUnique({
+    where: { id: visitId },
+    select: {
+      id: true,
+      clockInAt: true,
+      clockOutAt: true,
+      assignment: {
+        select: {
+          jobId: true,
+          userId: true,
+          supervisorId: true,
+          // Both, because they can differ: the assignment records who answered
+          // for this person on this job, and their standing supervisor covers
+          // a job raised before that was written down.
+          user: { select: { name: true, directSupervisorId: true } },
+        },
+      },
+    },
+  });
+  if (!visit) return fail("That visit is no longer here.");
+
+  const context = await loadContext(visit.assignment.jobId);
+  if (!context) return fail("Job not found.");
+  const { user, job } = context;
+
+  if (!(await canOnJob(user, "job.adjust_time", job))) {
+    return fail("You cannot change clock times on this job.");
+  }
+
+  const from = field === "clockIn" ? visit.clockInAt : visit.clockOutAt;
+  if (!from) return fail("That clock has not been stopped yet.");
+
+  const to = parseDatetimeLocalInZone(parsed.data.at, job.timeZone);
+  if (!to) return fail("That is not a valid time.");
+
+  const company = await getCompanySettings();
+  const snapped = roundToInterval(to, company.timeRoundingMinutes);
+
+  const project = job.projectId
+    ? await db.project.findUnique({
+        where: { id: job.projectId },
+        select: { managerId: true },
+      })
+    : null;
+
+  const authority = clockAuthority({
+    scope: permissionScope(user, "job.adjust_time"),
+    isDirectSupervisor:
+      visit.assignment.supervisorId === user.id ||
+      visit.assignment.user.directSupervisorId === user.id,
+    isProjectManager: project?.managerId === user.id,
+    isLead: job.isLead,
+    isSupervisor: user.baseRole !== "TECH",
+  });
+
+  const verdict = judgeClockEdit(authority, { field, from, to: snapped });
+
+  if (verdict.outcome === "refuse") return fail(verdict.reason);
+
+  if (verdict.outcome === "approval") {
+    // Not written. The person who pays for the time decides, and until they do
+    // the record says what actually happened rather than what was asked for.
+    await db.changeRequest.create({
+      data: {
+        jobId: job.id,
+        requestedById: user.id,
+        fieldPath: `visit.${visitId}.${field}`,
+        oldValue: from.toISOString(),
+        newValue: snapped.toISOString(),
+        reason: reason ?? verdict.reason,
+      },
+    });
+
+    // No notification: notifications are for things that happened, and this is
+    // something to decide. The request itself is what reaches the approvals
+    // inbox, which is where decisions are answered.
+    touch(job.id);
+    return fail(verdict.reason);
+  }
+
+  await db.visit.update({
+    where: { id: visitId },
+    data:
+      field === "clockIn"
+        ? { clockInAt: snapped, clockInSource: "ADJUSTED" }
+        : { clockOutAt: snapped, clockOutSource: "ADJUSTED" },
+  });
+
+  await recordAudit({
+    actorId: user.id,
+    entityType: "Visit",
+    entityId: visitId,
+    jobId: job.id,
+    action: "time_adjusted",
+    detail: {
+      field,
+      who: visit.assignment.user.name,
+      from: from.toISOString(),
+      to: snapped.toISOString(),
+      reason: reason ?? null,
+    },
+  });
+
+  // The event has been telling a supervisor's day view the old time.
+  syncJobInBackground(job.id);
+  touch(job.id);
   return ok;
 }

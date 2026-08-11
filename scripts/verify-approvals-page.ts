@@ -655,7 +655,8 @@ async function main() {
 
   check(
     "their contact details come with them once picked",
-    await bossPage.locator('a[href="tel:206-555-0114"]').isVisible(),
+    // Dashes are for reading; a tel: link dials digits.
+    await bossPage.locator('a[href="tel:2065550114"]').isVisible(),
     true,
   );
 
