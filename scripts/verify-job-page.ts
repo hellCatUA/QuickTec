@@ -39,8 +39,12 @@ async function main() {
     where: { email: "tech@417group.org" },
   });
 
+  // The fixture job by name, not "whichever assignment comes back first": the
+  // destructive domain suite leaves jobs behind with this tech on them, and an
+  // unordered findFirst picks a different one from run to run — which then
+  // fails on the first step, about state this suite never created.
   const assignment = await db.jobAssignment.findFirstOrThrow({
-    where: { userId: tech.id },
+    where: { userId: tech.id, job: { title: "Elevator phone line" } },
     select: { id: true, jobId: true },
   });
 
@@ -262,6 +266,11 @@ async function main() {
 
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("button", { name: "Completed" }).click();
+
+  // Separate from the outcome on purpose: a job can be Completed and still
+  // need somebody back for the part that did not turn up. The tech is the only
+  // person who knows, and by the time a planner looks it is a memory.
+  await page.getByRole("checkbox", { name: /Revisit required/ }).check();
   await page.getByRole("button", { name: "Continue" }).click();
 
   // Scoped by id: the page also carries a "Release code" field of its own.
@@ -354,6 +363,34 @@ async function main() {
     check(`timeline records ${action}`, actions.has(action), true);
   }
 
+  // --- revisit required -----------------------------------------------------
+  // Raised at checkout by the tech who found out, acted on days later by
+  // somebody else. It is internal: the client is told the job was Completed,
+  // because it was, and never that we are coming back.
+  check(
+    "the revisit flag is on the job",
+    (
+      await db.job.findUniqueOrThrow({
+        where: { id: assignment.jobId },
+        select: { internalStatus: true },
+      })
+    ).internalStatus,
+    "REVISIT_REQUIRED",
+  );
+  check("and it is on the timeline", actions.has("revisit_required"), true);
+
+  await page.goto(`${BASE}/jobs?filter=revisit`, {
+    waitUntil: "domcontentloaded",
+  });
+  await page.waitForTimeout(800);
+  check(
+    "the planner can filter for it rather than scanning badges",
+    await page.getByText("Revisit required").first().isVisible(),
+    true,
+  );
+
+  await page.goto(url, { waitUntil: "domcontentloaded" });
+
   // --- exports ------------------------------------------------------------
   await page.reload({ waitUntil: "domcontentloaded" });
 
@@ -373,6 +410,11 @@ async function main() {
     "the on-page report names the MOD who signed",
     reportText.includes("MOD name: Dana Reyes"),
     true,
+  );
+  check(
+    "and says nothing about a revisit, which is ours to know",
+    /revisit/i.test(reportText),
+    false,
   );
 
   const textDownload = await page.request.get(
@@ -1583,6 +1625,58 @@ async function main() {
       await planner.locator('input[role="combobox"]#crew-add').isVisible(),
       true,
     );
+  });
+
+  // --- booking the return trip answers the flag -----------------------------
+  // A queue that only ever grows is one people stop opening, so the job leaves
+  // it when the revisit it asked for exists.
+  await bossPage(browser, bossToken, async (planner) => {
+    await db.job.update({
+      where: { id: assignment.jobId },
+      data: { internalStatus: "REVISIT_REQUIRED" },
+    });
+
+    await planner.goto(url, { waitUntil: "load" });
+    await planner.waitForTimeout(1000);
+
+    await openJobMenu(planner);
+    const menu = planner.getByRole("dialog", { name: "Job settings" });
+    await menu.getByRole("button", { name: "Schedule a revisit" }).click();
+    await menu.getByRole("button", { name: "Create revisit" }).click();
+
+    // Not waitForURL: the page is already on a job URL, so the pattern matches
+    // before anything has happened and the check below reads the old state.
+    for (let attempt = 0; attempt < 30; attempt++) {
+      const made = await db.job.count({
+        where: { parentJobId: assignment.jobId },
+      });
+      if (made > 0) break;
+      await planner.waitForTimeout(1000);
+    }
+
+    check(
+      "the revisit exists",
+      await db.job.count({ where: { parentJobId: assignment.jobId } }),
+      1,
+    );
+
+    check(
+      "scheduling the revisit takes the job out of the queue",
+      (
+        await db.job.findUniqueOrThrow({
+          where: { id: assignment.jobId },
+          select: { internalStatus: true },
+        })
+      ).internalStatus,
+      "RESCHEDULED",
+    );
+
+    // Not left behind for the next run to trip over.
+    await db.job.deleteMany({ where: { parentJobId: assignment.jobId } });
+    await db.job.update({
+      where: { id: assignment.jobId },
+      data: { internalStatus: null },
+    });
   });
 
   // --- a company's standing blank, offered on the next job ------------------

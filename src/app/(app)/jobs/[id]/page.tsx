@@ -706,6 +706,7 @@ export default async function JobPage({
             releaseCode: job.releaseCode,
             noReleaseCode: job.noReleaseCode,
             outcome: job.outcome,
+            revisitRequired: job.internalStatus === "REVISIT_REQUIRED",
             canOverrideMissing,
             canSetOutcome,
           }}

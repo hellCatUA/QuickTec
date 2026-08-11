@@ -298,6 +298,7 @@ const checkoutSchema = z.object({
   outcome: z.enum(JobOutcome),
   releaseCode: z.string().trim().max(120).optional(),
   noReleaseCode: z.string().optional(),
+  revisitRequired: flag,
   at: z.string().optional(),
 });
 
@@ -318,7 +319,7 @@ export async function completeCheckout(
   const parsed = checkoutSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return fail(z.prettifyError(parsed.error));
 
-  const { jobId, outcome, releaseCode, at } = parsed.data;
+  const { jobId, outcome, releaseCode, revisitRequired, at } = parsed.data;
   const noReleaseCode = parsed.data.noReleaseCode === "true";
 
   const context = await loadContext(jobId);
@@ -351,6 +352,12 @@ export async function completeCheckout(
       outcome,
       releaseCode: noReleaseCode ? null : (releaseCode ?? null),
       noReleaseCode,
+      // Raised by whoever is standing there, because they are the only person
+      // who knows. It is a report of fact — "this needs another trip" — not a
+      // decision to schedule one, which is why setting the outcome is enough
+      // to raise it. Taking it back off is a scheduling decision and needs
+      // job.set_internal_status.
+      ...(revisitRequired ? { internalStatus: "REVISIT_REQUIRED" as const } : {}),
     },
   });
 
@@ -366,6 +373,16 @@ export async function completeCheckout(
       overrodeMissing: missing.length > 0 ? missing.join(", ") : null,
     },
   });
+
+  if (revisitRequired) {
+    await recordAudit({
+      actorId: user.id,
+      entityType: "Job",
+      entityId: jobId,
+      jobId,
+      action: "revisit_required",
+    });
+  }
 
   return performClockOut(jobId, at || null);
 }

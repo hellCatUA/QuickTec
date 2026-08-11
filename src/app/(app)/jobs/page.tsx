@@ -17,12 +17,16 @@ import {
 } from "@/lib/job-status";
 import { jobScopeWhere } from "@/lib/scope";
 import { can, getSessionUser } from "@/lib/session";
-import type { JobLifecycle } from "@prisma-client";
+import type { JobInternalStatus, JobLifecycle } from "@prisma-client";
 
 export const metadata = { title: "Jobs" };
 
 const FILTERS = [
   { key: "open", label: "Open" },
+  // Its own tab rather than a badge to scan for: a job needing a return trip
+  // is raised on site and then acted on days later by somebody else, and a
+  // flag nobody can filter by is a flag nobody sees.
+  { key: "revisit", label: "Revisit" },
   { key: "all", label: "All" },
   { key: "approved", label: "Approved" },
 ] as const;
@@ -41,12 +45,17 @@ export default async function JobsPage({
   const { filter = "open" } = await searchParams;
   const company = await getCompanySettings();
 
-  const lifecycleFilter: { lifecycle?: { in: JobLifecycle[] } } =
+  const lifecycleFilter: {
+    lifecycle?: { in: JobLifecycle[] };
+    internalStatus?: JobInternalStatus;
+  } =
     filter === "open"
       ? { lifecycle: { in: OPEN_LIFECYCLES } }
       : filter === "approved"
         ? { lifecycle: { in: ["APPROVED"] } }
-        : {};
+        : filter === "revisit"
+          ? { internalStatus: "REVISIT_REQUIRED" }
+          : {};
 
   const jobs = await db.job.findMany({
     where: { AND: [where, lifecycleFilter] },
@@ -108,7 +117,9 @@ export default async function JobsPage({
           description={
             filter === "open"
               ? "No open jobs you can see. Try the All tab."
-              : "No jobs match this filter yet."
+              : filter === "revisit"
+                ? "Nothing is waiting on a return trip. A tech raises this at checkout, and scheduling the revisit clears it."
+                : "No jobs match this filter yet."
           }
         />
       ) : null}

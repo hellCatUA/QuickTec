@@ -52,6 +52,7 @@ export function TimePanel({
     releaseCode: string | null;
     noReleaseCode: boolean;
     outcome: JobOutcome | null;
+    revisitRequired: boolean;
     canOverrideMissing: boolean;
     canSetOutcome: boolean;
   };
@@ -74,6 +75,7 @@ export function TimePanel({
         releaseCode={checkout.releaseCode}
         noReleaseCode={checkout.noReleaseCode}
         outcome={checkout.outcome}
+        revisitRequired={checkout.revisitRequired}
         canOverrideMissing={checkout.canOverrideMissing}
         onClose={() => setWizard(null)}
       />

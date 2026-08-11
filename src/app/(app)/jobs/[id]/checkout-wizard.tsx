@@ -52,6 +52,7 @@ export function CheckoutWizard({
   releaseCode: initialReleaseCode,
   noReleaseCode: initialNoReleaseCode,
   outcome: initialOutcome,
+  revisitRequired: initialRevisitRequired,
   canOverrideMissing,
   onClose,
 }: {
@@ -66,6 +67,8 @@ export function CheckoutWizard({
   releaseCode: string | null;
   noReleaseCode: boolean;
   outcome: JobOutcome | null;
+  /** Already flagged, so preparing then finishing later does not lose it. */
+  revisitRequired: boolean;
   canOverrideMissing: boolean;
   onClose: () => void;
 }) {
@@ -87,6 +90,8 @@ export function CheckoutWizard({
   );
   const [releaseCode, setReleaseCode] = React.useState(initialReleaseCode ?? "");
   const [noReleaseCode, setNoReleaseCode] = React.useState(initialNoReleaseCode);
+  const [revisitRequired, setRevisitRequired] =
+    React.useState(initialRevisitRequired);
 
   const [modList, setModList] = React.useState(mods);
   const [modName, setModName] = React.useState("");
@@ -196,6 +201,7 @@ export function CheckoutWizard({
       formData.set("outcome", outcome);
       formData.set("releaseCode", noReleaseCode ? "" : releaseCode);
       formData.set("noReleaseCode", String(noReleaseCode));
+      formData.set("revisitRequired", String(revisitRequired));
       if (at) formData.set("at", at.toISOString());
       return completeCheckout(null, formData);
     });
@@ -269,10 +275,27 @@ export function CheckoutWizard({
                 {OUTCOME_META[option].label}
               </Button>
             ))}
-            <p className="text-xs text-muted-foreground">
-              Internal statuses like Revisit required are set afterwards by a
-              supervisor and never leave the company.
-            </p>
+
+            {/* Asked here because the person standing on site is the only one
+                who knows, and by the time anybody else looks at the job the
+                reason is a memory. It is separate from the outcome on purpose:
+                a job can be Completed and still need somebody back for the
+                part that did not arrive. */}
+            <label className="mt-1 flex items-start gap-2 rounded-lg border border-border p-3 text-sm">
+              <input
+                type="checkbox"
+                checked={revisitRequired}
+                onChange={(event) => setRevisitRequired(event.target.checked)}
+                className="mt-0.5 size-5 accent-[var(--color-primary)]"
+              />
+              <span>
+                Revisit required
+                <span className="block text-xs text-muted-foreground">
+                  Flags the job for whoever plans the return trip. Internal —
+                  it never reaches the client report.
+                </span>
+              </span>
+            </label>
           </div>
         ) : null}
 
@@ -395,6 +418,13 @@ export function CheckoutWizard({
               </Row>
               <Row label="Release code">
                 {noReleaseCode ? "None" : releaseCode || "—"}
+              </Row>
+              <Row label="Revisit">
+                {revisitRequired ? (
+                  <Badge variant="warning">Required</Badge>
+                ) : (
+                  "Not needed"
+                )}
               </Row>
               <Row label="MOD signature">
                 {noMod ? "No MOD" : modDone ? "Captured" : "Not captured"}

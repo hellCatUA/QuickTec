@@ -527,6 +527,14 @@ export async function createRevisit(
     detail: { revisitJobId: job.id, intWoId: job.intWoId },
   });
 
+  // The flag was a request for exactly this, and it has now been answered. A
+  // queue that only ever grows is one people stop opening, so booking the
+  // return trip is what takes the job back out of it.
+  await db.job.updateMany({
+    where: { id: parent.id, internalStatus: "REVISIT_REQUIRED" },
+    data: { internalStatus: "RESCHEDULED" },
+  });
+
   if (parent.projectId) {
     await recordAudit({
       actorId: actor.id,

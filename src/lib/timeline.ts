@@ -97,6 +97,7 @@ export const TIMELINE_META: Record<string, TimelineMeta> = {
   created: { label: "Job created", icon: FilePlus2, tone: "primary" },
   revisit_created: { label: "Revisit created", icon: Repeat, tone: "warning" },
   revisit_scheduled: { label: "Revisit scheduled", icon: Repeat, tone: "warning" },
+  revisit_required: { label: "Revisit required", icon: Repeat, tone: "warning" },
   approved: { label: "Job approved", icon: CircleCheck, tone: "success" },
   ad_hoc_approved: { label: "Ad-hoc job approved", icon: CircleCheck, tone: "success" },
   report_approved: { label: "Report approved", icon: CircleCheck, tone: "success" },
