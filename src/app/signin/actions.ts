@@ -122,6 +122,7 @@ export async function setPasswordWithToken(
         mustChangePassword: false,
         failedSignIns: 0,
         lockedUntil: null,
+        passwordChangedAt: new Date(),
       },
     }),
     db.passwordSetupToken.update({

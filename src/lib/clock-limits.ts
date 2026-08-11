@@ -124,3 +124,24 @@ export function clockAuthority(input: {
 
   return "suggest";
 }
+
+/**
+ * A visit that ends before it starts is not a correction, it is a typo.
+ *
+ * visitTotals clamps a negative span to zero, so without this the tech is
+ * silently paid nothing for the day, jobSpan reports an offsite earlier than
+ * its onsite, and the review panel reads "16:00 – 08:00" — with nothing
+ * anywhere having refused. Bounded authority makes it reachable: pulling a
+ * clock-out back is deliberately unlimited, because that direction can only
+ * ever give time back. Past the clock-in it stops being that.
+ */
+export function clockOrderProblem(
+  clockIn: Date,
+  clockOut: Date | null,
+): string | null {
+  if (!clockOut) return null;
+  if (clockOut.getTime() <= clockIn.getTime()) {
+    return "That would put the clock-out at or before the clock-in.";
+  }
+  return null;
+}

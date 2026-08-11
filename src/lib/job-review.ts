@@ -80,23 +80,21 @@ export function reviewTimes(input: TimesInput): ReviewFlag[] {
     }
   }
 
-  const worked = input.visits.reduce(
-    (total, visit) => total + visit.paidMinutes,
-    0,
-  );
-
   if (input.estimateMinutes && input.estimateMinutes > 0) {
-    // Per tech, not summed: two techs on a six-hour job book twelve hours
-    // between them and neither of them is over.
-    const perTech = worked / input.visits.length;
-    const over = perTech - input.estimateMinutes;
-    if (over > input.estimateMinutes * OVER_ESTIMATE_FRACTION) {
-      flags.push({
-        level: "warn",
-        text: `${hours(perTech)} against an estimate of ${hours(
-          input.estimateMinutes,
-        )}.`,
-      });
+    // Each person against the estimate, not the crew's average against it.
+    // Summing would report every two-hander as overrunning; averaging hides
+    // one tech four hours over behind a colleague who finished early, which is
+    // the case this exists to catch.
+    const limit = input.estimateMinutes * (1 + OVER_ESTIMATE_FRACTION);
+    for (const visit of input.visits) {
+      if (visit.paidMinutes > limit) {
+        flags.push({
+          level: "warn",
+          text: `${visit.who}: ${hours(visit.paidMinutes)} against an estimate of ${hours(
+            input.estimateMinutes,
+          )}.`,
+        });
+      }
     }
   }
 

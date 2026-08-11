@@ -4,7 +4,12 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { recordAudit } from "@/lib/audit";
 import { syncJobInBackground } from "@/lib/calendar/sync";
-import { clockAuthority, judgeClockEdit } from "@/lib/clock-limits";
+import {
+  clockAuthority,
+  type ClockField,
+  clockOrderProblem,
+  judgeClockEdit,
+} from "@/lib/clock-limits";
 import { getCompanySettings } from "@/lib/company";
 import { parseDatetimeLocalInZone, roundToInterval } from "@/lib/datetime";
 import { db } from "@/lib/db";
@@ -42,6 +47,7 @@ type JobContext = {
     createdById: string;
     breakPaid: boolean;
     lifecycle: string;
+    internalStatus: string | null;
     assigneeIds: string[];
     /**
      * Whether the caller is leading this job.
@@ -68,6 +74,7 @@ async function loadContext(jobId: string): Promise<JobContext | null> {
       createdById: true,
       breakPaid: true,
       lifecycle: true,
+      internalStatus: true,
       site: { select: { timeZone: true } },
       assignments: { select: { userId: true, isLead: true } },
     },
@@ -84,6 +91,7 @@ async function loadContext(jobId: string): Promise<JobContext | null> {
       createdById: job.createdById,
       breakPaid: job.breakPaid,
       lifecycle: job.lifecycle,
+      internalStatus: job.internalStatus,
       assigneeIds: job.assignments.map((assignment) => assignment.userId),
       isLead: job.assignments.some(
         (assignment) => assignment.userId === user.id && assignment.isLead,
@@ -365,10 +373,19 @@ export async function completeCheckout(
       noReleaseCode,
       // Raised by whoever is standing there, because they are the only person
       // who knows. It is a report of fact — "this needs another trip" — not a
-      // decision to schedule one, which is why setting the outcome is enough
-      // to raise it. Taking it back off is a scheduling decision and needs
-      // job.set_internal_status.
-      ...(revisitRequired ? { internalStatus: "REVISIT_REQUIRED" as const } : {}),
+      // decision to schedule one.
+      //
+      // Unticking it clears the flag rather than doing nothing: the box is
+      // pre-ticked from the job, so a second run through the wizard after the
+      // part turned up would otherwise show "Not needed" and leave the job in
+      // the queue anyway. A job already moved to Rescheduled is left alone in
+      // both directions — the revisit is booked, and this is not the place to
+      // unbook it.
+      ...(job.internalStatus === "RESCHEDULED"
+        ? {}
+        : revisitRequired
+          ? { internalStatus: "REVISIT_REQUIRED" as const }
+          : { internalStatus: null }),
     },
   });
 
@@ -932,6 +949,86 @@ export async function suggestChange(
   return ok;
 }
 
+/** `visit.<id>.clockIn` — the shape adjustVisitTime files a request under. */
+function parseVisitPath(
+  fieldPath: string,
+): { visitId: string; field: ClockField } | null {
+  const match = /^visit\.([^.]+)\.(clockIn|clockOut)$/.exec(fieldPath);
+  if (!match) return null;
+  return { visitId: match[1], field: match[2] as ClockField };
+}
+
+/**
+ * Answers a clock correction somebody asked for.
+ *
+ * Approving writes the time the requester wanted, with no second opinion about
+ * limits: the person deciding here is the one those limits defer to.
+ */
+async function reviewVisitTimeRequest(
+  request: { id: string; jobId: string; newValue: string | null },
+  clock: { visitId: string; field: ClockField },
+  approve: boolean,
+  user: SessionUser,
+  formData: FormData,
+): Promise<ActionResult> {
+  const visit = await db.visit.findUnique({
+    where: { id: clock.visitId },
+    select: { id: true, clockInAt: true, clockOutAt: true },
+  });
+
+  // The punch may have been removed while the request waited. Rejecting one
+  // still has to work, or it is stuck for a different reason.
+  if (!visit && approve) return fail("That punch is no longer here.");
+
+  const at = request.newValue ? new Date(request.newValue) : null;
+  if (approve && (!at || Number.isNaN(at.getTime()))) {
+    return fail("That request does not carry a valid time.");
+  }
+
+  if (approve && visit && at) {
+    const problem = clockOrderProblem(
+      clock.field === "clockIn" ? at : visit.clockInAt,
+      clock.field === "clockOut" ? at : visit.clockOutAt,
+    );
+    if (problem) return fail(problem);
+  }
+
+  await db.$transaction(async (tx) => {
+    await tx.changeRequest.update({
+      where: { id: request.id },
+      data: {
+        status: approve ? "APPROVED" : "REJECTED",
+        reviewedById: user.id,
+        reviewedAt: new Date(),
+        reviewNote: (formData.get("note") as string) || null,
+      },
+    });
+
+    if (approve && visit && at) {
+      await tx.visit.update({
+        where: { id: visit.id },
+        data:
+          clock.field === "clockIn"
+            ? { clockInAt: at, clockInSource: "ADJUSTED" }
+            : { clockOutAt: at, clockOutSource: "ADJUSTED" },
+      });
+    }
+  });
+
+  await recordAudit({
+    actorId: user.id,
+    entityType: "Visit",
+    entityId: clock.visitId,
+    jobId: request.jobId,
+    action: approve ? "change_approved" : "change_rejected",
+    detail: { field: clock.field, to: at?.toISOString() ?? null },
+  });
+
+  if (approve) syncJobInBackground(request.jobId);
+  touch(request.jobId);
+  return ok;
+}
+
 export async function reviewChangeRequest(
   formData: FormData,
 ): Promise<ActionResult> {
@@ -958,6 +1055,15 @@ export async function reviewChangeRequest(
   if (!(await canOnJob(user, "job.approve_change", job))) {
     return fail("You cannot approve changes on this job.");
   }
+
+  // A clock correction beyond somebody's reach arrives here as a request like
+  // `visit.<id>.clockOut`, which is not a job field and never was. Without
+  // this it fell through to "That field no longer exists" on both Approve and
+  // Reject, so the request could not be decided at all and sat in the queue
+  // for ever while the clock stayed wrong.
+  const clock = parseVisitPath(request.fieldPath);
+  if (clock) return reviewVisitTimeRequest(request, clock, approve, user, formData);
+
   if (!isJobField(request.fieldPath)) {
     return fail("That field no longer exists.");
   }
@@ -1997,18 +2103,38 @@ export async function adjustVisitTime(
     isSupervisor: user.baseRole !== "TECH",
   });
 
+  const ordering = clockOrderProblem(
+    field === "clockIn" ? snapped : visit.clockInAt,
+    field === "clockOut" ? snapped : visit.clockOutAt,
+  );
+  if (ordering) return fail(ordering);
+
   const verdict = judgeClockEdit(authority, { field, from, to: snapped });
 
   if (verdict.outcome === "refuse") return fail(verdict.reason);
 
   if (verdict.outcome === "approval") {
+    const fieldPath = `visit.${visitId}.${field}`;
+
+    // Pressing Save again with a different reason should not put a second copy
+    // in somebody's queue, the same way suggestChange refuses a duplicate.
+    const already = await db.changeRequest.findFirst({
+      where: { jobId: job.id, fieldPath, status: "PENDING" },
+      select: { id: true },
+    });
+    if (already) {
+      return fail(
+        "That clock is already waiting on whoever pays for the time. They have the earlier request.",
+      );
+    }
+
     // Not written. The person who pays for the time decides, and until they do
     // the record says what actually happened rather than what was asked for.
     await db.changeRequest.create({
       data: {
         jobId: job.id,
         requestedById: user.id,
-        fieldPath: `visit.${visitId}.${field}`,
+        fieldPath,
         oldValue: from.toISOString(),
         newValue: snapped.toISOString(),
         reason: reason ?? verdict.reason,

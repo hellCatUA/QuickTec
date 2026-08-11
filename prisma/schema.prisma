@@ -86,6 +86,14 @@ model User {
   failedSignIns Int       @default(0)
   lockedUntil   DateTime?
 
+  /// When the password last changed, so sessions older than that stop working.
+  ///
+  /// Sessions are JWTs and are not stored, so there is no list to delete from.
+  /// Without this, resetting a password somebody else had learned left them
+  /// signed in for the rest of the week — which is the whole case a reset
+  /// exists for.
+  passwordChangedAt DateTime?
+
   baseRole BaseRole
   active   Boolean  @default(true)
   timeZone String   @default("America/Los_Angeles")

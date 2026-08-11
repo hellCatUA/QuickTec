@@ -18,7 +18,7 @@ import { JOB_FIELDS, isJobField } from "@/lib/job-fields";
 import { formatMoney } from "@/lib/money";
 import { jobScopeWhere, reportIds } from "@/lib/scope";
 import { getSessionUser, permissionScope } from "@/lib/session";
-import { approveReport } from "../jobs/actions";
+import { ApproveReportButton } from "./approve-report-button";
 import { DecidedList, fieldKind, type DecidedRow } from "./decided";
 import { NotificationsPanel } from "./notifications-panel";
 import {
@@ -486,17 +486,7 @@ export default async function ApprovalsPage({
                 {/* Signed off from here as well as from the job. Somebody
                     clearing a Monday backlog of a dozen reports they have
                     already read should not have to open each one again. */}
-                <form
-                  action={async (formData: FormData) => {
-                    "use server";
-                    await approveReport(formData);
-                  }}
-                >
-                  <input type="hidden" name="jobId" value={job.id} />
-                  <Button type="submit" size="sm" variant="success">
-                    <CircleCheck /> Approve
-                  </Button>
-                </form>
+                <ApproveReportButton jobId={job.id} />
               </div>
             ))}
           </CardContent>

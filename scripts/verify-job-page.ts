@@ -1455,6 +1455,31 @@ async function main() {
     true,
   );
 
+  // Pressing Save again with a different reason must not put a second copy in
+  // somebody's queue.
+  await sheet.locator('[data-clock="clockOut"]').click();
+  await sheet.locator('input[type="datetime-local"]').fill("2026-07-28T20:00");
+  await sheet.getByPlaceholder("Why?").fill("Actually it was eight");
+  await sheet.getByRole("button", { name: "Save", exact: true }).click();
+  await page.waitForTimeout(2500);
+  check(
+    "and asking twice does not queue it twice",
+    await db.changeRequest.count({
+      where: {
+        jobId: assignment.jobId,
+        fieldPath: `visit.${clockVisit.id}.clockOut`,
+        status: "PENDING",
+      },
+    }),
+    1,
+  );
+
+  check(
+    "and says so rather than repeating the first answer",
+    await sheet.getByText(/already waiting on whoever pays/i).isVisible(),
+    true,
+  );
+
   // Within the hour, either way, is theirs.
   await sheet.locator('[data-clock="clockIn"]').click();
   await sheet.locator('input[type="datetime-local"]').fill("2026-07-28T08:30");

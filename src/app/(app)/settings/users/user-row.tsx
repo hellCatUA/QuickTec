@@ -82,7 +82,7 @@ export function UserRow({
           {/* Only for accounts whose password this app actually holds. A
               NextCloud one is answered in NextCloud. */}
           {user.signInMethod === "LOCAL" ? (
-            <ResetPassword userId={user.id} />
+            <ResetPassword userId={user.id} email={user.email} />
           ) : null}
 
           <div className="grid gap-4 sm:grid-cols-3">

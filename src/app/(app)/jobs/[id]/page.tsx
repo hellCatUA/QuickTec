@@ -473,10 +473,26 @@ export default async function JobPage({
   );
   const paysForThis = isDirectSupervisor || isProjectManager;
 
-  // The same test clock-limits.ts calls "unbounded": whoever the time is
-  // charged to. Deleting a punch is theirs; the job's lead may only move one.
-  const canRemovePunch =
-    permissionScope(user, "job.adjust_time") === "ALL" || paysForThis;
+  /**
+   * Whether this particular person's punch may be deleted, which is not a
+   * question about the job.
+   *
+   * paysForThis is true when *any* assignment matches, so on a two-tech job
+   * Sam was offered Remove on Alex's punch and the server then refused it —
+   * removeVisit recomputes authority from that visit's own assignment.
+   */
+  const managerEverywhere = permissionScope(user, "job.adjust_time") === "ALL";
+  function canRemoveFor(assignment: {
+    supervisorId: string | null;
+    user: { directSupervisorId: string | null };
+  }): boolean {
+    return (
+      managerEverywhere ||
+      isProjectManager ||
+      assignment.supervisorId === user!.id ||
+      assignment.user.directSupervisorId === user!.id
+    );
+  }
 
   // A rate is the job's own money: their supervisor, the project's manager, or
   // whoever raised it and negotiated the number in the first place.
@@ -496,6 +512,7 @@ export default async function JobPage({
   const editableVisits = job.assignments.flatMap((assignment) =>
     assignment.visits.map((visit, index) => ({
       id: visit.id,
+      canRemove: canRemoveFor(assignment),
       who:
         assignment.visits.length > 1
           ? `${assignment.user.name} · visit ${index + 1}`
@@ -513,11 +530,17 @@ export default async function JobPage({
     })),
   );
 
-  // The menu itself stops at a supervisor or the job's lead. A tech may adjust
-  // their own clock, but from the time panel they are already looking at —
-  // this is the place the crew's times are changed, and that is not theirs.
-  const showMenu =
-    canManageJob && [canAdjustTime, canSetPay, canRevisit].some(Boolean);
+  // Correcting somebody else's clock: a supervisor, the job's lead, or whoever
+  // the time is charged to. A tech may still nudge their own from the time
+  // panel they are already looking at — this is the crew's, and that is not
+  // theirs.
+  const canFixClocks = canAdjustTime && (canManageJob || paysForThis);
+
+  // The menu opens if any one of its sections does. Requiring canManageJob on
+  // top of that shut it entirely for a direct supervisor who is neither the
+  // lead nor able to edit planned fields — the very person the clock requests
+  // are addressed to.
+  const showMenu = [canFixClocks, canSetPay, canRevisit].some(Boolean);
 
   // The tech's own supervisor always heads the dispatch block — the one number
   // they are most likely to need and least likely to have to hand.
@@ -723,12 +746,12 @@ export default async function JobPage({
 
             {showMenu ? (
               <JobMenu>
-                {canAdjustTime ? (
+                {canFixClocks ? (
                   <JobMenuSection
                     title="Clock times"
                     hint="A crew that forgot to clock out is the usual reason. Anything past your limit becomes a request for whoever pays for the time."
                   >
-                    <VisitTimes visits={editableVisits} canRemove={canRemovePunch} />
+                    <VisitTimes visits={editableVisits} />
                   </JobMenuSection>
                 ) : null}
 

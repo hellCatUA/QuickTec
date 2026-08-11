@@ -55,6 +55,13 @@ export async function changeOwnPassword(
       mustChangePassword: false,
       failedSignIns: 0,
       lockedUntil: null,
+      // Deliberately not stamping passwordChangedAt here. That stamp exists to
+      // cut off sessions older than the change, and the oldest session there
+      // is right now is the one doing the changing — stamping would sign this
+      // person out of the page they are standing on, which for the forced
+      // first change is a loop back to the form they just submitted. An
+      // administrator's reset is where somebody else needs cutting off, and
+      // that path stamps it.
     },
   });
 

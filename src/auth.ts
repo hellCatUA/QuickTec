@@ -230,8 +230,14 @@ export const authConfig: NextAuthConfig = {
           throw new CredentialsSignin(`Locked:${locked}`);
         }
 
+        // A lock that has run out clears what put it there. Otherwise the
+        // eighth wrong answer is followed by a permanent one-strike policy:
+        // the counter stays at eight, so the next single typo locks them out
+        // again, and again, with nothing to reset it but an administrator.
+        const priorFailures = user.lockedUntil ? 0 : user.failedSignIns;
+
         if (!(await verifyPassword(password, user.passwordHash))) {
-          const failures = user.failedSignIns + 1;
+          const failures = priorFailures + 1;
           await db.user.update({
             where: { id: user.id },
             data: { failedSignIns: failures, lockedUntil: lockoutUntil(failures) },
@@ -407,7 +413,13 @@ export const authConfig: NextAuthConfig = {
     async jwt({ token, user, profile }) {
       // The password provider has no profile: it hands back the row it just
       // checked, and that id is the whole of what the session needs.
-      if (user?.id) token.userId = user.id;
+      if (user?.id) {
+        token.userId = user.id;
+        // Stamped rather than read from `iat`, which Auth.js refreshes as the
+        // token rolls over. This is when they proved who they were, and it is
+        // what a password reset is compared against.
+        token.signedInAt = Date.now();
+      }
 
       if (profile?.sub) {
         const user = await db.user.findUnique({
@@ -422,6 +434,10 @@ export const authConfig: NextAuthConfig = {
     async session({ session, token }) {
       if (token.userId) {
         session.user.id = token.userId as string;
+      }
+      if (token.signedInAt) {
+        (session as { signedInAt?: number }).signedInAt =
+          token.signedInAt as number;
       }
       return session;
     },

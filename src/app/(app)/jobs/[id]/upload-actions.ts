@@ -909,19 +909,35 @@ export async function moveDeliverable(
   });
 
   if (destination) {
-    await db.attachment.updateMany({
-      where: { deliverableItemId: item.id },
-      data: { deliverableItemId: destination.id },
-    });
-    // Whatever text it carried belongs with the photos; an emptied shell left
-    // behind reads as a section somebody filled in and then abandoned.
-    const emptied = await db.deliverableItem.findUniqueOrThrow({
+    // The whole entry moves, text and all. Repointing only the attachments
+    // left the tracking numbers behind under the old section — still on the
+    // client report — while the photo of the label appeared under the new one,
+    // and the same action behaved differently depending on whether the
+    // destination happened to exist yet.
+    const moved = await db.deliverableItem.findUniqueOrThrow({
       where: { id: item.id },
-      select: { textValue: true, _count: { select: { attachments: true } } },
+      select: { textValue: true },
     });
-    if (!emptied.textValue && emptied._count.attachments === 0) {
-      await db.deliverableItem.delete({ where: { id: item.id } });
-    }
+    const existing = await db.deliverableItem.findUniqueOrThrow({
+      where: { id: destination.id },
+      select: { textValue: true },
+    });
+
+    await db.$transaction([
+      db.attachment.updateMany({
+        where: { deliverableItemId: item.id },
+        data: { deliverableItemId: destination.id },
+      }),
+      db.deliverableItem.update({
+        where: { id: destination.id },
+        data: {
+          textValue:
+            [existing.textValue, moved.textValue].filter(Boolean).join("\n") ||
+            null,
+        },
+      }),
+      db.deliverableItem.delete({ where: { id: item.id } }),
+    ]);
   } else {
     await db.deliverableItem.update({
       where: { id: item.id },

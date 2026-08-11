@@ -322,6 +322,59 @@ export async function createOutsideUser(
 }
 
 /**
+ * Hands an outside account over to NextCloud.
+ *
+ * The subcontractor joined the company. Their SSO sign-in was being refused
+ * with "an administrator has to join the two", which named an action that did
+ * not exist anywhere — the only ways out were deleting the account and its job
+ * history, or editing the database by hand.
+ *
+ * The password goes with the change: it is not theirs to sign in with any
+ * more, and leaving it would be a second door into the same account.
+ */
+export async function switchToSso(formData: FormData): Promise<LinkResult> {
+  const actor = await requirePermission("users.manage");
+  const userId = String(formData.get("userId") ?? "");
+
+  const user = await db.user.findUnique({
+    where: { id: userId },
+    select: { id: true, name: true, email: true, signInMethod: true },
+  });
+  if (!user) return { ok: false, error: "No such account." };
+  if (user.signInMethod === "SSO") return { ok: true };
+
+  await db.user.update({
+    where: { id: userId },
+    data: {
+      signInMethod: "SSO",
+      passwordHash: null,
+      mustChangePassword: false,
+      failedSignIns: 0,
+      lockedUntil: null,
+      passwordChangedAt: new Date(),
+    },
+  });
+
+  // Any link still outstanding would set a password on an account that no
+  // longer has one.
+  await db.passwordSetupToken.updateMany({
+    where: { userId, usedAt: null },
+    data: { usedAt: new Date() },
+  });
+
+  await recordAudit({
+    actorId: actor.id,
+    entityType: "User",
+    entityId: userId,
+    action: "sign_in_method_changed",
+    detail: { who: user.name, field: "Sign-in", from: "password", to: "SSO" },
+  });
+
+  revalidatePath("/settings/users");
+  return { ok: true };
+}
+
+/**
  * A new link for an account that already exists.
  *
  * The same button answers a forgotten password and a first sign-in that never
@@ -356,6 +409,8 @@ export async function resetOutsidePassword(
       mustChangePassword: false,
       failedSignIns: 0,
       lockedUntil: null,
+      // Cuts off anybody already signed in on the password being replaced.
+      passwordChangedAt: new Date(),
     },
   });
 

@@ -56,11 +56,24 @@ async function main() {
     await page.getByText(/SSO account\?/).isVisible(),
     true,
   );
+  const sso = page.getByRole("link", { name: /Yes .* sign in with SSO/ });
+  check("SSO is offered", await sso.isVisible(), true);
+
+  // Signing out asks for /signin?reauth=1, and the SSO half has to carry that
+  // to /api/auth/start or NextCloud silently reuses the previous session — the
+  // next person on a shared van phone lands on somebody else's dashboard.
+  await page.goto(`${BASE}/signin?reauth=1`, { waitUntil: "load" });
+  await page.waitForTimeout(500);
   check(
-    "SSO is offered",
-    await page.getByRole("button", { name: /Yes .* sign in with SSO/ }).isVisible(),
-    true,
+    "and signing out still means the next person is asked who they are",
+    await page
+      .getByRole("link", { name: /Yes .* sign in with SSO/ })
+      .getAttribute("href"),
+    "/api/auth/start?reauth=1",
   );
+
+  await page.goto(`${BASE}/signin`, { waitUntil: "load" });
+  await page.waitForTimeout(500);
 
   await page.getByRole("link", { name: /No .* QuickTec password/ }).click();
   await page.waitForSelector("#signin-password", { timeout: 15_000 });

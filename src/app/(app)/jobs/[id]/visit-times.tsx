@@ -12,6 +12,8 @@ export type VisitClock = { value: string; text: string };
 export type EditableVisit = {
   id: string;
   who: string;
+  /** Deleting a day is for whoever pays for *this person's* time. */
+  canRemove: boolean;
   clockIn: VisitClock;
   /** Absent while somebody is still on site. */
   clockOut: VisitClock | null;
@@ -27,14 +29,7 @@ export type EditableVisit = {
  * somebody's reach is not lost: it becomes a request for whoever pays for the
  * time, and the record keeps saying what actually happened until they answer.
  */
-export function VisitTimes({
-  visits,
-  canRemove,
-}: {
-  visits: EditableVisit[];
-  /** Deleting a day is for whoever pays for it, not for the job's lead. */
-  canRemove: boolean;
-}) {
+export function VisitTimes({ visits }: { visits: EditableVisit[] }) {
   const [editing, setEditing] = React.useState<string | null>(null);
   const [value, setValue] = React.useState("");
   const [reason, setReason] = React.useState("");
@@ -99,7 +94,7 @@ export function VisitTimes({
           {/* A punch on the wrong job is not a time to correct — there should
               be no time there at all. Two taps, because it takes somebody's
               whole day off the record. */}
-          {!canRemove ? null : confirming === visit.id ? (
+          {!visit.canRemove ? null : confirming === visit.id ? (
             <div className="flex flex-wrap items-center gap-2 rounded-lg border border-danger/50 p-2 text-xs">
               <span className="min-w-0 flex-1">
                 Remove {visit.who}&apos;s punch from this job? The time goes

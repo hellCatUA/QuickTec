@@ -50,6 +50,7 @@ export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
       active: true,
       timeZone: true,
       mustChangePassword: true,
+      passwordChangedAt: true,
       directSupervisorId: true,
       permissionOverrides: {
         select: {
@@ -68,6 +69,18 @@ export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
   });
 
   if (!user || !user.active) return null;
+
+  // Sessions are JWTs, so an administrator resetting a password has nothing to
+  // delete. Anyone holding a session from before the reset — which is exactly
+  // who a reset is aimed at — is turned away here instead.
+  const signedInAt = (session as { signedInAt?: number }).signedInAt;
+  if (
+    user.passwordChangedAt &&
+    signedInAt !== undefined &&
+    signedInAt < user.passwordChangedAt.getTime()
+  ) {
+    return null;
+  }
 
   const roleGrants = await db.roleGrant.findMany({
     where: { role: user.baseRole },

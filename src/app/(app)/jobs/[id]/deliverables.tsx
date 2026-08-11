@@ -13,7 +13,11 @@ import * as React from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Select, Textarea } from "@/components/ui/field";
-import { DELIVERABLE_META, type DeliverableRule } from "@/lib/deliverables";
+import {
+  DELIVERABLE_META,
+  type DeliverableRule,
+  ruleKey,
+} from "@/lib/deliverables";
 import { prepareForUpload } from "@/lib/photo-upload";
 import type { DeliverableCategory } from "@prisma-client";
 import {
@@ -31,11 +35,6 @@ export type DeliverableItemView = {
   isOwn: boolean;
   attachments: { id: string; mimeType: string; originalName: string }[];
 };
-
-/** How one section is named in a list of them. Matches the map key above. */
-function sectionKey(rule: DeliverableRule): string {
-  return rule.customLabel ? `${rule.category}:${rule.customLabel}` : rule.category;
-}
 
 export function Deliverables({
   jobId,
@@ -82,7 +81,7 @@ export function Deliverables({
       </p>
 
       {rules.map((rule) => {
-        const key = sectionKey(rule);
+        const key = ruleKey(rule);
 
         const mine = items.filter(
           (item) =>
@@ -192,7 +191,7 @@ export function Deliverables({
                       disabled={pending}
                       onChange={(event) => {
                         const target = rules.find(
-                          (option) => sectionKey(option) === event.target.value,
+                          (option) => ruleKey(option) === event.target.value,
                         );
                         if (target) move(item.id, target);
                       }}
@@ -201,11 +200,11 @@ export function Deliverables({
                         Move to…
                       </option>
                       {rules
-                        .filter((option) => sectionKey(option) !== key)
+                        .filter((option) => ruleKey(option) !== key)
                         .map((option) => (
                           <option
-                            key={sectionKey(option)}
-                            value={sectionKey(option)}
+                            key={ruleKey(option)}
+                            value={ruleKey(option)}
                           >
                             {option.category === "CUSTOM" && option.customLabel
                               ? option.customLabel
@@ -234,9 +233,12 @@ export function Deliverables({
                         .split("\n")
                         .map((line) => line.trim())
                         .filter(Boolean)
-                        .map((line) => (
+                        .map((line, index) => (
                           <span
-                            key={line}
+                            // The same number can legitimately appear twice —
+                            // two boxes on one label run, a pasted repeat — and
+                            // keying on the text drops one of them.
+                            key={`${index}-${line}`}
                             className="tabular w-fit rounded border border-border px-2 py-0.5 text-sm"
                           >
                             {line}

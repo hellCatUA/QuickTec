@@ -11,6 +11,15 @@ import { probeDiscovery, reportConfigProblems } from "@/lib/env";
 import { getSessionUser } from "@/lib/session";
 import { PasswordSignIn } from "./password-form";
 
+/** Where the SSO half starts, carrying whatever /signin was asked for. */
+function startHref(params: { callbackUrl?: string; reauth?: string }): string {
+  const query = new URLSearchParams();
+  if (params.callbackUrl) query.set("callbackUrl", params.callbackUrl);
+  if (params.reauth === "1") query.set("reauth", "1");
+  const search = query.toString();
+  return `/api/auth/start${search ? `?${search}` : ""}`;
+}
+
 /** Keeps where they were going, and which fork they are on, across a click. */
 function signInHref(params: {
   callbackUrl?: string;
@@ -190,23 +199,22 @@ export default async function SignInPage({
                 <strong>{company?.name ?? "company"}</strong> SSO account?
               </p>
 
-              <form
-                action={async () => {
-                  "use server";
-                  await signIn("nextcloud", {
-                    redirectTo: callbackUrl ?? "/dashboard",
-                  });
-                }}
+              {/* A link to the same route the page used to redirect to,
+                  rather than its own signIn call: that route is what turns
+                  ?reauth=1 into prompt=login, and signing out on a shared van
+                  phone has to mean the next person is actually asked who they
+                  are. A form action here quietly dropped it. */}
+              <Link
+                href={startHref({ callbackUrl, reauth })}
+                aria-disabled={configProblems.length > 0}
+                className={`flex min-h-11 w-full items-center justify-center rounded-lg px-4 text-sm font-medium ${
+                  configProblems.length > 0
+                    ? "pointer-events-none bg-muted text-muted-foreground"
+                    : "bg-primary text-primary-foreground"
+                }`}
               >
-                <Button
-                  type="submit"
-                  size="lg"
-                  block
-                  disabled={configProblems.length > 0}
-                >
-                  Yes — sign in with SSO
-                </Button>
-              </form>
+                Yes — sign in with SSO
+              </Link>
 
               <Link
                 href={signInHref({ callbackUrl, reauth, method: "password" })}

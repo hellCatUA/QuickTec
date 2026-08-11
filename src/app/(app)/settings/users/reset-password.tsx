@@ -1,9 +1,13 @@
 "use client";
 
-import { Copy, KeyRound, Loader2 } from "lucide-react";
+import { Building2, Copy, KeyRound, Loader2 } from "lucide-react";
 import * as React from "react";
 import { Button } from "@/components/ui/button";
-import { resetOutsidePassword, type LinkResult } from "../actions";
+import {
+  resetOutsidePassword,
+  switchToSso,
+  type LinkResult,
+} from "../actions";
 
 /**
  * A fresh link for an account somebody has locked themselves out of.
@@ -14,17 +18,23 @@ import { resetOutsidePassword, type LinkResult } from "../actions";
  * pressed rather than when the link is used — an account being reset is one
  * somebody else may already hold the password to.
  */
-export function ResetPassword({ userId }: { userId: string }) {
+export function ResetPassword({
+  userId,
+  email,
+}: {
+  userId: string;
+  email: string;
+}) {
   const [result, setResult] = React.useState<LinkResult | null>(null);
   const [copied, setCopied] = React.useState(false);
   const [pending, startTransition] = React.useTransition();
 
-  function reset() {
+  function run(action: (formData: FormData) => Promise<LinkResult>) {
     setCopied(false);
     startTransition(async () => {
       const formData = new FormData();
       formData.set("userId", userId);
-      setResult(await resetOutsidePassword(formData));
+      setResult(await action(formData));
     });
   }
 
@@ -55,17 +65,33 @@ export function ResetPassword({ userId }: { userId: string }) {
       {result && !result.ok ? (
         <p className="text-xs text-danger">{result.error}</p>
       ) : null}
-      <Button
-        type="button"
-        size="sm"
-        variant="secondary"
-        className="self-start"
-        disabled={pending}
-        onClick={reset}
-      >
-        {pending ? <Loader2 className="animate-spin" /> : <KeyRound />}
-        Issue a password link
-      </Button>
+      <div className="flex flex-wrap gap-2">
+        <Button
+          type="button"
+          size="sm"
+          variant="secondary"
+          disabled={pending}
+          onClick={() => run(resetOutsidePassword)}
+        >
+          {pending ? <Loader2 className="animate-spin" /> : <KeyRound />}
+          Issue a password link
+        </Button>
+
+        {/* They joined the company. Without this the refusal on their first
+            SSO sign-in named an action nobody could take. */}
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          disabled={pending}
+          onClick={() => run(switchToSso)}
+        >
+          <Building2 /> They have SSO now
+        </Button>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Switching hands {email} to NextCloud and drops the password held here.
+      </p>
     </div>
   );
 }

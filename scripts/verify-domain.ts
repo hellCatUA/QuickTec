@@ -548,6 +548,19 @@ async function main() {
     }).some((flag) => flag.text.includes("against an estimate")),
     true,
   );
+  // Averaging would hide this one: 600 and 120 average to exactly the estimate.
+  check(
+    "one tech well over is not hidden by a colleague who finished early",
+    reviewTimes({
+      scheduledStart: nine,
+      estimateMinutes: 360,
+      visits: [
+        { ...onTime, paidMinutes: 600 },
+        { ...onTime, who: "Sam Super", paidMinutes: 120 },
+      ],
+    }).filter((flag) => flag.text.includes("against an estimate")).length,
+    1,
+  );
   // The trap: two techs on a six-hour job book twelve hours between them, and
   // summing them would report every two-hander as overrunning.
   check(
@@ -719,6 +732,41 @@ async function main() {
     "and a lock that has passed is not a lock",
     lockRemaining(new Date(Date.now() - 60_000)),
     0,
+  );
+
+  // --- a clock-out cannot land before its clock-in --------------------------
+  const { clockOrderProblem } = await import("@/lib/clock-limits");
+
+  check(
+    "an ordinary day is fine",
+    clockOrderProblem(
+      new Date("2026-08-11T16:00:00Z"),
+      new Date("2026-08-11T23:00:00Z"),
+    ),
+    null,
+  );
+  check(
+    "a still-open visit is fine too",
+    clockOrderProblem(new Date("2026-08-11T16:00:00Z"), null),
+    null,
+  );
+  // visitTotals clamps a negative span to zero, so this pays nothing and says
+  // nothing — the failure is entirely silent without a guard.
+  check(
+    "a clock-out before the clock-in is refused",
+    clockOrderProblem(
+      new Date("2026-08-11T16:00:00Z"),
+      new Date("2026-08-11T15:00:00Z"),
+    ) !== null,
+    true,
+  );
+  check(
+    "and so is one exactly on it",
+    clockOrderProblem(
+      new Date("2026-08-11T16:00:00Z"),
+      new Date("2026-08-11T16:00:00Z"),
+    ) !== null,
+    true,
   );
 
   // --- phone numbers -------------------------------------------------------
