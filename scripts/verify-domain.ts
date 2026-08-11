@@ -398,6 +398,98 @@ async function main() {
   );
   check("manager ALL sees everything", await countFor(boss.id, "ALL"), total);
 
+  // --- how far a clock may be moved ----------------------------------------
+  //
+  // Every branch here is somebody's money, so every boundary is checked from
+  // both sides rather than sampled in the middle.
+  const { CLOCK_GRACE_MINUTES, clockAuthority, judgeClockEdit } = await import(
+    "@/lib/clock-limits"
+  );
+
+  const clockAt = (hhmm: string) => new Date(`2026-08-10T${hhmm}:00.000Z`);
+  const verdict = (
+    authority: Parameters<typeof judgeClockEdit>[0],
+    field: "clockIn" | "clockOut",
+    from: string,
+    to: string,
+  ) =>
+    judgeClockEdit(authority, {
+      field,
+      from: clockAt(from),
+      to: clockAt(to),
+    }).outcome;
+
+  check("an hour is the grace", CLOCK_GRACE_MINUTES, 60);
+
+  check("nobody without the right may touch a clock", verdict("none", "clockOut", "17:00", "16:00"), "refuse");
+  check("a tech's change is a request", verdict("suggest", "clockOut", "17:00", "16:55"), "approval");
+  check("whoever pays for the time has no limits", verdict("unbounded", "clockOut", "17:00", "23:00"), "allow");
+
+  // The case this exists for: a crew that forgot to clock out and noticed the
+  // next morning. Pulling it back can only ever give time away.
+  check(
+    "the lead may pull a clock-out back as far as it takes",
+    verdict("bounded", "clockOut", "23:59", "17:00"),
+    "allow",
+  );
+  check(
+    "and further still",
+    verdict("bounded", "clockOut", "23:59", "09:00"),
+    "allow",
+  );
+
+  // Adding is the direction somebody would invent, so it is bounded.
+  check("an hour added is allowed", verdict("bounded", "clockOut", "17:00", "18:00"), "allow");
+  check("a minute past the hour is not", verdict("bounded", "clockOut", "17:00", "18:01"), "approval");
+  check("59 minutes is", verdict("bounded", "clockOut", "17:00", "17:59"), "allow");
+
+  // A clock-in moves either way — arrived earlier than logged, logged on the
+  // drive over — so the hour applies in both directions.
+  check("an hour earlier on a clock-in", verdict("bounded", "clockIn", "09:00", "08:00"), "allow");
+  check("an hour later", verdict("bounded", "clockIn", "09:00", "10:00"), "allow");
+  check("further back needs approval", verdict("bounded", "clockIn", "09:00", "07:59"), "approval");
+  check("and further forward", verdict("bounded", "clockIn", "09:00", "10:01"), "approval");
+
+  // Saving a form without touching the time must never ask anybody anything.
+  check("no change is no question", verdict("suggest", "clockIn", "09:00", "09:00"), "allow");
+
+  // Rank alone does not answer it.
+  check(
+    "a manager is unbounded",
+    clockAuthority({ scope: "ALL", isDirectSupervisor: false, isProjectManager: false, isLead: false, isSupervisor: true }),
+    "unbounded",
+  );
+  check(
+    "a supervisor is bounded like the lead",
+    clockAuthority({ scope: "PROJECT", isDirectSupervisor: false, isProjectManager: false, isLead: false, isSupervisor: true }),
+    "bounded",
+  );
+  check(
+    "until it is their own report's clock, and their own payroll",
+    clockAuthority({ scope: "PROJECT", isDirectSupervisor: true, isProjectManager: false, isLead: false, isSupervisor: true }),
+    "unbounded",
+  );
+  check(
+    "the project's manager is unbounded on it",
+    clockAuthority({ scope: "PROJECT", isDirectSupervisor: false, isProjectManager: true, isLead: false, isSupervisor: false }),
+    "unbounded",
+  );
+  check(
+    "a tech leading the job is bounded rather than merely asking",
+    clockAuthority({ scope: "OWN", isDirectSupervisor: false, isProjectManager: false, isLead: true, isSupervisor: false }),
+    "bounded",
+  );
+  check(
+    "a tech who is not leading asks",
+    clockAuthority({ scope: "OWN", isDirectSupervisor: false, isProjectManager: false, isLead: false, isSupervisor: false }),
+    "suggest",
+  );
+  check(
+    "and somebody with no right at all cannot",
+    clockAuthority({ scope: null, isDirectSupervisor: true, isProjectManager: true, isLead: true, isSupervisor: true }),
+    "none",
+  );
+
   // --- phone numbers -------------------------------------------------------
   const { formatPhone, formatPhoneAsTyped, telHref } = await import("@/lib/phone");
 
