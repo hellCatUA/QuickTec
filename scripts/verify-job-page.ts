@@ -299,24 +299,26 @@ async function main() {
 
   await page.getByRole("button", { name: "Clock out now" }).click();
   await page
-    .getByRole("button", { name: "Clock in", exact: true })
+    .getByText(/You have worked this job/i)
     .waitFor({ timeout: 30_000 });
 
-  // One job, one tech, one arrival. Clocking in used to be refused only while
-  // a visit was open, so this opened a second one — never because there were
-  // two trips, always a mis-tap or somebody trying to fix a wrong clock-out.
-  await page.getByRole("button", { name: "Clock in", exact: true }).click();
-  await page.locator("button:has-text('now')").first().click();
-  await page.waitForTimeout(2500);
+  // One job, one tech, one arrival. The server had refused a second clock-in
+  // for a while, but the button carried on offering it — so the answer was an
+  // error message where there should never have been a button.
   check(
-    "clocking in a second time is refused",
-    await db.visit.count({ where: { assignmentId: assignment.id } }),
-    1,
+    "there is no second Clock in to press",
+    await page.getByRole("button", { name: "Clock in", exact: true }).count(),
+    0,
   );
   check(
-    "and says where to go instead",
-    await page.getByText(/already worked this job/i).isVisible(),
+    "and it says where to go instead",
+    await page.getByText(/Manager Portal/i).isVisible(),
     true,
+  );
+  check(
+    "with one punch on the record",
+    await db.visit.count({ where: { assignmentId: assignment.id } }),
+    1,
   );
 
   const closed = await db.visit.findFirstOrThrow({
@@ -1360,6 +1362,9 @@ async function main() {
       where: { id: clockVisit.id },
       data: { clockInAt: plantedIn, clockOutAt: plantedOut },
     });
+    // The breaks belong to the day the punch is being moved to. Left behind,
+    // they sit outside it, which is a state the app itself cannot produce.
+    await db.breakPeriod.deleteMany({ where: { visitId: clockVisit.id } });
     await db.changeRequest.deleteMany({
       where: { jobId: assignment.jobId, fieldPath: { startsWith: "visit." } },
     });
@@ -1414,7 +1419,7 @@ async function main() {
   );
 
   // Downwards without limit: this can only ever give time back.
-  await editPunch(page, sheet, "Edit CO", "2026-07-28T13:00", "Forgot to punch");
+  await editPunch(page, sheet, "CO", "2026-07-28T13:00", "Forgot to punch");
   await page.waitForTimeout(2500);
 
   check(
@@ -1427,7 +1432,7 @@ async function main() {
   await plantClock();
   await openPortal(page, assignment.jobId);
 
-  await editPunch(page, sheet, "Edit CO", "2026-07-28T19:00", "Adjust to time worked");
+  await editPunch(page, sheet, "CO", "2026-07-28T19:00", "Adjust to time worked");
   await page.waitForTimeout(2500);
 
   check(
@@ -1437,15 +1442,17 @@ async function main() {
   );
   check(
     "it goes to whoever pays for the time instead",
-    (
-      await db.changeRequest.findFirstOrThrow({
-        where: {
-          jobId: assignment.jobId,
-          fieldPath: `visit.${clockVisit.id}.clockOut`,
-        },
-        select: { newValue: true, status: true },
-      })
-    ).newValue,
+    JSON.parse(
+      (
+        await db.changeRequest.findFirstOrThrow({
+          where: {
+            jobId: assignment.jobId,
+            fieldPath: `visit.${clockVisit.id}.punch`,
+          },
+          select: { newValue: true },
+        })
+      ).newValue!,
+    ).clockOut,
     "2026-07-29T02:00:00.000Z",
   );
   check(
@@ -1456,14 +1463,14 @@ async function main() {
 
   // Pressing Save again with a different reason must not put a second copy in
   // somebody's queue.
-  await editPunch(page, sheet, "Edit CO", "2026-07-28T20:00", "Adjust to time worked");
+  await editPunch(page, sheet, "CO", "2026-07-28T20:00", "Adjust to time worked");
   await page.waitForTimeout(2500);
   check(
     "and asking twice does not queue it twice",
     await db.changeRequest.count({
       where: {
         jobId: assignment.jobId,
-        fieldPath: `visit.${clockVisit.id}.clockOut`,
+        fieldPath: `visit.${clockVisit.id}.punch`,
         status: "PENDING",
       },
     }),
@@ -1477,7 +1484,7 @@ async function main() {
   );
 
   // Within the hour, either way, is theirs.
-  await editPunch(page, sheet, "Edit CI", "2026-07-28T08:30", "Forgot to punch");
+  await editPunch(page, sheet, "CI", "2026-07-28T08:30", "Forgot to punch");
   await page.waitForTimeout(2500);
   check(
     "half an hour on a clock-in is within reach",
@@ -1489,14 +1496,14 @@ async function main() {
   // request above.
   await plantClock();
   await db.auditEvent.deleteMany({
-    where: { jobId: assignment.jobId, action: "time_adjusted" },
+    where: { jobId: assignment.jobId, action: "punch_changed" },
   });
 
   await bossPage(browser, bossToken, async (planner) => {
     await openPortal(planner, assignment.jobId);
 
     const menu = planner.locator("[data-punch]").first();
-    await editPunch(planner, menu, "Edit CI", "2026-07-28T06:00", "Adjust to time worked");
+    await editPunch(planner, menu, "CI", "2026-07-28T06:00", "Adjust to time worked");
     await planner.waitForTimeout(2500);
 
     check(
@@ -1509,7 +1516,7 @@ async function main() {
       (
         (
           await db.auditEvent.findFirstOrThrow({
-            where: { jobId: assignment.jobId, action: "time_adjusted" },
+            where: { jobId: assignment.jobId, action: "punch_changed" },
             select: { detail: true },
           })
         ).detail as { reason?: string } | null
@@ -2170,13 +2177,13 @@ async function pickReason(page: import("playwright").Page, what: string) {
 async function editPunch(
   page: import("playwright").Page,
   block: import("playwright").Locator,
-  action: string,
+  which: "CI" | "CO",
   at: string,
   reason: string,
 ) {
   await block.getByRole("button", { name: /^Punch actions for/ }).click();
-  await page.getByRole("button", { name: action, exact: true }).click();
-  await block.locator('input[type="datetime-local"]').fill(at);
+  await page.getByRole("button", { name: "Edit Punch", exact: true }).click();
+  await block.locator('input[type="datetime-local"]').nth(which === "CI" ? 0 : 1).fill(at);
   await pickReason(page, reason);
   await block.getByRole("button", { name: "Save", exact: true }).click();
 }

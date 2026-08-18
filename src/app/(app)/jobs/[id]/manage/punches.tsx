@@ -17,26 +17,23 @@ import * as React from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/field";
-import {
-  acceptTimeFlag,
-  addVisit,
-  adjustVisitTime,
-  removeVisit,
-} from "../actions";
+import type { PunchHistoryRow } from "@/lib/punch-history";
+import { acceptTimeFlag, addVisit, editPunch, removeVisit } from "../actions";
 import { ReasonPicker } from "./reason-picker";
 
 /** A time as the picker wants it and as a person reads it. */
 export type PunchClock = { value: string; text: string };
 
-export type BreakRow = { text: string; minutes: number; paid: boolean };
-
-export type HistoryRow = {
-  id: string;
-  what: string;
-  who: string;
-  when: string;
-  detail: string | null;
+export type BreakRow = {
+  text: string;
+  minutes: number;
+  paid: boolean;
+  /** Datetime-local, so the same row can be handed to the editor. */
+  startValue: string;
+  endValue: string;
 };
+
+export type { PunchHistoryRow } from "@/lib/punch-history";
 
 export type Punch = {
   assignmentId: string;
@@ -61,7 +58,7 @@ export type Punch = {
   canAdd: boolean;
   /** Accepting a flag is part of signing the job off. */
   canAccept: boolean;
-  history: HistoryRow[];
+  history: PunchHistoryRow[];
 };
 
 /**
@@ -108,7 +105,10 @@ export function Punches({
   );
 }
 
-type Pane = "editIn" | "editOut" | "add" | "remove" | "history" | null;
+type Pane = "edit" | "add" | "remove" | "history" | null;
+
+/** A break as the form holds it, before it goes back as JSON. */
+type DraftBreak = { id: number; startAt: string; endAt: string; paid: boolean };
 
 function PunchBlock({
   punch,
@@ -123,6 +123,8 @@ function PunchBlock({
   const [pane, setPane] = React.useState<Pane>(null);
   const [value, setValue] = React.useState("");
   const [newOut, setNewOut] = React.useState("");
+  const [draftBreaks, setDraftBreaks] = React.useState<DraftBreak[]>([]);
+  const nextBreakId = React.useRef(0);
   const [code, setCode] = React.useState("");
   const [reasonNote, setReasonNote] = React.useState("");
   const [showBreaks, setShowBreaks] = React.useState(false);
@@ -134,13 +136,18 @@ function PunchBlock({
     setCode("");
     setReasonNote("");
     setNewOut("");
-    setValue(
-      next === "editIn"
-        ? (punch.clockIn?.value ?? "")
-        : next === "editOut"
-          ? (punch.clockOut?.value ?? "")
-          : "",
-    );
+    setValue(next === "edit" ? (punch.clockIn?.value ?? "") : "");
+    if (next === "edit") {
+      setNewOut(punch.clockOut?.value ?? "");
+      setDraftBreaks(
+        punch.breaks.map((entry) => ({
+          id: nextBreakId.current++,
+          startAt: entry.startValue,
+          endAt: entry.endValue,
+          paid: entry.paid,
+        })),
+      );
+    }
     setPane(next);
   }
 
@@ -156,15 +163,27 @@ function PunchBlock({
   }
 
   function save() {
-    if (!punch.visitId || (pane !== "editIn" && pane !== "editOut")) return;
+    if (!punch.visitId) return;
     run(async () => {
       const formData = new FormData();
       formData.set("visitId", punch.visitId!);
-      formData.set("field", pane === "editIn" ? "clockIn" : "clockOut");
-      formData.set("at", value);
+      formData.set("clockIn", value);
+      if (newOut) formData.set("clockOut", newOut);
+      formData.set(
+        "breaks",
+        JSON.stringify(
+          draftBreaks
+            .filter((entry) => entry.startAt && entry.endAt)
+            .map((entry) => ({
+              startAt: entry.startAt,
+              endAt: entry.endAt,
+              paid: entry.paid,
+            })),
+        ),
+      );
       formData.set("reasonCode", code);
       if (reasonNote) formData.set("note", reasonNote);
-      return adjustVisitTime(formData);
+      return editPunch(formData);
     });
   }
 
@@ -205,12 +224,7 @@ function PunchBlock({
 
   const actions: { key: Pane; label: string; icon: React.ReactNode }[] = [
     ...(punch.visitId && punch.canEdit
-      ? ([
-          { key: "editIn", label: "Edit CI", icon: <Pencil /> },
-          ...(punch.clockOut
-            ? [{ key: "editOut" as const, label: "Edit CO", icon: <Pencil /> }]
-            : []),
-        ] as { key: Pane; label: string; icon: React.ReactNode }[])
+      ? [{ key: "edit" as Pane, label: "Edit Punch", icon: <Pencil /> }]
       : []),
     ...(!punch.visitId && punch.canAdd
       ? [{ key: "add" as Pane, label: "Add a punch", icon: <Plus /> }]
@@ -230,31 +244,6 @@ function PunchBlock({
     >
       <div className="flex flex-wrap items-center gap-2">
         <h3 className="text-sm font-semibold">{punch.who}</h3>
-
-        {punch.manual ? (
-          <Badge variant="neutral">
-            <PenLine className="size-3" /> Manually added
-          </Badge>
-        ) : null}
-
-        {punch.late ? (
-          <FlagBadge
-            label="Late in"
-            accepted={punch.lateAccepted}
-            canAccept={punch.canAccept}
-            pending={pending}
-            onToggle={() => accept("late", !punch.lateAccepted)}
-          />
-        ) : null}
-        {punch.over ? (
-          <FlagBadge
-            label="Over estimate"
-            accepted={punch.overAccepted}
-            canAccept={punch.canAccept}
-            pending={pending}
-            onToggle={() => accept("over", !punch.overAccepted)}
-          />
-        ) : null}
 
         <div className="relative ml-auto">
           <Button
@@ -295,6 +284,36 @@ function PunchBlock({
           ) : null}
         </div>
       </div>
+
+      {/* Their own line. Three badges beside a name wrapped into a knot on a
+          phone, and the name is what somebody is looking for. */}
+      {punch.manual || punch.late || punch.over ? (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {punch.manual ? (
+            <Badge variant="neutral">
+              <PenLine className="size-3" /> Manually added
+            </Badge>
+          ) : null}
+          {punch.late ? (
+            <FlagBadge
+              label="Late in"
+              accepted={punch.lateAccepted}
+              canAccept={punch.canAccept}
+              pending={pending}
+              onToggle={() => accept("late", !punch.lateAccepted)}
+            />
+          ) : null}
+          {punch.over ? (
+            <FlagBadge
+              label="Over estimate"
+              accepted={punch.overAccepted}
+              canAccept={punch.canAccept}
+              pending={pending}
+              onToggle={() => accept("over", !punch.overAccepted)}
+            />
+          ) : null}
+        </div>
+      ) : null}
 
       {punch.visitId === null ? (
         <p className="text-sm text-muted-foreground">No punch recorded.</p>
@@ -358,29 +377,18 @@ function PunchBlock({
           ) : (
             <ol className="flex flex-col gap-2">
               {punch.history.map((row) => (
-                <li key={row.id} className="text-sm">
-                  <div className="flex flex-wrap items-baseline gap-x-2">
-                    <span className="font-medium">{row.what}</span>
-                    <span className="text-xs text-muted-foreground">
-                      {row.who} · {row.when}
-                    </span>
-                  </div>
-                  {row.detail ? (
-                    <p className="text-xs text-muted-foreground">{row.detail}</p>
-                  ) : null}
-                </li>
+                <HistoryLine key={row.id} row={row} />
               ))}
             </ol>
           )}
         </Pane>
       ) : null}
 
-      {pane === "editIn" || pane === "editOut" ? (
-        <Pane
-          title={pane === "editIn" ? "Edit CI" : "Edit CO"}
-          onClose={() => setPane(null)}
-        >
-          <Field label="Time" htmlFor={`edit-${punch.assignmentId}`}>
+      {/* One pane, because it is one decision: this is what the day was. Two
+          buttons and a third somewhere else made three out of it. */}
+      {pane === "edit" ? (
+        <Pane title="Edit Punch" onClose={() => setPane(null)}>
+          <Field label="CI" htmlFor={`edit-${punch.assignmentId}`}>
             <Input
               id={`edit-${punch.assignmentId}`}
               type="datetime-local"
@@ -388,6 +396,85 @@ function PunchBlock({
               onChange={(event) => setValue(event.target.value)}
             />
           </Field>
+          <Field label="CO" htmlFor={`edit-out-${punch.assignmentId}`}>
+            <Input
+              id={`edit-out-${punch.assignmentId}`}
+              type="datetime-local"
+              value={newOut}
+              onChange={(event) => setNewOut(event.target.value)}
+            />
+          </Field>
+
+          <div className="flex flex-col gap-2">
+            <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Breaks
+            </span>
+            {draftBreaks.map((entry, index) => (
+              <div key={entry.id} className="flex flex-wrap items-end gap-2">
+                <Input
+                  aria-label={`Break ${index + 1} start`}
+                  type="datetime-local"
+                  value={entry.startAt}
+                  onChange={(event) =>
+                    setDraftBreaks((was) =>
+                      was.map((row) =>
+                        row.id === entry.id
+                          ? { ...row, startAt: event.target.value }
+                          : row,
+                      ),
+                    )
+                  }
+                />
+                <Input
+                  aria-label={`Break ${index + 1} end`}
+                  type="datetime-local"
+                  value={entry.endAt}
+                  onChange={(event) =>
+                    setDraftBreaks((was) =>
+                      was.map((row) =>
+                        row.id === entry.id
+                          ? { ...row, endAt: event.target.value }
+                          : row,
+                      ),
+                    )
+                  }
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label={`Remove break ${index + 1}`}
+                  onClick={() =>
+                    setDraftBreaks((was) =>
+                      was.filter((row) => row.id !== entry.id),
+                    )
+                  }
+                >
+                  <X />
+                </Button>
+              </div>
+            ))}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="self-start"
+              onClick={() =>
+                setDraftBreaks((was) => [
+                  ...was,
+                  {
+                    id: nextBreakId.current++,
+                    startAt: value,
+                    endAt: value,
+                    paid: false,
+                  },
+                ])
+              }
+            >
+              <Plus /> Another break
+            </Button>
+          </div>
+
           <ReasonPicker
             action="adjust"
             companyName={companyName}
@@ -479,6 +566,71 @@ function PunchBlock({
         </Pane>
       ) : null}
     </section>
+  );
+}
+
+const TONE_TEXT: Record<string, string> = {
+  success: "text-success",
+  warning: "text-warning",
+  danger: "text-danger",
+  primary: "text-primary",
+  neutral: "text-muted-foreground",
+};
+
+/**
+ * One thing that happened to this punch.
+ *
+ * The time being written about and the moment somebody wrote it are two
+ * different clocks, and a history that shows only one of them cannot answer
+ * the question it exists for. So the headline carries the time the record
+ * says, and the small line underneath carries who touched it and when.
+ */
+function HistoryLine({ row }: { row: PunchHistoryRow }) {
+  return (
+    <li
+      data-history={row.action}
+      className={
+        // A request and the answer to it are the same event from both ends,
+        // so they are drawn as one thing rather than left to be matched by eye.
+        row.paired
+          ? "border-l-2 border-primary/40 pl-2 text-sm"
+          : "text-sm"
+      }
+    >
+      <div className="flex flex-wrap items-baseline gap-x-2">
+        <span className={`font-medium ${TONE_TEXT[row.tone] ?? ""}`}>
+          {row.title}
+        </span>
+        {row.suffix ? <span className="tabular">{row.suffix}</span> : null}
+      </div>
+
+      {row.changes.map((change) => (
+        <div
+          key={change.label}
+          className="flex flex-wrap items-baseline gap-x-1.5 text-sm"
+        >
+          <span className="text-muted-foreground">{change.label}</span>
+          {change.from ? (
+            <span className="tabular text-muted-foreground line-through">
+              {change.from}
+            </span>
+          ) : null}
+          <span aria-hidden>→</span>
+          <span className="tabular">{change.to}</span>
+        </div>
+      ))}
+
+      {row.reason ? (
+        <p className="text-xs text-muted-foreground">Reason: {row.reason}</p>
+      ) : null}
+      {row.denial ? (
+        <p className="text-xs text-danger">Reason for denial: {row.denial}</p>
+      ) : null}
+
+      <p className="text-xs text-muted-foreground">
+        by {row.by} @ {row.at}
+      </p>
+    </li>
   );
 }
 

@@ -51,7 +51,9 @@ export function ChangeRequests({
       {requests.map((request) => {
         const label = isJobField(request.fieldPath)
           ? JOB_FIELDS[request.fieldPath].label
-          : request.fieldPath;
+          : request.fieldPath.startsWith("visit.")
+            ? "Punch"
+            : request.fieldPath;
 
         return (
           <div
@@ -79,7 +81,10 @@ export function ChangeRequests({
 
             {canReview ? (
               <div className="flex flex-wrap items-center gap-2">
-                <Input
+                {/* Turning a punch down without saying why sends somebody back to
+                ask the same thing again, so the server refuses it — and the
+                field says so before they find out. */}
+            <Input
                   value={note[request.id] ?? ""}
                   placeholder="Note (optional)"
                   onChange={(event) =>

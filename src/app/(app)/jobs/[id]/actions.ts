@@ -489,7 +489,13 @@ export async function toggleBreak(formData: FormData): Promise<ActionResult> {
   const visit = await db.visit.findFirst({
     where: { assignmentId: assignment.id, clockOutAt: null },
     orderBy: { clockInAt: "desc" },
-    select: { id: true, breaks: { where: { endAt: null }, select: { id: true } } },
+    select: {
+      id: true,
+      breaks: {
+        where: { endAt: null },
+        select: { id: true, startAt: true },
+      },
+    },
   });
   if (!visit) return fail("Clock in before taking a break.");
 
@@ -519,7 +525,19 @@ export async function toggleBreak(formData: FormData): Promise<ActionResult> {
     entityId: visit.id,
     jobId,
     action: running ? "break_end" : "break_start",
-    detail: { paid: job.breakPaid },
+    // The moment, and on ending how long it ran: a history that says "Break
+    // Out" and nothing else is not worth reading.
+    detail: {
+      paid: job.breakPaid,
+      at: now.toISOString(),
+      ...(running && running.startAt
+        ? {
+            minutes: Math.round(
+              (now.getTime() - running.startAt.getTime()) / 60_000,
+            ),
+          }
+        : {}),
+    },
   });
 
   touch(jobId);
@@ -950,13 +968,20 @@ export async function suggestChange(
   return ok;
 }
 
-/** `visit.<id>.clockIn` — the shape adjustVisitTime files a request under. */
+/**
+ * `visit.<id>.punch`, or the older per-field shape.
+ *
+ * A whole-punch request carries both clocks in a JSON value, because that is
+ * what somebody actually asked for. The single-field paths predate it and are
+ * still answered, since a request already in a queue must not become
+ * undecidable because the shape changed underneath it.
+ */
 function parseVisitPath(
   fieldPath: string,
-): { visitId: string; field: ClockField } | null {
-  const match = /^visit\.([^.]+)\.(clockIn|clockOut)$/.exec(fieldPath);
+): { visitId: string; field: ClockField | "punch" } | null {
+  const match = /^visit\.([^.]+)\.(clockIn|clockOut|punch)$/.exec(fieldPath);
   if (!match) return null;
-  return { visitId: match[1], field: match[2] as ClockField };
+  return { visitId: match[1], field: match[2] as ClockField | "punch" };
 }
 
 /**
@@ -966,12 +991,26 @@ function parseVisitPath(
  * limits: the person deciding here is the one those limits defer to.
  */
 async function reviewVisitTimeRequest(
-  request: { id: string; jobId: string; newValue: string | null },
-  clock: { visitId: string; field: ClockField },
+  request: {
+    id: string;
+    jobId: string;
+    oldValue: string | null;
+    newValue: string | null;
+    reason: string | null;
+  },
+  clock: { visitId: string; field: ClockField | "punch" },
   approve: boolean,
   user: SessionUser,
   formData: FormData,
 ): Promise<ActionResult> {
+  const denialNote = String(formData.get("note") ?? "").trim();
+
+  // Saying no to somebody's day needs a sentence. "Rejected" on its own sends
+  // them back to ask the same thing again, or to stop asking at all.
+  if (!approve && !denialNote) {
+    return fail("Say why this is being turned down — they will read it.");
+  }
+
   const visit = await db.visit.findUnique({
     where: { id: clock.visitId },
     select: { id: true, clockInAt: true, clockOutAt: true },
@@ -981,16 +1020,42 @@ async function reviewVisitTimeRequest(
   // still has to work, or it is stuck for a different reason.
   if (!visit && approve) return fail("That punch is no longer here.");
 
-  const at = request.newValue ? new Date(request.newValue) : null;
-  if (approve && (!at || Number.isNaN(at.getTime()))) {
+  /** What the requester asked for, whichever shape they asked in. */
+  function wanted(): { clockIn: Date | null; clockOut: Date | null } | null {
+    if (!request.newValue) return null;
+    if (clock.field === "punch") {
+      try {
+        const parsed = JSON.parse(request.newValue) as {
+          clockIn?: string | null;
+          clockOut?: string | null;
+        };
+        return {
+          clockIn: parsed.clockIn ? new Date(parsed.clockIn) : null,
+          clockOut: parsed.clockOut ? new Date(parsed.clockOut) : null,
+        };
+      } catch {
+        return null;
+      }
+    }
+    const at = new Date(request.newValue);
+    if (Number.isNaN(at.getTime())) return null;
+    return {
+      clockIn: clock.field === "clockIn" ? at : null,
+      clockOut: clock.field === "clockOut" ? at : null,
+    };
+  }
+
+  const ask = wanted();
+  if (approve && !ask) {
     return fail("That request does not carry a valid time.");
   }
 
-  if (approve && visit && at) {
-    const problem = clockOrderProblem(
-      clock.field === "clockIn" ? at : visit.clockInAt,
-      clock.field === "clockOut" ? at : visit.clockOutAt,
-    );
+  const nextIn = ask?.clockIn ?? visit?.clockInAt ?? null;
+  const nextOut =
+    ask?.clockOut ?? (clock.field === "punch" ? null : (visit?.clockOutAt ?? null));
+
+  if (approve && visit && nextIn) {
+    const problem = clockOrderProblem(nextIn, nextOut);
     if (problem) return fail(problem);
   }
 
@@ -1001,17 +1066,20 @@ async function reviewVisitTimeRequest(
         status: approve ? "APPROVED" : "REJECTED",
         reviewedById: user.id,
         reviewedAt: new Date(),
-        reviewNote: (formData.get("note") as string) || null,
+        reviewNote: denialNote || null,
       },
     });
 
-    if (approve && visit && at) {
+    if (approve && visit && nextIn) {
       await tx.visit.update({
         where: { id: visit.id },
-        data:
-          clock.field === "clockIn"
-            ? { clockInAt: at, clockInSource: "ADJUSTED" }
-            : { clockOutAt: at, clockOutSource: "ADJUSTED" },
+        data: {
+          clockInAt: nextIn,
+          clockInSource: "ADJUSTED",
+          ...(nextOut
+            ? { clockOutAt: nextOut, clockOutSource: "ADJUSTED" as const }
+            : {}),
+        },
       });
     }
   });
@@ -1021,8 +1089,15 @@ async function reviewVisitTimeRequest(
     entityType: "Visit",
     entityId: clock.visitId,
     jobId: request.jobId,
-    action: approve ? "change_approved" : "change_rejected",
-    detail: { field: clock.field, to: at?.toISOString() ?? null },
+    action: approve ? "punch_change_approved" : "punch_change_denied",
+    detail: {
+      reason: request.reason,
+      denial: denialNote || null,
+      fromIn: visit?.clockInAt.toISOString() ?? null,
+      toIn: ask?.clockIn?.toISOString() ?? null,
+      fromOut: visit?.clockOutAt?.toISOString() ?? null,
+      toOut: ask?.clockOut?.toISOString() ?? null,
+    },
   });
 
   if (approve) syncJobInBackground(request.jobId);
@@ -1042,7 +1117,9 @@ export async function reviewChangeRequest(
       id: true,
       jobId: true,
       fieldPath: true,
+      oldValue: true,
       newValue: true,
+      reason: true,
       status: true,
     },
   });
@@ -2488,6 +2565,255 @@ export async function acceptTimeFlag(
     },
   });
 
+  touch(job.id);
+  return ok;
+}
+
+const breakRowSchema = z.object({
+  startAt: z.string().min(1),
+  endAt: z.string().min(1),
+  paid: z.boolean(),
+});
+
+const editPunchSchema = z.object({
+  visitId: z.string().min(1),
+  clockIn: z.string().min(1),
+  clockOut: optionalText,
+  /** The whole list, as the form holds it — not a diff. */
+  breaks: optionalText,
+  reasonCode: z.string().trim().min(1),
+  note: optionalText,
+});
+
+/**
+ * Edits a punch as one thing.
+ *
+ * Two buttons and a third somewhere else made three decisions out of what is
+ * always one: this is what the day actually was. Clock-in, clock-out and the
+ * breaks between them are edited together, judged together, and — when any part
+ * of it is beyond the person's reach — asked for together, so the request reads
+ * as the correction somebody meant rather than as three unrelated ones.
+ */
+export async function editPunch(formData: FormData): Promise<ActionResult> {
+  const parsed = editPunchSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return fail(z.prettifyError(parsed.error));
+
+  const { visitId, clockOut, reasonCode, note } = parsed.data;
+
+  const badReason = punchReasonProblem("adjust", reasonCode, note);
+  if (badReason) return fail(badReason);
+  const reason = describeReason(reasonCode, note);
+
+  const visit = await db.visit.findUnique({
+    where: { id: visitId },
+    select: {
+      id: true,
+      clockInAt: true,
+      clockOutAt: true,
+      breaks: { where: { endAt: null }, select: { id: true } },
+      assignment: {
+        select: {
+          jobId: true,
+          supervisorId: true,
+          user: { select: { name: true, directSupervisorId: true } },
+        },
+      },
+    },
+  });
+  if (!visit) return fail("That punch is no longer here.");
+
+  // A break that has not ended cannot be in the form — it has no end time to
+  // put in a field — so writing the list back would delete it without saying
+  // so, and somebody's unpaid half hour would quietly become paid.
+  if (visit.breaks.length > 0 && parsed.data.breaks !== null) {
+    return fail("A break is still running. It has to end before this can be edited.");
+  }
+
+  const context = await loadContext(visit.assignment.jobId);
+  if (!context) return fail("Job not found.");
+  const { user, job } = context;
+
+  if (!(await canOnJob(user, "job.adjust_time", job))) {
+    return fail("You cannot change clock times on this job.");
+  }
+
+  const company = await getCompanySettings();
+  const snap = (raw: string) => {
+    const at = parseDatetimeLocalInZone(raw, job.timeZone);
+    return at ? roundToInterval(at, company.timeRoundingMinutes) : null;
+  };
+
+  const newIn = snap(parsed.data.clockIn);
+  if (!newIn) return fail("That is not a valid clock-in time.");
+
+  const newOut = clockOut ? snap(clockOut) : null;
+  if (clockOut && !newOut) return fail("That is not a valid clock-out time.");
+
+  const ordering = clockOrderProblem(newIn, newOut);
+  if (ordering) return fail(ordering);
+
+  const project = job.projectId
+    ? await db.project.findUnique({
+        where: { id: job.projectId },
+        select: { managerId: true },
+      })
+    : null;
+
+  const authority = clockAuthority({
+    scope: permissionScope(user, "job.adjust_time"),
+    isDirectSupervisor:
+      visit.assignment.supervisorId === user.id ||
+      visit.assignment.user.directSupervisorId === user.id,
+    isProjectManager: project?.managerId === user.id,
+    isLead: job.isLead,
+    isSupervisor: user.baseRole !== "TECH",
+  });
+
+  // Each moved clock judged on its own, because the rules differ by direction
+  // and by field — then the strictest answer decides for the whole edit.
+  const verdicts = [
+    judgeClockEdit(authority, {
+      field: "clockIn",
+      from: visit.clockInAt,
+      to: newIn,
+    }),
+    ...(visit.clockOutAt && newOut
+      ? [
+          judgeClockEdit(authority, {
+            field: "clockOut",
+            from: visit.clockOutAt,
+            to: newOut,
+          }),
+        ]
+      : []),
+  ];
+
+  const refused = verdicts.find((verdict) => verdict.outcome === "refuse");
+  if (refused && refused.outcome === "refuse") return fail(refused.reason);
+
+  let breaks: { startAt: Date; endAt: Date; paid: boolean }[] = [];
+  if (parsed.data.breaks) {
+    const rows = z
+      .array(breakRowSchema)
+      .safeParse(JSON.parse(parsed.data.breaks));
+    if (!rows.success) return fail("Those breaks are not readable.");
+
+    for (const row of rows.data) {
+      const start = snap(row.startAt);
+      const end = snap(row.endAt);
+      if (!start || !end) return fail("A break has an unreadable time.");
+      if (end <= start) return fail("A break ends before it starts.");
+      if (start < newIn || (newOut && end > newOut)) {
+        return fail("A break falls outside the punch it belongs to.");
+      }
+      breaks.push({ startAt: start, endAt: end, paid: row.paid });
+    }
+
+    breaks.sort((a, b) => a.startAt.getTime() - b.startAt.getTime());
+    for (let index = 1; index < breaks.length; index++) {
+      if (breaks[index].startAt < breaks[index - 1].endAt) {
+        return fail("Two breaks overlap.");
+      }
+    }
+  }
+
+  const asked = verdicts.find((verdict) => verdict.outcome === "approval");
+  if (asked && asked.outcome === "approval") {
+    const fieldPath = `visit.${visitId}.punch`;
+
+    const already = await db.changeRequest.findFirst({
+      where: { jobId: job.id, fieldPath, status: "PENDING" },
+      select: { id: true },
+    });
+    if (already) {
+      return fail(
+        "That punch is already waiting on whoever pays for the time. They have the earlier request.",
+      );
+    }
+
+    await db.changeRequest.create({
+      data: {
+        jobId: job.id,
+        requestedById: user.id,
+        fieldPath,
+        oldValue: JSON.stringify({
+          clockIn: visit.clockInAt.toISOString(),
+          clockOut: visit.clockOutAt?.toISOString() ?? null,
+        }),
+        newValue: JSON.stringify({
+          clockIn: newIn.toISOString(),
+          clockOut: newOut?.toISOString() ?? null,
+        }),
+        reason,
+      },
+    });
+
+    await recordAudit({
+      actorId: user.id,
+      entityType: "Visit",
+      entityId: visitId,
+      jobId: job.id,
+      action: "punch_change_requested",
+      detail: {
+        who: visit.assignment.user.name,
+        reason,
+        fromIn: visit.clockInAt.toISOString(),
+        toIn: newIn.toISOString(),
+        fromOut: visit.clockOutAt?.toISOString() ?? null,
+        toOut: newOut?.toISOString() ?? null,
+      },
+    });
+
+    touch(job.id);
+    return fail(asked.reason);
+  }
+
+  // Breaks are somebody's pay as much as the clocks are, so they stop where
+  // moving a clock beyond the hour stops.
+  if (parsed.data.breaks !== null && authority === "suggest") {
+    return fail("Changing breaks is for a supervisor or the job's lead.");
+  }
+
+  await db.$transaction(async (tx) => {
+    await tx.visit.update({
+      where: { id: visitId },
+      data: {
+        clockInAt: newIn,
+        clockInSource: "ADJUSTED",
+        ...(newOut
+          ? { clockOutAt: newOut, clockOutSource: "ADJUSTED" as const }
+          : {}),
+      },
+    });
+
+    if (parsed.data.breaks !== null) {
+      await tx.breakPeriod.deleteMany({ where: { visitId } });
+      if (breaks.length > 0) {
+        await tx.breakPeriod.createMany({
+          data: breaks.map((entry) => ({ ...entry, visitId })),
+        });
+      }
+    }
+  });
+
+  await recordAudit({
+    actorId: user.id,
+    entityType: "Visit",
+    entityId: visitId,
+    jobId: job.id,
+    action: "punch_changed",
+    detail: {
+      who: visit.assignment.user.name,
+      reason,
+      fromIn: visit.clockInAt.toISOString(),
+      toIn: newIn.toISOString(),
+      fromOut: visit.clockOutAt?.toISOString() ?? null,
+      toOut: newOut?.toISOString() ?? null,
+      breaks: breaks.length,
+    },
+  });
+
+  syncJobInBackground(job.id);
   touch(job.id);
   return ok;
 }

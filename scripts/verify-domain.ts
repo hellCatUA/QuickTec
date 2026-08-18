@@ -842,6 +842,130 @@ async function main() {
     "417 Group · Adjust to time worked",
   );
 
+  // --- what happened to one punch ------------------------------------------
+  // The job's timeline answers "what happened on this job"; this answers "why
+  // does this clock say what it says", which is what payroll asks.
+  const { buildPunchHistory } = await import("@/lib/punch-history");
+
+  const fmt = {
+    time: (value: string | Date) =>
+      new Intl.DateTimeFormat("en-US", {
+        timeZone: "UTC",
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+      }).format(value instanceof Date ? value : new Date(value)),
+    minutes: (from: string | Date, to: string | Date) =>
+      Math.round(
+        ((to instanceof Date ? to : new Date(to)).getTime() -
+          (from instanceof Date ? from : new Date(from)).getTime()) /
+          60_000,
+      ),
+  };
+
+  const acted = new Date("2026-08-11T15:27:00Z");
+  const rows = buildPunchHistory(
+    [
+      {
+        id: "a",
+        action: "clock_in",
+        createdAt: acted,
+        actorName: "Anton Kyshnar",
+        detail: { at: "2026-08-11T16:30:00Z" },
+      },
+      {
+        id: "b",
+        action: "break_end",
+        createdAt: acted,
+        actorName: "Anton Kyshnar",
+        detail: { at: "2026-08-11T18:00:00Z", minutes: 30 },
+      },
+      {
+        id: "c",
+        action: "punch_changed",
+        createdAt: acted,
+        actorName: "Volodymyr Knyazev",
+        detail: {
+          reason: "QuickTec/Adjust to time worked",
+          fromIn: "2026-08-11T16:30:00Z",
+          toIn: "2026-08-11T16:45:00Z",
+          fromOut: "2026-08-11T22:10:00Z",
+          toOut: "2026-08-11T22:10:00Z",
+        },
+      },
+      {
+        id: "d",
+        action: "time_added",
+        createdAt: acted,
+        actorName: "Anton Kyshnar",
+        detail: {
+          reason: "QuickTec/Forgot to punch",
+          from: "2026-08-11T16:30:00Z",
+          to: "2026-08-11T18:30:00Z",
+        },
+      },
+    ],
+    fmt,
+  );
+
+  check("a clock-in reads as the time it records", rows[0].suffix, "4:30 PM");
+  // The moment somebody acted is not the time being written about, and a
+  // history that shows only one of them cannot answer what it exists for.
+  check("with who did it and when", `by ${rows[0].by} @ ${rows[0].at}`,
+    "by Anton Kyshnar @ 3:27 PM");
+  check("a break carries how long it ran", rows[1].suffix, "6:00 PM · 30 min");
+
+  check("a change reads as before and after", rows[2].changes.length, 1);
+  check(
+    "naming the clock that moved",
+    `${rows[2].changes[0].label} ${rows[2].changes[0].from} → ${rows[2].changes[0].to}`,
+    "Clock In 4:30 PM → 4:45 PM",
+  );
+  // Listing the clock that did not move is noise dressed as detail.
+  check(
+    "and not the one that did not",
+    rows[2].changes.some((change) => change.label === "Clock Out"),
+    false,
+  );
+  check("carrying the reason", rows[2].reason, "QuickTec/Adjust to time worked");
+
+  check(
+    "an added punch reads as a span with its length",
+    rows[3].suffix,
+    "4:30 PM → 6:30 PM (2.00 hrs)",
+  );
+
+  // A request and the answer to it are one event seen from both ends.
+  const pair = buildPunchHistory(
+    [
+      {
+        id: "e",
+        action: "punch_change_requested",
+        createdAt: acted,
+        actorName: "Anton Kyshnar",
+        detail: { fromIn: "2026-08-11T16:30:00Z", toIn: "2026-08-11T16:45:00Z" },
+      },
+      {
+        id: "f",
+        action: "punch_change_denied",
+        createdAt: acted,
+        actorName: "Volodymyr Knyazev",
+        detail: {
+          denial: "The site opened on time that day",
+          fromIn: "2026-08-11T16:30:00Z",
+          toIn: "2026-08-11T16:45:00Z",
+        },
+      },
+    ],
+    fmt,
+  );
+  check("a request and its answer are marked as one thing", pair.every((row) => row.paired), true);
+  check("a denial carries the sentence somebody wrote", pair[1].denial,
+    "The site opened on time that day");
+  check("and a request on its own is not", 
+    buildPunchHistory([{ id: "g", action: "punch_change_requested", createdAt: acted, actorName: "A", detail: {} }], fmt)[0].paired,
+    false);
+
   // --- phone numbers -------------------------------------------------------
   const { formatPhone, formatPhoneAsTyped, telHref } = await import("@/lib/phone");
 

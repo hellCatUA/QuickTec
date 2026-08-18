@@ -57,6 +57,8 @@ export function TimeClock({
   const [error, setError] = React.useState<string | null>(null);
 
   const openVisit = visits.find((visit) => visit.clockOutAt === null);
+  /** They have been here. One job is one arrival, so that is the end of it. */
+  const worked = visits.length > 0 && !openVisit;
   const onBreak = Boolean(
     openVisit?.breaks.some((entry) => entry.endAt === null),
   );
@@ -209,6 +211,14 @@ export function TimeClock({
               <LogOut /> Clock out
             </Button>
           </div>
+        ) : worked ? (
+          // One job, one arrival. The server has refused a second clock-in for
+          // a while, but the button carried on offering it — so the answer was
+          // an error message where there should never have been a button.
+          <p className="text-sm text-muted-foreground">
+            You have worked this job. A wrong time is corrected in the job&apos;s
+            Manager Portal; coming back another day is a revisit.
+          </p>
         ) : (
           // The time is asked for rather than assumed. "Now" is the first
           // button in the picker and the common answer, so the extra tap costs

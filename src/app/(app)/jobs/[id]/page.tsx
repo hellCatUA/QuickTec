@@ -732,8 +732,10 @@ export default async function JobPage({
               requests={job.changeRequests.map((request) => ({
                 id: request.id,
                 fieldPath: request.fieldPath,
-                oldValue: request.oldValue,
-                newValue: request.newValue,
+                // A punch request carries instants, and a reviewer asked to
+                // decide one should not be reading an ISO string or a blob of
+                // JSON. Formatted here, where the site's zone is known.
+                ...punchRequestValues(request, zone),
                 reason: request.reason,
                 requestedBy: request.requestedBy.name,
                 createdAt: usDateTimeInZone(request.createdAt, zone),
@@ -1221,6 +1223,48 @@ export default async function JobPage({
 
     </div>
   );
+}
+
+/**
+ * Turns a punch request into something readable, or leaves it alone.
+ *
+ * Job-field requests already hold the value somebody typed. A punch request
+ * holds an instant, or two of them in a JSON object, because that is what was
+ * being asked for — and neither renders as anything a person can decide from.
+ */
+function punchRequestValues(
+  request: { fieldPath: string; oldValue: string | null; newValue: string | null },
+  zone: string,
+): { oldValue: string | null; newValue: string | null } {
+  if (!request.fieldPath.startsWith("visit.")) {
+    return { oldValue: request.oldValue, newValue: request.newValue };
+  }
+
+  const show = (raw: string | null): string | null => {
+    if (!raw) return null;
+    if (raw.startsWith("{")) {
+      try {
+        const parsed = JSON.parse(raw) as {
+          clockIn?: string | null;
+          clockOut?: string | null;
+        };
+        return [
+          parsed.clockIn ? `in ${usTimeInZone(new Date(parsed.clockIn), zone)}` : null,
+          parsed.clockOut
+            ? `out ${usTimeInZone(new Date(parsed.clockOut), zone)}`
+            : null,
+        ]
+          .filter(Boolean)
+          .join(", ");
+      } catch {
+        return raw;
+      }
+    }
+    const at = new Date(raw);
+    return Number.isNaN(at.getTime()) ? raw : usDateTimeInZone(at, zone);
+  };
+
+  return { oldValue: show(request.oldValue), newValue: show(request.newValue) };
 }
 
 function Static({

@@ -15,7 +15,7 @@ import {
 } from "@/lib/datetime";
 import { db } from "@/lib/db";
 import { LATE_START_MINUTES } from "@/lib/job-review";
-import { timelineMeta } from "@/lib/timeline";
+import { buildPunchHistory } from "@/lib/punch-history";
 import { canOnJob } from "@/lib/scope";
 import { getSessionUser, permissionScope } from "@/lib/session";
 import { JobPay } from "../job-pay";
@@ -114,10 +114,17 @@ export default async function ManagePage({
   // Everything that has happened to each punch, which is a question about the
   // punch rather than about the job — so it is read here and shown in the
   // block rather than sending somebody to the job's timeline to search.
+  // Not filtered by entityType: a break records itself against the visit it
+  // belongs to but calls itself a BreakPeriod, and a history missing every
+  // break is not a history.
   const events = await db.auditEvent.findMany({
     where: {
       jobId: job.id,
-      entityType: "Visit",
+      entityId: {
+        in: job.assignments.flatMap((assignment) =>
+          assignment.visits.map((visit) => visit.id),
+        ),
+      },
     },
     orderBy: { createdAt: "desc" },
     take: 200,
@@ -194,29 +201,35 @@ export default async function ManagePage({
         } · ${minutes} min`,
         minutes,
         paid: entry.paid,
+        startValue: toDatetimeLocalInZone(entry.startAt, zone),
+        endValue: entry.endAt ? toDatetimeLocalInZone(entry.endAt, zone) : "",
       };
     });
 
     const totalBreak = breaks.reduce((sum, entry) => sum + entry.minutes, 0);
 
     const history = visit
-      ? events
-          .filter((event) => event.entityId === visit.id)
-          .map((event) => {
-            const detail = event.detail as
-              | { reason?: string | null; field?: string; from?: string; to?: string }
-              | null;
-            return {
+      ? buildPunchHistory(
+          events
+            .filter((event) => event.entityId === visit.id)
+            .map((event) => ({
               id: event.id,
-              what: timelineMeta(event.action).label,
-              who: event.actor?.name ?? "the system",
-              when: usDateTimeInZone(event.createdAt, zone),
-              detail:
-                detail?.reason ??
-                (detail?.field ? `${detail.field}` : null) ??
-                null,
-            };
-          })
+              action: event.action,
+              createdAt: event.createdAt,
+              actorName: event.actor?.name ?? null,
+              detail: (event.detail ?? null) as Record<string, unknown> | null,
+            })),
+          {
+            time: (value) =>
+              usTimeInZone(value instanceof Date ? value : new Date(value), zone),
+            minutes: (from, to) =>
+              Math.round(
+                ((to instanceof Date ? to : new Date(to)).getTime() -
+                  (from instanceof Date ? from : new Date(from)).getTime()) /
+                  60_000,
+              ),
+          },
+        )
       : [];
 
     return {
