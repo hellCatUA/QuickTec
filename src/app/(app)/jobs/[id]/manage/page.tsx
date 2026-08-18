@@ -10,6 +10,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { getCompanySettings } from "@/lib/company";
 import {
   toDatetimeLocalInZone,
+  usDateInZone,
   usDateTimeInZone,
   usTimeInZone,
 } from "@/lib/datetime";
@@ -154,8 +155,12 @@ export default async function ManagePage({
         },
       ],
     },
+    // Newest first only so that a cap this generous drops the oldest rather
+    // than the latest; the builder puts them back in the order they happened.
+    // The cap covers the whole crew, so it is set for a job several people
+    // have argued over rather than for one punch.
     orderBy: { createdAt: "desc" },
-    take: 200,
+    take: 500,
     select: {
       id: true,
       entityId: true,
@@ -212,6 +217,13 @@ export default async function ManagePage({
     const visit = assignment.visits[0] ?? null;
     const mayRemove = paysFor(assignment);
 
+    /** The day this punch is about, against which times are read. */
+    const day = visit
+      ? usDateInZone(visit.clockInAt, zone)
+      : job.scheduledStart
+        ? usDateInZone(job.scheduledStart, zone)
+        : null;
+
     const late =
       visit && job.scheduledStart
         ? Math.round(
@@ -247,8 +259,16 @@ export default async function ManagePage({
           detail: (event.detail ?? null) as Record<string, unknown> | null,
         })),
       {
-        time: (value) =>
-          usTimeInZone(value instanceof Date ? value : new Date(value), zone),
+        // A bare time is only unambiguous on the day the punch belongs to.
+        // Anything recorded on another day — a clock corrected the following
+        // morning, a punch merged from a second visit — reads as though it
+        // happened out of order unless it says which day it was.
+        time: (value) => {
+          const at = value instanceof Date ? value : new Date(value);
+          return day && usDateInZone(at, zone) === day
+            ? usTimeInZone(at, zone)
+            : usDateTimeInZone(at, zone);
+        },
         minutes: (from, to) =>
           Math.round(
             ((to instanceof Date ? to : new Date(to)).getTime() -

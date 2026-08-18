@@ -92,10 +92,14 @@ function hours(minutes: number): string {
 }
 
 /**
- * Which of the two clocks moved, and from what to what.
+ * What the edit moved, in the order a punch is read: in, then out, then what
+ * happened in between.
  *
- * A whole-punch change carries both and usually only one of them differs;
- * listing the one that did not is noise dressed as detail.
+ * Only the ends that moved. An edit that shifted a clock-out by twenty minutes
+ * and left the arrival alone is a different thing from one that rewrote the
+ * whole day, and a record that prints both either way cannot tell them apart.
+ * The writer leaves out what did not move; the equality test here is for rows
+ * written before it did.
  */
 function clockChanges(
   detail: Record<string, unknown>,
@@ -130,7 +134,25 @@ function clockChanges(
     });
   }
 
+  // Breaks come last because that is where they sit in the day, and they are
+  // counted rather than listed: the question a history answers is whether
+  // somebody's unpaid time was rewritten, not which minute of it moved.
+  const toBreaks = detail.toBreaks;
+  if (typeof toBreaks === "number") {
+    const fromBreaks = detail.fromBreaks;
+    const same = fromBreaks === toBreaks;
+    changes.push({
+      label: "Breaks",
+      from: same || typeof fromBreaks !== "number" ? null : plural(fromBreaks),
+      to: same ? "rewritten" : plural(toBreaks),
+    });
+  }
+
   return changes;
+}
+
+function plural(count: number): string {
+  return `${count} break${count === 1 ? "" : "s"}`;
 }
 
 export function buildPunchHistory(
@@ -267,15 +289,19 @@ export function buildPunchHistory(
       }
 
       case "punch_changed":
-      case "time_adjusted":
+      case "time_adjusted": {
+        const changes = clockChanges(detail, format);
         return {
           ...base,
           title: "Punch Adjusted",
           icon: "changed" as PunchIcon,
-          suffix: null,
-          changes: clockChanges(detail, format),
+          // Written before the record kept what moved. Saying so is better
+          // than a heading with nothing beneath it, which reads as a bug.
+          suffix: changes.length === 0 ? "details not recorded" : null,
+          changes,
           tone: "warning" as TimelineTone,
         };
+      }
 
       case "punch_change_requested":
         return {

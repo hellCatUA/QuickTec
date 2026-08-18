@@ -2108,166 +2108,6 @@ export async function saveJobDeliverableRule(
 // Moving a clock that is already recorded
 // ---------------------------------------------------------------------------
 
-const visitTimeSchema = z.object({
-  visitId: z.string().min(1),
-  field: z.enum(["clockIn", "clockOut"]),
-  /** A datetime-local from the browser, read in the site's zone. */
-  at: z.string().min(1),
-  /** One of the codes in punch-reasons.ts, not free text. */
-  reasonCode: z.string().trim().min(1),
-  note: optionalText,
-});
-
-/**
- * Corrects a clock-in or clock-out after the fact.
- *
- * How far anybody may move one is decided in clock-limits.ts, away from here,
- * because it is the calculation that settles what a person is paid. This does
- * the three things that follow from its answer: write it, send it to whoever
- * pays for the time, or refuse.
- */
-export async function adjustVisitTime(
-  formData: FormData,
-): Promise<ActionResult> {
-  const parsed = visitTimeSchema.safeParse(Object.fromEntries(formData));
-  if (!parsed.success) return fail(z.prettifyError(parsed.error));
-
-  const { visitId, field, reasonCode, note } = parsed.data;
-
-  const badReason = punchReasonProblem("adjust", reasonCode, note);
-  if (badReason) return fail(badReason);
-
-  const reason = describeReason(reasonCode, note);
-
-  const visit = await db.visit.findUnique({
-    where: { id: visitId },
-    select: {
-      id: true,
-      clockInAt: true,
-      clockOutAt: true,
-      assignment: {
-        select: {
-          jobId: true,
-          userId: true,
-          supervisorId: true,
-          // Both, because they can differ: the assignment records who answered
-          // for this person on this job, and their standing supervisor covers
-          // a job raised before that was written down.
-          user: { select: { name: true, directSupervisorId: true } },
-        },
-      },
-    },
-  });
-  if (!visit) return fail("That visit is no longer here.");
-
-  const context = await loadContext(visit.assignment.jobId);
-  if (!context) return fail("Job not found.");
-  const { user, job } = context;
-
-  if (!(await canOnJob(user, "job.adjust_time", job))) {
-    return fail("You cannot change clock times on this job.");
-  }
-
-  const from = field === "clockIn" ? visit.clockInAt : visit.clockOutAt;
-  if (!from) return fail("That clock has not been stopped yet.");
-
-  const to = parseDatetimeLocalInZone(parsed.data.at, job.timeZone);
-  if (!to) return fail("That is not a valid time.");
-
-  const company = await getCompanySettings();
-  const snapped = roundToInterval(to, company.timeRoundingMinutes);
-
-  const project = job.projectId
-    ? await db.project.findUnique({
-        where: { id: job.projectId },
-        select: { managerId: true },
-      })
-    : null;
-
-  const authority = clockAuthority({
-    scope: permissionScope(user, "job.adjust_time"),
-    isDirectSupervisor:
-      visit.assignment.supervisorId === user.id ||
-      visit.assignment.user.directSupervisorId === user.id,
-    isProjectManager: project?.managerId === user.id,
-    isLead: job.isLead,
-    isSupervisor: user.baseRole !== "TECH",
-  });
-
-  const ordering = clockOrderProblem(
-    field === "clockIn" ? snapped : visit.clockInAt,
-    field === "clockOut" ? snapped : visit.clockOutAt,
-  );
-  if (ordering) return fail(ordering);
-
-  const verdict = judgeClockEdit(authority, { field, from, to: snapped });
-
-  if (verdict.outcome === "refuse") return fail(verdict.reason);
-
-  if (verdict.outcome === "approval") {
-    const fieldPath = `visit.${visitId}.${field}`;
-
-    // Pressing Save again with a different reason should not put a second copy
-    // in somebody's queue, the same way suggestChange refuses a duplicate.
-    const already = await db.changeRequest.findFirst({
-      where: { jobId: job.id, fieldPath, status: "PENDING" },
-      select: { id: true },
-    });
-    if (already) {
-      return fail(
-        "That clock is already waiting on whoever pays for the time. They have the earlier request.",
-      );
-    }
-
-    // Not written. The person who pays for the time decides, and until they do
-    // the record says what actually happened rather than what was asked for.
-    await db.changeRequest.create({
-      data: {
-        jobId: job.id,
-        requestedById: user.id,
-        fieldPath,
-        oldValue: from.toISOString(),
-        newValue: snapped.toISOString(),
-        reason: reason ?? verdict.reason,
-      },
-    });
-
-    // No notification: notifications are for things that happened, and this is
-    // something to decide. The request itself is what reaches the approvals
-    // inbox, which is where decisions are answered.
-    touch(job.id);
-    return fail(verdict.reason);
-  }
-
-  await db.visit.update({
-    where: { id: visitId },
-    data:
-      field === "clockIn"
-        ? { clockInAt: snapped, clockInSource: "ADJUSTED" }
-        : { clockOutAt: snapped, clockOutSource: "ADJUSTED" },
-  });
-
-  await recordAudit({
-    actorId: user.id,
-    entityType: "Visit",
-    entityId: visitId,
-    jobId: job.id,
-    action: "time_adjusted",
-    detail: {
-      field,
-      who: visit.assignment.user.name,
-      from: from.toISOString(),
-      to: snapped.toISOString(),
-      reason: reason ?? null,
-    },
-  });
-
-  // The event has been telling a supervisor's day view the old time.
-  syncJobInBackground(job.id);
-  touch(job.id);
-  return ok;
-}
-
 /**
  * Removes a punch entirely.
  *
@@ -2395,8 +2235,8 @@ const newPunchSchema = z.object({
  * there with a working phone.
  *
  * Only the people who pay for the time may do it, and only where there is no
- * punch already: correcting one that exists is adjustVisitTime's job, and one
- * job means one arrival per person.
+ * punch already: correcting one that exists is editPunch's job, and one job
+ * means one arrival per person.
  */
 export async function addVisit(formData: FormData): Promise<ActionResult> {
   const parsed = newPunchSchema.safeParse(Object.fromEntries(formData));
@@ -2622,7 +2462,10 @@ export async function editPunch(formData: FormData): Promise<ActionResult> {
       id: true,
       clockInAt: true,
       clockOutAt: true,
-      breaks: { where: { endAt: null }, select: { id: true } },
+      breaks: {
+        orderBy: { startAt: "asc" },
+        select: { startAt: true, endAt: true, paid: true },
+      },
       assignment: {
         select: {
           jobId: true,
@@ -2637,7 +2480,8 @@ export async function editPunch(formData: FormData): Promise<ActionResult> {
   // A break that has not ended cannot be in the form — it has no end time to
   // put in a field — so writing the list back would delete it without saying
   // so, and somebody's unpaid half hour would quietly become paid.
-  if (visit.breaks.length > 0 && parsed.data.breaks !== null) {
+  const running = visit.breaks.filter((entry) => entry.endAt === null);
+  if (running.length > 0 && parsed.data.breaks !== null) {
     return fail("A break is still running. It has to end before this can be edited.");
   }
 
@@ -2729,6 +2573,47 @@ export async function editPunch(formData: FormData): Promise<ActionResult> {
     }
   }
 
+  // What this edit actually does, end by end.
+  //
+  // Recording all four times whatever happened made the history unreadable in
+  // both directions: an edit that moved nothing wrote a line saying "Punch
+  // Adjusted" with nothing under it, and an edit that moved one clock looked
+  // the same on the record as one that moved both. So the record carries the
+  // ends that moved and nothing else.
+  const movedIn = visit.clockInAt.getTime() !== newIn.getTime();
+  // A blank clock-out means "leave it", not "clear it" — the update below does
+  // not touch it — so it is not a change.
+  const movedOut =
+    newOut !== null && visit.clockOutAt?.getTime() !== newOut.getTime();
+
+  const sameBreaks =
+    parsed.data.breaks === null ||
+    (visit.breaks.length === breaks.length &&
+      visit.breaks.every(
+        (was, index) =>
+          was.endAt !== null &&
+          was.startAt.getTime() === breaks[index].startAt.getTime() &&
+          was.endAt.getTime() === breaks[index].endAt.getTime() &&
+          was.paid === breaks[index].paid,
+      ));
+
+  /** Only the ends that moved, so the history says what was done. */
+  const moves = {
+    ...(movedIn
+      ? { fromIn: visit.clockInAt.toISOString(), toIn: newIn.toISOString() }
+      : {}),
+    ...(movedOut
+      ? {
+          fromOut: visit.clockOutAt?.toISOString() ?? null,
+          toOut: newOut.toISOString(),
+        }
+      : {}),
+  };
+
+  if (!movedIn && !movedOut && sameBreaks) {
+    return fail("Nothing on that punch changed, so nothing was recorded.");
+  }
+
   const asked = verdicts.find((verdict) => verdict.outcome === "approval");
   if (asked && asked.outcome === "approval") {
     const fieldPath = `visit.${visitId}.punch`;
@@ -2766,14 +2651,7 @@ export async function editPunch(formData: FormData): Promise<ActionResult> {
       entityId: visitId,
       jobId: job.id,
       action: "punch_change_requested",
-      detail: {
-        who: visit.assignment.user.name,
-        reason,
-        fromIn: visit.clockInAt.toISOString(),
-        toIn: newIn.toISOString(),
-        fromOut: visit.clockOutAt?.toISOString() ?? null,
-        toOut: newOut?.toISOString() ?? null,
-      },
+      detail: { who: visit.assignment.user.name, reason, ...moves },
     });
 
     touch(job.id);
@@ -2817,11 +2695,12 @@ export async function editPunch(formData: FormData): Promise<ActionResult> {
     detail: {
       who: visit.assignment.user.name,
       reason,
-      fromIn: visit.clockInAt.toISOString(),
-      toIn: newIn.toISOString(),
-      fromOut: visit.clockOutAt?.toISOString() ?? null,
-      toOut: newOut?.toISOString() ?? null,
-      breaks: breaks.length,
+      ...moves,
+      // Breaks are pay too. Without this an edit that rewrote somebody's
+      // unpaid half hour and left the clocks alone left no trace at all.
+      ...(sameBreaks
+        ? {}
+        : { fromBreaks: visit.breaks.length, toBreaks: breaks.length }),
     },
   });
 

@@ -1511,18 +1511,50 @@ async function main() {
       (await visitNow()).clockInAt?.toISOString(),
       "2026-07-28T13:00:00.000Z",
     );
+    const written = (
+      await db.auditEvent.findFirstOrThrow({
+        where: { jobId: assignment.jobId, action: "punch_changed" },
+        select: { detail: true },
+      })
+    ).detail as Record<string, unknown> | null;
+
     check(
       "and it is on the record with who and why",
-      (
-        (
-          await db.auditEvent.findFirstOrThrow({
-            where: { jobId: assignment.jobId, action: "punch_changed" },
-            select: { detail: true },
-          })
-        ).detail as { reason?: string } | null
-      )?.reason,
+      (written as { reason?: string } | null)?.reason,
       "QuickTec/Adjust to time worked",
     );
+    // Only the end that moved. Recording all four times whatever happened made
+    // an edit that shifted one clock look identical to one that rewrote the day.
+    check(
+      "the record carries the end that moved",
+      Object.keys(written ?? {})
+        .filter((key) => key.startsWith("from") || key.startsWith("to"))
+        .sort()
+        .join(","),
+      "fromIn,toIn",
+    );
+
+    // Saving a pane nobody changed used to write a "Punch Adjusted" line with
+    // nothing under it, which reads as a bug in the history rather than as a
+    // person pressing Save twice.
+    const before = await db.auditEvent.count({
+      where: { jobId: assignment.jobId, action: "punch_changed" },
+    });
+    await editPunch(planner, menu, "CI", "2026-07-28T06:00", "Adjust to time worked");
+    await planner.waitForTimeout(2000);
+    check(
+      "an edit that changes nothing is refused",
+      await planner.getByText(/Nothing on that punch changed/).isVisible(),
+      true,
+    );
+    check(
+      "and nothing is written for it",
+      await db.auditEvent.count({
+        where: { jobId: assignment.jobId, action: "punch_changed" },
+      }),
+      before,
+    );
+    await planner.getByRole("button", { name: "Cancel", exact: true }).click();
 
     // The history is the last thing in the menu and the thing somebody opens
     // when payroll asks why a clock says what it says.

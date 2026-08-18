@@ -1009,6 +1009,118 @@ async function main() {
   check("with the day it took away", removed[0].suffix, "4:30 PM → 10:10 PM");
   check("and why", removed[0].reason, "RepCompany/Job Cancelled");
 
+  // An edit that moved one end and one that moved both are different events,
+  // and a record that prints all four times either way cannot tell them apart.
+  const oneEnd = buildPunchHistory(
+    [
+      {
+        id: "one",
+        action: "punch_changed",
+        createdAt: acted,
+        actorName: "Volodymyr Knyazev",
+        detail: {
+          reason: "QuickTec/Adjust to time worked",
+          fromOut: "2026-08-11T22:10:00Z",
+          toOut: "2026-08-11T22:30:00Z",
+        },
+      },
+    ],
+    fmt,
+  )[0];
+  check("moving one end lists that end alone", oneEnd.changes.length, 1);
+  check(
+    "and names it",
+    `${oneEnd.changes[0].label} ${oneEnd.changes[0].from} → ${oneEnd.changes[0].to}`,
+    "Clock Out 10:10 PM → 10:30 PM",
+  );
+
+  const bothEnds = buildPunchHistory(
+    [
+      {
+        id: "both",
+        action: "punch_changed",
+        createdAt: acted,
+        actorName: "Volodymyr Knyazev",
+        detail: {
+          reason: "QuickTec/Adjust to time worked",
+          fromIn: "2026-08-11T16:30:00Z",
+          toIn: "2026-08-11T16:45:00Z",
+          fromOut: "2026-08-11T22:10:00Z",
+          toOut: "2026-08-11T22:30:00Z",
+        },
+      },
+    ],
+    fmt,
+  )[0];
+  check("moving both lists both", bothEnds.changes.length, 2);
+  // A punch is read arrival first, so it is written that way too.
+  check(
+    "arrival first",
+    bothEnds.changes.map((change) => change.label).join(","),
+    "Clock In,Clock Out",
+  );
+
+  // Breaks are pay as much as the clocks are. An edit that rewrote somebody's
+  // unpaid half hour and left the clocks alone used to leave a heading with
+  // nothing under it.
+  const breakEdit = buildPunchHistory(
+    [
+      {
+        id: "brk",
+        action: "punch_changed",
+        createdAt: acted,
+        actorName: "Volodymyr Knyazev",
+        detail: {
+          reason: "QuickTec/Error/App",
+          fromBreaks: 2,
+          toBreaks: 1,
+        },
+      },
+    ],
+    fmt,
+  )[0];
+  check("a break-only edit still says what it did", breakEdit.changes.length, 1);
+  check(
+    "counted rather than listed",
+    `${breakEdit.changes[0].label} ${breakEdit.changes[0].from} → ${breakEdit.changes[0].to}`,
+    "Breaks 2 breaks → 1 break",
+  );
+  check(
+    "and the same number rewritten reads as that",
+    buildPunchHistory(
+      [
+        {
+          id: "brk2",
+          action: "punch_changed",
+          createdAt: acted,
+          actorName: "V",
+          detail: { fromBreaks: 1, toBreaks: 1 },
+        },
+      ],
+      fmt,
+    )[0].changes[0].to,
+    "rewritten",
+  );
+
+  // Rows written before any of that was kept. A heading with nothing beneath
+  // it reads as a bug rather than as an old record.
+  check(
+    "an adjustment with nothing recorded says so",
+    buildPunchHistory(
+      [
+        {
+          id: "bare",
+          action: "punch_changed",
+          createdAt: acted,
+          actorName: "V",
+          detail: { reason: "QuickTec/Other — checked" },
+        },
+      ],
+      fmt,
+    )[0].suffix,
+    "details not recorded",
+  );
+
   // A request and the answer to it are one event seen from both ends.
   const pair = buildPunchHistory(
     [
