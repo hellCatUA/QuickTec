@@ -1,3 +1,4 @@
+import { Auth } from "@auth/core";
 import NextAuth, {
   CredentialsSignin,
   customFetch,
@@ -444,4 +445,58 @@ export const authConfig: NextAuthConfig = {
   },
 };
 
-export const { handlers, auth, signIn, signOut } = NextAuth(authConfig);
+// Calling this also fills the config in from the environment — the secret, the
+// base path, trustHost — in place, so `authConfig` is ready to hand to the
+// core handler below.
+const { auth, signIn, signOut } = NextAuth(authConfig);
+
+export { auth, signIn, signOut };
+
+/**
+ * Serves Auth.js the address the browser actually used.
+ *
+ * Every absolute URL Auth.js emits — the `redirect_uri` sent to NextCloud, the
+ * page somebody lands on after signing in, the error redirect — is built from
+ * the URL of the request it is handed. `next-auth` is supposed to replace that
+ * origin with AUTH_URL, and it tries: it constructs a `NextRequest` with a new
+ * href. Under Next 16 that constructor keeps the original request's URL and
+ * drops the new one, so the substitution does nothing and every URL comes out
+ * as `http://localhost:3000` — the port the server happens to be listening on,
+ * not the address anybody typed. Behind a proxy that is fatal: NextCloud is
+ * asked to redirect to a host that only exists inside the container, and a
+ * completed sign-in throws the browser at nothing.
+ *
+ * A plain `Request` does take the URL it is given, and the core handler is
+ * happy with one — it is what `next-auth` calls with the request it failed to
+ * rewrite. So the rewrite is done here and handed straight over.
+ */
+function withPublicOrigin(request: Request): Request {
+  const base = (process.env.AUTH_URL ?? "").trim().replace(/\/+$/, "");
+  if (!base) return request;
+
+  let target: URL;
+  try {
+    const url = new URL(request.url);
+    target = new URL(`${url.pathname}${url.search}`, base);
+  } catch {
+    return request;
+  }
+  if (target.href === request.url) return request;
+
+  const init: RequestInit & { duplex?: "half" } = {
+    method: request.method,
+    headers: request.headers,
+    redirect: "manual",
+    signal: request.signal,
+  };
+  // Streaming a body through requires saying so; without it Node refuses.
+  if (request.body) {
+    init.body = request.body;
+    init.duplex = "half";
+  }
+  return new Request(target, init);
+}
+
+const serve = (request: Request) => Auth(withPublicOrigin(request), authConfig);
+
+export const handlers = { GET: serve, POST: serve };

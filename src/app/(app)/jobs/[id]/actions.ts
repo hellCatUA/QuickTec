@@ -189,14 +189,15 @@ export async function clockIn(formData: FormData): Promise<ActionResult> {
   );
   if ("error" in resolved) return fail(resolved.error);
 
-  await db.$transaction(async (tx) => {
-    await tx.visit.create({
+  const started = await db.$transaction(async (tx) => {
+    const visit = await tx.visit.create({
       data: {
         assignmentId: assignment.id,
         clockInAt: resolved.at,
         clockInSource: resolved.source,
         clockInRawAt: resolved.raw,
       },
+      select: { id: true },
     });
 
     // A job someone is standing on is in progress, whatever it said before.
@@ -204,6 +205,8 @@ export async function clockIn(formData: FormData): Promise<ActionResult> {
       where: { id: jobId },
       data: { lifecycle: "IN_PROGRESS" },
     });
+
+    return visit;
   });
 
   // The event has been sitting on the planned time; it now knows when the day
@@ -213,7 +216,10 @@ export async function clockIn(formData: FormData): Promise<ActionResult> {
   await recordAudit({
     actorId: user.id,
     entityType: "Visit",
-    entityId: assignment.id,
+    // The visit, not the assignment. Recorded against the assignment, the one
+    // event everybody most wants to see — when they arrived — was the only one
+    // missing from the punch's own history.
+    entityId: started.id,
     jobId,
     action: "clock_in",
     detail: { at: resolved.at.toISOString(), source: resolved.source },
@@ -2288,6 +2294,7 @@ export async function removeVisit(formData: FormData): Promise<ActionResult> {
     where: { id: visitId },
     select: {
       id: true,
+      assignmentId: true,
       clockInAt: true,
       clockOutAt: true,
       assignment: {
@@ -2336,11 +2343,16 @@ export async function removeVisit(formData: FormData): Promise<ActionResult> {
 
   await recordAudit({
     actorId: user.id,
-    entityType: "Visit",
-    entityId: visitId,
+    // The assignment, because the visit has just stopped existing. An event
+    // filed under a deleted id cannot be looked up by anybody afterwards, so
+    // the one record of why somebody's day disappeared would disappear with
+    // it. The assignment is what the block on the page is, and it survives.
+    entityType: "Assignment",
+    entityId: visit.assignmentId,
     jobId: job.id,
     action: "time_removed",
     detail: {
+      visitId,
       who: visit.assignment.user.name,
       from: visit.clockInAt.toISOString(),
       to: visit.clockOutAt?.toISOString() ?? null,

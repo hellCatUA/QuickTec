@@ -935,6 +935,80 @@ async function main() {
     "4:30 PM → 6:30 PM (2.00 hrs)",
   );
 
+  // Every line gets a picture, and none of them falls through to the shrug.
+  check(
+    "every line names its own icon",
+    rows.map((row) => row.icon).join(","),
+    "in,breakEnd,changed,added",
+  );
+
+  // The day in the order it was lived, whichever order the rows arrived in.
+  const shuffled = buildPunchHistory(
+    [
+      {
+        id: "out",
+        action: "clock_out",
+        createdAt: new Date("2026-08-11T22:10:00Z"),
+        actorName: "Anton Kyshnar",
+        detail: { at: "2026-08-11T22:10:00Z" },
+      },
+      {
+        id: "bs",
+        action: "break_start",
+        createdAt: new Date("2026-08-11T17:30:00Z"),
+        actorName: "Anton Kyshnar",
+        detail: { at: "2026-08-11T17:30:00Z" },
+      },
+      {
+        id: "in",
+        action: "clock_in",
+        createdAt: new Date("2026-08-11T16:30:00Z"),
+        actorName: "Anton Kyshnar",
+        detail: { at: "2026-08-11T16:30:00Z" },
+      },
+      {
+        id: "be",
+        action: "break_end",
+        createdAt: new Date("2026-08-11T18:00:00Z"),
+        actorName: "Anton Kyshnar",
+        detail: { at: "2026-08-11T18:00:00Z", minutes: 30 },
+      },
+    ],
+    fmt,
+  );
+  check(
+    "the history reads in the order the day happened",
+    shuffled.map((row) => row.id).join(","),
+    "in,bs,be,out",
+  );
+  // How long a break ran is only known when it ends, so the line that says it
+  // started can only carry it by looking forward — and that is the line
+  // somebody reads first.
+  check("a break says how long it ran from the moment it starts",
+    shuffled[1].suffix, "5:30 PM · 30 min");
+
+  // A removal is recorded about a punch that has stopped existing; if it is
+  // filed under the dead row nobody can ever look it up again.
+  const removed = buildPunchHistory(
+    [
+      {
+        id: "r",
+        action: "time_removed",
+        createdAt: acted,
+        actorName: "Volodymyr Knyazev",
+        detail: {
+          reason: "RepCompany/Job Cancelled",
+          from: "2026-08-11T16:30:00Z",
+          to: "2026-08-11T22:10:00Z",
+        },
+      },
+    ],
+    fmt,
+  );
+  check("a removal says so plainly", removed[0].title, "Punch Removed");
+  check("with the day it took away", removed[0].suffix, "4:30 PM → 10:10 PM");
+  check("and why", removed[0].reason, "RepCompany/Job Cancelled");
+
   // A request and the answer to it are one event seen from both ends.
   const pair = buildPunchHistory(
     [

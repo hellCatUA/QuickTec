@@ -2,13 +2,22 @@
 
 import {
   AlertTriangle,
+  ArrowRightLeft,
+  Ban,
   ChevronDown,
+  CircleCheck,
   Clock,
+  FileText,
+  Flag,
   History,
   Loader2,
+  LogIn,
+  LogOut,
   MoreHorizontal,
+  Pause,
   Pencil,
   PenLine,
+  Play,
   Plus,
   Trash2,
   X,
@@ -17,7 +26,7 @@ import * as React from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/field";
-import type { PunchHistoryRow } from "@/lib/punch-history";
+import type { PunchHistoryRow, PunchIcon } from "@/lib/punch-history";
 import { acceptTimeFlag, addVisit, editPunch, removeVisit } from "../actions";
 import { ReasonPicker } from "./reason-picker";
 
@@ -372,7 +381,7 @@ function PunchBlock({
         <Pane title={`What has happened to ${punch.who}'s punch`} onClose={() => setPane(null)}>
           {punch.history.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              Nothing but the punch itself.
+              Nothing recorded against this person on this job.
             </p>
           ) : (
             <ol className="flex flex-col gap-2">
@@ -578,6 +587,27 @@ const TONE_TEXT: Record<string, string> = {
 };
 
 /**
+ * A picture per kind of event.
+ *
+ * The builder names the picture rather than choosing it, so the history can be
+ * checked in a test with no browser in it; the drawing happens here.
+ */
+const HISTORY_ICON: Record<PunchIcon, React.ComponentType<{ className?: string }>> = {
+  in: LogIn,
+  out: LogOut,
+  breakStart: Pause,
+  breakEnd: Play,
+  added: PenLine,
+  removed: Trash2,
+  changed: ArrowRightLeft,
+  asked: Pencil,
+  approved: CircleCheck,
+  denied: Ban,
+  flagged: Flag,
+  other: FileText,
+};
+
+/**
  * One thing that happened to this punch.
  *
  * The time being written about and the moment somebody wrote it are two
@@ -586,6 +616,9 @@ const TONE_TEXT: Record<string, string> = {
  * says, and the small line underneath carries who touched it and when.
  */
 function HistoryLine({ row }: { row: PunchHistoryRow }) {
+  const Icon = HISTORY_ICON[row.icon] ?? FileText;
+  const tone = TONE_TEXT[row.tone] ?? "";
+
   return (
     <li
       data-history={row.action}
@@ -593,43 +626,47 @@ function HistoryLine({ row }: { row: PunchHistoryRow }) {
         // A request and the answer to it are the same event from both ends,
         // so they are drawn as one thing rather than left to be matched by eye.
         row.paired
-          ? "border-l-2 border-primary/40 pl-2 text-sm"
-          : "text-sm"
+          ? "flex gap-2 border-l-2 border-primary/40 pl-2 text-sm"
+          : "flex gap-2 text-sm"
       }
     >
-      <div className="flex flex-wrap items-baseline gap-x-2">
-        <span className={`font-medium ${TONE_TEXT[row.tone] ?? ""}`}>
-          {row.title}
-        </span>
-        {row.suffix ? <span className="tabular">{row.suffix}</span> : null}
-      </div>
+      {/* Aligned to the first line's text rather than centred on the block,
+          so a row with three lines under it does not float its own icon. */}
+      <Icon className={`mt-0.5 size-4 shrink-0 ${tone}`} data-icon={row.icon} />
 
-      {row.changes.map((change) => (
-        <div
-          key={change.label}
-          className="flex flex-wrap items-baseline gap-x-1.5 text-sm"
-        >
-          <span className="text-muted-foreground">{change.label}</span>
-          {change.from ? (
-            <span className="tabular text-muted-foreground line-through">
-              {change.from}
-            </span>
-          ) : null}
-          <span aria-hidden>→</span>
-          <span className="tabular">{change.to}</span>
+      <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex flex-wrap items-baseline gap-x-2">
+          <span className={`font-medium ${tone}`}>{row.title}</span>
+          {row.suffix ? <span className="tabular">{row.suffix}</span> : null}
         </div>
-      ))}
 
-      {row.reason ? (
-        <p className="text-xs text-muted-foreground">Reason: {row.reason}</p>
-      ) : null}
-      {row.denial ? (
-        <p className="text-xs text-danger">Reason for denial: {row.denial}</p>
-      ) : null}
+        {row.changes.map((change) => (
+          <div
+            key={change.label}
+            className="flex flex-wrap items-baseline gap-x-1.5 text-sm"
+          >
+            <span className="text-muted-foreground">{change.label}</span>
+            {change.from ? (
+              <span className="tabular text-muted-foreground line-through">
+                {change.from}
+              </span>
+            ) : null}
+            <span aria-hidden>→</span>
+            <span className="tabular">{change.to}</span>
+          </div>
+        ))}
 
-      <p className="text-xs text-muted-foreground">
-        by {row.by} @ {row.at}
-      </p>
+        {row.reason ? (
+          <p className="text-xs text-muted-foreground">Reason: {row.reason}</p>
+        ) : null}
+        {row.denial ? (
+          <p className="text-xs text-danger">Reason for denial: {row.denial}</p>
+        ) : null}
+
+        <p className="text-xs text-muted-foreground">
+          by {row.by} @ {row.at}
+        </p>
+      </div>
     </li>
   );
 }

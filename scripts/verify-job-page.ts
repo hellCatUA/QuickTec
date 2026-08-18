@@ -1523,6 +1523,45 @@ async function main() {
       )?.reason,
       "QuickTec/Adjust to time worked",
     );
+
+    // The history is the last thing in the menu and the thing somebody opens
+    // when payroll asks why a clock says what it says.
+    await menu.getByRole("button", { name: /^Punch actions for/ }).click();
+    await planner.getByRole("button", { name: "History", exact: true }).click();
+    await planner.waitForTimeout(500);
+
+    check(
+      "the arrival is in the punch's own history",
+      await planner.locator('[data-history="clock_in"]').count(),
+      1,
+    );
+    check(
+      "and so is the change just made to it",
+      await planner.locator('[data-history="punch_changed"]').count(),
+      1,
+    );
+    // Reported as missing: every line is meant to carry a picture, and the
+    // builder naming one is worth nothing if nothing draws it.
+    check(
+      "every line carries its icon",
+      await planner.locator("[data-history] [data-icon]").count(),
+      await planner.locator("[data-history]").count(),
+    );
+    check(
+      "the change reads as before and after",
+      await planner
+        .locator('[data-history="punch_changed"] .line-through')
+        .count(),
+      1,
+    );
+    check(
+      "with who did it, which is the point of keeping it",
+      await planner
+        .locator('[data-history="punch_changed"]')
+        .textContent()
+        .then((text) => (text ?? "").includes("Reason: QuickTec/Adjust")),
+      true,
+    );
   });
 
   await plantClock();

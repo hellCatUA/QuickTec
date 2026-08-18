@@ -258,12 +258,29 @@ async function main() {
     true,
   );
 
-  // Nobody is asked whether they would like to sign in: NextCloud is the only
-  // way in, so /signin hands straight over.
+  // NextCloud is no longer the only way in, so /signin asks which kind of
+  // account this is rather than handing straight over. A client's coordinator
+  // has no NextCloud account and never will.
   const signinPage = await fetch(`${BASE}/signin`, { redirect: "manual" });
+  const signinHtml = await signinPage.text();
+  check("an unauthenticated visit is asked which account they have",
+    signinPage.status, 200);
   check(
-    "an unauthenticated visit is sent straight into the flow",
-    signinPage.headers.get("location"),
+    "answering yes hands over to NextCloud",
+    signinHtml.includes('href="/api/auth/start"'),
+    true,
+  );
+  check(
+    "and answering no offers a password instead",
+    signinHtml.includes("/signin?method=password"),
+    true,
+  );
+
+  // Answering it still ends up in the flow, with nothing else in between.
+  const chose = await fetch(`${BASE}/signin?method=sso`, { redirect: "manual" });
+  check(
+    "choosing SSO is sent straight into the flow",
+    chose.headers.get("location"),
     "/api/auth/start",
   );
   check(
@@ -274,7 +291,7 @@ async function main() {
 
   // After signing out it does, otherwise signing out on a shared phone and
   // back in silently returns the same account.
-  const afterSignOut = await fetch(`${BASE}/signin?reauth=1`, {
+  const afterSignOut = await fetch(`${BASE}/signin?method=sso&reauth=1`, {
     redirect: "manual",
   });
   check(

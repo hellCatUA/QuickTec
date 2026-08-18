@@ -111,6 +111,22 @@ export default async function ManagePage({
       canOnJob(user, "job.approve_report", jobRef),
     ]);
 
+  // Whose block each recorded event belongs in.
+  //
+  // The history is the person's, not the visit's. Filing it under the visit
+  // loses every event that outlives one: a removal is recorded about a row
+  // that no longer exists, and a punch written to replace it starts a fresh
+  // history with no trace of what happened to the first. The assignment is
+  // what the block on the page is, and it is there from the day somebody is
+  // put on the job to the day the job is closed.
+  const blockOfEntity = new Map<string, string>();
+  for (const assignment of job.assignments) {
+    blockOfEntity.set(assignment.id, assignment.id);
+    for (const visit of assignment.visits) {
+      blockOfEntity.set(visit.id, assignment.id);
+    }
+  }
+
   // Everything that has happened to each punch, which is a question about the
   // punch rather than about the job — so it is read here and shown in the
   // block rather than sending somebody to the job's timeline to search.
@@ -120,11 +136,23 @@ export default async function ManagePage({
   const events = await db.auditEvent.findMany({
     where: {
       jobId: job.id,
-      entityId: {
-        in: job.assignments.flatMap((assignment) =>
-          assignment.visits.map((visit) => visit.id),
-        ),
-      },
+      OR: [
+        {
+          entityId: {
+            in: job.assignments.flatMap((assignment) =>
+              assignment.visits.map((visit) => visit.id),
+            ),
+          },
+        },
+        // Recorded against the assignment: a removal, whose visit is gone, and
+        // clock-ins from before that action learned to name the visit it had
+        // just created. Named actions rather than everything, because a rate
+        // change is filed against an assignment too and is not a punch event.
+        {
+          action: { in: ["clock_in", "time_removed"] },
+          entityId: { in: job.assignments.map((assignment) => assignment.id) },
+        },
+      ],
     },
     orderBy: { createdAt: "desc" },
     take: 200,
@@ -208,29 +236,27 @@ export default async function ManagePage({
 
     const totalBreak = breaks.reduce((sum, entry) => sum + entry.minutes, 0);
 
-    const history = visit
-      ? buildPunchHistory(
-          events
-            .filter((event) => event.entityId === visit.id)
-            .map((event) => ({
-              id: event.id,
-              action: event.action,
-              createdAt: event.createdAt,
-              actorName: event.actor?.name ?? null,
-              detail: (event.detail ?? null) as Record<string, unknown> | null,
-            })),
-          {
-            time: (value) =>
-              usTimeInZone(value instanceof Date ? value : new Date(value), zone),
-            minutes: (from, to) =>
-              Math.round(
-                ((to instanceof Date ? to : new Date(to)).getTime() -
-                  (from instanceof Date ? from : new Date(from)).getTime()) /
-                  60_000,
-              ),
-          },
-        )
-      : [];
+    const history = buildPunchHistory(
+      events
+        .filter((event) => blockOfEntity.get(event.entityId) === assignment.id)
+        .map((event) => ({
+          id: event.id,
+          action: event.action,
+          createdAt: event.createdAt,
+          actorName: event.actor?.name ?? null,
+          detail: (event.detail ?? null) as Record<string, unknown> | null,
+        })),
+      {
+        time: (value) =>
+          usTimeInZone(value instanceof Date ? value : new Date(value), zone),
+        minutes: (from, to) =>
+          Math.round(
+            ((to instanceof Date ? to : new Date(to)).getTime() -
+              (from instanceof Date ? from : new Date(from)).getTime()) /
+              60_000,
+          ),
+      },
+    );
 
     return {
       assignmentId: assignment.id,

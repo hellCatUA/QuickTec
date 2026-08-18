@@ -22,9 +22,30 @@ export type PunchChange = {
   to: string;
 };
 
+/**
+ * Which picture goes on the line.
+ *
+ * A name rather than a component, so this file stays free of React and can be
+ * read by a test that has no browser in it.
+ */
+export type PunchIcon =
+  | "in"
+  | "out"
+  | "breakStart"
+  | "breakEnd"
+  | "added"
+  | "removed"
+  | "changed"
+  | "asked"
+  | "approved"
+  | "denied"
+  | "flagged"
+  | "other";
+
 export type PunchHistoryRow = {
   id: string;
   action: string;
+  icon: PunchIcon;
   /** "Clock In", "Punch changed", "Punch change denied". */
   title: string;
   /** On the same line as the title: a time, a duration, a span. */
@@ -116,19 +137,37 @@ export function buildPunchHistory(
   events: PunchEvent[],
   format: Format,
 ): PunchHistoryRow[] {
+  // The day in the order it was lived: in, break, back, out, and whatever was
+  // argued about afterwards. Sorted here rather than trusted from the caller,
+  // who reads newest-first to cap the query and should not have to know that
+  // the pairing below depends on the order.
+  const ordered = [...events].sort(
+    (a, b) => a.createdAt.getTime() - b.createdAt.getTime(),
+  );
+
+  // How long each break ran, which is only known when it ends — so the line
+  // that says a break started can only carry it by looking forward. The nth
+  // start is the nth end, breaks on one punch being one at a time.
+  const breakMinutes: (number | null)[] = ordered
+    .filter((event) => event.action === "break_end")
+    .map((event) =>
+      typeof event.detail?.minutes === "number" ? event.detail.minutes : null,
+    );
+  let breakIndex = 0;
+
   // Requests and their answers are the same event from both ends, so a row is
   // marked whenever the other half is somewhere in the list.
-  const hasRequest = events.some(
+  const hasRequest = ordered.some(
     (event) => event.action === "punch_change_requested",
   );
-  const hasAnswer = events.some(
+  const hasAnswer = ordered.some(
     (event) =>
       event.action === "punch_change_approved" ||
       event.action === "punch_change_denied",
   );
   const paired = hasRequest && hasAnswer;
 
-  return events.map((event) => {
+  return ordered.map((event) => {
     const detail = event.detail ?? {};
     const by = event.actorName ?? "the system";
     const at = format.time(event.createdAt);
@@ -149,6 +188,7 @@ export function buildPunchHistory(
         return {
           ...base,
           title: "Clock In",
+          icon: "in" as PunchIcon,
           suffix: str(detail.at) ? format.time(detail.at as string) : null,
           tone: "success" as TimelineTone,
         };
@@ -157,22 +197,32 @@ export function buildPunchHistory(
         return {
           ...base,
           title: "Clock Out",
+          icon: "out" as PunchIcon,
           suffix: str(detail.at) ? format.time(detail.at as string) : null,
           tone: "neutral" as TimelineTone,
         };
 
-      case "break_start":
+      case "break_start": {
+        const ran = breakMinutes[breakIndex++] ?? null;
         return {
           ...base,
           title: "Break In",
-          suffix: str(detail.at) ? format.time(detail.at as string) : at,
+          icon: "breakStart" as PunchIcon,
+          suffix: [
+            str(detail.at) ? format.time(detail.at as string) : at,
+            ran === null ? null : `${ran} min`,
+          ]
+            .filter(Boolean)
+            .join(" · "),
           tone: "neutral" as TimelineTone,
         };
+      }
 
       case "break_end":
         return {
           ...base,
           title: "Break Out",
+          icon: "breakEnd" as PunchIcon,
           suffix: [
             str(detail.at) ? format.time(detail.at as string) : at,
             typeof detail.minutes === "number"
@@ -192,10 +242,27 @@ export function buildPunchHistory(
         return {
           ...base,
           title: "Punch Added",
+          icon: "added" as PunchIcon,
           suffix: from
             ? `${format.time(from)} → ${to ? format.time(to) : "still on site"}${span}`
             : null,
           tone: "warning" as TimelineTone,
+        };
+      }
+
+      case "time_removed": {
+        const from = str(detail.from);
+        const to = str(detail.to);
+        return {
+          ...base,
+          title: "Punch Removed",
+          icon: "removed" as PunchIcon,
+          // The day that was taken away, because a removal with no times on it
+          // says only that something happened.
+          suffix: from
+            ? `${format.time(from)} → ${to ? format.time(to) : "still on site"}`
+            : null,
+          tone: "danger" as TimelineTone,
         };
       }
 
@@ -204,6 +271,7 @@ export function buildPunchHistory(
         return {
           ...base,
           title: "Punch Adjusted",
+          icon: "changed" as PunchIcon,
           suffix: null,
           changes: clockChanges(detail, format),
           tone: "warning" as TimelineTone,
@@ -213,6 +281,7 @@ export function buildPunchHistory(
         return {
           ...base,
           title: "Punch Adjust requested",
+          icon: "asked" as PunchIcon,
           suffix: null,
           changes: clockChanges(detail, format),
           tone: "warning" as TimelineTone,
@@ -223,6 +292,7 @@ export function buildPunchHistory(
         return {
           ...base,
           title: "Punch Adjust approved",
+          icon: "approved" as PunchIcon,
           suffix: null,
           changes: clockChanges(detail, format),
           tone: "success" as TimelineTone,
@@ -233,6 +303,7 @@ export function buildPunchHistory(
         return {
           ...base,
           title: "Punch Adjust denied",
+          icon: "denied" as PunchIcon,
           suffix: null,
           changes: clockChanges(detail, format),
           tone: "danger" as TimelineTone,
@@ -243,6 +314,7 @@ export function buildPunchHistory(
         return {
           ...base,
           title: "Time flag accepted",
+          icon: "approved" as PunchIcon,
           suffix: str(detail.field),
           tone: "success" as TimelineTone,
         };
@@ -251,6 +323,7 @@ export function buildPunchHistory(
         return {
           ...base,
           title: "Time flag reopened",
+          icon: "flagged" as PunchIcon,
           suffix: str(detail.field),
           tone: "warning" as TimelineTone,
         };
@@ -261,6 +334,7 @@ export function buildPunchHistory(
           title:
             event.action.charAt(0).toUpperCase() +
             event.action.slice(1).replace(/_/g, " "),
+          icon: "other" as PunchIcon,
           suffix: null,
           tone: "neutral" as TimelineTone,
         };
