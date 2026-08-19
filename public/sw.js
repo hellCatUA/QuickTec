@@ -71,20 +71,34 @@ self.addEventListener("fetch", (event) => {
 
   // Pages: network-first so the tech always sees current job state, falling
   // back to the offline notice rather than a browser error page.
+  //
+  // Raced against a clock, because the usual reason this fails is the VPN
+  // being off — and then the app's address resolves to something with no
+  // route to it, which is not refused, it is simply never answered. The
+  // browser waits out its own connect timeout, so a person who could have
+  // been told to turn the VPN on stares at a white screen for half a minute
+  // first. Ten seconds is long enough that a tech on one bar in a basement
+  // still gets the real page, and short enough to be worth reading.
   if (request.mode === "navigate") {
+    const notice = () =>
+      caches
+        .match("/offline")
+        .then(
+          (cached) =>
+            cached ||
+            new Response("Offline", {
+              status: 503,
+              headers: { "Content-Type": "text/plain" },
+            }),
+        );
+
     event.respondWith(
-      fetch(request).catch(() =>
-        caches
-          .match("/offline")
-          .then(
-            (cached) =>
-              cached ||
-              new Response("Offline", {
-                status: 503,
-                headers: { "Content-Type": "text/plain" },
-              }),
-          ),
-      ),
+      Promise.race([
+        fetch(request),
+        new Promise((resolve) => setTimeout(() => resolve(null), 10_000)),
+      ])
+        .then((response) => response || notice())
+        .catch(notice),
     );
   }
 });
