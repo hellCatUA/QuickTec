@@ -1,6 +1,7 @@
 import { redirect, notFound } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
+import { decimalHours } from "@/lib/datetime";
 import { db } from "@/lib/db";
 import { canOnJob } from "@/lib/scope";
 import { can, getSessionUser } from "@/lib/session";
@@ -32,6 +33,22 @@ export default async function RevisitPage({
       externalAssignmentId: true,
       createdById: true,
       projectId: true,
+      // What the original is actually carrying, so the form offers only what
+      // is there and says how much of it there is.
+      scopeOfWork: true,
+      ticketNumber: true,
+      incNumber: true,
+      estimateMinutes: true,
+      techsRequired: true,
+      payType: true,
+      payRate: true,
+      breakPaid: true,
+      extraTickets: { orderBy: { order: "asc" }, select: { number: true } },
+      _count: { select: { deliverableRules: true, dispatchContacts: true } },
+      documents: {
+        where: { jobDocumentKind: "SIGN_OFF", sourceTemplateId: { not: null } },
+        select: { id: true },
+      },
       project: { select: { managerId: true } },
       assignments: {
         orderBy: { isLead: "desc" },
@@ -89,6 +106,29 @@ export default async function RevisitPage({
               name: assignment.user.name,
               isLead: assignment.isLead,
             }))}
+            source={{
+              scope: Boolean(job.scopeOfWork?.trim()),
+              deliverables: job._count.deliverableRules,
+              tickets: [
+                job.ticketNumber,
+                ...job.extraTickets.map((row) => row.number),
+                job.incNumber ? `INC ${job.incNumber}` : null,
+              ].filter((value): value is string => Boolean(value)),
+              estimate: [
+                job.estimateMinutes
+                  ? `${decimalHours(job.estimateMinutes)} hrs`
+                  : null,
+                `${job.techsRequired} tech${job.techsRequired === 1 ? "" : "s"}`,
+              ]
+                .filter(Boolean)
+                .join(" · "),
+              pay:
+                job.payType && job.payRate
+                  ? `${job.payType} ${job.payRate}, breaks ${job.breakPaid ? "paid" : "unpaid"}`
+                  : `No pay set on the job — breaks ${job.breakPaid ? "paid" : "unpaid"}.`,
+              dispatch: job._count.dispatchContacts,
+              signOff: job.documents.length > 0,
+            }}
           />
         </CardContent>
       </Card>

@@ -18,6 +18,7 @@ import {
 } from "@/lib/int-wo";
 import { notify } from "@/lib/notifications";
 import { resolvePayRate } from "@/lib/pay-rates";
+import { REVISIT_CARRIES, type RevisitCarry } from "@/lib/revisit";
 import { canOnJob, resolveJobSupervisor } from "@/lib/scope";
 import { can, requirePermission } from "@/lib/session";
 import { PayType } from "@prisma-client";
@@ -396,6 +397,16 @@ const revisitSchema = z.object({
   /** Who is going back. Ticked from the original crew, and editable. */
   crewIds: z.array(z.string()).default([]),
   leadId: optionalText,
+  /**
+   * Which parts of the original this one starts from.
+   *
+   * A list rather than a flag per field, so adding something that can be
+   * carried is one name in REVISIT_CARRIES and one checkbox, not a schema
+   * change and a migration.
+   */
+  carry: z.array(z.enum(REVISIT_CARRIES)).default([]),
+  /** Fresh resolution, or the rate each person was actually on last time. */
+  rates: z.enum(["fresh", "keep"]).default("fresh"),
 });
 
 export async function createRevisit(
@@ -407,6 +418,7 @@ export async function createRevisit(
   const parsed = revisitSchema.safeParse({
     ...Object.fromEntries(formData),
     crewIds: formData.getAll("crewIds").map(String).filter(Boolean),
+    carry: formData.getAll("carry").map(String).filter(Boolean),
   });
   if (!parsed.success) {
     return { ok: false, error: z.prettifyError(parsed.error) };
@@ -430,7 +442,33 @@ export async function createRevisit(
       techsRequired: true,
       scopeOfWork: true,
       breakPaid: true,
+      payType: true,
+      payRate: true,
+      travelReimbursement: true,
+      pmContactId: true,
       site: { select: { timeZone: true } },
+      extraTickets: {
+        orderBy: { order: "asc" },
+        select: { number: true, order: true },
+      },
+      dispatchContacts: {
+        orderBy: { order: "asc" },
+        select: {
+          label: true,
+          name: true,
+          phone: true,
+          email: true,
+          note: true,
+          order: true,
+        },
+      },
+      // The blank itself is not copied across — two jobs pointing at one file
+      // is how deleting the first breaks the second. What is carried is which
+      // company blank it came from, and a fresh copy is taken from that.
+      documents: {
+        where: { jobDocumentKind: "SIGN_OFF", sourceTemplateId: { not: null } },
+        select: { sourceTemplateId: true },
+      },
       // Who worked it, so the same people can be sent back without being
       // looked up and re-added by hand.
       assignments: {
@@ -492,6 +530,7 @@ export async function createRevisit(
   // could not clock in on it, because as far as the record was concerned they
   // were not on the job at all. A tech cannot see a job they are not on
   // either, so it did not even fail loudly; it just was not there.
+  const carries = new Set<RevisitCarry>(input.carry);
   const wanted = new Set(input.crewIds);
   const crew = parent.assignments.filter((entry) => wanted.has(entry.userId));
 
@@ -507,17 +546,23 @@ export async function createRevisit(
       );
 
       // A rate somebody was deliberately put on — a trainee, a favour — is a
-      // decision about that person and travels with them. Everything else is
-      // resolved afresh, because a revisit is a new job and last month's
-      // resolved rate may no longer be what they are on.
-      if (entry.payOverridden) {
+      // decision about that person and travels with them whatever else was
+      // chosen. Beyond that it is the planner's call: resolve afresh, because
+      // a revisit is a new job and last month's rate may not be what they are
+      // on now, or keep exactly what they were paid last time.
+      if (entry.payOverridden || input.rates === "keep") {
         return {
           userId: entry.userId,
           supervisorId,
           payType: entry.payType,
           payRate: entry.payRate.toString(),
-          payRateNote: entry.payRateNote,
-          payOverridden: true,
+          // The exception flag is theirs, not this form's: it means "leave
+          // this person alone when the job's pay is set", and carrying a rate
+          // forward is not the same claim.
+          payOverridden: entry.payOverridden,
+          payRateNote:
+            entry.payRateNote ??
+            (entry.payOverridden ? null : "Carried from the original visit"),
           travelReimbursement: entry.travelReimbursement?.toString() ?? null,
         };
       }
@@ -570,13 +615,32 @@ export async function createRevisit(
         siteId: parent.siteId,
         projectId: parent.projectId,
         externalAssignmentId: assignmentId,
-        ticketNumber: parent.ticketNumber,
-        incNumber: parent.incNumber,
+        ticketNumber: carries.has("tickets") ? parent.ticketNumber : null,
+        incNumber: carries.has("tickets") ? parent.incNumber : null,
+        extraTickets:
+          carries.has("tickets") && parent.extraTickets.length > 0
+            ? { create: parent.extraTickets.map((row) => ({ ...row })) }
+            : undefined,
         scheduledStart,
-        estimateMinutes: parent.estimateMinutes,
-        techsRequired: parent.techsRequired,
-        scopeOfWork: parent.scopeOfWork,
-        breakPaid: parent.breakPaid,
+        estimateMinutes: carries.has("estimate")
+          ? parent.estimateMinutes
+          : null,
+        techsRequired: carries.has("estimate") ? parent.techsRequired : 1,
+        scopeOfWork: carries.has("scope") ? parent.scopeOfWork : null,
+        // The break rule travels with pay, being the same kind of decision.
+        // Unticked, the revisit falls back to what the project says, which is
+        // where a job with nobody's opinion on it should start.
+        breakPaid: carries.has("pay") ? parent.breakPaid : true,
+        payType: carries.has("pay") ? parent.payType : null,
+        payRate: carries.has("pay") ? parent.payRate : null,
+        travelReimbursement: carries.has("pay")
+          ? parent.travelReimbursement
+          : null,
+        pmContactId: carries.has("dispatch") ? parent.pmContactId : null,
+        dispatchContacts:
+          carries.has("dispatch") && parent.dispatchContacts.length > 0
+            ? { create: parent.dispatchContacts.map((row) => ({ ...row })) }
+            : undefined,
         lifecycle: scheduledStart ? "SCHEDULED" : "DRAFT",
         createdById: actor.id,
         assignments:
@@ -594,21 +658,45 @@ export async function createRevisit(
                 })),
               }
             : undefined,
-        deliverableRules: {
-          create: parent.deliverableRules.map((rule) => ({
-            category: rule.category,
-            customLabel: rule.customLabel,
-            enabled: rule.enabled,
-            required: rule.required,
-            requiresPhoto: rule.requiresPhoto,
-            requiresText: rule.requiresText,
-            order: rule.order,
-          })),
-        },
+        // Unticked leaves the revisit with no rows of its own, which is how a
+        // job says "whatever the project asks for" rather than "nothing".
+        deliverableRules:
+          carries.has("deliverables") && parent.deliverableRules.length > 0
+            ? {
+                create: parent.deliverableRules.map((rule) => ({
+                  category: rule.category,
+                  customLabel: rule.customLabel,
+                  enabled: rule.enabled,
+                  required: rule.required,
+                  requiresPhoto: rule.requiresPhoto,
+                  requiresText: rule.requiresText,
+                  order: rule.order,
+                })),
+              }
+            : undefined,
       },
       select: { id: true, intWoId: true },
     });
   });
+
+  // Their sign-off blank, taken fresh from the company template the original
+  // used rather than pointed at the original's own file.
+  if (carries.has("signOff")) {
+    const templateIds = Array.from(
+      new Set(
+        parent.documents
+          .map((document) => document.sourceTemplateId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    );
+    const allowed = await db.clientDocumentTemplate.findMany({
+      where: { id: { in: templateIds }, clientId: parent.clientId },
+      select: { id: true },
+    });
+    for (const template of allowed) {
+      await copyTemplateToJob(template.id, job.id, actor.id);
+    }
+  }
 
   await recordAudit({
     actorId: actor.id,

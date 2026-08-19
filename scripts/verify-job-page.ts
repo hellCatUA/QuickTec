@@ -1951,6 +1951,10 @@ async function main() {
     const back = await db.job.findFirstOrThrow({
       where: { parentJobId: assignment.jobId },
       select: {
+        ticketNumber: true,
+        scopeOfWork: true,
+        estimateMinutes: true,
+        _count: { select: { deliverableRules: true, extraTickets: true } },
         assignments: {
           select: { userId: true, isLead: true, payType: true, payRate: true },
         },
@@ -1985,6 +1989,87 @@ async function main() {
         `${back.assignments[0]?.payType} ${back.assignments[0]?.payRate}`,
       false,
     );
+
+    // Everything offered is ticked, so pressing straight through carries the
+    // lot — which is what a revisit almost always wants. Read against the
+    // original rather than against a literal: the fixture's numbers are not
+    // this check's business.
+    const from = await db.job.findUniqueOrThrow({
+      where: { id: assignment.jobId },
+      select: {
+        ticketNumber: true,
+        scopeOfWork: true,
+        estimateMinutes: true,
+        _count: { select: { extraTickets: true, deliverableRules: true } },
+      },
+    });
+
+    check(
+      "the ticket comes across by default",
+      back.ticketNumber,
+      from.ticketNumber,
+    );
+    check(
+      "the ones after it too",
+      back._count.extraTickets,
+      from._count.extraTickets,
+    );
+    check(
+      "and the sheet this job asked for",
+      back._count.deliverableRules,
+      from._count.deliverableRules,
+    );
+    check("and the scope", back.scopeOfWork, from.scopeOfWork);
+    check("and the estimate", back.estimateMinutes, from.estimateMinutes);
+
+    // --- and the parts that were unticked stay behind ----------------------
+    await db.job.deleteMany({ where: { parentJobId: assignment.jobId } });
+
+    await planner.goto(`${BASE}/jobs/${assignment.jobId}/revisit`, {
+      waitUntil: "load",
+    });
+    await planner.waitForTimeout(1000);
+    await planner.getByRole("button", { name: "Schedule a revisit" }).click();
+
+    await planner
+      .getByRole("checkbox", { name: /Ticket and INC numbers/ })
+      .uncheck({ force: true });
+    await planner
+      .getByRole("checkbox", { name: /Scope of work/ })
+      .uncheck({ force: true });
+    await planner
+      .getByRole("checkbox", { name: /Estimate and crew size/ })
+      .uncheck({ force: true });
+    await planner.getByRole("button", { name: "Create revisit" }).click();
+
+    for (let attempt = 0; attempt < 30; attempt++) {
+      const made = await db.job.count({
+        where: { parentJobId: assignment.jobId },
+      });
+      if (made > 0) break;
+      await planner.waitForTimeout(1000);
+    }
+
+    const bare = await db.job.findFirstOrThrow({
+      where: { parentJobId: assignment.jobId },
+      select: {
+        ticketNumber: true,
+        incNumber: true,
+        scopeOfWork: true,
+        estimateMinutes: true,
+        _count: { select: { extraTickets: true, deliverableRules: true } },
+        assignments: { select: { userId: true } },
+      },
+    });
+
+    check("an unticked ticket number is not carried", bare.ticketNumber, null);
+    check("nor the ones after it", bare._count.extraTickets, 0);
+    check("nor the INC", bare.incNumber, null);
+    check("an unticked scope is not carried", bare.scopeOfWork, null);
+    check("an unticked estimate is not carried", bare.estimateMinutes, null);
+    // Ticked things are unaffected by what was unticked beside them.
+    check("what stayed ticked still is", bare._count.deliverableRules > 0, true);
+    check("and the crew is a separate question", bare.assignments.length, 1);
 
     // Not left behind for the next run to trip over.
     await db.job.deleteMany({ where: { parentJobId: assignment.jobId } });
