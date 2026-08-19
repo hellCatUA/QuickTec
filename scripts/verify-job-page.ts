@@ -1945,6 +1945,47 @@ async function main() {
       "RESCHEDULED",
     );
 
+    // Reported from the field: the revisit carried the site, the numbers, the
+    // scope and the deliverable sheet, and nobody at all — so the tech told to
+    // go back could not clock in, and could not even see the job.
+    const back = await db.job.findFirstOrThrow({
+      where: { parentJobId: assignment.jobId },
+      select: {
+        assignments: {
+          select: { userId: true, isLead: true, payType: true, payRate: true },
+        },
+      },
+    });
+    check("the crew goes back with it", back.assignments.length, 1);
+    check(
+      "and it is the person who worked it",
+      back.assignments[0]?.userId,
+      tech.id,
+    );
+    check(
+      "still leading it",
+      back.assignments[0]?.isLead,
+      true,
+    );
+    // A revisit is a new job, so the rate is resolved afresh rather than
+    // copied from a month ago — unless it was a deliberate exception. The
+    // parent carries a rate set on that job; the revisit does not inherit it.
+    const parentRate = await db.jobAssignment.findUniqueOrThrow({
+      where: { id: assignment.id },
+      select: { payType: true, payRate: true },
+    });
+    check(
+      "on the tech's own rate, resolved afresh",
+      `${back.assignments[0]?.payType} ${back.assignments[0]?.payRate}`,
+      "HOURLY 45",
+    );
+    check(
+      "which is not the rate somebody set on the job it came from",
+      `${parentRate.payType} ${parentRate.payRate}` ===
+        `${back.assignments[0]?.payType} ${back.assignments[0]?.payRate}`,
+      false,
+    );
+
     // Not left behind for the next run to trip over.
     await db.job.deleteMany({ where: { parentJobId: assignment.jobId } });
     await db.job.update({

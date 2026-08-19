@@ -34,9 +34,13 @@ export default async function RevisitPage({
       projectId: true,
       project: { select: { managerId: true } },
       assignments: {
+        orderBy: { isLead: "desc" },
         select: {
           supervisorId: true,
-          user: { select: { id: true, directSupervisorId: true } },
+          isLead: true,
+          user: {
+            select: { id: true, name: true, directSupervisorId: true },
+          },
         },
       },
     },
@@ -72,13 +76,19 @@ export default async function RevisitPage({
         <CardContent className="flex flex-col gap-3">
           <p className="text-sm text-muted-foreground">
             Creates a new job carrying the same internal number with an -R
-            suffix, in the month the revisit happens. Site, scope and deliverable
-            rules are copied across.
+            suffix, in the month the revisit happens. Site, scope, deliverable
+            rules and the crew are copied across.
           </p>
           <RevisitPanel
             jobId={job.id}
             jobTitle={job.title}
             externalAssignmentId={job.externalAssignmentId}
+            canAssign={can(user, "job.assign")}
+            crew={job.assignments.map((assignment) => ({
+              id: assignment.user.id,
+              name: assignment.user.name,
+              isLead: assignment.isLead,
+            }))}
           />
         </CardContent>
       </Card>

@@ -393,6 +393,9 @@ const revisitSchema = z.object({
   externalAssignmentId: optionalText,
   scheduledStart: optionalText,
   title: optionalText,
+  /** Who is going back. Ticked from the original crew, and editable. */
+  crewIds: z.array(z.string()).default([]),
+  leadId: optionalText,
 });
 
 export async function createRevisit(
@@ -401,7 +404,10 @@ export async function createRevisit(
 ): Promise<ActionResult> {
   const actor = await requirePermission("job.create");
 
-  const parsed = revisitSchema.safeParse(Object.fromEntries(formData));
+  const parsed = revisitSchema.safeParse({
+    ...Object.fromEntries(formData),
+    crewIds: formData.getAll("crewIds").map(String).filter(Boolean),
+  });
   if (!parsed.success) {
     return { ok: false, error: z.prettifyError(parsed.error) };
   }
@@ -425,6 +431,21 @@ export async function createRevisit(
       scopeOfWork: true,
       breakPaid: true,
       site: { select: { timeZone: true } },
+      // Who worked it, so the same people can be sent back without being
+      // looked up and re-added by hand.
+      assignments: {
+        select: {
+          userId: true,
+          isLead: true,
+          supervisorId: true,
+          payType: true,
+          payRate: true,
+          payRateNote: true,
+          payOverridden: true,
+          travelReimbursement: true,
+          user: { select: { name: true } },
+        },
+      },
       deliverableRules: {
         select: {
           category: true,
@@ -463,6 +484,71 @@ export async function createRevisit(
       ? revisitAssignmentId(parent.externalAssignmentId)
       : input.externalAssignmentId;
 
+  // Who is going back.
+  //
+  // A revisit used to be created with nobody on it. Everything else was
+  // carried over — the site, the numbers, the scope, the deliverable sheet —
+  // so it read as the same job, and then the person who was told to go back
+  // could not clock in on it, because as far as the record was concerned they
+  // were not on the job at all. A tech cannot see a job they are not on
+  // either, so it did not even fail loudly; it just was not there.
+  const wanted = new Set(input.crewIds);
+  const crew = parent.assignments.filter((entry) => wanted.has(entry.userId));
+
+  if (crew.length > 0 && !can(actor, "job.assign")) {
+    return { ok: false, error: "You cannot assign techs to a job." };
+  }
+
+  const carried = await Promise.all(
+    crew.map(async (entry) => {
+      const supervisorId = await resolveJobSupervisor(
+        entry.userId,
+        parent.projectId,
+      );
+
+      // A rate somebody was deliberately put on — a trainee, a favour — is a
+      // decision about that person and travels with them. Everything else is
+      // resolved afresh, because a revisit is a new job and last month's
+      // resolved rate may no longer be what they are on.
+      if (entry.payOverridden) {
+        return {
+          userId: entry.userId,
+          supervisorId,
+          payType: entry.payType,
+          payRate: entry.payRate.toString(),
+          payRateNote: entry.payRateNote,
+          payOverridden: true,
+          travelReimbursement: entry.travelReimbursement?.toString() ?? null,
+        };
+      }
+
+      const resolved = await resolvePayRate(
+        entry.userId,
+        parent.projectId,
+        parent.clientId,
+      );
+      return {
+        userId: entry.userId,
+        supervisorId,
+        payType: resolved.payType,
+        payRate: resolved.rate,
+        payRateNote:
+          resolved.source === "none"
+            ? "No rate configured — defaulted to non-billable"
+            : null,
+        payOverridden: false,
+        travelReimbursement: resolved.travelReimbursement ?? null,
+      };
+    }),
+  );
+
+  // Whoever led it last time keeps it, unless the planner said otherwise or
+  // that person is not among those going back.
+  const leadId =
+    input.leadId && wanted.has(input.leadId)
+      ? input.leadId
+      : (crew.find((entry) => entry.isLead)?.userId ?? crew[0]?.userId ?? null);
+
   const job = await db.$transaction(async (tx) => {
     const { intWoId, sequence, revisitNumber } = await allocateRevisitIntWo(tx, {
       parentJobId: parent.id,
@@ -493,6 +579,21 @@ export async function createRevisit(
         breakPaid: parent.breakPaid,
         lifecycle: scheduledStart ? "SCHEDULED" : "DRAFT",
         createdById: actor.id,
+        assignments:
+          carried.length > 0
+            ? {
+                create: carried.map((entry) => ({
+                  userId: entry.userId,
+                  supervisorId: entry.supervisorId,
+                  isLead: entry.userId === leadId,
+                  payType: entry.payType,
+                  payRate: entry.payRate,
+                  payRateNote: entry.payRateNote,
+                  payOverridden: entry.payOverridden,
+                  travelReimbursement: entry.travelReimbursement,
+                })),
+              }
+            : undefined,
         deliverableRules: {
           create: parent.deliverableRules.map((rule) => ({
             category: rule.category,
