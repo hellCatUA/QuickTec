@@ -28,7 +28,7 @@ export async function GET(
   });
 
   // Streamed rather than buffered — thirty full-size photos should not sit in
-  // memory while a phone pulls them down over Tailscale. No Content-Length is
+  // memory while a phone pulls them down over the VPN. No Content-Length is
   // possible for the same reason.
   return new NextResponse(
     Readable.toWeb(archive) as ReadableStream<Uint8Array>,

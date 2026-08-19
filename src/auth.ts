@@ -145,7 +145,7 @@ async function fetchUserInfo(
 }
 
 export const authConfig: NextAuthConfig = {
-  // Behind Nginx Proxy Manager on a Tailscale-only subdomain, so the host
+  // Behind Nginx Proxy Manager on a VPN-only subdomain, so the host
   // header has to be trusted for callback URLs to come out right.
   trustHost: true,
 

@@ -46,7 +46,7 @@ export function PdfPage({ url, page, width, className }: PdfPageProps) {
         const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
 
         // The worker is emitted as an asset of this bundle rather than pulled
-        // from a CDN: the app runs behind Tailscale on a server with no
+        // from a CDN: the app runs behind the company VPN on a server with no
         // outbound path to one.
         pdfjs.GlobalWorkerOptions.workerSrc = new URL(
           "pdfjs-dist/legacy/build/pdf.worker.min.mjs",

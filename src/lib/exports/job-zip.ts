@@ -19,8 +19,8 @@ import { absolutePath, fileExists } from "@/lib/storage";
  * Photos sit under their section and then under whoever took them, so a
  * two-tech job does not turn into an unsorted pile. The archive is streamed
  * rather than assembled in memory: thirty photos at 2400px is comfortably more
- * than a Node buffer should be holding while a phone downloads it over
- * Tailscale.
+ * than a Node buffer should be holding while a phone downloads it over the
+ * VPN.
  */
 
 /** Strips anything that would upset a filesystem, on any platform. */
