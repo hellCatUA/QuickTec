@@ -6,6 +6,7 @@ import { recordAudit } from "@/lib/audit";
 import { db } from "@/lib/db";
 import { optionalText } from "@/lib/form";
 import { getSessionUser } from "@/lib/session";
+import { US_STATES } from "@/lib/us-regions";
 
 export type ContactResult = { ok: true } | { ok: false; error: string };
 
@@ -14,7 +15,12 @@ const contactSchema = z.object({
   addressLine1: optionalText,
   addressLine2: optionalText,
   city: optionalText,
-  state: optionalText,
+  // The picker offers fifty-six; the action should accept fifty-six. It is
+  // the only one of these fields with a closed set behind it.
+  state: optionalText.refine(
+    (value) => !value || US_STATES.some((entry) => entry.code === value),
+    "That is not a state.",
+  ),
   postalCode: optionalText,
   country: optionalText,
 });

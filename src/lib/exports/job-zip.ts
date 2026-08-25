@@ -59,14 +59,15 @@ export async function buildJobZip(data: JobExportData) {
    */
   const missing: string[] = [];
 
-  // A missing photo should cost that photo, not the whole download — and
-  // throwing from an event handler cannot be caught by the caller anyway, it
-  // just takes the process's stream down mid-download and hands the client a
-  // truncated zip.
+  // Archiver raises this from its queue worker, which drains after this
+  // function has already written the manifest below — so there is no putting
+  // it in there. Logged instead, and loudly: the pre-checks further down
+  // catch the ordinary "file is gone" case, so anything reaching here is the
+  // unusual kind, and the download it produces will be quietly short.
   archive.on("warning", (error: ArchiverError) => {
     const where = (error as { path?: unknown }).path;
-    missing.push(
-      `${typeof where === "string" ? where : "a file"}: ${error.message}`,
+    console.error(
+      `[export] ${job.intWoId}: ${typeof where === "string" ? where : "a file"} — ${error.message}`,
     );
   });
 

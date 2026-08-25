@@ -67,16 +67,20 @@ export default async function UsersSettingsPage() {
         </Card>
       ) : (
         <div className="flex flex-col gap-3">
-          {users.map((user) => (
+          {users.map(({ passwordHash, ...user }) => (
             <UserRow
               key={user.id}
               user={{
                 ...user,
                 lastLoginAt: user.lastLoginAt?.toISOString() ?? null,
-                // The hash never leaves the server; whether there is one does,
-                // because "invited and never signed in" reads differently from
-                // "forgotten it".
-                hasPassword: user.passwordHash !== null,
+                // Pulled out of the spread rather than trusted to it. UserRow
+                // is a client component, so anything handed to it is
+                // serialised into the payload the browser receives — and
+                // `...user` was quietly putting every scrypt hash in there
+                // while the comment underneath claimed the opposite. Only the
+                // answer to "is there one" crosses, because "invited and never
+                // signed in" reads differently from "forgotten it".
+                hasPassword: passwordHash !== null,
               }}
               supervisorOptions={supervisorOptions.filter(
                 (option) => option.id !== user.id,

@@ -7,11 +7,14 @@
 -- two formats in one list, sorting apart from each other, for no gain — the
 -- century was never the part anybody needed.
 --
--- Matched strictly on a four-digit year and two-digit month at the front, so a
--- number already in the new shape is left alone and this can be re-run.
+-- Matched on a four-digit year, a two-digit month, and then a project ref that
+-- is NOT itself two digits followed by a dash. Without that last part a client
+-- whose project ID happens to be two digits would produce 2608-12-0042, which
+-- looks exactly like an unconverted number, and a second run would chew it
+-- down to 0812-0042. externalProjectId is free text, so that is possible.
 UPDATE "Job"
 SET "intWoId" =
   substring("intWoId" from 3 for 2) ||
   substring("intWoId" from 6 for 2) ||
   substring("intWoId" from 8)
-WHERE "intWoId" ~ '^[0-9]{4}-[0-9]{2}-';
+WHERE "intWoId" ~ '^[0-9]{4}-[0-9]{2}-' AND "intWoId" !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}-';

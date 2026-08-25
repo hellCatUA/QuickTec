@@ -1,44 +1,23 @@
 import { db } from "@/lib/db";
-import { pad, zonedParts } from "@/lib/datetime";
+import { formatIntWo, NO_PROJECT_REF } from "@/lib/int-wo-format";
+import { zonedParts } from "@/lib/datetime";
 import type { Prisma } from "@prisma-client";
 
 /**
  * Internal work order numbering.
  *
- *   YYMM-PRJID-NNNN            2607-PRJ12-0042
- *   YYMM-PRJID-NNNN-R<n>       2608-PRJ12-0042-R1
+ * The shape of the number lives in int-wo-format.ts, so the new-job form can
+ * show it before it exists without dragging the database into the browser.
+ * This file is the allocation: which counter it comes from and when.
  *
- * - YYMM is the last two digits of the year and the month, run together: the
- *   number is read off a phone screen and written onto paper forms, and the
- *   century has never been the part anybody needed.
- * - PRJID is the client's own project ID, or 0000 when the job has no project.
  * - Jobs with no project draw from a global counter that resets each January.
  * - Jobs in a project draw from that project's counter, which never resets.
  * - A revisit keeps its parent's sequence and project, and takes the month it
- *   actually happens in — so August's revisit of a July job reads 2608-…-R1.
+ *   actually happens in.
  */
 
-export const NO_PROJECT_REF = "0000";
-const SEQUENCE_WIDTH = 4;
-
-export type IntWoParts = {
-  year: number;
-  month: number;
-  projectRef: string;
-  sequence: number;
-  revisitNumber?: number | null;
-};
-
-export function formatIntWo(parts: IntWoParts): string {
-  const base = [
-    // Two digits of year and two of month, as one segment.
-    `${pad(parts.year % 100)}${pad(parts.month)}`,
-    parts.projectRef || NO_PROJECT_REF,
-    pad(parts.sequence, SEQUENCE_WIDTH),
-  ].join("-");
-
-  return parts.revisitNumber ? `${base}-R${parts.revisitNumber}` : base;
-}
+export { formatIntWo, NO_PROJECT_REF };
+export type { IntWoParts } from "@/lib/int-wo-format";
 
 /**
  * A revisit reusing the original external Assignment ID is marked with an R-

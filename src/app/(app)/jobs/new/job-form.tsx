@@ -22,6 +22,7 @@ import { Combobox } from "@/components/ui/combobox";
 import { Field, Input, Select, Textarea } from "@/components/ui/field";
 import { FormStatus, type SaveState } from "@/components/ui/form-status";
 import { HoursPicker, Stepper } from "@/components/ui/stepper";
+import { formatIntWo } from "@/lib/int-wo-format";
 import { cn } from "@/lib/utils";
 import { createJob, type ActionResult } from "../actions";
 import { DispatchList } from "./dispatch-list";
@@ -216,20 +217,23 @@ export function JobForm({
     pickedTemplates ??
     clientTemplates.filter((template) => template.isDefault).map((t) => t.id);
 
-  // Mirrors formatIntWo on the server. Advisory only: the real number is
-  // allocated inside the creating transaction, so a concurrent save can shift it.
+  // The same function the server allocates with, not a second copy of the
+  // format: this preview went on promising YYYY-MM-… for as long as the copy
+  // existed, while the job created underneath it got the short number.
+  // Advisory only — the real number is allocated inside the creating
+  // transaction, so a concurrent save can still shift the sequence.
   const intWoPreview = useMemo(() => {
     const date = scheduledStart ? new Date(scheduledStart) : new Date();
     if (Number.isNaN(date.getTime())) return null;
 
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const projectRef = selectedProject?.externalProjectId || "0000";
-    const sequence = selectedProject
-      ? selectedProject.intWoCounter + 1
-      : globalNextSequence + 1;
-
-    return `${year}-${month}-${projectRef}-${String(sequence).padStart(4, "0")}`;
+    return formatIntWo({
+      year: date.getFullYear(),
+      month: date.getMonth() + 1,
+      projectRef: selectedProject?.externalProjectId || "",
+      sequence: selectedProject
+        ? selectedProject.intWoCounter + 1
+        : globalNextSequence + 1,
+    });
   }, [scheduledStart, selectedProject, globalNextSequence]);
 
   const defaultLead =
@@ -415,7 +419,7 @@ export function JobForm({
           <Field
             label="Scheduled start"
             htmlFor="scheduledStart"
-            hint="Site local time. Also decides the YYYY-MM of the WO number."
+            hint="Site local time. Also decides the YYMM of the WO number."
           >
             <Input
               id="scheduledStart"

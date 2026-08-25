@@ -125,29 +125,37 @@ const ZIP_RANGES: ZipRange[] = [
   { from: 370, to: 385, zone: "America/Chicago" },
   // Kentucky: Louisville and Lexington Eastern, Bowling Green and Paducah
   // Central.
+  { from: 425, to: 426, zone: "America/New_York" },
   { from: 420, to: 427, zone: "America/Chicago" },
   // Indiana: the Gary corner and the Evansville corner run on Chicago time.
   { from: 463, to: 464, zone: "America/Chicago" },
   { from: 476, to: 477, zone: "America/Chicago" },
-  // Michigan: the western end of the Upper Peninsula.
-  { from: 498, to: 499, zone: "America/Chicago" },
+  // Michigan's Upper Peninsula is mostly Eastern — Marquette, Escanaba and
+  // Houghton all are — and the four Central counties (Gogebic, Iron,
+  // Dickinson, Menominee) share their prefixes with Eastern towns. No ZIP
+  // range separates them, so the majority wins and the exception is left to
+  // whoever knows the address.
   // The western ends of the plains states.
   { from: 577, to: 577, zone: "America/Denver" },
   { from: 586, to: 586, zone: "America/Denver" },
-  { from: 677, to: 679, zone: "America/Denver" },
-  { from: 691, to: 691, zone: "America/Denver" },
+  { from: 677, to: 677, zone: "America/Denver" },
   { from: 693, to: 693, zone: "America/Denver" },
   // Texas: El Paso and Hudspeth counties.
   { from: 798, to: 799, zone: "America/Denver" },
   { from: 885, to: 885, zone: "America/Denver" },
-  // Idaho: the panhandle above the Salmon River is Pacific.
+  // Idaho: the ten northern counties are Pacific — Coeur d'Alene and Moscow
+  // in 838, Lewiston in 835.
+  { from: 835, to: 835, zone: "America/Los_Angeles" },
   { from: 838, to: 838, zone: "America/Los_Angeles" },
 
   // --- Eastern --------------------------------------------------------------
   { from: 5, to: 5, zone: "America/New_York" },
   { from: 10, to: 349, zone: "America/New_York" },
   { from: 398, to: 419, zone: "America/New_York" },
-  { from: 430, to: 497, zone: "America/New_York" },
+  // To 499 rather than 497: the Upper Peninsula is Eastern, its four Central
+  // counties share prefixes with Eastern towns, and stopping at 497 left
+  // Marquette and Houghton with no zone at all.
+  { from: 430, to: 499, zone: "America/New_York" },
 
   // --- Central --------------------------------------------------------------
   { from: 350, to: 397, zone: "America/Chicago" },

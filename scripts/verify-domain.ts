@@ -1192,6 +1192,17 @@ async function main() {
     ["83814", "America/Los_Angeles", "Coeur d'Alene, north Idaho"],
     ["83702", "America/Denver", "Boise, south Idaho"],
     ["96799", "Pacific/Pago_Pago", "American Samoa, inside Hawaii's prefix"],
+    // Five ranges an audit found backwards. Each was a confident claim about
+    // a prefix whose towns are mostly on the other clock, which is worse than
+    // no rule at all — the block they sit in would have been right.
+    ["69101", "America/Chicago", "North Platte, Nebraska"],
+    ["69361", "America/Denver", "Scottsbluff, in the Nebraska panhandle"],
+    ["67801", "America/Chicago", "Dodge City, Kansas"],
+    ["67735", "America/Denver", "Goodland, in far-western Kansas"],
+    ["49855", "America/New_York", "Marquette, in Michigan's Upper Peninsula"],
+    ["83501", "America/Los_Angeles", "Lewiston, in the Idaho panhandle"],
+    ["42501", "America/New_York", "Somerset, Kentucky"],
+    ["42101", "America/Chicago", "Bowling Green, Kentucky"],
   ];
   for (const [zip, zone, where] of split) {
     check(`${where} reads as ${zone.split("/")[1]}`, timeZoneForZip(zip), zone);
