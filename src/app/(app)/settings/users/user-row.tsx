@@ -36,11 +36,19 @@ export function UserRow({
   user: {
     id: string;
     name: string;
+    nameOverridden: boolean;
+    legalName: string | null;
     email: string;
     baseRole: string;
     active: boolean;
     timeZone: string;
     phone: string | null;
+    addressLine1: string | null;
+    addressLine2: string | null;
+    city: string | null;
+    state: string | null;
+    postalCode: string | null;
+    country: string | null;
     directSupervisorId: string | null;
     lastLoginAt: string | null;
     signInMethod: string;
@@ -85,6 +93,40 @@ export function UserRow({
             <ResetPassword userId={user.id} email={user.email} />
           ) : null}
 
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field
+              label="Display name"
+              htmlFor={`name-${user.id}`}
+              hint={
+                user.signInMethod === "LOCAL"
+                  ? "What the app calls them."
+                  : user.nameOverridden
+                    ? "Set here, so NextCloud no longer changes it. Clear the box to hand it back."
+                    : "Comes from NextCloud. Typing here takes it over."
+              }
+            >
+              <Input
+                id={`name-${user.id}`}
+                name="name"
+                defaultValue={user.name}
+                autoComplete="off"
+              />
+            </Field>
+
+            <Field
+              label="Legal name"
+              htmlFor={`legal-${user.id}`}
+              hint="For payroll and anything with a signature line. Blank means the display name is it."
+            >
+              <Input
+                id={`legal-${user.id}`}
+                name="legalName"
+                defaultValue={user.legalName ?? ""}
+                autoComplete="off"
+              />
+            </Field>
+          </div>
+
           <div className="grid gap-4 sm:grid-cols-3">
             <Field
               label="Direct supervisor"
@@ -128,6 +170,68 @@ export function UserRow({
               />
             </Field>
           </div>
+
+          {/* Wanted by payroll and by anybody posting something physical.
+              Never on the report a customer reads. */}
+          <fieldset className="flex flex-col gap-4">
+            <legend className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Address
+            </legend>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Address line 1" htmlFor={`addr1-${user.id}`}>
+                <Input
+                  id={`addr1-${user.id}`}
+                  name="addressLine1"
+                  defaultValue={user.addressLine1 ?? ""}
+                  autoComplete="off"
+                />
+              </Field>
+              <Field label="Address line 2" htmlFor={`addr2-${user.id}`}>
+                <Input
+                  id={`addr2-${user.id}`}
+                  name="addressLine2"
+                  defaultValue={user.addressLine2 ?? ""}
+                  autoComplete="off"
+                />
+              </Field>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-4">
+              <Field label="City" htmlFor={`city-${user.id}`}>
+                <Input
+                  id={`city-${user.id}`}
+                  name="city"
+                  defaultValue={user.city ?? ""}
+                  autoComplete="off"
+                />
+              </Field>
+              <Field label="State" htmlFor={`state-${user.id}`}>
+                <Input
+                  id={`state-${user.id}`}
+                  name="state"
+                  defaultValue={user.state ?? ""}
+                  autoComplete="off"
+                />
+              </Field>
+              <Field label="ZIP" htmlFor={`zip-${user.id}`}>
+                <Input
+                  id={`zip-${user.id}`}
+                  name="postalCode"
+                  defaultValue={user.postalCode ?? ""}
+                  autoComplete="off"
+                />
+              </Field>
+              <Field label="Country" htmlFor={`country-${user.id}`}>
+                <Input
+                  id={`country-${user.id}`}
+                  name="country"
+                  defaultValue={user.country ?? ""}
+                  autoComplete="off"
+                />
+              </Field>
+            </div>
+          </fieldset>
 
           <div className="flex flex-wrap items-center gap-3">
             <label className="flex items-center gap-2 text-sm">

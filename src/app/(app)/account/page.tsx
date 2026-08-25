@@ -35,18 +35,45 @@ export default async function AccountPage() {
   const user = await getSessionUser();
   if (!user) redirect("/signin");
 
-  const supervisor = user.directSupervisorId
-    ? await db.user.findUnique({
-        where: { id: user.directSupervisorId },
-        select: { name: true, email: true },
-      })
-    : null;
+  const [supervisor, details] = await Promise.all([
+    user.directSupervisorId
+      ? db.user.findUnique({
+          where: { id: user.directSupervisorId },
+          select: { name: true, email: true },
+        })
+      : null,
+    db.user.findUniqueOrThrow({
+      where: { id: user.id },
+      select: {
+        legalName: true,
+        phone: true,
+        addressLine1: true,
+        addressLine2: true,
+        city: true,
+        state: true,
+        postalCode: true,
+        country: true,
+      },
+    }),
+  ]);
+
+  // One line, the way it would be written on an envelope.
+  const address = [
+    details.addressLine1,
+    details.addressLine2,
+    [details.city, details.state].filter(Boolean).join(", "),
+    details.postalCode,
+    details.country,
+  ]
+    .map((part) => part?.trim())
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4">
       <PageHeader
         title="Your account"
-        description="Read from NextCloud on every sign-in. Ask a manager to change anything here."
+        description="Your name and email come from NextCloud; the rest is held here. Ask a manager to change any of it."
       />
 
       <Card>
@@ -56,6 +83,13 @@ export default async function AccountPage() {
         </CardHeader>
         <CardContent className="flex flex-col gap-2 text-sm">
           <Row label="Role" value={ROLE_LABEL[user.baseRole] ?? user.baseRole} />
+          {/* Only worth a line when it differs — for most people the name the
+              app uses is the name on the paperwork. */}
+          {details.legalName && details.legalName !== user.name ? (
+            <Row label="Legal name" value={details.legalName} />
+          ) : null}
+          <Row label="Phone" value={details.phone ?? "not on file"} />
+          <Row label="Address" value={address || "not on file"} />
           <Row label="Time zone" value={user.timeZone} />
           <Row
             label="Direct supervisor"

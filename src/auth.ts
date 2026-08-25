@@ -368,7 +368,13 @@ export const authConfig: NextAuthConfig = {
 
       const existing = await db.user.findFirst({
         where: { OR: [{ nextcloudSub: sub }, { email }] },
-        select: { id: true, active: true, signInMethod: true, nextcloudSub: true },
+        select: {
+          id: true,
+          active: true,
+          signInMethod: true,
+          nextcloudSub: true,
+          nameOverridden: true,
+        },
       });
 
       if (existing && !existing.active) return `/signin?error=Inactive`;
@@ -389,7 +395,11 @@ export const authConfig: NextAuthConfig = {
           data: {
             nextcloudSub: sub,
             email,
-            name,
+            // NextCloud is where the name comes from, until somebody corrects
+            // it here on purpose. Refreshing it every time regardless would
+            // undo that correction at their next sign-in, days later, with
+            // nothing on screen to say it had happened.
+            ...(existing.nameOverridden ? {} : { name }),
             avatarUrl: (claims.picture as string) ?? undefined,
             baseRole: role,
             lastLoginAt: new Date(),

@@ -97,7 +97,16 @@ const userSchema = z.object({
   userId: z.string().min(1),
   directSupervisorId: optionalText,
   timeZone: z.string().trim().min(1),
+  /** What the app calls them. Blank means "go back to what NextCloud says". */
+  name: optionalText,
+  legalName: optionalText,
   phone: optionalText,
+  addressLine1: optionalText,
+  addressLine2: optionalText,
+  city: optionalText,
+  state: optionalText,
+  postalCode: optionalText,
+  country: optionalText,
   active: flag,
 });
 
@@ -141,7 +150,25 @@ export async function updateUser(
   const before = await db.user.findUnique({ where: { id: userId } });
   if (!before) return { ok: false, error: "User not found." };
 
-  await db.user.update({ where: { id: userId }, data });
+  // A name typed here is a decision, and has to be marked as one: NextCloud
+  // rewrites the name on every sign-in, so without the flag the correction
+  // would survive until that person next signed in and then vanish. Clearing
+  // the field hands the name back to NextCloud, which is how somebody undoes
+  // a correction they no longer want.
+  const { name, ...rest } = data;
+  const nameChange =
+    name && name !== before.name
+      ? { name, nameOverridden: true }
+      : name
+        ? {}
+        : before.nameOverridden
+          ? { nameOverridden: false }
+          : {};
+
+  await db.user.update({
+    where: { id: userId },
+    data: { ...rest, ...nameChange },
+  });
 
   await recordAudit({
     actorId: actor.id,
@@ -150,7 +177,7 @@ export async function updateUser(
     action: "updated",
     detail: diffFields(
       before as unknown as Record<string, unknown>,
-      data as unknown as Record<string, unknown>,
+      { ...rest, ...nameChange } as unknown as Record<string, unknown>,
     ),
   });
 

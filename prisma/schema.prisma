@@ -62,9 +62,31 @@ model User {
   /// OIDC `sub` from NextCloud. Stable across email changes.
   nextcloudSub String? @unique
   email        String  @unique
-  name         String
-  phone        String?
-  avatarUrl    String?
+
+  /// What the app calls this person, everywhere: lists, job pages, the report
+  /// the customer reads. NextCloud supplies it and refreshes it on every
+  /// sign-in, which is right until somebody corrects it here — hence the flag
+  /// below, without which a correction survives until their next sign-in and
+  /// no longer.
+  name           String
+  nameOverridden Boolean @default(false)
+
+  /// Their name as it appears on paperwork, when that is not what anybody
+  /// calls them. Payroll and anything with a signature line want this one; the
+  /// app itself goes on using `name`.
+  legalName String?
+
+  phone     String?
+  avatarUrl String?
+
+  /// Where they actually are. Wanted for payroll and for posting anything
+  /// physical, and deliberately not on the report a customer reads.
+  addressLine1 String?
+  addressLine2 String?
+  city         String?
+  state        String?
+  postalCode   String?
+  country      String? @default("USA")
 
   /// How this person proves who they are.
   ///

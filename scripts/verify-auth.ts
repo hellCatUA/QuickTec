@@ -307,6 +307,38 @@ async function main() {
   check("the account is provisioned", fromIdToken?.name, "Ivy IdToken");
   check("with the role from their group", fromIdToken?.baseRole, "MANAGER");
 
+  // --- a name corrected in QuickTec ----------------------------------------
+  // NextCloud is asked for the name on every sign-in and it is written
+  // straight over the top. A correction made here would therefore last until
+  // that person next signed in and then quietly revert, days later, with
+  // nothing on screen to say it had gone — which is worse than not being able
+  // to correct it at all.
+  await db.user.update({
+    where: { id: fromIdToken!.id },
+    data: { name: "Ivy Kovalenko", nameOverridden: true },
+  });
+
+  await signInRoundTrip();
+  check(
+    "a name set here survives the next sign-in",
+    (await db.user.findUnique({ where: { email: emails[0] } }))?.name,
+    "Ivy Kovalenko",
+  );
+
+  // Clearing it hands the name back, which is how somebody undoes a
+  // correction they no longer want.
+  await db.user.update({
+    where: { id: fromIdToken!.id },
+    data: { nameOverridden: false },
+  });
+
+  await signInRoundTrip();
+  check(
+    "and handing it back lets NextCloud write it again",
+    (await db.user.findUnique({ where: { email: emails[0] } }))?.name,
+    "Ivy IdToken",
+  );
+
   // --- claims only in userinfo ---------------------------------------------
   // Auth.js treats the ID token as the whole profile and never asks userinfo,
   // so this is the case that refused entry on a real install.
