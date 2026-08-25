@@ -295,17 +295,18 @@ with the public `AUTH_URL` and `NEXTCLOUD_ISSUER=http://127.0.0.1:9999`.
 
 ### Domain rules
 
-**Internal work order ID** — `YYYY-MM-PRJID-NNNN`
+**Internal work order ID** — `YYMM-PRJID-NNNN`
 
+- `YYMM` is two digits of year and two of month, run together
 - `PRJID` is the client's project ID, or `0000` when the job has no project
 - Jobs without a project use a global counter that resets each January
 - Jobs in a project use that project's own counter, which never resets
 - Revisits append `-R1`, `-R2`, …, and the month is the revisit's month:
 
 ```
-Original   INT WO 2026-07-PRJ12-0042    Assignment ID 887766
-Revisit 1  INT WO 2026-08-PRJ12-0042-R1 Assignment ID R-887766
-Revisit 2  INT WO 2026-09-PRJ12-0042-R2 Assignment ID R-887766
+Original   INT WO 2607-PRJ12-0042    Assignment ID 887766
+Revisit 1  INT WO 2608-PRJ12-0042-R1 Assignment ID R-887766
+Revisit 2  INT WO 2609-PRJ12-0042-R2 Assignment ID R-887766
 ```
 
 `R-` is added only when the client reuses the original Assignment ID. A genuinely
@@ -391,7 +392,7 @@ Pre-Install/<tech>/IMG_0001.jpg
 Post Install/<tech>/…
 Signatures/MOD-Dana Reyes-Signature.png
 Receipts/…
-<Company> INT WO/2026-07-PRJ12-0042.pdf
+<Company> INT WO/2607-PRJ12-0042.pdf
 887766-Report.txt
 ```
 

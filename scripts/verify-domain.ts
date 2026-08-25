@@ -114,8 +114,8 @@ async function main() {
     });
     noProject.push(job);
   }
-  check("no-project job 1", noProject[0].intWoId, "2026-07-0000-0001");
-  check("no-project job 2", noProject[1].intWoId, "2026-07-0000-0002");
+  check("no-project job 1", noProject[0].intWoId, "2607-0000-0001");
+  check("no-project job 2", noProject[1].intWoId, "2607-0000-0002");
 
   // A job in a different month draws from the same yearly counter.
   const december = new Date("2026-12-03T18:00:00Z");
@@ -130,7 +130,7 @@ async function main() {
       data: { ...base, intWoId, intWoSequence: sequence, scheduledStart: december },
     });
   });
-  check("counter does not reset monthly", decJob.intWoId, "2026-12-0000-0003");
+  check("counter does not reset monthly", decJob.intWoId, "2612-0000-0003");
 
   // A new year restarts it.
   const nextYear = new Date("2027-01-06T18:00:00Z");
@@ -145,7 +145,7 @@ async function main() {
       data: { ...base, intWoId, intWoSequence: sequence, scheduledStart: nextYear },
     });
   });
-  check("counter resets in January", nyJob.intWoId, "2027-01-0000-0001");
+  check("counter resets in January", nyJob.intWoId, "2701-0000-0001");
 
   // --- project counter ----------------------------------------------------
   const projJobs = [];
@@ -170,8 +170,8 @@ async function main() {
     });
     projJobs.push(job);
   }
-  check("project job 1", projJobs[0].intWoId, "2026-07-PRJ12-0001");
-  check("project job 2", projJobs[1].intWoId, "2026-07-PRJ12-0002");
+  check("project job 1", projJobs[0].intWoId, "2607-PRJ12-0001");
+  check("project job 2", projJobs[1].intWoId, "2607-PRJ12-0002");
 
   // Project counters are independent of the global one.
   check(
@@ -203,7 +203,7 @@ async function main() {
       },
     });
   });
-  check("revisit 1 number", r1.intWoId, "2026-08-PRJ12-0001-R1");
+  check("revisit 1 number", r1.intWoId, "2608-PRJ12-0001-R1");
   check("revisit 1 assignment id", r1.externalAssignmentId, "R-887766");
 
   const r2 = await db.$transaction(async (tx) => {
@@ -224,7 +224,7 @@ async function main() {
       },
     });
   });
-  check("revisit 2 number", r2.intWoId, "2026-09-PRJ12-0001-R2");
+  check("revisit 2 number", r2.intWoId, "2609-PRJ12-0001-R2");
   check("R- prefix is not doubled", r2.externalAssignmentId, "R-887766");
 
   check(
@@ -247,7 +247,7 @@ async function main() {
       data: { ...base, projectId: project.id, intWoId, intWoSequence: sequence },
     });
   });
-  check("late-evening job files under local month", tzJob.intWoId, "2026-07-PRJ12-0003");
+  check("late-evening job files under local month", tzJob.intWoId, "2607-PRJ12-0003");
 
   // --- concurrency --------------------------------------------------------
   const concurrent = await Promise.all(
@@ -1675,7 +1675,7 @@ async function main() {
   const exportJob = await db.job.create({
     data: {
       ...base,
-      intWoId: "2026-07-PRJ12-9001",
+      intWoId: "2607-PRJ12-9001",
       intWoSequence: 9001,
       title: "Register Refresh",
       projectId: project.id,
@@ -1998,7 +1998,7 @@ async function main() {
   const payJob = await db.job.create({
     data: {
       ...base,
-      intWoId: "2026-07-PRJ12-9500",
+      intWoId: "2607-PRJ12-9500",
       intWoSequence: 9500,
       title: "Pay week job",
       projectId: project.id,
@@ -2625,7 +2625,7 @@ async function main() {
     data: {
       ...base,
       title: "Register swap",
-      intWoId: "2026-07-0000-9001",
+      intWoId: "2607-0000-9001",
       intWoSequence: 9001,
       projectId: project.id,
       scheduledStart: calStart,
@@ -2800,7 +2800,7 @@ async function main() {
     data: {
       ...base,
       title: "Unscheduled",
-      intWoId: "2026-07-0000-9002",
+      intWoId: "2607-0000-9002",
       intWoSequence: 9002,
     },
   });
@@ -2825,7 +2825,7 @@ async function main() {
     data: {
       ...base,
       title: "Nobody on it",
-      intWoId: "2026-07-0000-9003",
+      intWoId: "2607-0000-9003",
       intWoSequence: 9003,
       scheduledStart: new Date(Date.now() + 3 * 24 * 60 * 60_000),
     },
@@ -2896,7 +2896,7 @@ async function main() {
     data: {
       ...base,
       title: "Finished last quarter",
-      intWoId: "2026-07-0000-9004",
+      intWoId: "2607-0000-9004",
       intWoSequence: 9004,
       scheduledStart: longAgo,
       estimateMinutes: 60,

@@ -692,7 +692,7 @@ enum JobInternalStatus {
 model Job {
   id String @id @default(cuid())
 
-  /// YYYY-MM-PRJID-NNNN, plus -R<n> for revisits. Month is the revisit's month.
+  /// YYMM-PRJID-NNNN, plus -R<n> for revisits. Month is the revisit's month.
   intWoId       String @unique
   /// The NNNN part on its own. A revisit reuses its parent's sequence, so
   /// generating one never has to parse the string back apart.

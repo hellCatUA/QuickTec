@@ -5,14 +5,17 @@ import type { Prisma } from "@prisma-client";
 /**
  * Internal work order numbering.
  *
- *   YYYY-MM-PRJID-NNNN            2026-07-PRJ12-0042
- *   YYYY-MM-PRJID-NNNN-R<n>       2026-08-PRJ12-0042-R1
+ *   YYMM-PRJID-NNNN            2607-PRJ12-0042
+ *   YYMM-PRJID-NNNN-R<n>       2608-PRJ12-0042-R1
  *
+ * - YYMM is the last two digits of the year and the month, run together: the
+ *   number is read off a phone screen and written onto paper forms, and the
+ *   century has never been the part anybody needed.
  * - PRJID is the client's own project ID, or 0000 when the job has no project.
  * - Jobs with no project draw from a global counter that resets each January.
  * - Jobs in a project draw from that project's counter, which never resets.
  * - A revisit keeps its parent's sequence and project, and takes the month it
- *   actually happens in — so August's revisit of a July job reads 2026-08-…-R1.
+ *   actually happens in — so August's revisit of a July job reads 2608-…-R1.
  */
 
 export const NO_PROJECT_REF = "0000";
@@ -28,8 +31,8 @@ export type IntWoParts = {
 
 export function formatIntWo(parts: IntWoParts): string {
   const base = [
-    parts.year,
-    pad(parts.month),
+    // Two digits of year and two of month, as one segment.
+    `${pad(parts.year % 100)}${pad(parts.month)}`,
     parts.projectRef || NO_PROJECT_REF,
     pad(parts.sequence, SEQUENCE_WIDTH),
   ].join("-");
