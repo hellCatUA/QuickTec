@@ -13,6 +13,8 @@ import {
 import { PageHeader } from "@/components/ui/page-header";
 import { db } from "@/lib/db";
 import { getSessionUser } from "@/lib/session";
+import { timeZoneLabel } from "@/lib/us-regions";
+import { ContactForm } from "./contact-form";
 
 export const metadata = { title: "Your account" };
 
@@ -57,23 +59,11 @@ export default async function AccountPage() {
     }),
   ]);
 
-  // One line, the way it would be written on an envelope.
-  const address = [
-    details.addressLine1,
-    details.addressLine2,
-    [details.city, details.state].filter(Boolean).join(", "),
-    details.postalCode,
-    details.country,
-  ]
-    .map((part) => part?.trim())
-    .filter(Boolean)
-    .join(" · ");
-
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4">
       <PageHeader
         title="Your account"
-        description="Your name and email come from NextCloud; the rest is held here. Ask a manager to change any of it."
+        description="Your name and email come from NextCloud. Your contact details are yours to change; the rest is a manager's."
       />
 
       <Card>
@@ -88,9 +78,7 @@ export default async function AccountPage() {
           {details.legalName && details.legalName !== user.name ? (
             <Row label="Legal name" value={details.legalName} />
           ) : null}
-          <Row label="Phone" value={details.phone ?? "not on file"} />
-          <Row label="Address" value={address || "not on file"} />
-          <Row label="Time zone" value={user.timeZone} />
+          <Row label="Time zone" value={timeZoneLabel(user.timeZone)} />
           <Row
             label="Direct supervisor"
             value={
@@ -99,6 +87,20 @@ export default async function AccountPage() {
                 : "not set — payroll needs one"
             }
           />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Contact details</CardTitle>
+          <CardDescription>
+            Yours to keep current — people move, and an address that has to go
+            through somebody else is an address that stays wrong. Your name,
+            role, rate and supervisor are not here: those are a manager&rsquo;s.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ContactForm contact={details} />
         </CardContent>
       </Card>
 

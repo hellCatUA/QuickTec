@@ -1152,6 +1152,55 @@ async function main() {
     buildPunchHistory([{ id: "g", action: "punch_change_requested", createdAt: acted, actorName: "A", detail: {} }], fmt)[0].paired,
     false);
 
+  // --- which clock a ZIP is on ---------------------------------------------
+  // A site left on the company default showed a Dallas job in Los Angeles
+  // time, which is wrong by two hours and invisible until payroll.
+  const { timeZoneForZip, US_STATES, stateName } = await import(
+    "@/lib/us-regions"
+  );
+
+  const zips: [string, string | null][] = [
+    ["90210", "America/Los_Angeles"], // Beverly Hills
+    ["98101", "America/Los_Angeles"], // Seattle
+    ["75201", "America/Chicago"], // Dallas
+    ["60601", "America/Chicago"], // Chicago
+    ["10001", "America/New_York"], // Manhattan
+    ["33101", "America/New_York"], // Miami
+    ["80202", "America/Denver"], // Denver
+    ["85001", "America/Phoenix"], // Phoenix — no daylight saving
+    ["99501", "America/Anchorage"], // Anchorage
+    ["96813", "Pacific/Honolulu"], // Honolulu
+    ["00901", "America/Puerto_Rico"], // San Juan
+    ["not a zip", null],
+    ["9021", null], // too short to mean anything
+  ];
+  for (const [zip, zone] of zips) {
+    check(`${zip} is on the right clock`, timeZoneForZip(zip), zone);
+  }
+
+  // The states that straddle a boundary are the whole reason this is a table
+  // of ZIP ranges rather than a table of states.
+  const split: [string, string, string][] = [
+    ["32502", "America/Chicago", "Pensacola, in the Florida panhandle"],
+    ["32801", "America/New_York", "Orlando, in the rest of Florida"],
+    ["79901", "America/Denver", "El Paso, at the far end of Texas"],
+    ["77002", "America/Chicago", "Houston, in the rest of Texas"],
+    ["37201", "America/Chicago", "Nashville"],
+    ["37902", "America/New_York", "Knoxville"],
+    ["46403", "America/Chicago", "Gary, Indiana"],
+    ["46204", "America/New_York", "Indianapolis"],
+    ["83814", "America/Los_Angeles", "Coeur d'Alene, north Idaho"],
+    ["83702", "America/Denver", "Boise, south Idaho"],
+    ["96799", "Pacific/Pago_Pago", "American Samoa, inside Hawaii's prefix"],
+  ];
+  for (const [zip, zone, where] of split) {
+    check(`${where} reads as ${zone.split("/")[1]}`, timeZoneForZip(zip), zone);
+  }
+
+  check("every state is there, plus DC and the territories", US_STATES.length, 56);
+  check("looked up by code", stateName("wa"), "Washington");
+  check("and an unknown one is not invented", stateName("ZZ"), null);
+
   // --- phone numbers -------------------------------------------------------
   const { formatPhone, formatPhoneAsTyped, telHref } = await import("@/lib/phone");
 

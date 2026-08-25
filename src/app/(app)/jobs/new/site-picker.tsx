@@ -5,6 +5,7 @@ import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { Combobox, type ComboOption } from "@/components/ui/combobox";
 import { Field, Input } from "@/components/ui/field";
+import { StatePicker } from "@/components/ui/state-picker";
 import { quickCreateSite } from "../actions";
 
 export type SiteOption = {
@@ -168,11 +169,7 @@ export function SitePicker({
             />
           </Field>
           <Field label="State" htmlFor="qs-state">
-            <Input
-              id="qs-state"
-              value={state}
-              onChange={(event) => setState(event.target.value)}
-            />
+            <StatePicker id="qs-state" value={state} onChange={setState} />
           </Field>
           <Field label="ZIP" htmlFor="qs-zip">
             <Input

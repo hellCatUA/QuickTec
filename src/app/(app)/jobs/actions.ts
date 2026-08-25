@@ -20,6 +20,7 @@ import { notify } from "@/lib/notifications";
 import { resolvePayRate } from "@/lib/pay-rates";
 import { REVISIT_CARRIES, type RevisitCarry } from "@/lib/revisit";
 import { canOnJob, resolveJobSupervisor } from "@/lib/scope";
+import { timeZoneForZip } from "@/lib/us-regions";
 import { can, requirePermission } from "@/lib/session";
 import { PayType } from "@prisma-client";
 import { jobFormSchema } from "./schema";
@@ -981,6 +982,10 @@ export async function quickCreateSite(
       city: input.city ?? "",
       state: input.state ?? "",
       postalCode: input.postalCode ?? "",
+      // The ZIP already says which clock this place is on, and a site left on
+      // the company default shows a Dallas job in Los Angeles time — wrong in
+      // a way nobody sees until payroll.
+      timeZone: timeZoneForZip(input.postalCode),
     },
     select: { id: true, siteNumber: true, city: true, customer: { select: { code: true } } },
   });

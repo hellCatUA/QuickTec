@@ -11,18 +11,12 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Field, Input, Select } from "@/components/ui/field";
+import { PhoneInput } from "@/components/ui/phone-input";
+import { StateField } from "@/components/ui/state-picker";
+import { US_TIME_ZONES } from "@/lib/us-regions";
 import { updateCompanySettings, type ActionResult } from "../actions";
 
-// Everywhere the company actually operates. Kept short on purpose — a long
-// list is unusable on a phone.
-const TIME_ZONES = [
-  "America/Los_Angeles",
-  "America/Phoenix",
-  "America/Denver",
-  "America/Chicago",
-  "America/New_York",
-  "UTC",
-];
+const TIME_ZONES = US_TIME_ZONES.map((entry) => entry.value);
 
 type CompanyFormValues = {
   name: string;
@@ -137,10 +131,10 @@ export function CompanyForm({ company }: { company: CompanyFormValues }) {
           </Field>
           <div className="grid grid-cols-2 gap-4">
             <Field label="State" htmlFor="state">
-              <Input
+              <StateField
                 id="state"
                 name="state"
-                defaultValue={company.state ?? ""}
+                defaultValue={company.state}
               />
             </Field>
             <Field label="ZIP" htmlFor="postalCode">
@@ -159,12 +153,7 @@ export function CompanyForm({ company }: { company: CompanyFormValues }) {
             />
           </Field>
           <Field label="Phone" htmlFor="phone">
-            <Input
-              id="phone"
-              name="phone"
-              type="tel"
-              defaultValue={company.phone ?? ""}
-            />
+            <PhoneInput id="phone" name="phone" defaultValue={company.phone} />
           </Field>
           <Field label="Email" htmlFor="email">
             <Input

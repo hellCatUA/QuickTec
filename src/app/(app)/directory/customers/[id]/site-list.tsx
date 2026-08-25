@@ -5,19 +5,14 @@ import { useActionState, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Field, Input, Select, Textarea } from "@/components/ui/field";
+import { Combobox } from "@/components/ui/combobox";
+import { Field, Input, Textarea } from "@/components/ui/field";
 import { FormStatus, type SaveState } from "@/components/ui/form-status";
 import { EmptyState } from "@/components/ui/page-header";
+import { StatePicker } from "@/components/ui/state-picker";
 import { formatAddress, mapsUrl, siteLabel } from "@/lib/address";
+import { US_TIME_ZONES, timeZoneForZip } from "@/lib/us-regions";
 import { saveSite, type ActionResult } from "../../actions";
-
-const TIME_ZONES = [
-  "America/Los_Angeles",
-  "America/Phoenix",
-  "America/Denver",
-  "America/Chicago",
-  "America/New_York",
-];
 
 type SiteRecord = {
   id: string;
@@ -56,6 +51,16 @@ function SiteForm({
   );
 
   const key = site?.id ?? "new";
+
+  const [region, setRegion] = useState((site?.state ?? "").toUpperCase());
+  const [zip, setZip] = useState(site?.postalCode ?? "");
+  const [zone, setZone] = useState(site?.timeZone ?? "");
+
+  // The ZIP is being typed anyway and it already knows which clock this place
+  // is on. A site left on the company default is how a Dallas job comes out
+  // in Los Angeles time — wrong in a way nobody notices until payroll.
+  const fromZip = timeZoneForZip(zip);
+  const zoneFollowsZip = !fromZip || fromZip === zone;
 
   return (
     <form action={formAction} className="flex flex-col gap-4">
@@ -119,20 +124,26 @@ function SiteForm({
           />
         </Field>
         <Field label="State" htmlFor={`state-${key}`}>
-          <Input
+          <StatePicker
             id={`state-${key}`}
             name="state"
-            defaultValue={site?.state ?? ""}
-            placeholder="CA"
-            required
-            autoComplete="off"
+            value={region}
+            onChange={setRegion}
           />
         </Field>
         <Field label="ZIP" htmlFor={`zip-${key}`}>
           <Input
             id={`zip-${key}`}
             name="postalCode"
-            defaultValue={site?.postalCode ?? ""}
+            value={zip}
+            onChange={(event) => {
+              setZip(event.target.value);
+              // Filled in for them the first time, so a site added in a hurry
+              // is on the right clock without anybody thinking about it. Once
+              // a zone has been chosen it is left alone.
+              const next = timeZoneForZip(event.target.value);
+              if (next && !zone) setZone(next);
+            }}
             required
             autoComplete="off"
             inputMode="numeric"
@@ -153,20 +164,36 @@ function SiteForm({
         <Field
           label="Time zone"
           htmlFor={`tz-${key}`}
-          hint="Only set this when the site is outside the company default."
+          hint={
+            zoneFollowsZip
+              ? `Filled in from the ZIP. Blank means the company default (${defaultTimeZone}).`
+              : "The ZIP says otherwise — the button below sets it, or leave this if you know better."
+          }
         >
-          <Select
+          <Combobox
             id={`tz-${key}`}
             name="timeZone"
-            defaultValue={site?.timeZone ?? ""}
-          >
-            <option value="">Company default ({defaultTimeZone})</option>
-            {TIME_ZONES.map((zone) => (
-              <option key={zone} value={zone}>
-                {zone}
-              </option>
-            ))}
-          </Select>
+            value={zone}
+            onChange={setZone}
+            options={US_TIME_ZONES.map((entry) => ({
+              value: entry.value,
+              label: entry.label,
+              hint: entry.value,
+              keywords: entry.value,
+            }))}
+            placeholder={`Company default (${defaultTimeZone})`}
+          />
+          {fromZip && !zoneFollowsZip ? (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="mt-2 self-start"
+              onClick={() => setZone(fromZip)}
+            >
+              Use the zone for {zip.trim()}
+            </Button>
+          ) : null}
         </Field>
       </div>
 

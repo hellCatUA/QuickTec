@@ -1,22 +1,17 @@
 "use client";
 
 import { Check, Loader2 } from "lucide-react";
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Field, Input, Select } from "@/components/ui/field";
+import { Combobox } from "@/components/ui/combobox";
+import { Field, Input } from "@/components/ui/field";
+import { PhoneInput } from "@/components/ui/phone-input";
+import { StatePicker } from "@/components/ui/state-picker";
+import { US_TIME_ZONES, timeZoneForZip } from "@/lib/us-regions";
 import { updateUser, type ActionResult } from "../actions";
 import { ResetPassword } from "./reset-password";
-
-const TIME_ZONES = [
-  "America/Los_Angeles",
-  "America/Phoenix",
-  "America/Denver",
-  "America/Chicago",
-  "America/New_York",
-  "UTC",
-];
 
 const ROLE_VARIANT: Record<
   string,
@@ -60,6 +55,19 @@ export function UserRow({
     ActionResult | null,
     FormData
   >(updateUser, null);
+
+  const [supervisorId, setSupervisorId] = useState(
+    user.directSupervisorId ?? "",
+  );
+  const [region, setRegion] = useState((user.state ?? "").toUpperCase());
+  const [zone, setZone] = useState(user.timeZone);
+
+  // Their ZIP knows which clock they are on, and nobody wants to think about
+  // it. Only ever offered — a typed zone is left alone, because the ZIP-to-zone
+  // table follows county lines it cannot see.
+  const [zip, setZip] = useState(user.postalCode ?? "");
+  const suggested = timeZoneForZip(zip);
+  const zoneMatchesZip = !suggested || suggested === zone;
 
   return (
     <Card>
@@ -133,40 +141,50 @@ export function UserRow({
               htmlFor={`sup-${user.id}`}
               hint="Approves and pays this user."
             >
-              <Select
+              <Combobox
                 id={`sup-${user.id}`}
                 name="directSupervisorId"
-                defaultValue={user.directSupervisorId ?? ""}
-              >
-                <option value="">— none —</option>
-                {supervisorOptions.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.name}
-                  </option>
-                ))}
-              </Select>
+                value={supervisorId}
+                onChange={setSupervisorId}
+                options={supervisorOptions.map((option) => ({
+                  value: option.id,
+                  label: option.name,
+                }))}
+                placeholder="Search by name…"
+                emptyText="Nobody by that name can approve."
+              />
             </Field>
 
-            <Field label="Time zone" htmlFor={`tz-${user.id}`}>
-              <Select
+            <Field
+              label="Time zone"
+              htmlFor={`tz-${user.id}`}
+              hint={
+                zoneMatchesZip
+                  ? undefined
+                  : "Their ZIP says otherwise — set from the button below, or leave it if you know better."
+              }
+            >
+              <Combobox
                 id={`tz-${user.id}`}
                 name="timeZone"
-                defaultValue={user.timeZone}
-              >
-                {TIME_ZONES.map((zone) => (
-                  <option key={zone} value={zone}>
-                    {zone}
-                  </option>
-                ))}
-              </Select>
+                value={zone}
+                onChange={setZone}
+                options={US_TIME_ZONES.map((entry) => ({
+                  value: entry.value,
+                  label: entry.label,
+                  hint: entry.value,
+                  keywords: entry.value,
+                }))}
+                allowClear={false}
+                placeholder="Search zones…"
+              />
             </Field>
 
             <Field label="Phone" htmlFor={`phone-${user.id}`}>
-              <Input
+              <PhoneInput
                 id={`phone-${user.id}`}
                 name="phone"
-                type="tel"
-                defaultValue={user.phone ?? ""}
+                defaultValue={user.phone}
               />
             </Field>
           </div>
@@ -207,18 +225,28 @@ export function UserRow({
                 />
               </Field>
               <Field label="State" htmlFor={`state-${user.id}`}>
-                <Input
+                <StatePicker
                   id={`state-${user.id}`}
                   name="state"
-                  defaultValue={user.state ?? ""}
-                  autoComplete="off"
+                  value={region}
+                  onChange={setRegion}
                 />
               </Field>
-              <Field label="ZIP" htmlFor={`zip-${user.id}`}>
+              <Field
+                label="ZIP"
+                htmlFor={`zip-${user.id}`}
+                hint={
+                  zoneMatchesZip
+                    ? undefined
+                    : "This ZIP is on another clock."
+                }
+              >
                 <Input
                   id={`zip-${user.id}`}
                   name="postalCode"
-                  defaultValue={user.postalCode ?? ""}
+                  value={zip}
+                  onChange={(event) => setZip(event.target.value)}
+                  inputMode="numeric"
                   autoComplete="off"
                 />
               </Field>
@@ -231,6 +259,21 @@ export function UserRow({
                 />
               </Field>
             </div>
+
+            {/* Offered rather than applied: the table works off ZIP prefixes
+                and the real boundaries follow county lines, so the last word
+                belongs to whoever knows the address. */}
+            {suggested && !zoneMatchesZip ? (
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="self-start"
+                onClick={() => setZone(suggested)}
+              >
+                Use the zone for {zip.trim()}
+              </Button>
+            ) : null}
           </fieldset>
 
           <div className="flex flex-wrap items-center gap-3">
