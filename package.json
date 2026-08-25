@@ -22,7 +22,8 @@
     "verify:forms": "tsx --tsconfig tsconfig.json scripts/verify-forms.ts",
     "verify:form-pages": "tsx --tsconfig tsconfig.json scripts/verify-form-pages.ts",
     "verify:images": "tsx --tsconfig tsconfig.json scripts/verify-images.ts",
-    "verify:signin": "tsx --tsconfig tsconfig.json scripts/verify-signin.ts"
+    "verify:signin": "tsx --tsconfig tsconfig.json scripts/verify-signin.ts",
+    "audit:files": "tsx --tsconfig tsconfig.json scripts/audit-job-files.ts"
   },
   "repository": {
     "type": "git",

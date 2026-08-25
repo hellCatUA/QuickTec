@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { chromium } from "playwright";
 import { encode } from "next-auth/jwt";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { db } from "@/lib/db";
 import { loadJobForExport } from "@/lib/exports/job-data";
@@ -32,6 +32,30 @@ function check(label: string, actual: unknown, expected: unknown) {
   console.log(
     `${ok ? "PASS" : "FAIL"}  ${label}\n      got ${actual}${ok ? "" : `  want ${expected}`}`,
   );
+}
+
+/**
+ * The paths inside a zip, read from its central directory.
+ *
+ * No library: the central directory is a list of fixed-width records each
+ * starting PK\x01\x02, and the name is the only field this needs. Reading the
+ * local headers instead would miss nothing here but would also count each
+ * entry's data, which is not what is being asked.
+ */
+function zipEntryNames(zip: Buffer): string[] {
+  const names: string[] = [];
+  const SIGNATURE = 0x02014b50;
+
+  for (let at = 0; at + 46 <= zip.length; at++) {
+    if (zip.readUInt32LE(at) !== SIGNATURE) continue;
+    const nameLength = zip.readUInt16LE(at + 28);
+    const extraLength = zip.readUInt16LE(at + 30);
+    const commentLength = zip.readUInt16LE(at + 32);
+    names.push(zip.subarray(at + 46, at + 46 + nameLength).toString("utf8"));
+    at += 45 + nameLength + extraLength + commentLength;
+  }
+
+  return names;
 }
 
 async function main() {
@@ -453,6 +477,86 @@ async function main() {
   const zipBody = await zipDownload.body();
   check("zip export is a real archive", zipBody.subarray(0, 2).toString(), "PK");
   check("zip export is not empty", zipBody.byteLength > 1000, true);
+
+  // Reported from the field: a job came back short a few Post Install photos.
+  // "It is a zip and it is not empty" was the whole of what this checked, so
+  // an export that dropped a section would have passed every time. Now the
+  // archive is opened and the photos are looked for by name.
+  const entries = zipEntryNames(zipBody);
+
+  check(
+    "the archive carries the client report",
+    entries.some((name) => name.endsWith("-Report.txt")),
+    true,
+  );
+  check(
+    "the Pre-Install photo is in it",
+    entries.some((name) => name.startsWith("Pre-Install/") && name.endsWith(".jpg")),
+    true,
+  );
+  check(
+    "and so is the Post Install one",
+    entries.some(
+      (name) => name.startsWith("Post Install/") && name.endsWith(".jpg"),
+    ),
+    true,
+  );
+  check(
+    "filed under the tech who took it",
+    entries.some((name) => name.startsWith(`Post Install/${tech.name}/`)),
+    true,
+  );
+  check(
+    "both signatures are in it",
+    entries.filter((name) => name.startsWith("Signatures/")).length,
+    2,
+  );
+  check(
+    "and the internal work order",
+    entries.some((name) => name.endsWith(".pdf")),
+    true,
+  );
+  // Every file on the record was readable, so the archive should not be
+  // apologising for anything.
+  check(
+    "nothing had to be left out",
+    entries.includes("MISSING FILES.txt"),
+    false,
+  );
+
+  // A photo whose file has gone from the volume used to be skipped in silence,
+  // which is indistinguishable from a section nobody photographed — and is
+  // exactly what makes a short download impossible to explain.
+  const postInstall = await db.deliverableItem.findFirstOrThrow({
+    where: { jobId: assignment.jobId, category: "POST_INSTALL" },
+    select: { attachments: { select: { id: true, storagePath: true } } },
+  });
+  const hidden = `${postInstall.attachments[0].storagePath}.hidden`;
+  const uploads = process.env.UPLOADS_DIR ?? "/var/tmp/qt-uploads";
+  await rename(
+    `${uploads}/${postInstall.attachments[0].storagePath}`,
+    `${uploads}/${hidden}`,
+  );
+
+  const shortZip = await page.request.get(
+    `${BASE}/api/jobs/${assignment.jobId}/export/zip`,
+  );
+  const shortEntries = zipEntryNames(await shortZip.body());
+  check(
+    "a file gone from the volume is named rather than dropped",
+    shortEntries.includes("MISSING FILES.txt"),
+    true,
+  );
+  check(
+    "and the rest of the archive still comes through",
+    shortEntries.some((name) => name.startsWith("Pre-Install/")),
+    true,
+  );
+
+  await rename(
+    `${uploads}/${hidden}`,
+    `${uploads}/${postInstall.attachments[0].storagePath}`,
+  );
 
   // The internal work order is a supervisor-and-above document; a tech asking
   // for it should be told the route does not exist, not that it is forbidden.

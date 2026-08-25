@@ -49,9 +49,25 @@ export async function buildJobZip(data: JobExportData) {
   // factory function.
   const archive = new ZipArchive({ zlib: { level: 6 } });
 
-  // A missing photo should cost that photo, not the whole download.
+  /**
+   * What the job holds that the archive could not.
+   *
+   * A file that is on the record but not on disk used to be skipped in
+   * silence, which is the worst of the options: the download succeeds, it is
+   * short, and nobody can tell a section nobody photographed from a photo that
+   * has gone missing. Now it is skipped and said out loud.
+   */
+  const missing: string[] = [];
+
+  // A missing photo should cost that photo, not the whole download — and
+  // throwing from an event handler cannot be caught by the caller anyway, it
+  // just takes the process's stream down mid-download and hands the client a
+  // truncated zip.
   archive.on("warning", (error: ArchiverError) => {
-    if (error.code !== "ENOENT") throw error;
+    const where = (error as { path?: unknown }).path;
+    missing.push(
+      `${typeof where === "string" ? where : "a file"}: ${error.message}`,
+    );
   });
 
   archive.append(buildTextReport(data), { name: reportFileName(data) });
@@ -117,36 +133,69 @@ export async function buildJobZip(data: JobExportData) {
     }
 
     for (const attachment of item.attachments) {
-      if (!(await fileExists(attachment.storagePath))) continue;
+      const path = `${folder}/${tech}/${safeName(attachment.originalName)}`;
+      if (!(await fileExists(attachment.storagePath))) {
+        missing.push(path);
+        continue;
+      }
       archive.file(absolutePath(attachment.storagePath), {
-        name: uniquePath(`${folder}/${tech}/${safeName(attachment.originalName)}`),
+        name: uniquePath(path),
       });
     }
   }
 
   for (const signature of job.signatures) {
     if (!signature.attachment) continue;
-    if (!(await fileExists(signature.attachment.storagePath))) continue;
+    const path = `Signatures/${safeName(
+      `${signature.kind}-${signature.signerName}-Signature`,
+    )}.png`;
+    if (!(await fileExists(signature.attachment.storagePath))) {
+      missing.push(path);
+      continue;
+    }
 
     archive.file(absolutePath(signature.attachment.storagePath), {
-      name: uniquePath(
-        `Signatures/${safeName(`${signature.kind}-${signature.signerName}-Signature`)}.png`,
-      ),
+      name: uniquePath(path),
     });
   }
 
   for (const entry of job.reimbursements) {
     for (const attachment of entry.attachments) {
-      if (!(await fileExists(attachment.storagePath))) continue;
       const label = safeName(entry.label ?? entry.type);
+      const path = `Receipts/${label} $${Number(entry.amount).toFixed(2)}.jpg`;
+      if (!(await fileExists(attachment.storagePath))) {
+        missing.push(path);
+        continue;
+      }
       archive.file(absolutePath(attachment.storagePath), {
-        name: uniquePath(
-          `Receipts/${label} $${Number(entry.amount).toFixed(2)}.jpg`,
-        ),
+        name: uniquePath(path),
       });
     }
   }
 
-  void archive.finalize();
+  // Last, so it has seen everything. A download that is quietly short is worse
+  // than one that says which pieces are not in it and who to ask.
+  if (missing.length > 0) {
+    archive.append(
+      [
+        "These are on the job's record but their files could not be read,",
+        "so they are not in this archive. Nothing has been deleted from the",
+        "job — tell an administrator, who can look for them on the server.",
+        "",
+        ...missing.map((entry) => `  ${entry}`),
+        "",
+      ].join("\n"),
+      { name: "MISSING FILES.txt" },
+    );
+  }
+
+  // Not awaited — the caller streams the archive as it is written — but a
+  // rejection here would otherwise be an unhandled one, and the client would
+  // be handed a truncated zip with nothing said anywhere.
+  archive.finalize().catch((error) => {
+    console.error(`[export] archive for ${job.intWoId} failed:`, error);
+    archive.destroy(error instanceof Error ? error : new Error(String(error)));
+  });
+
   return archive;
 }
