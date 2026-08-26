@@ -54,22 +54,14 @@ self.addEventListener("fetch", (event) => {
   }
 
   // Immutable build output: cache-first is safe because the hash changes.
-  //
-  // Only a real answer is kept. Off the VPN this address is answered by the
-  // static "turn the VPN on" page instead of by the app, so a request for a
-  // script comes back as somebody else's 404 — and cache-first means whatever
-  // is filed here is filed for good. A broken icon that survives reconnecting,
-  // reloading and reinstalling is a hard thing to explain.
   if (url.pathname.startsWith("/_next/static/") || url.pathname.startsWith("/icons/")) {
     event.respondWith(
       caches.match(request).then(
         (cached) =>
           cached ||
           fetch(request).then((response) => {
-            if (response.ok) {
-              const copy = response.clone();
-              caches.open(ASSET_CACHE).then((cache) => cache.put(request, copy));
-            }
+            const copy = response.clone();
+            caches.open(ASSET_CACHE).then((cache) => cache.put(request, copy));
             return response;
           }),
       ),

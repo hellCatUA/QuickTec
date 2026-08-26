@@ -1196,59 +1196,6 @@ async function main() {
     }
   }
 
-  // --- the page the public internet is shown -------------------------------
-  // Served by Cloudflare at the same address as the app, to anybody at all.
-  // Two things can go wrong with it quietly: the 404 copy drifting away from
-  // the page it is meant to duplicate, and somebody helpfully adding the
-  // server's address to a file that is world-readable by design.
-  {
-    const notice = await readFile("deploy/vpn-notice/public/index.html", "utf8");
-    const notFound = await readFile("deploy/vpn-notice/public/404.html", "utf8");
-    const headers = await readFile("deploy/vpn-notice/public/_headers", "utf8");
-
-    check("the 404 copy matches the notice page", notFound === notice, true);
-
-    for (const [name, text] of [
-      ["the notice page", notice],
-      ["the 404 copy", notFound],
-    ] as const) {
-      check(
-        `${name} names no VPN product`,
-        /tailscale|wireguard/i.test(text),
-        false,
-      );
-      check(
-        `${name} carries no tailnet address`,
-        /\b100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}\b/.test(text),
-        false,
-      );
-      // Relative, so it follows whatever the device resolves the name to. An
-      // absolute one would have to name the server, which is the whole thing
-      // this page exists to avoid.
-      check(`${name} asks the app about itself relatively`, text.includes('fetch("/api/health"'), true);
-    }
-
-    // The page and the app share a hostname. Without this a browser files the
-    // notice away and serves it back once the VPN is on — the app replaced by
-    // a page telling you to connect a VPN you are already connected to.
-    check("the notice page is never cached", /Cache-Control:\s*no-store/i.test(headers), true);
-
-    // Everything in the assets directory is served to the public internet, so
-    // the config sits outside it — and the 404 copy only earns its keep if
-    // Workers is told to reach for it.
-    const wrangler = await readFile("deploy/vpn-notice/wrangler.jsonc", "utf8");
-    check(
-      "only public/ is published",
-      /"directory":\s*"\.\/public"/.test(wrangler),
-      true,
-    );
-    check(
-      "a bookmarked deep link gets the notice, not an error page",
-      /"not_found_handling":\s*"404-page"/.test(wrangler),
-      true,
-    );
-  }
-
   // --- which clock a ZIP is on ---------------------------------------------
   // A site left on the company default showed a Dallas job in Los Angeles
   // time, which is wrong by two hours and invisible until payroll.

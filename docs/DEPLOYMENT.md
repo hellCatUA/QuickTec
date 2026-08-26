@@ -47,14 +47,6 @@ Check from a laptop on the tailnet:
 dig +short quicktec.417group.org      # → 100.x.y.z
 ```
 
-A public record pointing at a tailnet address gets you running, but it has two
-costs: the address is published to anybody who looks, and somebody who opens the
-app without the VPN waits out a connection timeout and is told nothing useful.
-[docs/SPLIT-DNS.md](SPLIT-DNS.md) replaces it with a public record that serves a
-"turn the VPN on" page and a resolver that answers the same name properly from
-inside — no ports opened, and the address no longer in public DNS. Worth doing
-once the stack is up; nothing else in this guide depends on it.
-
 ---
 
 ## 2. Directories
