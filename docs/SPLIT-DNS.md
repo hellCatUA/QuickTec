@@ -52,15 +52,20 @@ ss -lnup | grep ':53 '
 ss -lntp | grep ':53 '
 ```
 
-`systemd-resolved` on `127.0.0.53` is fine — that is a different address from
-the `127.0.0.1` this binds. Anything listening on `127.0.0.1:53` or on the
-tailnet address is not, and has to be dealt with first. (If you would rather not
-touch it, drop the `interface=lo` line from `dnsmasq.conf` and the healthcheck
-from the compose file; only local testing loses out.)
+`systemd-resolved` on `127.0.0.53` and `127.0.0.54` is fine, and is what a
+Debian box normally shows. Those are addresses of their own; this binds
+`127.0.0.1`, and the two coexist — dnsmasq starts and answers with resolved
+still holding both. Anything listening on `127.0.0.1:53` itself, or on the
+tailnet address, is a real conflict and has to be dealt with first. (If you
+would rather not touch it, drop the `interface=lo` line from `dnsmasq.conf` and
+the healthcheck from the compose file; only local testing loses out.)
 
-**Turn MagicDNS on** in the VPN admin console if it is not already, under DNS.
-The split-DNS routing in step 3 does not apply without it — the setting saves,
-looks right, and does nothing.
+**MagicDNS.** The documentation says it is optional and not required by the
+other DNS settings, but split DNS not applying with it switched off is a
+long-standing complaint. Try step 3 as you are; if the name still resolves to
+the public answer on a connected device, turn MagicDNS on and try again. Read
+the next section before blaming it, though — a browser doing its own DNS looks
+exactly the same from the outside.
 
 ---
 
@@ -127,6 +132,37 @@ works. Ask the system instead:
 ```bash
 dscacheutil -q host -a name quicktec.417group.org
 ```
+
+### Browsers that do their own DNS
+
+Read this one before switching the public record over, because it is the failure
+that arrives late and looks like something else.
+
+Firefox ships with DNS over HTTPS on by default in some regions. It does not ask
+the operating system anything — it asks Cloudflare directly over HTTPS, which
+means the VPN's split never enters into it. Today that is harmless: the public
+answer *is* the right one. From the moment the public answer becomes the notice
+page, Firefox shows that notice to somebody who is connected, and keeps showing
+it, because the page's own check is resolved the same way.
+
+Chrome, Edge and Safari use the system resolver here and are not affected —
+Chrome only upgrades to DoH when the system resolver is one it recognises, and
+the VPN's is not.
+
+The fix is per-domain rather than switching the feature off. In `about:config`:
+
+```
+network.trr.excluded-domains        417group.org
+```
+
+It is a comma-separated list, so append rather than replace, and add `ts.net`
+alongside if MagicDNS names are wanted too. Everything else still goes over DoH.
+On a managed machine the same thing can be set once in a `policies.json`.
+
+This is almost certainly also the explanation for Firefox misbehaving whenever
+MagicDNS was switched on: `*.ts.net` resolves nowhere on the public internet, so
+Cloudflare answers "no such name" and Firefox believes it. There is nothing to
+fix on the VPN's side, and switching MagicDNS off treats the symptom.
 
 ---
 
@@ -209,7 +245,8 @@ neither ever sees the other's traffic.
 
 | What you see | Where to look |
 | --- | --- |
-| Still the notice page with the VPN on | MagicDNS off; the split not saved; the device's DNS cache, which clears by toggling the VPN off and on |
+| Still the notice page with the VPN on, in Firefox only | DNS over HTTPS. See "Browsers that do their own DNS" above |
+| Still the notice page with the VPN on, everywhere | The split not saved; MagicDNS off; the device's DNS cache, which clears by toggling the VPN off and on |
 | `SERVFAIL` with the VPN on | `docker compose ps` — and check `records.conf` is a *file*, not a directory Docker made |
 | The container restarts in a loop | Something else has port 53: `ss -lnup \| grep ':53 '` |
 | `dig` disagrees with the browser, on a Mac | `dig` bypasses the split. Use `dscacheutil -q host -a name …` |
