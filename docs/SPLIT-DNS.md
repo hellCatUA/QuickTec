@@ -107,11 +107,24 @@ breaks something unrelated in a way nobody traces back to this container.
 
 ## 3. Point the VPN at it
 
+Only once step 2 answers. Sending the name at a resolver that is not running
+takes it away from everybody on the VPN at once.
+
 In the VPN admin console, under **DNS → Nameservers**:
 
-1. Add a nameserver, `100.x.y.z` — the address from step 1.
+1. **Add nameserver → Custom**, and give it `100.x.y.z` — the address from
+   step 1.
 2. Turn on **Restrict to domain** (split DNS) and give it
    `quicktec.417group.org`.
+
+**Custom, not one of the presets.** The same dropdown offers Cloudflare, Google
+and the rest as one-click entries, and picking one saves cleanly, shows the
+Split DNS badge, and reads exactly like a working configuration. What it
+actually does is send this one name to a *public* resolver — the answer the
+split exists to avoid — so it looks right and changes nothing, and it will go on
+looking right after the public record moves and the split stops being harmless.
+A preset cannot be edited into a custom address either; delete it and add it
+again from the Custom option.
 
 That is the whole change. Every other name a device looks up still goes wherever
 it was already going; only this one is sent here, and only while the VPN is on.
@@ -209,9 +222,19 @@ be readable by somebody who cannot log in yet.
 `Path` is the one that matters — it tells the build where `wrangler.jsonc` is.
 Without it the deploy runs at the repository root, finds no config, and fails.
 
-The first deploy publishes to `quicktec-vpn-notice.<account>.workers.dev`. Open
-it and check the page before going anywhere near DNS: at that point nothing has
-changed for anybody.
+The deploy succeeds and the Worker serves nothing, because a new Worker is
+published with every URL switched off — the overview says "No URLs enabled" and
+that is the finished state, not a step still running.
+
+Go to **Domains → Worker URL** and turn on the **Production**
+`…workers.dev` toggle. Open that address and check the page there first: it is a
+real deploy on a throwaway hostname, so nothing has changed for anybody yet.
+
+The API token in the wizard is for later, not for this. It is what lets
+Cloudflare rebuild on a push to the repository; the first deploy happens without
+it. Add one under the project's build settings if automatic rebuilds are wanted,
+or leave it — for three files that change twice a year, deploying by hand is a
+defensible answer.
 
 ### Or without the repository
 
@@ -295,7 +318,9 @@ neither ever sees the other's traffic.
 | `SERVFAIL` with the VPN on | `docker compose ps` — and check `records.conf` is a *file*, not a directory Docker made |
 | The container restarts in a loop | Something else has port 53: `ss -lnup \| grep ':53 '` |
 | `dig` disagrees with the browser, on a Mac | `dig` bypasses the split. Use `dscacheutil -q host -a name …` |
-| Cloudflare error rather than the notice page | The custom domain is not attached to the Pages project yet |
+| The Worker deployed and serves nothing | Every URL is off on a new Worker. Domains → Worker URL → enable Production |
+| The split saved but the answer never changes | The nameserver is a public preset rather than a Custom address. See step 3 |
+| Cloudflare error rather than the notice page | The custom domain is not attached to the Worker yet |
 | Notice page appears *while* on the VPN | A cached copy. `_headers` sets `no-store`; check it was deployed with the site |
 | Nothing resolves at all after a reboot | tailscale0 arrives after Docker. The container retries; give it a minute and check the logs |
 
