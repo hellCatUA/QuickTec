@@ -35,7 +35,10 @@ export const JOB_FIELDS = {
     planned: true,
   },
   estimateMinutes: {
-    label: "Estimated time (minutes)",
+    // Stored in minutes, read in hours — the field shows "4.00 hrs" beside it,
+    // so saying "(minutes)" in the label only ever contradicted what was under
+    // it.
+    label: "Estimated time",
     kind: "number",
     planned: true,
   },

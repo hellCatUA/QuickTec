@@ -53,6 +53,10 @@ export type Punch = {
   clockOut: PunchClock | null;
   breaks: BreakRow[];
   breakTotal: string | null;
+  /** "Lead", or nothing — everybody else on a job is a tech. */
+  role: string | null;
+  /** What the day came to, paid time only. Null when they never clocked in. */
+  shift: string | null;
   /** Written by hand rather than pressed on site. */
   manual: boolean;
   /** Set when they arrived well after the job was due to start. */
@@ -138,6 +142,13 @@ function PunchBlock({
   const [reasonNote, setReasonNote] = React.useState("");
   const [showBreaks, setShowBreaks] = React.useState(false);
   const [pending, startTransition] = React.useTransition();
+
+  // Something on this block wants looking at: a flag nobody has accepted yet,
+  // or a punch that was written by hand rather than pressed on site. Accepting
+  // a flag settles it, so the edge goes quiet with the badge.
+  const flagged =
+    (punch.late !== null && !punch.lateAccepted) ||
+    (punch.over !== null && !punch.overAccepted);
 
   function choose(next: Pane) {
     onNote(null);
@@ -249,12 +260,33 @@ function PunchBlock({
   return (
     <section
       data-punch={punch.assignmentId}
-      className="flex flex-col gap-2 rounded-lg border border-border p-3"
+      data-flagged={flagged ? "" : undefined}
+      className={
+        // A block with something wrong in it is picked out by its edge rather
+        // than by reading four lines of every block on the page. Grey once
+        // somebody has accepted the flags, because then it is a note.
+        flagged
+          ? "flex flex-col gap-2 rounded-lg border border-warning bg-warning/5 p-3"
+          : "flex flex-col gap-2 rounded-lg border border-border p-3"
+      }
     >
-      <div className="flex flex-wrap items-center gap-2">
-        <h3 className="text-sm font-semibold">{punch.who}</h3>
+      {/* items-start, not items-center: the menu belongs level with the name,
+          and centring it dragged it down past the line below. */}
+      <div className="flex items-start gap-2">
+        <h3 className="min-w-0 truncate text-sm font-semibold">{punch.who}</h3>
+        {punch.role ? (
+          <Badge variant="primary" className="shrink-0">
+            {punch.role}
+          </Badge>
+        ) : null}
 
-        <div className="relative ml-auto">
+        {punch.shift ? (
+          <span className="ml-auto shrink-0 pt-0.5 text-sm tabular text-muted-foreground">
+            {punch.shift}
+          </span>
+        ) : null}
+
+        <div className={punch.shift ? "relative -mt-1.5 shrink-0" : "relative -mt-1.5 ml-auto shrink-0"}>
           <Button
             type="button"
             variant="ghost"

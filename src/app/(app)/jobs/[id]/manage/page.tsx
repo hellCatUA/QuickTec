@@ -9,6 +9,7 @@ import {
 import { PageHeader } from "@/components/ui/page-header";
 import { getCompanySettings } from "@/lib/company";
 import {
+  decimalHours,
   toDatetimeLocalInZone,
   usDateInZone,
   usDateTimeInZone,
@@ -315,8 +316,29 @@ export default async function ManagePage({
           : null,
       over:
         visit?.clockOutAt && dueOut && visit.clockOutAt > dueOut
-          ? `Past the estimated finish of ${usTimeInZone(dueOut, zone)}.`
+          ? `Past the estimated finish of ${usTimeInZone(dueOut, zone)} (+${decimalHours(
+              Math.round(
+                (visit.clockOutAt.getTime() - dueOut.getTime()) / 60_000,
+              ),
+            )} hrs).`
           : null,
+      // The word beside the name. Everybody on a job is a tech; only one of
+      // them owns the merged Work Performed, and that is worth seeing without
+      // opening anything.
+      role: assignment.isLead ? "Lead" : null,
+      // What the day came to, paid time only — the number somebody is looking
+      // for when they open this at all.
+      shift:
+        visit?.clockOutAt
+          ? `${decimalHours(
+              Math.round(
+                (visit.clockOutAt.getTime() - visit.clockInAt.getTime()) /
+                  60_000,
+              ) - breaks.reduce((sum, entry) => sum + (entry.paid ? 0 : entry.minutes), 0),
+            )} hrs`
+          : visit
+            ? "on site"
+            : null,
       canEdit: canAdjustTime,
       canRemove: mayRemove,
       canAdd: mayRemove,
