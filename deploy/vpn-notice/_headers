@@ -1,0 +1,14 @@
+# Cloudflare Pages headers for the VPN notice.
+#
+# no-store is the load-bearing one. This page is served from the *same address*
+# as QuickTec itself, so a browser that files it away under
+# quicktec.417group.org will happily show it again from disk once the VPN is on
+# — the app replaced by a page telling you to connect the VPN you are already
+# connected to. Nothing here is worth caching anyway.
+
+/*
+  Cache-Control: no-store, must-revalidate
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: no-referrer
+  Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'

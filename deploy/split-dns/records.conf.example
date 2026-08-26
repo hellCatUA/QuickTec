@@ -1,0 +1,23 @@
+# Copy to records.conf and put this server's VPN address in it.
+#
+#   cp records.conf.example records.conf
+#   docker exec tailscale tailscale ip -4      # → 100.x.y.z
+#
+# records.conf is not in git, because this address is the one thing that should
+# not be written down anywhere public.
+#
+# Create the file BEFORE the first `docker compose up`. A bind mount whose
+# source does not exist makes Docker create a directory at that path, and then
+# dnsmasq starts perfectly well while answering nothing.
+
+# Subdomains match too, which is what the VPN routes here anyway.
+#
+# Left deliberately unparseable rather than as a plausible-looking address: copy
+# this without editing it and dnsmasq refuses to start and says which line is
+# wrong, instead of answering with somewhere that does not exist.
+address=/quicktec.417group.org/100.x.y.z
+
+# If the tailnet has IPv6 and you would rather it were used, add the v6 address
+# as well. Without this line an AAAA question gets a correct empty answer and
+# the client falls back to the line above, which is fine.
+#address=/quicktec.417group.org/fd7a:115c:0000:0000:0000:0000:0000:0000
