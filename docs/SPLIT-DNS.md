@@ -136,6 +136,13 @@ The page lives in `deploy/vpn-notice/`. It is three files and no build step:
 `index.html`, an identical `404.html` so a bookmarked deep link lands on the same
 explanation, and `_headers`.
 
+It says almost nothing, on purpose. The company mark carries it: the logo
+already draws a laptop, the company, and the network behind it, so the link is
+cut where the VPN should be and the picture says the rest. Underneath that is a
+heading, one sentence and a button. The mark is traced into the page as vector
+paths in `currentColor`, so it follows the theme and needs no second copy for
+light mode, and the whole page is one request with nothing loaded from anywhere.
+
 In the Cloudflare dashboard:
 
 1. **Workers & Pages → Create → Pages.** Upload the contents of
