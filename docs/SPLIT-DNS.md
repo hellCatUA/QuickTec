@@ -249,11 +249,35 @@ cd deploy/vpn-notice && npx wrangler deploy
 
 ### Pointing the name at it
 
-1. On the Worker, **Settings → Domains & Routes → Add → Custom domain** →
-   `quicktec.417group.org`.
-2. Cloudflare will notice the existing record pointing at `100.x.y.z` and offer
-   to replace it. Let it. **That record going away is the point of the exercise**
-   — after this the address is not published anywhere.
+This is the switch, and the only step here that changes anything for anybody.
+Do it once step 3 is answering from the server, not before.
+
+Cloudflare will not take a hostname that already has a record on it, and does
+not offer to replace one:
+
+> Hostname 'quicktec.417group.org' already has externally managed DNS records
+> (A, CNAME, etc). Delete them first or try a different hostname.
+
+So the old record goes first, and between it going and the custom domain being
+attached the name resolves nowhere on the public internet. That is seconds if
+the two are done back to back. Write down what is being deleted before deleting
+it: an **A** record on `quicktec`, pointing at the tailnet address, **DNS only**
+— grey cloud, never proxied. Putting that back is the way out if anything here
+goes wrong.
+
+1. **DNS → Records** on the `417group.org` zone. Delete the `quicktec` A record.
+   Public resolution of the name stops at this moment.
+2. **Workers & Pages → quicktec-vpn-notice → Domains → Add Domain** →
+   `quicktec.417group.org`. Public resolution comes back, pointing at the
+   notice, and Cloudflare writes its own record.
+
+**That record going away is the point of the exercise** — from here the address
+is not published anywhere.
+
+Nobody on the VPN should notice any of it: their answer comes from the resolver
+on the server and never went near public DNS. If somebody on the VPN *does* lose
+the app while this is happening, that is step 3 being wrong rather than bad luck
+— put the A record back and fix the split first.
 
 Check from a device **with the VPN off** — mobile data on a phone is the honest
 test:
@@ -320,6 +344,7 @@ neither ever sees the other's traffic.
 | `dig` disagrees with the browser, on a Mac | `dig` bypasses the split. Use `dscacheutil -q host -a name …` |
 | The Worker deployed and serves nothing | Every URL is off on a new Worker. Domains → Worker URL → enable Production |
 | The split saved but the answer never changes | The nameserver is a public preset rather than a Custom address. See step 3 |
+| "already has externally managed DNS records" | Expected. Delete the `quicktec` A record first — see step 4 |
 | Cloudflare error rather than the notice page | The custom domain is not attached to the Worker yet |
 | Notice page appears *while* on the VPN | A cached copy. `_headers` sets `no-store`; check it was deployed with the site |
 | Nothing resolves at all after a reboot | tailscale0 arrives after Docker. The container retries; give it a minute and check the logs |
