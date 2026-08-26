@@ -208,11 +208,20 @@ export default async function ManagePage({
 
   if (!canSeePunches && !canSetPay) notFound();
 
-  // When the job was due to finish, which is what "over estimate" means.
-  const dueOut =
-    job.scheduledStart && job.estimateMinutes
-      ? new Date(job.scheduledStart.getTime() + job.estimateMinutes * 60_000)
-      : null;
+  // The estimate is how long the work takes, not what time it ends.
+  //
+  // This used to be read as a wall clock — scheduled start plus the estimate —
+  // so a crew that turned up two hours early was over estimate before it had
+  // done anything, and one that started two hours late got two free hours. In
+  // the field the start is early as often as it is late, so the number was
+  // wrong in both directions and never about the work.
+  //
+  // Measured against what each person actually worked instead, which is the
+  // same basis the approval step uses and the same figure shown beside their
+  // name — so the two numbers on screen are about the same thing.
+  const estimate = job.estimateMinutes && job.estimateMinutes > 0
+    ? job.estimateMinutes
+    : null;
 
   const punches: Punch[] = job.assignments.map((assignment) => {
     const visit = assignment.visits[0] ?? null;
@@ -248,6 +257,17 @@ export default async function ManagePage({
     });
 
     const totalBreak = breaks.reduce((sum, entry) => sum + entry.minutes, 0);
+
+    /**
+     * What this person actually worked: clock to clock, less the breaks they
+     * are not paid for. Null while they are still on site, because a day that
+     * has not finished cannot be over anything yet.
+     */
+    const workedMinutes = visit?.clockOutAt
+      ? Math.round(
+          (visit.clockOutAt.getTime() - visit.clockInAt.getTime()) / 60_000,
+        ) - breaks.reduce((sum, entry) => sum + (entry.paid ? 0 : entry.minutes), 0)
+      : null;
 
     const history = buildPunchHistory(
       events
@@ -315,11 +335,9 @@ export default async function ManagePage({
             )}.`
           : null,
       over:
-        visit?.clockOutAt && dueOut && visit.clockOutAt > dueOut
-          ? `Past the estimated finish of ${usTimeInZone(dueOut, zone)} (+${decimalHours(
-              Math.round(
-                (visit.clockOutAt.getTime() - dueOut.getTime()) / 60_000,
-              ),
+        estimate !== null && workedMinutes !== null && workedMinutes > estimate
+          ? `Past the scheduled estimate (+${decimalHours(
+              workedMinutes - estimate,
             )} hrs).`
           : null,
       // The word beside the name. Everybody on a job is a tech; only one of
@@ -329,13 +347,8 @@ export default async function ManagePage({
       // What the day came to, paid time only — the number somebody is looking
       // for when they open this at all.
       shift:
-        visit?.clockOutAt
-          ? `${decimalHours(
-              Math.round(
-                (visit.clockOutAt.getTime() - visit.clockInAt.getTime()) /
-                  60_000,
-              ) - breaks.reduce((sum, entry) => sum + (entry.paid ? 0 : entry.minutes), 0),
-            )} hrs`
+        workedMinutes !== null
+          ? `${decimalHours(workedMinutes)} hrs`
           : visit
             ? "on site"
             : null,

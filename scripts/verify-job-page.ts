@@ -1525,6 +1525,78 @@ async function main() {
     0,
   );
 
+  // Reported from the field: over-estimate was read off the clock — scheduled
+  // start plus the estimate — so a crew that turned up early was over before
+  // it had done anything, and one that started late got the difference for
+  // free. In the field the start is early as often as it is late.
+  const overJob = await db.job.findUniqueOrThrow({
+    where: { id: assignment.jobId },
+    select: { scheduledStart: true, estimateMinutes: true },
+  });
+
+  async function overText(): Promise<string> {
+    await openPortal(page, assignment.jobId);
+    return (
+      (await page.locator("[data-punch]").first().textContent()) ?? ""
+    );
+  }
+
+  // Four hours of work against a four-hour estimate, begun three hours EARLY.
+  // On the old rule that was three hours over; on this one it is not over.
+  const early = new Date(overJob.scheduledStart!.getTime() - 3 * 3_600_000);
+  await db.visit.update({
+    where: { id: clockVisit.id },
+    data: {
+      clockInAt: early,
+      clockOutAt: new Date(early.getTime() + overJob.estimateMinutes! * 60_000),
+    },
+  });
+  check(
+    "starting early is not being over estimate",
+    (await overText()).includes("Past the scheduled estimate"),
+    false,
+  );
+
+  // The same four hours, begun three hours LATE. Old rule: also three hours
+  // over, for the opposite reason. Still not over.
+  const late = new Date(overJob.scheduledStart!.getTime() + 3 * 3_600_000);
+  await db.visit.update({
+    where: { id: clockVisit.id },
+    data: {
+      clockInAt: late,
+      clockOutAt: new Date(late.getTime() + overJob.estimateMinutes! * 60_000),
+    },
+  });
+  check(
+    "and neither is starting late",
+    (await overText()).includes("Past the scheduled estimate"),
+    false,
+  );
+
+  // Two hours longer than the estimate, wherever it began. That is over.
+  await db.visit.update({
+    where: { id: clockVisit.id },
+    data: {
+      clockInAt: early,
+      clockOutAt: new Date(
+        early.getTime() + (overJob.estimateMinutes! + 120) * 60_000,
+      ),
+    },
+  });
+  const overrun = await overText();
+  check(
+    "working two hours longer than the estimate is",
+    overrun.includes("Past the scheduled estimate (+2.00 hrs)"),
+    true,
+  );
+  check(
+    "and it no longer names a finishing time it cannot know",
+    overrun.includes("Past the estimated finish"),
+    false,
+  );
+
+  await plantClock();
+
   // Downwards without limit: this can only ever give time back.
   await editPunch(page, sheet, "CO", "2026-07-28T13:00", "Forgot to punch");
   await page.waitForTimeout(2500);
