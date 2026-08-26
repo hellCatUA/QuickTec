@@ -91,17 +91,28 @@ docker compose up -d
 docker compose logs -f dns          # expect: "reading /etc/dnsmasq.d/records.conf"
 ```
 
-Prove it from the host:
+Prove it. A server install has no `dig` — it is in `dnsutils`, not a package
+called `dig` — and does not need one, because the container carries a resolver
+client of its own:
 
 ```bash
-dig +short quicktec.417group.org @127.0.0.1        # → 100.x.y.z
-dig +short quicktec.417group.org @100.x.y.z        # → 100.x.y.z, the way a client will ask
-dig +short example.com @127.0.0.1                  # → a real answer, not SERVFAIL
+docker compose ps                                     # → healthy
+
+docker exec quicktec-dns nslookup quicktec.417group.org 127.0.0.1
+docker exec quicktec-dns nslookup quicktec.417group.org 100.x.y.z
+docker exec quicktec-dns nslookup example.com 127.0.0.1
 ```
 
-The third one matters more than it looks. The VPN only routes the one domain
+`healthy` is itself the first of those lookups: the healthcheck asks the running
+dnsmasq the one question it exists to answer, so a container that reports
+healthy is a container that is answering.
+
+The third line matters more than it looks. The VPN only routes the one domain
 here, so a resolver that fails everything else works fine for months and then
 breaks something unrelated in a way nobody traces back to this container.
+
+If `dig` is wanted anyway — `apt install -y dnsutils`, then the same three as
+`dig +short NAME @SERVER`.
 
 ---
 
@@ -132,10 +143,12 @@ it was already going; only this one is sent here, and only while the VPN is on.
 If the tailnet has a hand-written ACL rather than the default allow-all, it needs
 to let devices reach port 53 on that node, TCP and UDP.
 
-Check from a laptop **with the VPN on**:
+Check from a laptop **with the VPN on**. On Linux this needs nothing installed,
+and asks the system rather than a particular server — which is the question that
+actually matters here:
 
 ```bash
-dig +short quicktec.417group.org     # → 100.x.y.z
+getent hosts quicktec.417group.org     # → 100.x.y.z
 ```
 
 On macOS `dig` talks straight to the network's resolver and ignores the split
