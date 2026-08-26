@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { recordAudit } from "@/lib/audit";
 import { db } from "@/lib/db";
-import { flag, optionalText } from "@/lib/form";
+import { flag, optionalText, phoneText } from "@/lib/form";
 import { analyzeForm, type FormAnalysis } from "@/lib/forms/analyze";
 import {
   DOCUMENT_LABELS,
@@ -379,7 +379,7 @@ const dispatchSchema = z.object({
   clientId: z.string().min(1),
   label: z.string().trim().min(1, "Say who they are"),
   name: optionalText,
-  phone: optionalText,
+  phone: phoneText,
   email: optionalText,
   note: optionalText,
 });

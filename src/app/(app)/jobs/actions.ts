@@ -18,6 +18,7 @@ import {
 } from "@/lib/int-wo";
 import { notify } from "@/lib/notifications";
 import { resolvePayRate } from "@/lib/pay-rates";
+import { formatPhone } from "@/lib/phone";
 import { REVISIT_CARRIES, type RevisitCarry } from "@/lib/revisit";
 import { canOnJob, resolveJobSupervisor } from "@/lib/scope";
 import { timeZoneForZip } from "@/lib/us-regions";
@@ -298,7 +299,8 @@ export async function createJob(
     .map((label, index) => ({
       label: label.trim(),
       name: input.dispatchName[index]?.trim() || null,
-      phone: input.dispatchPhone[index]?.trim() || null,
+      // Normalised where it is stored, like every other phone on the record.
+      phone: formatPhone(input.dispatchPhone[index] ?? "") || null,
       email: input.dispatchEmail[index]?.trim() || null,
       note: input.dispatchNote[index]?.trim() || null,
       order: index,

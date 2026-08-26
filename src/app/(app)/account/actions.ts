@@ -4,14 +4,14 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { recordAudit } from "@/lib/audit";
 import { db } from "@/lib/db";
-import { optionalText } from "@/lib/form";
+import { optionalText, phoneText } from "@/lib/form";
 import { getSessionUser } from "@/lib/session";
 import { US_STATES } from "@/lib/us-regions";
 
 export type ContactResult = { ok: true } | { ok: false; error: string };
 
 const contactSchema = z.object({
-  phone: optionalText,
+  phone: phoneText,
   addressLine1: optionalText,
   addressLine2: optionalText,
   city: optionalText,

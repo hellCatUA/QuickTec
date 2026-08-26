@@ -4,6 +4,7 @@ import { Mail, Phone, Plus, X } from "lucide-react";
 import { useActionState, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { formatPhone, telHref } from "@/lib/phone";
+import { PhoneInput } from "@/components/ui/phone-input";
 import { Field, Input } from "@/components/ui/field";
 import { FormStatus, type SaveState } from "@/components/ui/form-status";
 import {
@@ -135,7 +136,7 @@ export function DispatchContacts({
               <Input id="dc-name" name="name" autoComplete="off" />
             </Field>
             <Field label="Phone" htmlFor="dc-phone">
-              <Input id="dc-phone" name="phone" type="tel" autoComplete="off" />
+              <PhoneInput id="dc-phone" name="phone" />
             </Field>
             <Field label="Email" htmlFor="dc-email">
               <Input

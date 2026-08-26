@@ -1259,6 +1259,20 @@ async function main() {
   // --- phone numbers -------------------------------------------------------
   const { formatPhone, formatPhoneAsTyped, telHref } = await import("@/lib/phone");
 
+  // Written the one way wherever it is stored, not only where somebody typed
+  // it slowly. Half the forms formatted as you typed and half did not, so one
+  // dispatch number read two ways depending on the screen it was entered on —
+  // and a pasted number bypassed the typing rule on every screen.
+  const { phoneText } = await import("@/lib/form");
+  const asStored = (value: unknown) => phoneText.parse(value);
+
+  check("a pasted number is stored with its dashes", asStored("2065550177"), "206-555-0177");
+  check("however it was punctuated", asStored(" (206) 555.0177 "), "206-555-0177");
+  check("a country code survives", asStored("12065550177"), "1-206-555-0177");
+  check("blank stays blank", asStored(""), null);
+  check("and an extension is left exactly as written", asStored("206-555-0177 x203"), "206-555-0177 x203");
+  check("as is anything international", asStored("+380 44 123 4567"), "+380 44 123 4567");
+
   check("ten digits get their dashes", formatPhone("5551234567"), "555-123-4567");
   check(
     "however they were typed",

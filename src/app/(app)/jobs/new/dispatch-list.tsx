@@ -3,6 +3,7 @@
 import { Plus, X } from "lucide-react";
 import * as React from "react";
 import { Button } from "@/components/ui/button";
+import { formatPhoneAsTyped } from "@/lib/phone";
 import { Field, Input } from "@/components/ui/field";
 
 export type DraftContact = {
@@ -197,7 +198,11 @@ export function DispatchList({
                 id={`dispatch-phone-${index}`}
                 name="dispatchPhone"
                 value={contact.phone}
-                onChange={(event) => update(index, { phone: event.target.value })}
+                onChange={(event) =>
+                  update(index, {
+                    phone: formatPhoneAsTyped(event.target.value),
+                  })
+                }
                 inputMode="tel"
                 autoComplete="off"
               />

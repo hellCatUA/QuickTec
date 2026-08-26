@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { diffFields, recordAudit } from "@/lib/audit";
 import { db } from "@/lib/db";
-import { flag, optionalMoney, optionalText } from "@/lib/form";
+import { flag, optionalMoney, optionalText, phoneText } from "@/lib/form";
 import { PROJECT_DEFAULT_RULES } from "@/lib/deliverables";
 import { notify } from "@/lib/notifications";
 import { requirePermission } from "@/lib/session";
@@ -425,7 +425,7 @@ const contactSchema = z.object({
   projectId: z.string().min(1),
   label: z.string().trim().min(1, "Label is required"),
   name: optionalText,
-  phone: optionalText,
+  phone: phoneText,
   email: optionalText,
   note: optionalText,
 });
@@ -495,7 +495,7 @@ export async function deleteDispatchContact(
 const externalContactSchema = z.object({
   name: z.string().trim().min(1, "Name is required"),
   title: optionalText,
-  phone: optionalText,
+  phone: phoneText,
   email: optionalText,
   clientId: optionalText,
 });

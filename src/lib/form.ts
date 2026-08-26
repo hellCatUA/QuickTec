@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { formatPhone } from "@/lib/phone";
 
 /**
  * Shared coercion for everything arriving from a form.
@@ -36,6 +37,23 @@ export const optionalText = z
     const trimmed = String(value).replace(/\r\n?/g, "\n").trim();
     return trimmed === "" ? null : trimmed;
   });
+
+/**
+ * A phone number, written the one way.
+ *
+ * Applied where it is stored rather than only where it is typed: half the
+ * forms formatted as you typed and half did not, so the same dispatch number
+ * read 206-555-0177 when it was entered on the job and 2065550177 when it was
+ * entered on the project. Pasting from an email or an import bypassed the
+ * typing rule entirely, whichever form it went through.
+ *
+ * formatPhone leaves alone anything it does not recognise — an extension, an
+ * international number, a note in the field — so this normalises the ordinary
+ * case without mangling the unusual one.
+ */
+export const phoneText = optionalText.transform((value) =>
+  value === null ? null : formatPhone(value) || null,
+);
 
 /** Text that has to be there. Missing and blank fail the same way. */
 export function requiredText(message: string) {

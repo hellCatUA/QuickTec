@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { diffFields, recordAudit } from "@/lib/audit";
 import { db } from "@/lib/db";
-import { flag, optionalText } from "@/lib/form";
+import { flag, optionalText, phoneText } from "@/lib/form";
 import {
   hashPassword,
   newSetupToken,
@@ -27,7 +27,7 @@ const companySchema = z.object({
   state: optionalText,
   postalCode: optionalText,
   country: optionalText,
-  phone: optionalText,
+  phone: phoneText,
   email: optionalText,
   website: optionalText,
   intWoLabel: z.string().trim().min(1),
@@ -100,7 +100,7 @@ const userSchema = z.object({
   /** What the app calls them. Blank means "go back to what NextCloud says". */
   name: optionalText,
   legalName: optionalText,
-  phone: optionalText,
+  phone: phoneText,
   addressLine1: optionalText,
   addressLine2: optionalText,
   city: optionalText,

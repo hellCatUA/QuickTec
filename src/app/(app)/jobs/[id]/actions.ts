@@ -23,6 +23,7 @@ import {
 } from "@/lib/job-deliverables";
 import { isJobField, JOB_FIELDS, type JobFieldName } from "@/lib/job-fields";
 import { resolvePayRate } from "@/lib/pay-rates";
+import { formatPhone } from "@/lib/phone";
 import { notify } from "@/lib/notifications";
 import { canOnJob, resolveJobSupervisor } from "@/lib/scope";
 import { getSessionUser, permissionScope, type SessionUser } from "@/lib/session";
@@ -1252,7 +1253,7 @@ export async function addPointOfContact(
       jobId,
       type,
       name,
-      phone: phone || null,
+      phone: formatPhone(phone) || null,
       email: email || null,
       order: count,
     },
@@ -1561,7 +1562,7 @@ export async function addJobDispatchContact(
       jobId,
       label,
       name: String(formData.get("name") ?? "").trim() || null,
-      phone: String(formData.get("phone") ?? "").trim() || null,
+      phone: formatPhone(String(formData.get("phone") ?? "")) || null,
       email: String(formData.get("email") ?? "").trim() || null,
       note: String(formData.get("note") ?? "").trim() || null,
       order: (last?.order ?? -1) + 1,

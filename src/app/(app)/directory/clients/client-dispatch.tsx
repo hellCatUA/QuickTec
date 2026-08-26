@@ -3,7 +3,7 @@
 import { Loader2, Phone, Plus, X } from "lucide-react";
 import * as React from "react";
 import { Button } from "@/components/ui/button";
-import { formatPhone, telHref } from "@/lib/phone";
+import { formatPhone, formatPhoneAsTyped, telHref } from "@/lib/phone";
 import { Field, Input } from "@/components/ui/field";
 import { deleteClientDispatch, saveClientDispatch } from "../actions";
 
@@ -153,7 +153,7 @@ export function ClientDispatch({
                 id={`disp-phone-${clientId}`}
                 type="tel"
                 value={phone}
-                onChange={(event) => setPhone(event.target.value)}
+                onChange={(event) => setPhone(formatPhoneAsTyped(event.target.value))}
                 autoComplete="off"
               />
             </Field>
