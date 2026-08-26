@@ -1,4 +1,3 @@
-import { db } from "@/lib/db";
 import { formatIntWo, NO_PROJECT_REF } from "@/lib/int-wo-format";
 import { zonedParts } from "@/lib/datetime";
 import type { Prisma } from "@prisma-client";
@@ -136,34 +135,4 @@ export async function allocateRevisitIntWo(
       revisitNumber,
     }),
   };
-}
-
-/**
- * What the next number will look like, without consuming it. For showing the
- * operator what they are about to create — the real number is allocated inside
- * the creating transaction and can differ if someone else saves first.
- */
-export async function previewIntWo(input: AllocateIntWoInput): Promise<string> {
-  const { year, month } = zonedParts(input.effectiveDate, input.timeZone);
-
-  const current = input.projectId
-    ? ((
-        await db.project.findUnique({
-          where: { id: input.projectId },
-          select: { intWoCounter: true },
-        })
-      )?.intWoCounter ?? 0)
-    : ((
-        await db.intWoCounter.findUnique({
-          where: { scope: `global:${year}` },
-          select: { value: true },
-        })
-      )?.value ?? 0);
-
-  return formatIntWo({
-    year,
-    month,
-    projectRef: input.externalProjectId || NO_PROJECT_REF,
-    sequence: current + 1,
-  });
 }

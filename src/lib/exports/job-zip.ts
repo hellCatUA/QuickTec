@@ -13,7 +13,7 @@ import { absolutePath, fileExists } from "@/lib/storage";
  *   Sign Off/…
  *   Signatures/MOD-Dana Reyes-Signature.png
  *   Receipts/…
- *   <Company> INT WO/2026-07-PRJ12-0001.pdf
+ *   <Company> INT WO/2607-PRJ12-0001.pdf
  *   887766-Report.txt
  *
  * Photos sit under their section and then under whoever took them, so a

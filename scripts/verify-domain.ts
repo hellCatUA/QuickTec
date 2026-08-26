@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { readFile } from "node:fs/promises";
 import { db } from "@/lib/db";
 import {
   allocateIntWo,
@@ -1151,6 +1152,49 @@ async function main() {
   check("and a request on its own is not", 
     buildPunchHistory([{ id: "g", action: "punch_change_requested", createdAt: acted, actorName: "A", detail: {} }], fmt)[0].paired,
     false);
+
+  // --- the INT WO rewrite, run as SQL --------------------------------------
+  // Nothing exercised this, and it is the one artifact in the release that
+  // rewrites a business identifier in place. It shipped twice with a guard
+  // that was wrong: the first let a two-digit project ID be re-converted, the
+  // second corrupted 2608-12-0042 into 0812-0042 and stopped converting
+  // 2026-08-12-0042 at all.
+  {
+    const sql = await readFile(
+      "prisma/migrations/20260812090000_short_int_wo/migration.sql",
+      "utf8",
+    );
+    // The condition itself, without the keyword — it is being reused inside a
+    // CASE, not as a clause.
+    const where = sql
+      .slice(sql.indexOf("WHERE") + "WHERE".length)
+      .replace(/;\s*$/, "")
+      .trim();
+    const setter = `substring(v from 3 for 2)||substring(v from 6 for 2)||substring(v from 8)`;
+
+    const cases: [string, string][] = [
+      ["2026-08-0000-0017", "2608-0000-0017"],
+      ["2026-06-P-9-0009", "2606-P-9-0009"],
+      ["2026-07-PRJ12-0042-R1", "2607-PRJ12-0042-R1"],
+      // A project ID of exactly two digits, which is free text and so allowed.
+      ["2026-08-12-0042", "2608-12-0042"],
+      // Already converted: every one of these must come back untouched, or
+      // running the migration a second time eats the number.
+      ["2608-0000-0017", "2608-0000-0017"],
+      ["2608-12-0042", "2608-12-0042"],
+      ["2606-P-9-0009", "2606-P-9-0009"],
+    ];
+
+    for (const [before, after] of cases) {
+      const rows = await db.$queryRawUnsafe<{ out: string }[]>(
+        `SELECT CASE WHEN ${where.replace(/"intWoId"/g, "v")}
+           THEN ${setter} ELSE v END AS out
+         FROM (VALUES ($1::text)) AS s(v)`,
+        before,
+      );
+      check(`the migration turns ${before} into ${after}`, rows[0].out, after);
+    }
+  }
 
   // --- which clock a ZIP is on ---------------------------------------------
   // A site left on the company default showed a Dallas job in Los Angeles

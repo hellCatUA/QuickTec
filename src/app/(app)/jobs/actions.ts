@@ -470,6 +470,8 @@ export async function createRevisit(
         where: { jobDocumentKind: "SIGN_OFF", sourceTemplateId: { not: null } },
         select: { sourceTemplateId: true },
       },
+      createdById: true,
+      project: { select: { managerId: true } },
       // Who worked it, so the same people can be sent back without being
       // looked up and re-added by hand.
       assignments: {
@@ -482,7 +484,7 @@ export async function createRevisit(
           payRateNote: true,
           payOverridden: true,
           travelReimbursement: true,
-          user: { select: { name: true } },
+          user: { select: { name: true, directSupervisorId: true } },
         },
       },
       deliverableRules: {
@@ -500,6 +502,30 @@ export async function createRevisit(
   });
 
   if (!parent) return { ok: false, error: "Original job not found." };
+
+  // Holding job.create is not the question — the question is whether this
+  // person may act on THIS job. The page asks it before rendering the form,
+  // but the action is directly postable with any parentJobId, and it copies
+  // pay rates, copies the coordinator's phone and email, creates crew
+  // assignments and moves the parent out of the revisit queue. Asked here too,
+  // against the parent, the same way the page asks it.
+  const mayRevisit =
+    (await canOnJob(actor, "job.view", {
+      projectId: parent.projectId,
+      assigneeIds: parent.assignments.map((entry) => entry.userId),
+      createdById: parent.createdById,
+    })) &&
+    (actor.baseRole === "MANAGER" ||
+      actor.baseRole === "ADMINISTRATOR" ||
+      parent.project?.managerId === actor.id ||
+      parent.assignments.some(
+        (entry) =>
+          entry.supervisorId === actor.id ||
+          entry.user.directSupervisorId === actor.id,
+      ));
+  if (!mayRevisit) {
+    return { ok: false, error: "You cannot schedule a revisit of that job." };
+  }
 
   if (input.assignmentIdMode === "new" && !input.externalAssignmentId) {
     return { ok: false, error: "Enter the new Assignment ID from the client." };

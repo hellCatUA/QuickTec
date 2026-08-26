@@ -1596,6 +1596,10 @@ async function main() {
   );
 
   await plantClock();
+  // The block above moved the visit in the database several times; the page in
+  // front of us still holds the values it was rendered with, and editPunch
+  // below would save those.
+  await openPortal(page, assignment.jobId);
 
   // Downwards without limit: this can only ever give time back.
   await editPunch(page, sheet, "CO", "2026-07-28T13:00", "Forgot to punch");
