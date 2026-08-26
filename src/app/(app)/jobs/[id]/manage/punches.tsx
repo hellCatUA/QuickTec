@@ -105,7 +105,11 @@ export function Punches({
 
   return (
     <div className="flex flex-col gap-3">
-      {note ? <p className="text-sm text-warning">{note}</p> : null}
+      {note ? (
+        <p data-punch-note className="text-sm text-warning">
+          {note}
+        </p>
+      ) : null}
       {punches.map((punch) => (
         <PunchBlock
           key={punch.assignmentId}
@@ -140,6 +144,7 @@ function PunchBlock({
   const nextBreakId = React.useRef(0);
   const [code, setCode] = React.useState("");
   const [reasonNote, setReasonNote] = React.useState("");
+  const [reasonError, setReasonError] = React.useState<string | null>(null);
   const [showBreaks, setShowBreaks] = React.useState(false);
   const [pending, startTransition] = React.useTransition();
 
@@ -155,6 +160,7 @@ function PunchBlock({
     setMenu(false);
     setCode("");
     setReasonNote("");
+    setReasonError(null);
     setNewOut("");
     setValue(next === "edit" ? (punch.clockIn?.value ?? "") : "");
     if (next === "edit") {
@@ -171,13 +177,23 @@ function PunchBlock({
     setPane(next);
   }
 
-  function run(work: () => Promise<{ ok: boolean; error?: string }>) {
+  function run(
+    work: () => Promise<{ ok: boolean; error?: string; field?: "reason" }>,
+  ) {
     startTransition(async () => {
       const result = await work();
-      // A refusal and a request both come back as a message; the words come
-      // from the server, so they can say which this was.
-      if (!result.ok) return onNote(result.error ?? "That did not work.");
+      if (!result.ok) {
+        // A complaint about one field belongs under that field. Everything
+        // else — a refusal, a request sent for approval — is about the whole
+        // action and stays at the top where it can be seen from the list.
+        if (result.field === "reason") {
+          setReasonError(result.error ?? "That did not work.");
+          return;
+        }
+        return onNote(result.error ?? "That did not work.");
+      }
       setPane(null);
+      setReasonError(null);
       onNote(null);
     });
   }
@@ -521,8 +537,12 @@ function PunchBlock({
             companyName={companyName}
             code={code}
             note={reasonNote}
-            onCode={setCode}
+            onCode={(next) => {
+              setCode(next);
+              setReasonError(null);
+            }}
             onNote={setReasonNote}
+            error={reasonError}
             idPrefix={`adjust-${punch.assignmentId}`}
           />
           <Actions pending={pending} onSave={save} onCancel={() => setPane(null)} label="Save" />
@@ -556,8 +576,12 @@ function PunchBlock({
             companyName={companyName}
             code={code}
             note={reasonNote}
-            onCode={setCode}
+            onCode={(next) => {
+              setCode(next);
+              setReasonError(null);
+            }}
             onNote={setReasonNote}
+            error={reasonError}
             idPrefix={`add-${punch.assignmentId}`}
           />
           <Actions
@@ -579,8 +603,12 @@ function PunchBlock({
             companyName={companyName}
             code={code}
             note={reasonNote}
-            onCode={setCode}
+            onCode={(next) => {
+              setCode(next);
+              setReasonError(null);
+            }}
             onNote={setReasonNote}
+            error={reasonError}
             idPrefix={`remove-${punch.assignmentId}`}
           />
           <div className="flex gap-2">

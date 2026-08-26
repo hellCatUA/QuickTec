@@ -35,10 +35,26 @@ import {
   type Prisma,
 } from "@prisma-client";
 
-export type ActionResult = { ok: true } | { ok: false; error: string };
+export type ActionResult =
+  | { ok: true }
+  | {
+      ok: false;
+      error: string;
+      /**
+       * Which field the message is about, when it is about one. Without it
+       * every complaint lands at the top of the block — including "choose a
+       * reason", which is about a box six inches further down.
+       */
+      field?: "reason";
+    };
 
 const ok: ActionResult = { ok: true };
 const fail = (error: string): ActionResult => ({ ok: false, error });
+const failField = (field: "reason", error: string): ActionResult => ({
+  ok: false,
+  error,
+  field,
+});
 
 type JobContext = {
   user: SessionUser;
@@ -2128,7 +2144,7 @@ export async function removeVisit(formData: FormData): Promise<ActionResult> {
   const reasonCode = String(formData.get("reasonCode") ?? "").trim();
   const note = String(formData.get("note") ?? "").trim() || null;
   const badReason = punchReasonProblem("remove", reasonCode, note);
-  if (badReason) return fail(badReason);
+  if (badReason) return failField("reason", badReason);
 
   const visit = await db.visit.findUnique({
     where: { id: visitId },
@@ -2222,7 +2238,10 @@ const newPunchSchema = z.object({
   assignmentId: z.string().min(1),
   clockIn: z.string().min(1),
   clockOut: optionalText,
-  reasonCode: z.string().trim().min(1),
+  // Deliberately not .min(1): an empty reason is a real case with a sentence
+  // already written for it in punch-reasons.ts, and letting the schema reject
+  // it first put zod's own wording on screen instead.
+  reasonCode: z.string().trim(),
   note: optionalText,
 });
 
@@ -2245,7 +2264,7 @@ export async function addVisit(formData: FormData): Promise<ActionResult> {
   const { assignmentId, clockOut, reasonCode, note } = parsed.data;
 
   const badReason = punchReasonProblem("add", reasonCode, note);
-  if (badReason) return fail(badReason);
+  if (badReason) return failField("reason", badReason);
 
   const assignment = await db.jobAssignment.findUnique({
     where: { id: assignmentId },
@@ -2433,7 +2452,10 @@ const editPunchSchema = z.object({
   clockOut: optionalText,
   /** The whole list, as the form holds it — not a diff. */
   breaks: optionalText,
-  reasonCode: z.string().trim().min(1),
+  // Deliberately not .min(1): an empty reason is a real case with a sentence
+  // already written for it in punch-reasons.ts, and letting the schema reject
+  // it first put zod's own wording on screen instead.
+  reasonCode: z.string().trim(),
   note: optionalText,
 });
 
@@ -2453,7 +2475,7 @@ export async function editPunch(formData: FormData): Promise<ActionResult> {
   const { visitId, clockOut, reasonCode, note } = parsed.data;
 
   const badReason = punchReasonProblem("adjust", reasonCode, note);
-  if (badReason) return fail(badReason);
+  if (badReason) return failField("reason", badReason);
   const reason = describeReason(reasonCode, note);
 
   const visit = await db.visit.findUnique({

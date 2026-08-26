@@ -26,6 +26,7 @@ export function ReasonPicker({
   onCode,
   onNote,
   idPrefix,
+  error,
 }: {
   action: PunchAction;
   companyName: string;
@@ -34,6 +35,8 @@ export function ReasonPicker({
   onCode: (code: string) => void;
   onNote: (note: string) => void;
   idPrefix: string;
+  /** What the server said about this field, shown under it. */
+  error?: string | null;
 }) {
   const options = React.useMemo(
     () =>
@@ -61,6 +64,13 @@ export function ReasonPicker({
           emptyText="No reason matches that."
           allowClear={false}
         />
+        {/* Under the box it is about. At the top of the block it was six
+            inches from the field it referred to, above somebody's name. */}
+        {error ? (
+          <p role="alert" data-reason-error className="mt-1.5 text-sm text-danger">
+            {error}
+          </p>
+        ) : null}
       </Field>
 
       {code ? (

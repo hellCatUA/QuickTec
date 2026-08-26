@@ -729,7 +729,10 @@ async function main() {
 
     await planner.locator("#qs-address").fill("1 Test Way");
     await planner.locator("#qs-city").fill("Tacoma");
-    await planner.locator("#qs-state").fill("WA");
+    // A picker now, not a text box: click to open it, type, take the match.
+    await planner.locator("#qs-state").click();
+    await planner.locator('input[role="combobox"]').last().fill("WA");
+    await planner.getByRole("option", { name: /WA/ }).first().click();
     await planner.getByRole("button", { name: "Add site" }).click();
     await planner.waitForTimeout(2500);
 
@@ -1637,6 +1640,40 @@ async function main() {
         .join(","),
       "fromIn,toIn",
     );
+
+    // Reported from the field: saving without a reason put zod's own words on
+    // screen — "Too small: expected string to have >=1 characters → at
+    // reasonCode" — at the top of the block, six inches above the box it was
+    // about.
+    await menu.getByRole("button", { name: /^Punch actions for/ }).click();
+    await planner.getByRole("button", { name: "Edit Punch", exact: true }).click();
+    await menu.locator('input[type="datetime-local"]').first().fill("2026-07-28T07:00");
+    await menu.getByRole("button", { name: "Save", exact: true }).click();
+    await planner.waitForTimeout(2000);
+
+    check(
+      "a missing reason is said in words a person wrote",
+      await planner.getByText("Choose a reason.").isVisible(),
+      true,
+    );
+    check(
+      "and zod's own wording never reaches the screen",
+      await planner.getByText(/expected string to have/).count(),
+      0,
+    );
+    // Under the field it is about, not at the top above somebody's name.
+    check(
+      "the message sits under the reason field",
+      await menu.locator("[data-reason-error]").count(),
+      1,
+    );
+    check(
+      "and not at the top of the list",
+      await planner.locator("[data-punch-note]").count(),
+      0,
+    );
+    await menu.getByRole("button", { name: "Cancel", exact: true }).click();
+    await planner.waitForTimeout(500);
 
     // Saving a pane nobody changed used to write a "Punch Adjusted" line with
     // nothing under it, which reads as a bug in the history rather than as a
