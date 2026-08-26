@@ -1202,9 +1202,9 @@ async function main() {
   // the page it is meant to duplicate, and somebody helpfully adding the
   // server's address to a file that is world-readable by design.
   {
-    const notice = await readFile("deploy/vpn-notice/index.html", "utf8");
-    const notFound = await readFile("deploy/vpn-notice/404.html", "utf8");
-    const headers = await readFile("deploy/vpn-notice/_headers", "utf8");
+    const notice = await readFile("deploy/vpn-notice/public/index.html", "utf8");
+    const notFound = await readFile("deploy/vpn-notice/public/404.html", "utf8");
+    const headers = await readFile("deploy/vpn-notice/public/_headers", "utf8");
 
     check("the 404 copy matches the notice page", notFound === notice, true);
 
@@ -1232,6 +1232,21 @@ async function main() {
     // notice away and serves it back once the VPN is on — the app replaced by
     // a page telling you to connect a VPN you are already connected to.
     check("the notice page is never cached", /Cache-Control:\s*no-store/i.test(headers), true);
+
+    // Everything in the assets directory is served to the public internet, so
+    // the config sits outside it — and the 404 copy only earns its keep if
+    // Workers is told to reach for it.
+    const wrangler = await readFile("deploy/vpn-notice/wrangler.jsonc", "utf8");
+    check(
+      "only public/ is published",
+      /"directory":\s*"\.\/public"/.test(wrangler),
+      true,
+    );
+    check(
+      "a bookmarked deep link gets the notice, not an error page",
+      /"not_found_handling":\s*"404-page"/.test(wrangler),
+      true,
+    );
   }
 
   // --- which clock a ZIP is on ---------------------------------------------

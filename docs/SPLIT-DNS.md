@@ -168,9 +168,15 @@ fix on the VPN's side, and switching MagicDNS off treats the symptom.
 
 ## 4. The public answer
 
-The page lives in `deploy/vpn-notice/`. It is three files and no build step:
-`index.html`, an identical `404.html` so a bookmarked deep link lands on the same
-explanation, and `_headers`.
+The page lives in `deploy/vpn-notice/`. It is three files and no build step —
+`public/index.html`, an identical `public/404.html` so a bookmarked deep link
+lands on the same explanation, and `public/_headers` — plus a `wrangler.jsonc`
+that says what to do with them.
+
+Cloudflare folded Pages into Workers, so there is no "create a Pages project"
+any more. A static site is a Worker that serves assets and has no script of its
+own, which is what the config describes. Everything under `public/` is published
+to the internet; the config stays outside it deliberately.
 
 It says almost nothing, on purpose. The company mark carries it: the logo
 already draws a laptop, the company, and the network behind it, so the link is
@@ -179,14 +185,50 @@ heading, one sentence and a button. The mark is traced into the page as vector
 paths in `currentColor`, so it follows the theme and needs no second copy for
 light mode, and the whole page is one request with nothing loaded from anywhere.
 
-In the Cloudflare dashboard:
+### Deploying it from this repository
 
-1. **Workers & Pages → Create → Pages.** Upload the contents of
-   `deploy/vpn-notice/` directly, or connect this repository and set the build
-   output directory to `deploy/vpn-notice` with no build command.
-2. On the project, **Custom domains → Set up a custom domain** →
+**Workers & Pages → Create → Import a repository**, and pick this one. The
+wizard asks for rather more than a static site needs; most of it is left empty.
+
+| Field | Value |
+| --- | --- |
+| Project name | `quicktec-vpn-notice` |
+| Build command | *(empty)* |
+| Deploy command | `npx wrangler deploy` |
+| Builds for non-production branches | off |
+| **Protect with Cloudflare Access** | **off** |
+| Advanced settings → Path | `deploy/vpn-notice` |
+| Advanced settings → Non-production branch deploy command | *(empty)* |
+| API token | Create new token |
+| Variables | *(none)* |
+
+**Access has to stay off.** It is the right answer for an internal tool and the
+wrong one here: it would put a login in front of the page whose entire job is to
+be readable by somebody who cannot log in yet.
+
+`Path` is the one that matters — it tells the build where `wrangler.jsonc` is.
+Without it the deploy runs at the repository root, finds no config, and fails.
+
+The first deploy publishes to `quicktec-vpn-notice.<account>.workers.dev`. Open
+it and check the page before going anywhere near DNS: at that point nothing has
+changed for anybody.
+
+### Or without the repository
+
+Nothing here needs a git connection, and a static page that changes twice a year
+does not obviously want a deploy running on every push to the app. The
+alternative is **Workers & Pages → Create → Upload assets**, dropping the three
+files from `deploy/vpn-notice/public/` — or, from a checkout:
+
+```bash
+cd deploy/vpn-notice && npx wrangler deploy
+```
+
+### Pointing the name at it
+
+1. On the Worker, **Settings → Domains & Routes → Add → Custom domain** →
    `quicktec.417group.org`.
-3. Cloudflare will notice the existing record pointing at `100.x.y.z` and offer
+2. Cloudflare will notice the existing record pointing at `100.x.y.z` and offer
    to replace it. Let it. **That record going away is the point of the exercise**
    — after this the address is not published anywhere.
 
@@ -202,11 +244,14 @@ Give it a minute the first time; the old record may still be cached from before.
 
 ### What must never go on that page
 
-Anyone can read it. It carries no address, no internal hostname, and no mention
-of which VPN product is in use — a person who needs the VPN already has it or
-knows who to ask, and a person who does not need to learn anything from a page
-they cannot use. The comment at the top of `index.html` says so, and
-`scripts/verify-domain.ts` checks that `404.html` has not drifted away from it.
+Anyone can read it — everything under `public/` is on the open internet, and it
+is also reachable at the `workers.dev` address whatever DNS says. It carries no
+address, no internal hostname, and no mention of which VPN product is in use: a
+person who needs the VPN already has it or knows who to ask, and a person who
+does not need to learn anything from a page they cannot use. The comment at the
+top of `index.html` says so, and `scripts/verify-domain.ts` enforces it — no VPN
+product named, no tailnet address, and `404.html` still identical to the page it
+copies.
 
 ---
 
