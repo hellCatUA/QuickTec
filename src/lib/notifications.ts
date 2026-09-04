@@ -22,6 +22,14 @@ export const NOTIFICATION_KINDS = {
   // Not a decision for them either: it is the answer to one they have been
   // waiting on, and nothing else tells a tech their week can now be run.
   report_approved: "Report approved",
+  // The other two answers. Both carry what the reviewer wrote, because "sent
+  // back" without a reason is a job that comes straight back unchanged.
+  report_sent_back: "Report sent back",
+  report_rejected: "Report rejected",
+  // And the way back up: whoever is waiting on a report needs telling when the
+  // crew have had another go at it, or it sits in a queue they stopped
+  // watching.
+  report_resubmitted: "Report resubmitted",
 } as const;
 
 export type NotificationKind = keyof typeof NOTIFICATION_KINDS;

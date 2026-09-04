@@ -22,6 +22,39 @@ export type ReviewFlag = {
   text: string;
 };
 
+/** The four passes, in the order they are made. */
+export const REVIEW_STEPS = [
+  "times",
+  "deliverables",
+  "reimbursements",
+  "work",
+] as const;
+
+export type ReviewStepKey = (typeof REVIEW_STEPS)[number];
+
+export function isReviewStep(value: string): value is ReviewStepKey {
+  return (REVIEW_STEPS as readonly string[]).includes(value);
+}
+
+/**
+ * What a step was warning about, reduced to one comparable string.
+ *
+ * A tick is about what was on screen, and the screen moves: a punch is
+ * corrected, a photo arrives, a receipt is attached. Stored beside the tick and
+ * compared against the findings now, this is what lets a step stop claiming to
+ * have been checked once it is about something else — rather than a review
+ * signed off against a version of the day that has since been rewritten.
+ *
+ * Sorted, because the order flags come out in is an accident of how they were
+ * gathered and not something a reviewer saw change.
+ */
+export function flagsFingerprint(flags: ReviewFlag[]): string {
+  return flags
+    .map((flag) => `${flag.level}:${flag.text}`)
+    .sort()
+    .join("\n");
+}
+
 /** How late counts as late. Traffic is not a finding. */
 export const LATE_START_MINUTES = 30;
 

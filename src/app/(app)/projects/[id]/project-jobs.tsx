@@ -36,13 +36,21 @@ const GROUPS = [
   {
     key: "scheduled",
     label: "Scheduled",
-    lifecycles: ["DRAFT", "PENDING_APPROVAL", "SCHEDULED", "IN_PROGRESS"],
+    lifecycles: [
+      "DRAFT",
+      "PENDING_APPROVAL",
+      "SCHEDULED",
+      "IN_PROGRESS",
+      // Work still to do, even though the day is over: the crew have been
+      // asked for something before the report can go anywhere.
+      "CHANGES_REQUESTED",
+    ],
     tone: "border-primary/40",
   },
   {
     key: "completed",
     label: "Completed",
-    lifecycles: ["PENDING_REVIEW", "APPROVED", "BILLED", "CLOSED"],
+    lifecycles: ["PENDING_REVIEW", "APPROVED", "REJECTED", "BILLED", "CLOSED"],
     tone: "border-border",
   },
 ] as const;

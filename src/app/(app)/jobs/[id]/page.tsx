@@ -57,6 +57,7 @@ import { BlockBody, BlockEditToggle, EditableBlock } from "./editable-block";
 import { EditableField } from "./editable-field";
 import { PointsOfContact } from "./points-of-contact";
 import { ScopeOfWork } from "./scope-of-work";
+import { SentBack } from "./sent-back";
 import { SiteNumberPrompt } from "./site-number";
 import { Deliverables } from "./deliverables";
 import { DeliverableSections } from "./deliverable-sections";
@@ -118,6 +119,9 @@ export default async function JobPage({
       lifecycle: true,
       outcome: true,
       internalStatus: true,
+      reviewNote: true,
+      reviewNoteAt: true,
+      reviewNoteBy: { select: { name: true } },
       revisitNumber: true,
       createdById: true,
       createdAt: true,
@@ -666,6 +670,23 @@ export default async function JobPage({
           <Badge variant="warning">Revisit {job.revisitNumber}</Badge>
         ) : null}
       </div>
+
+      {/* Above the work, because that is what it is about. A reviewer's
+          objection delivered only as a notification is read in a van and gone
+          by the time anybody opens the job to act on it. */}
+      {job.reviewNote &&
+      (job.lifecycle === "CHANGES_REQUESTED" || job.lifecycle === "REJECTED") ? (
+        <SentBack
+          jobId={job.id}
+          rejected={job.lifecycle === "REJECTED"}
+          reason={job.reviewNote}
+          who={job.reviewNoteBy?.name ?? null}
+          when={
+            job.reviewNoteAt ? usDateTimeInZone(job.reviewNoteAt, zone) : null
+          }
+          canResubmit={canSetOutcome}
+        />
+      ) : null}
 
       {mine ? (
         <TimePanel

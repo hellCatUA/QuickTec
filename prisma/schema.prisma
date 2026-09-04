@@ -99,7 +99,7 @@ model User {
 
   /// scrypt, with its parameters and salt in the string. Only ever set for
   /// LOCAL accounts; an SSO account has no password here to steal.
-  passwordHash String?
+  passwordHash       String?
   /// A password somebody else chose is a password somebody else knows.
   mustChangePassword Boolean @default(false)
 
@@ -153,6 +153,8 @@ model User {
   changeRequests        ChangeRequest[]      @relation("ChangeRequester")
   reviewedChanges       ChangeRequest[]      @relation("ChangeReviewer")
   scopeChecks           JobScopeCheck[]
+  reviewChecks          JobReviewCheck[]     @relation("JobReviewChecker")
+  returnedJobs          Job[]                @relation("JobReviewNote")
   uploads               Attachment[]
   auditEvents           AuditEvent[]
   notifications         Notification[]
@@ -178,7 +180,7 @@ model PasswordSetupToken {
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   /// SHA-256 of the token in the URL.
-  tokenHash String   @unique
+  tokenHash String    @unique
   expiresAt DateTime
   usedAt    DateTime?
 
@@ -688,7 +690,17 @@ enum JobLifecycle {
   IN_PROGRESS
   /// Clocked out, waiting on supervisor review.
   PENDING_REVIEW
+  /// A reviewer read it and sent it back. The crew can edit again, and
+  /// resubmitting returns it to PENDING_REVIEW. Distinct from IN_PROGRESS
+  /// because the day is over: everybody is clocked out, so nothing would move
+  /// it forward again on its own, and a job parked there waits for a clock-out
+  /// that is never coming.
+  CHANGES_REQUESTED
   APPROVED
+  /// Read and refused. Nothing goes to the client and nothing is paid against
+  /// it. Kept rather than deleted — a job that was worked and then thrown out
+  /// is a thing somebody will ask about.
+  REJECTED
   /// The representing company has paid for it and payroll has been run.
   BILLED
   /// The techs have been paid. Nothing left to do.
@@ -803,7 +815,19 @@ model Job {
   approvedBy   User?     @relation("JobApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
   approvedAt   DateTime?
 
-  calendarSyncedAt DateTime?
+  /// Why the last reviewer sent this back, or why they refused it. The
+  /// lifecycle says which of the two it was.
+  ///
+  /// The audit trail holds every round; this holds the one in progress, so the
+  /// crew see what to fix at the top of the job rather than by reading a
+  /// timeline. Cleared on resubmission — a banner about a round that is over is
+  /// worse than no banner.
+  reviewNote     String?
+  reviewNoteById String?
+  reviewNoteBy   User?     @relation("JobReviewNote", fields: [reviewNoteById], references: [id], onDelete: SetNull)
+  reviewNoteAt   DateTime?
+
+  calendarSyncedAt  DateTime?
   /// Why the last push failed, cleared when one succeeds. Background syncs are
   /// not awaited by anybody, so without this a calendar that quietly rejects
   /// every event looks exactly like a calendar with nothing to put in it.
@@ -828,6 +852,7 @@ model Job {
   formEntries      JobFormEntry[]
   mileageEntries   MileageEntry[]
   scopeChecks      JobScopeCheck[]
+  reviewChecks     JobReviewCheck[]
   changeRequests   ChangeRequest[]
   auditEvents      AuditEvent[]
   calendarEvents   CalendarEvent[]
@@ -920,9 +945,9 @@ model Visit {
   /// — but once a reviewer has said "yes, that was the site's fault" the
   /// warning has done its job and should stop shouting. An unexcused one keeps
   /// its colour.
-  lateAcceptedAt  DateTime?
+  lateAcceptedAt   DateTime?
   lateAcceptedById String?
-  overAcceptedAt  DateTime?
+  overAcceptedAt   DateTime?
   overAcceptedById String?
 
   createdAt DateTime @default(now())
@@ -969,6 +994,45 @@ model JobScopeCheck {
   checkedAt   DateTime?
 
   @@unique([jobId, lineKey])
+}
+
+/// One reviewer's pass over one section of a report.
+///
+/// Kept rather than held in the page for two reasons. A review on a phone
+/// survives the screen going to sleep and the browser throwing the tab away,
+/// which is most of them. And "who signed this off, and what were they looking
+/// at when they did" is a question that gets asked months later, when the only
+/// honest answer from a client-side wizard is that nobody knows.
+///
+/// Cleared when a report is sent back. The round those ticks belonged to is
+/// over, and carrying them forward would have somebody vouching for a version
+/// of the day that no longer exists.
+model JobReviewCheck {
+  id    String @id @default(cuid())
+  jobId String
+  job   Job    @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  /// Which pass: times, deliverables, reimbursements, work.
+  step String
+
+  checkedById String?
+  checkedBy   User?    @relation("JobReviewChecker", fields: [checkedById], references: [id], onDelete: SetNull)
+  checkedAt   DateTime @default(now())
+
+  /// What the step was warning about at the moment it was ticked.
+  ///
+  /// A tick is about what was on screen, and the screen changes: a punch gets
+  /// corrected, a photo turns up, a receipt is attached. Comparing this against
+  /// the findings now is what lets a step stop claiming to be checked once it
+  /// is about something else.
+  flagsSeen String
+
+  /// Why a step was signed off with a warning still on it. Required there and
+  /// meaningless without one, which is the whole point — approving over a
+  /// finding should cost a sentence.
+  note String?
+
+  @@unique([jobId, step])
 }
 
 // ---------------------------------------------------------------------------

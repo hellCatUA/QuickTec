@@ -16,9 +16,11 @@ import {
   Play,
   Repeat,
   Square,
+  Undo2,
   UserMinus,
   UserPlus,
   Users,
+  XCircle,
 } from "lucide-react";
 
 /**
@@ -101,6 +103,9 @@ export const TIMELINE_META: Record<string, TimelineMeta> = {
   approved: { label: "Job approved", icon: CircleCheck, tone: "success" },
   ad_hoc_approved: { label: "Ad-hoc job approved", icon: CircleCheck, tone: "success" },
   report_approved: { label: "Report approved", icon: CircleCheck, tone: "success" },
+  report_sent_back: { label: "Report sent back", icon: Undo2, tone: "warning" },
+  report_rejected: { label: "Report rejected", icon: XCircle, tone: "danger" },
+  report_resubmitted: { label: "Report resubmitted", icon: Repeat, tone: "primary" },
   field_filled: { label: "Detail filled in", icon: Pencil, tone: "neutral", groups: true },
   field_edited: { label: "Detail changed", icon: Pencil, tone: "warning", groups: true },
   requirements_updated: { label: "Requirements updated", icon: ClipboardList, tone: "neutral" },

@@ -136,6 +136,10 @@ const OPEN_LIFECYCLES = [
   "SCHEDULED",
   "IN_PROGRESS",
   "PENDING_REVIEW",
+  // Sent back is still open by this test: nothing has gone out, and the crew
+  // are on their way back to it — which is exactly when a newly issued blank
+  // has the best chance of being filled in.
+  "CHANGES_REQUESTED",
 ] as const;
 
 export type TemplateRollout = {

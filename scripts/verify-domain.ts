@@ -661,6 +661,77 @@ async function main() {
     0,
   );
 
+  // --- a tick that stops counting when the day changes ----------------------
+  // Signing off a pass, then correcting a punch, then approving would otherwise
+  // pass on a review of the version before the correction. The fingerprint is
+  // what makes the tick about something rather than about the moment it was
+  // made.
+  const { flagsFingerprint, REVIEW_STEPS, isReviewStep } = await import(
+    "@/lib/job-review"
+  );
+
+  const late = [
+    { level: "warn" as const, text: "Terry Tech checked in 45 minutes after the scheduled start." },
+    { level: "note" as const, text: "Nothing in Pre Install." },
+  ];
+
+  check(
+    "the order flags were gathered in is not a change",
+    flagsFingerprint(late) === flagsFingerprint([late[1], late[0]]),
+    true,
+  );
+  check(
+    "but a finding going away is",
+    flagsFingerprint(late) === flagsFingerprint([late[1]]),
+    false,
+  );
+  check(
+    "and so is one changing its number",
+    flagsFingerprint(late) ===
+      flagsFingerprint([
+        { level: "warn" as const, text: "Terry Tech checked in 90 minutes after the scheduled start." },
+        late[1],
+      ]),
+    false,
+  );
+  check("a clean pass fingerprints as nothing", flagsFingerprint([]), "");
+
+  check("there are four passes", REVIEW_STEPS.length, 4);
+  check("and a form cannot invent a fifth", isReviewStep("payroll"), false);
+  check("while a real one is accepted", isReviewStep("deliverables"), true);
+
+  // --- the review, assembled from a real job --------------------------------
+  // The page and the action behind its buttons ask the same function, so that
+  // what a step was warning about when it was ticked cannot differ from what it
+  // is warning about when the tick is checked.
+  {
+    const { loadReview } = await import("@/lib/job-review-data");
+
+    const built = await loadReview(parent.id);
+    check("a review is built for a real job", built !== null, true);
+    check(
+      "with the four passes in the order they are made",
+      built?.steps.map((step) => step.key).join(","),
+      "times,deliverables,reimbursements,work",
+    );
+    check(
+      "and a missing job builds nothing rather than throwing",
+      await loadReview("does-not-exist"),
+      null,
+    );
+
+    // Nobody clocked in on this fixture, so the times pass has the one finding
+    // that stops a report being approvable at all.
+    const times = built!.steps.find((step) => step.key === "times")!;
+    check(
+      "a job nobody worked says so on the times pass",
+      times.flags.some(
+        (one) => one.level === "warn" && one.text.includes("Nobody clocked in"),
+      ),
+      true,
+    );
+  }
+
   // --- passwords for the people who are not in NextCloud -------------------
   const {
     hashPassword,

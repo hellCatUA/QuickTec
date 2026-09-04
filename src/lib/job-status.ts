@@ -16,7 +16,9 @@ export const LIFECYCLE_META: Record<
   SCHEDULED: { label: "Scheduled", variant: "primary" },
   IN_PROGRESS: { label: "In progress", variant: "success" },
   PENDING_REVIEW: { label: "Pending review", variant: "warning" },
+  CHANGES_REQUESTED: { label: "Sent back", variant: "danger" },
   APPROVED: { label: "Approved", variant: "success" },
+  REJECTED: { label: "Rejected", variant: "danger" },
   BILLED: { label: "Billed", variant: "success" },
   CLOSED: { label: "Closed", variant: "neutral" },
 };
@@ -54,4 +56,7 @@ export const OPEN_LIFECYCLES: JobLifecycle[] = [
   "SCHEDULED",
   "IN_PROGRESS",
   "PENDING_REVIEW",
+  // A report sent back is the most open a job gets: somebody is waiting on the
+  // crew, and it has already been through a review once.
+  "CHANGES_REQUESTED",
 ];

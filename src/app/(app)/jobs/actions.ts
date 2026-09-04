@@ -11,6 +11,8 @@ import { db } from "@/lib/db";
 import { ruleSheet } from "@/lib/deliverables";
 import { flag, optionalText } from "@/lib/form";
 import { copyTemplateToJob, storeDocument } from "@/lib/job-documents";
+import { loadReview } from "@/lib/job-review-data";
+import { flagsFingerprint, isReviewStep } from "@/lib/job-review";
 import {
   allocateIntWo,
   allocateRevisitIntWo,
@@ -844,6 +846,97 @@ export async function approveJob(formData: FormData): Promise<ActionResult> {
 }
 
 /**
+ * Which passes still need somebody's eyes, by name.
+ *
+ * A step counts only while its tick is about what is on screen now. Approving,
+ * then correcting a punch, then approving again would otherwise pass on a
+ * review of the version before the correction — which is exactly the case
+ * anybody asking "who signed this off" is asking about.
+ */
+async function unreviewedSteps(jobId: string): Promise<string[]> {
+  const review = await loadReview(jobId);
+  if (!review) return [];
+
+  const checks = await db.jobReviewCheck.findMany({
+    where: { jobId },
+    select: { step: true, flagsSeen: true },
+  });
+  const seen = new Map(checks.map((check) => [check.step, check.flagsSeen]));
+
+  return review.steps
+    .filter((step) => seen.get(step.key) !== flagsFingerprint(step.flags))
+    .map((step) => step.title);
+}
+
+/**
+ * Ticking off one pass of the read-through.
+ *
+ * The findings are worked out here rather than taken from the form. A
+ * fingerprint the browser posted back would be a fingerprint the browser could
+ * choose, and this record exists to say what somebody was actually warned about
+ * when they signed a day off.
+ */
+export async function confirmReviewStep(
+  formData: FormData,
+): Promise<ActionResult> {
+  const jobId = String(formData.get("jobId") ?? "");
+  const step = String(formData.get("step") ?? "");
+  const note = String(formData.get("note") ?? "").trim();
+
+  if (!jobId) return { ok: false, error: "Missing job" };
+  if (!isReviewStep(step)) return { ok: false, error: "Unknown review step." };
+
+  const found = await approverFor(jobId);
+  if (!found.ok) return { ok: false, error: found.error };
+  const { actor, job } = found;
+
+  if (job.lifecycle !== "PENDING_REVIEW") {
+    return { ok: false, error: "This job is not waiting on a read-through." };
+  }
+
+  const review = await loadReview(jobId);
+  if (!review) return { ok: false, error: "Job not found" };
+
+  const current = review.steps.find((one) => one.key === step);
+  if (!current) return { ok: false, error: "Unknown review step." };
+
+  // Signing off over a finding costs a sentence. Not because the finding is
+  // necessarily wrong — a late start is usually the site's fault — but because
+  // the question "why was this approved" has an answer six weeks later.
+  const warns = current.flags.filter((one) => one.level === "warn");
+  if (warns.length > 0 && !note) {
+    return {
+      ok: false,
+      error: `Say why this is alright: ${warns.length} thing${
+        warns.length === 1 ? "" : "s"
+      } on this step need${warns.length === 1 ? "s" : ""} explaining.`,
+    };
+  }
+
+  const flagsSeen = flagsFingerprint(current.flags);
+
+  await db.jobReviewCheck.upsert({
+    where: { jobId_step: { jobId, step } },
+    create: {
+      jobId,
+      step,
+      checkedById: actor.id,
+      flagsSeen,
+      note: note || null,
+    },
+    update: {
+      checkedById: actor.id,
+      checkedAt: new Date(),
+      flagsSeen,
+      note: note || null,
+    },
+  });
+
+  revalidatePath(`/jobs/${jobId}/review`);
+  return { ok: true };
+}
+
+/**
  * The final read-through: the job is finished and the report stands.
  *
  * Checking out puts a job in PENDING_REVIEW and, until now, nothing took it
@@ -860,6 +953,11 @@ export async function approveJob(formData: FormData): Promise<ActionResult> {
  * company actually has: a manager who is also on the crew, whose reports would
  * otherwise wait forever on somebody senior to them who does not exist. Who
  * signed it off is recorded either way, which is the part that matters.
+ *
+ * What it will not do is fire from a screen nobody read. All four passes have
+ * to have been ticked, and ticked against the findings as they stand — a step
+ * signed off before somebody rewrote a punch is a step signed off about a
+ * different day, and it asks to be looked at again rather than counting.
  */
 export async function approveReport(formData: FormData): Promise<ActionResult> {
   const jobId = String(formData.get("jobId") ?? "");
@@ -875,7 +973,19 @@ export async function approveReport(formData: FormData): Promise<ActionResult> {
       error:
         job.lifecycle === "APPROVED"
           ? "This report has already been approved."
-          : "This job has not been checked out yet.",
+          : job.lifecycle === "CHANGES_REQUESTED"
+            ? "This report has been sent back and is with the crew."
+            : job.lifecycle === "REJECTED"
+              ? "This report was rejected."
+              : "This job has not been checked out yet.",
+    };
+  }
+
+  const outstanding = await unreviewedSteps(jobId);
+  if (outstanding.length > 0) {
+    return {
+      ok: false,
+      error: `Still to go through: ${outstanding.join(", ")}.`,
     };
   }
 
@@ -885,6 +995,11 @@ export async function approveReport(formData: FormData): Promise<ActionResult> {
       lifecycle: "APPROVED",
       approvedById: actor.id,
       approvedAt: new Date(),
+      // The round is over and its reason with it, or an approved job keeps
+      // showing the note from the time it was sent back.
+      reviewNote: null,
+      reviewNoteById: null,
+      reviewNoteAt: null,
     },
   });
 
@@ -906,6 +1021,182 @@ export async function approveReport(formData: FormData): Promise<ActionResult> {
       kind: "report_approved",
       title: "Report approved",
       href: `/jobs/${jobId}`,
+      jobId,
+    });
+  }
+
+  revalidatePath("/jobs");
+  revalidatePath(`/jobs/${jobId}`);
+  revalidatePath("/approvals");
+  return { ok: true };
+}
+
+/**
+ * The other two answers.
+ *
+ * A read-through that can only end in yes is not a read-through. Sending back
+ * says the work stands but the paperwork does not — go and fix it. Rejecting
+ * says this is not going to the client and is not being paid against, and is
+ * the rarer and heavier of the two.
+ *
+ * Both insist on a reason. A job that comes back with "no" written on it and
+ * nothing else comes straight back again unchanged, and a rejection nobody
+ * explained is one the company cannot answer for.
+ *
+ * Sending back clears the ticks. The round they belonged to is over, and a
+ * reviewer returning to a resubmitted report should be looking at it again
+ * rather than at four green marks from before the thing they objected to was
+ * touched.
+ */
+async function endReview(
+  formData: FormData,
+  outcome: "CHANGES_REQUESTED" | "REJECTED",
+): Promise<ActionResult> {
+  const jobId = String(formData.get("jobId") ?? "");
+  const reason = String(formData.get("reason") ?? "").trim();
+
+  if (!jobId) return { ok: false, error: "Missing job" };
+  if (!reason) {
+    return {
+      ok: false,
+      error:
+        outcome === "CHANGES_REQUESTED"
+          ? "Say what needs fixing, or there is nothing for them to act on."
+          : "Say why this is being rejected.",
+    };
+  }
+
+  const found = await approverFor(jobId);
+  if (!found.ok) return { ok: false, error: found.error };
+  const { actor, job } = found;
+
+  if (job.lifecycle !== "PENDING_REVIEW") {
+    return { ok: false, error: "This job is not waiting on a read-through." };
+  }
+
+  await db.$transaction(async (tx) => {
+    await tx.job.update({
+      where: { id: jobId },
+      data: {
+        lifecycle: outcome,
+        reviewNote: reason,
+        reviewNoteById: actor.id,
+        reviewNoteAt: new Date(),
+      },
+    });
+
+    if (outcome === "CHANGES_REQUESTED") {
+      await tx.jobReviewCheck.deleteMany({ where: { jobId } });
+    }
+  });
+
+  await recordAudit({
+    actorId: actor.id,
+    entityType: "Job",
+    entityId: jobId,
+    jobId,
+    action: outcome === "CHANGES_REQUESTED" ? "report_sent_back" : "report_rejected",
+    detail: { reason },
+  });
+
+  for (const assignment of job.assignments) {
+    await notify({
+      userId: assignment.userId,
+      actorId: actor.id,
+      kind: outcome === "CHANGES_REQUESTED" ? "report_sent_back" : "report_rejected",
+      title:
+        outcome === "CHANGES_REQUESTED" ? "Report sent back" : "Report rejected",
+      // The reason travels with it. Being told to look at a job without being
+      // told what is wrong with it is how a report comes back unchanged.
+      body: reason,
+      href: `/jobs/${jobId}`,
+      jobId,
+    });
+  }
+
+  revalidatePath("/jobs");
+  revalidatePath(`/jobs/${jobId}`);
+  revalidatePath("/approvals");
+  return { ok: true };
+}
+
+export async function sendBackReport(formData: FormData): Promise<ActionResult> {
+  return endReview(formData, "CHANGES_REQUESTED");
+}
+
+export async function rejectReport(formData: FormData): Promise<ActionResult> {
+  return endReview(formData, "REJECTED");
+}
+
+/**
+ * The way back up, once the crew have dealt with it.
+ *
+ * PENDING_REVIEW is normally reached by the last person clocking out, and after
+ * a send-back there is no clock-out left to come — so without this the job sits
+ * where it was put and nobody hears about it again. Gated on the permission
+ * that finishes a job rather than on the one that approves it: this is the
+ * crew's move, not the reviewer's.
+ */
+export async function resubmitReport(formData: FormData): Promise<ActionResult> {
+  const jobId = String(formData.get("jobId") ?? "");
+  if (!jobId) return { ok: false, error: "Missing job" };
+
+  const actor = await requirePermission("job.set_outcome_status");
+
+  const job = await db.job.findUnique({
+    where: { id: jobId },
+    select: {
+      lifecycle: true,
+      projectId: true,
+      createdById: true,
+      reviewNoteById: true,
+      assignments: { select: { userId: true } },
+    },
+  });
+  if (!job) return { ok: false, error: "Job not found" };
+
+  const allowed = await canOnJob(actor, "job.set_outcome_status", {
+    projectId: job.projectId,
+    assigneeIds: job.assignments.map((assignment) => assignment.userId),
+    createdById: job.createdById,
+  });
+  if (!allowed) return { ok: false, error: "This job is not yours to send." };
+
+  if (job.lifecycle !== "CHANGES_REQUESTED") {
+    return { ok: false, error: "This job has not been sent back." };
+  }
+
+  await db.job.update({
+    where: { id: jobId },
+    data: {
+      lifecycle: "PENDING_REVIEW",
+      // The note described what was wrong with the last round. Leaving it up
+      // would have the crew reading an instruction they have already carried
+      // out, and the reviewer reading their own words back as though they still
+      // applied.
+      reviewNote: null,
+      reviewNoteById: null,
+      reviewNoteAt: null,
+    },
+  });
+
+  await recordAudit({
+    actorId: actor.id,
+    entityType: "Job",
+    entityId: jobId,
+    jobId,
+    action: "report_resubmitted",
+  });
+
+  // Whoever sent it back is the one waiting on it. Everybody else with the
+  // permission finds it in the queue.
+  if (job.reviewNoteById) {
+    await notify({
+      userId: job.reviewNoteById,
+      actorId: actor.id,
+      kind: "report_resubmitted",
+      title: "Report resubmitted",
+      href: `/jobs/${jobId}/review`,
       jobId,
     });
   }
