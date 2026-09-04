@@ -2,7 +2,7 @@ import { ArrowRight, CircleCheck, Clock, FileQuestion, Wallet } from "lucide-rea
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -18,7 +18,6 @@ import { JOB_FIELDS, isJobField } from "@/lib/job-fields";
 import { formatMoney } from "@/lib/money";
 import { jobScopeWhere, reportIds } from "@/lib/scope";
 import { getSessionUser, permissionScope } from "@/lib/session";
-import { ApproveReportButton } from "./approve-report-button";
 import { DecidedList, fieldKind, type DecidedRow } from "./decided";
 import { NotificationsPanel } from "./notifications-panel";
 import {
@@ -483,10 +482,21 @@ export default async function ApprovalsPage({
                   </span>
                 </Link>
 
-                {/* Signed off from here as well as from the job. Somebody
-                    clearing a Monday backlog of a dozen reports they have
-                    already read should not have to open each one again. */}
-                <ApproveReportButton jobId={job.id} />
+                {/* A link, not an Approve button.
+                    It used to sign the job off from here, which is the one
+                    thing this queue should not be able to do: a row showing a
+                    title and a couple of names is not enough to vouch for
+                    somebody's day, and the button made saying yes to all of
+                    them the easiest thing on the page. The read-through it now
+                    opens has the times, what was produced, what is being
+                    claimed back and what the client is about to be told — and
+                    the approval lives at the end of that. */}
+                <Link
+                  href={`/jobs/${job.id}/review`}
+                  className={buttonVariants({ variant: "primary", size: "sm" })}
+                >
+                  Review <ArrowRight />
+                </Link>
               </div>
             ))}
           </CardContent>
