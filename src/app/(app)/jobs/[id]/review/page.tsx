@@ -4,6 +4,7 @@ import { usDateTimeInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
 import { flagsFingerprint } from "@/lib/job-review";
 import { loadReview } from "@/lib/job-review-data";
+import { loadPunchBlocks } from "@/lib/punch-blocks";
 import { canOnJob } from "@/lib/scope";
 import { getSessionUser } from "@/lib/session";
 import { JobReview, type ReviewStep } from "../job-review";
@@ -58,6 +59,11 @@ export default async function ReviewPage({
   });
   const checkOf = new Map(checks.map((check) => [check.step, check]));
 
+  // The crew's clocks, editable, inside the pass that is about them. Being told
+  // a clock-out is wrong and sent to another page to fix it means coming back to
+  // a read-through that has started again from the top.
+  const blocks = await loadPunchBlocks(job.id, user);
+
   const withState: ReviewStep[] = steps.map((step) => {
     const check = checkOf.get(step.key);
     const current = flagsFingerprint(step.flags);
@@ -90,7 +96,12 @@ export default async function ReviewPage({
       />
 
       {job.lifecycle === "PENDING_REVIEW" ? (
-        <JobReview jobId={job.id} steps={withState} />
+        <JobReview
+          jobId={job.id}
+          steps={withState}
+          punches={blocks?.visible ? blocks.punches : []}
+          companyName={blocks?.companyName ?? ""}
+        />
       ) : (
         <p className="text-sm text-muted-foreground">
           This job is not waiting on a read-through — it is {job.lifecycle}.

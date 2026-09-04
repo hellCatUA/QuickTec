@@ -557,19 +557,154 @@ async function main() {
     true,
   );
 
+  // The queue used to sign a job off in place, from a row showing a title and
+  // a couple of names. It opens the read-through instead, and the approval
+  // lives at the end of that.
+  check(
+    "the queue no longer signs a report off in place",
+    await supPage.getByRole("button", { name: "Approve", exact: true }).count(),
+    0,
+  );
+
+  await supPage.getByRole("link", { name: /Review/ }).first().click();
+  await supPage.waitForURL(/\/review$/);
+  await supPage.waitForTimeout(800);
+
+  check(
+    "approving is not offered until every pass has been through",
+    await supPage.getByRole("button", { name: "Approve report" }).isDisabled(),
+    true,
+  );
+
+  /** One pass: read it, explain anything it is warning about, tick it. */
+  async function goThrough(title: string) {
+    await supPage.getByRole("button", { name: title }).first().click();
+    await supPage.waitForTimeout(300);
+    const note = supPage.locator("textarea[id^='note-']");
+    if ((await note.count()) > 0) {
+      await note.fill("Site let them in late; the client knows.");
+    }
+    await supPage
+      .getByRole("button", { name: /^(Looks right|Checked)$/ })
+      .click();
+    await supPage.waitForTimeout(1200);
+  }
+
+  await goThrough("Times");
+  check(
+    "a pass that has been looked at is recorded",
+    await db.jobReviewCheck.count({ where: { jobId: visited.id } }),
+    1,
+  );
+
+  // --- sending it back ------------------------------------------------------
+  // A read-through that can only end in yes is a formality with extra steps.
+  await supPage.getByRole("button", { name: "Send back" }).click();
+  await supPage.waitForTimeout(300);
   await supPage
-    .getByRole("button", { name: "Approve", exact: true })
-    .first()
-    .click();
+    .locator("#review-reason")
+    .fill("Post-install photos are of the old rack. Reshoot and resubmit.");
+  await supPage.getByRole("button", { name: "Send it back" }).click();
+  await supPage.waitForTimeout(2500);
+
+  const sentBack = await db.job.findUniqueOrThrow({
+    where: { id: visited.id },
+    select: { lifecycle: true, reviewNote: true, reviewNoteById: true },
+  });
+  check("a report can be sent back", sentBack.lifecycle, "CHANGES_REQUESTED");
+  check(
+    "with what needs fixing",
+    sentBack.reviewNote,
+    "Post-install photos are of the old rack. Reshoot and resubmit.",
+  );
+  check("and who said so", sentBack.reviewNoteById, sup.user.id);
+  check(
+    "the ticks from that round are cleared",
+    await db.jobReviewCheck.count({ where: { jobId: visited.id } }),
+    0,
+  );
+  check(
+    "and the crew are told, with the reason",
+    (
+      await db.notification.findFirstOrThrow({
+        where: {
+          jobId: visited.id,
+          kind: "report_sent_back",
+          userId: tech.user.id,
+        },
+      })
+    ).body,
+    "Post-install photos are of the old rack. Reshoot and resubmit.",
+  );
+
+  // --- and the way back up --------------------------------------------------
+  // PENDING_REVIEW is normally reached by the last person clocking out, and
+  // after a send-back there is no clock-out left to come.
+  await techPage.goto(`${BASE}/jobs/${visited.id}`, {
+    waitUntil: "domcontentloaded",
+  });
+  await techPage.waitForTimeout(800);
+  check(
+    "the crew see what the reviewer wrote, on the job it is about",
+    await techPage
+      .locator("[data-sent-back='changes']")
+      .getByText(/Post-install photos are of the old rack/)
+      .isVisible(),
+    true,
+  );
+  // It reaches the timeline as well, which is where it is looked for once the
+  // banner has been cleared by resubmitting.
+  check(
+    "and it is on the record",
+    await techPage.getByText(/Reason: Post-install photos/).count(),
+    1,
+  );
+
+  await techPage.getByRole("button", { name: "Send back for review" }).click();
+  await techPage.waitForTimeout(2500);
+
+  const resubmitted = await db.job.findUniqueOrThrow({
+    where: { id: visited.id },
+    select: { lifecycle: true, reviewNote: true },
+  });
+  check("the crew can resubmit it", resubmitted.lifecycle, "PENDING_REVIEW");
+  check(
+    "and the notice about the last round goes with it",
+    resubmitted.reviewNote,
+    null,
+  );
+
+  // --- signing it off, having read all of it --------------------------------
+  await supPage.goto(`${BASE}/jobs/${visited.id}/review`, {
+    waitUntil: "domcontentloaded",
+  });
+  await supPage.waitForTimeout(800);
+
+  for (const title of ["Times", "Deliverables", "Reimbursements", "Work performed"]) {
+    await goThrough(title);
+  }
+
+  check(
+    "every pass is recorded before it can be approved",
+    await db.jobReviewCheck.count({ where: { jobId: visited.id } }),
+    4,
+  );
+
+  await supPage.getByRole("button", { name: "Approve report" }).click();
   await supPage.waitForTimeout(2500);
 
   const signedOff = await db.job.findUniqueOrThrow({
     where: { id: visited.id },
     select: { lifecycle: true, approvedById: true, approvedAt: true },
   });
-  check("it can be signed off from the queue", signedOff.lifecycle, "APPROVED");
+  check("it can be signed off at the end of the read-through", signedOff.lifecycle, "APPROVED");
   check("by whoever pressed it", signedOff.approvedById, sup.user.id);
   check("with when", signedOff.approvedAt !== null, true);
+
+  // Approving lands on the job, so the queue is asked again rather than
+  // assumed — the point is that it is no longer listed there.
+  await supPage.goto(`${BASE}/approvals`, { waitUntil: "domcontentloaded" });
+  await supPage.waitForTimeout(500);
 
   check(
     "and it leaves the queue",

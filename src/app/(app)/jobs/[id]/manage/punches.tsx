@@ -30,49 +30,13 @@ import type { PunchHistoryRow, PunchIcon } from "@/lib/punch-history";
 import { acceptTimeFlag, addVisit, editPunch, removeVisit } from "../actions";
 import { ReasonPicker } from "./reason-picker";
 
-/** A time as the picker wants it and as a person reads it. */
-export type PunchClock = { value: string; text: string };
+// The shapes live beside the query that fills them, in @/lib/punch-blocks, now
+// that the review renders these blocks too. Type-only in both directions, so
+// nothing of that server module reaches the browser.
+import type { BreakRow, Punch, PunchClock } from "@/lib/punch-blocks";
 
-export type BreakRow = {
-  text: string;
-  minutes: number;
-  paid: boolean;
-  /** Datetime-local, so the same row can be handed to the editor. */
-  startValue: string;
-  endValue: string;
-};
-
+export type { BreakRow, Punch, PunchClock } from "@/lib/punch-blocks";
 export type { PunchHistoryRow } from "@/lib/punch-history";
-
-export type Punch = {
-  assignmentId: string;
-  who: string;
-  /** Null when this person never clocked in. */
-  visitId: string | null;
-  clockIn: PunchClock | null;
-  clockOut: PunchClock | null;
-  breaks: BreakRow[];
-  breakTotal: string | null;
-  /** "Lead", or nothing — everybody else on a job is a tech. */
-  role: string | null;
-  /** What the day came to, paid time only. Null when they never clocked in. */
-  shift: string | null;
-  /** Written by hand rather than pressed on site. */
-  manual: boolean;
-  /** Set when they arrived well after the job was due to start. */
-  late: string | null;
-  /** Set when they were still on site past the scheduled time plus estimate. */
-  over: string | null;
-  /** A reviewer has looked at that flag and accepted it, so it stops shouting. */
-  lateAccepted: boolean;
-  overAccepted: boolean;
-  canEdit: boolean;
-  canRemove: boolean;
-  canAdd: boolean;
-  /** Accepting a flag is part of signing the job off. */
-  canAccept: boolean;
-  history: PunchHistoryRow[];
-};
 
 /**
  * One block per person: when they arrived, what they took, when they left.

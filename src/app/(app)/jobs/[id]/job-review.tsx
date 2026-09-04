@@ -27,6 +27,7 @@ import {
   rejectReport,
   sendBackReport,
 } from "../actions";
+import { Punches, type Punch } from "./manage/punches";
 
 export type ReviewStep = {
   key: "times" | "deliverables" | "reimbursements" | "work";
@@ -70,9 +71,14 @@ type Outcome = "back" | "reject";
 export function JobReview({
   jobId,
   steps,
+  punches,
+  companyName,
 }: {
   jobId: string;
   steps: ReviewStep[];
+  /** The crew's clocks, editable in place. Empty where they may not be shown. */
+  punches: Punch[];
+  companyName: string;
 }) {
   const router = useRouter();
 
@@ -227,6 +233,17 @@ export function JobReview({
               </div>
             ))
           )}
+
+          {/* The clocks themselves, in the pass that is about them. A reviewer
+              who reads "8:02 AM – 4:31 PM" and thinks the out is wrong can move
+              it here; sending them to another page to do it means coming back
+              to a read-through that has started again from the top. The block
+              is the Manager Portal's, with its history and its reasons. */}
+          {step.key === "times" && punches.length > 0 ? (
+            <div className="border-t border-border pt-2">
+              <Punches punches={punches} companyName={companyName} />
+            </div>
+          ) : null}
 
           {/* The photos themselves, not a count of them. "4 photos" read and
               believed is how a job goes to the client with four pictures of the

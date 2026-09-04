@@ -1960,6 +1960,11 @@ async function main() {
       where: { id: assignment.jobId },
       data: { lifecycle: "PENDING_REVIEW", estimateMinutes: 60 },
     });
+    // The fixture job is reused between runs, and a review now leaves ticks
+    // behind it. Without this the second run of this suite starts with all four
+    // passes already signed off, and everything about needing to read them
+    // passes for the wrong reason.
+    await db.jobReviewCheck.deleteMany({ where: { jobId: assignment.jobId } });
 
     await planner.goto(`${BASE}/jobs/${assignment.jobId}/review`, {
       waitUntil: "load",
@@ -1972,43 +1977,61 @@ async function main() {
       true,
     );
 
-    for (const [step, next] of [
-      ["times", "Deliverables"],
-      ["deliverables", "Reimbursements"],
-      ["reimbursements", "Work performed"],
-    ] as const) {
-      check(
-        `the ${step} step is shown`,
-        await planner.locator(`[data-review-step="${step}"]`).isVisible(),
-        true,
-      );
-      check(
-        `and ${next} is waiting behind it`,
-        await planner.getByRole("button", { name: next }).isVisible(),
-        true,
-      );
-      await planner.getByRole("button", { name: "Looks right" }).click();
-      await planner.waitForTimeout(300);
-    }
-
-    check(
-      "the last step is what the client will read",
-      await planner.locator('[data-review-step="work"]').isVisible(),
-      true,
-    );
-
     // The day ran well past an hour, which is exactly the thing a reviewer
     // would otherwise have to work out from two timestamps.
-    await planner.getByRole("button", { name: "Times" }).click();
-    await planner.waitForTimeout(300);
     check(
       "a day well past the estimate is put in front of them",
       await planner.getByText(/against an estimate of/).isVisible(),
       true,
     );
 
-    await planner.getByRole("button", { name: "Work performed" }).click();
-    await planner.waitForTimeout(300);
+    // The crew's clocks are in the pass that is about them, editable, rather
+    // than on another page a reviewer has to leave the read-through for.
+    check(
+      "and their punches are here to be corrected",
+      await planner.getByText("TimeClock Punches").count() > 0 ||
+        (await planner.getByRole("button", { name: /Punch actions for/ }).count()) > 0,
+      true,
+    );
+
+    check(
+      "approving waits until all four have been through",
+      await planner.getByRole("button", { name: "Approve report" }).isDisabled(),
+      true,
+    );
+
+    for (const [step, title] of [
+      ["times", "Times"],
+      ["deliverables", "Deliverables"],
+      ["reimbursements", "Reimbursements"],
+      ["work", "Work performed"],
+    ] as const) {
+      await planner.getByRole("button", { name: title }).first().click();
+      await planner.waitForTimeout(300);
+
+      check(
+        `the ${step} step is shown`,
+        await planner.locator(`[data-review-step="${step}"]`).isVisible(),
+        true,
+      );
+
+      // A pass with a warning on it costs a sentence to get past.
+      const note = planner.locator("textarea[id^='note-']");
+      if ((await note.count()) > 0) {
+        await note.fill("Spoke to the crew; the client knows.");
+      }
+      await planner
+        .getByRole("button", { name: /^(Looks right|Checked)$/ })
+        .click();
+      await planner.waitForTimeout(1200);
+    }
+
+    check(
+      "every pass is on the record before it can be signed off",
+      await db.jobReviewCheck.count({ where: { jobId: assignment.jobId } }),
+      4,
+    );
+
     await planner.getByRole("button", { name: "Approve report" }).click();
     await planner.waitForTimeout(2500);
 
