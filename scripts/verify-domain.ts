@@ -2373,6 +2373,17 @@ async function main() {
     check("with nothing in payroll yet", week.state.stage, "recorded");
     check("and the week still open", week.state.running, true);
 
+    // A week nobody has reached yet is not "running": counting it as such made
+    // September claim four weeks in progress while its own tally said one.
+    const ahead = await loadPayWeek({
+      userId: tech.id,
+      weekStart: new Date(week.start.getTime() + 14 * 86_400_000),
+      timeZone: TZ,
+      payLagWeeks: 3,
+      now: mid,
+    });
+    check("a week that has not started is not running", ahead.state.running, false);
+
     const september = await loadPayMonth({
       userId: tech.id,
       year: 2026,

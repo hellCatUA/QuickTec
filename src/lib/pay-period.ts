@@ -51,7 +51,11 @@ export const PAY_STAGE_LABEL: Record<PayStage, string> = {
 
 export type PayState = {
   stage: PayStage;
-  /** The period has days still to come, so the figures are not final.  */
+  /**
+   * Under way right now: begun, and with days still to come, so the figures
+   * are not final. A week that has not started yet is not running — counting
+   * it as such makes a month claim four weeks in progress when one is.
+   */
   running: boolean;
   approvedBy: string | null;
   approvedAt: Date | null;
@@ -298,7 +302,7 @@ async function stateOfWeek(
     },
   });
 
-  const running = now < range.end;
+  const running = now >= range.start && now < range.end;
   const expected = period?.expectedPayDate ?? expectedPayDate(range.end, payLagWeeks);
 
   if (!period) {

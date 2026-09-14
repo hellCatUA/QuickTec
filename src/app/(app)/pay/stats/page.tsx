@@ -23,29 +23,20 @@ export const metadata = { title: "Statistics" };
 export default async function StatsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ user?: string; period?: string }>;
+  searchParams: Promise<{ period?: string }>;
 }) {
   const viewer = await getSessionUser();
   if (!viewer) redirect("/signin");
 
-  const scope = permissionScope(viewer, "payroll.view");
-  if (!scope) redirect("/dashboard");
+  if (!permissionScope(viewer, "payroll.view")) redirect("/dashboard");
 
   const company = await getCompanySettings();
   const zone = company.defaultTimeZone;
   const params = await searchParams;
 
-  const visibleIds =
-    scope === "ALL"
-      ? null
-      : scope === "OWN"
-        ? [viewer.id]
-        : [viewer.id, ...(await reportIds(viewer.id))];
-
-  const subjectId =
-    params.user && (visibleIds === null || visibleIds.includes(params.user))
-      ? params.user
-      : viewer.id;
+  // Own figures only, like the rest of Pay. Somebody else's totals are a
+  // payroll question and are answered on the payroll pages.
+  const subjectId = viewer.id;
 
   const now = new Date();
   const { year, month } = zonedParts(now, zone);
@@ -93,54 +84,19 @@ export default async function StatsPage({
   const selected =
     ranges.find((entry) => entry.key === params.period) ?? ranges[0];
 
-  const [subject, team, stats] = await Promise.all([
-    db.user.findUniqueOrThrow({
-      where: { id: subjectId },
-      select: { name: true },
-    }),
-    visibleIds === null
-      ? db.user.findMany({
-          where: { active: true },
-          orderBy: { name: "asc" },
-          select: { id: true, name: true },
-        })
-      : db.user.findMany({
-          where: { id: { in: visibleIds } },
-          orderBy: { name: "asc" },
-          select: { id: true, name: true },
-        }),
-    computeStats(subjectId, selected.range),
-  ]);
+  const stats = await computeStats(subjectId, selected.range);
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4">
       <PageHeader
         title="Statistics"
         backHref="/pay"
-        description={`${subject.name} · ${selected.label}`}
+        description={`Your figures · ${selected.label}`}
       />
-
-      {team.length > 1 ? (
-        <div className="flex flex-wrap gap-1.5">
-          {team.map((person) => (
-            <Link
-              key={person.id}
-              href={`/pay/stats?user=${person.id}&period=${selected.key}`}
-            >
-              <Badge variant={person.id === subjectId ? "primary" : "neutral"}>
-                {person.id === viewer.id ? "You" : person.name}
-              </Badge>
-            </Link>
-          ))}
-        </div>
-      ) : null}
 
       <div className="flex flex-wrap gap-1.5">
         {ranges.map((entry) => (
-          <Link
-            key={entry.key}
-            href={`/pay/stats?user=${subjectId}&period=${entry.key}`}
-          >
+          <Link key={entry.key} href={`/pay/stats?period=${entry.key}`}>
             <Badge variant={entry.key === selected.key ? "primary" : "neutral"}>
               {entry.label}
             </Badge>
