@@ -1,0 +1,175 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    :root {
+      --background: oklch(0.17 0.012 260);
+      --surface: oklch(0.21 0.014 260);
+      --surface-raised: oklch(0.25 0.016 260);
+      --foreground: oklch(0.96 0.005 260);
+      --muted: oklch(0.28 0.014 260);
+      --muted-foreground: oklch(0.7 0.018 260);
+      --border: oklch(0.31 0.016 260);
+      --primary: oklch(0.66 0.16 235);
+      --primary-foreground: oklch(0.16 0.02 260);
+      --success: oklch(0.7 0.16 155);
+      --warning: oklch(0.79 0.15 85);
+      --danger: oklch(0.64 0.2 25);
+    }
+    body {
+      margin: 0;
+      background: var(--background);
+      color: var(--foreground);
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+        "Helvetica Neue", Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    .tabular { font-variant-numeric: tabular-nums; }
+    a { color: var(--primary); text-decoration: none; }
+    a:hover { color: oklch(0.74 0.16 235); }
+  </style>
+</helmet>
+
+<div style="display: flex; flex-direction: column; gap: 16px; padding: 16px">
+
+  <div style="display: flex; flex-direction: column; gap: 2px">
+    <div style="font-size: 24px; font-weight: 650; letter-spacing: -0.01em">Payroll</div>
+    <div style="font-size: 12px; color: var(--muted-foreground)">
+      What the company owes, week by week.
+    </div>
+  </div>
+
+  <!-- Which week -->
+  <div style="display: flex; align-items: center; gap: 8px">
+    <div style="display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface)">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--muted-foreground)"><path d="M15 18l-6-6 6-6"></path></svg>
+    </div>
+    <div style="flex-grow: 1; display: flex; flex-direction: column; align-items: center; gap: 1px">
+      <div class="tabular" style="font-size: 15px; font-weight: 600">W38 &middot; Sep 14 &ndash; 20</div>
+      <div style="font-size: 11px; color: var(--muted-foreground)">pays out around Oct 12</div>
+    </div>
+    <div style="display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface)">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--muted-foreground)"><path d="M9 18l6-6-6-6"></path></svg>
+    </div>
+  </div>
+
+  <!-- The week at a glance -->
+  <div style="border: 1px solid var(--border); border-radius: 14px; background: var(--surface); padding: 16px; display: flex; flex-direction: column; gap: 12px">
+    <div style="display: flex; align-items: flex-end; gap: 12px">
+      <div style="display: flex; flex-direction: column; gap: 3px; flex-grow: 1">
+        <div style="font-size: 11px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted-foreground)">Expected</div>
+        <div class="tabular" style="font-size: 30px; font-weight: 650; line-height: 1.1; letter-spacing: -0.02em">$6,214.00</div>
+      </div>
+      <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 3px">
+        <div class="tabular" style="font-size: 13px; color: var(--muted-foreground)">5 people</div>
+        <div class="tabular" style="font-size: 13px; color: var(--muted-foreground)">94.50 hrs</div>
+      </div>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap">
+      <span style="display: inline-flex; align-items: center; gap: 5px; border-radius: 8px; padding: 3px 9px; font-size: 11px; font-weight: 500; background: color-mix(in oklch, var(--warning) 15%, transparent); color: var(--warning); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--warning) 30%, transparent)">2 to approve</span>
+      <span style="display: inline-flex; align-items: center; gap: 5px; border-radius: 8px; padding: 3px 9px; font-size: 11px; font-weight: 500; background: color-mix(in oklch, var(--success) 15%, transparent); color: var(--success); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--success) 30%, transparent)">2 approved</span>
+      <span style="display: inline-flex; align-items: center; gap: 5px; border-radius: 8px; padding: 3px 9px; font-size: 11px; font-weight: 500; background: var(--muted); color: var(--muted-foreground)">1 not built</span>
+    </div>
+  </div>
+
+  <!-- The one action that used to be buried per-person -->
+  <div style="display: flex; align-items: center; gap: 10px; min-height: 44px; border-radius: 10px; background: var(--primary); color: var(--primary-foreground); padding: 0 16px; justify-content: center">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 11-6.22-8.56"></path><path d="M21 3v6h-6"></path></svg>
+    <span style="font-size: 14px; font-weight: 600">Build the whole week</span>
+  </div>
+
+  <!-- Everybody in it -->
+  <div style="display: flex; flex-direction: column; gap: 8px">
+    <div style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted-foreground)">Who is in this week</div>
+
+    <div style="border: 1px solid var(--border); border-radius: 14px; background: var(--surface); overflow: hidden; display: flex; flex-direction: column">
+
+      <div style="display: flex; align-items: center; gap: 12px; padding: 13px 14px; border-bottom: 1px solid var(--border)">
+        <div style="display: flex; flex-direction: column; gap: 3px; flex-grow: 1; min-width: 0">
+          <div style="font-size: 14px; font-weight: 600">Terry Tech</div>
+          <div class="tabular" style="font-size: 11px; color: var(--muted-foreground)">3 jobs &middot; 24.50 hrs &middot; $65.00/hr</div>
+        </div>
+        <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px">
+          <div class="tabular" style="font-size: 15px; font-weight: 650">$1,592.50</div>
+          <span style="display: inline-flex; border-radius: 8px; padding: 2px 8px; font-size: 10px; font-weight: 500; background: color-mix(in oklch, var(--warning) 15%, transparent); color: var(--warning); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--warning) 30%, transparent)">To approve</span>
+        </div>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--muted-foreground); flex-shrink: 0"><path d="M9 18l6-6-6-6"></path></svg>
+      </div>
+
+      <div style="display: flex; align-items: center; gap: 12px; padding: 13px 14px; border-bottom: 1px solid var(--border)">
+        <div style="display: flex; flex-direction: column; gap: 3px; flex-grow: 1; min-width: 0">
+          <div style="font-size: 14px; font-weight: 600">Marta Ortiz</div>
+          <div class="tabular" style="font-size: 11px; color: var(--muted-foreground)">2 jobs &middot; 18.00 hrs &middot; $58.00/hr</div>
+        </div>
+        <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px">
+          <div class="tabular" style="font-size: 15px; font-weight: 650">$1,044.00</div>
+          <span style="display: inline-flex; border-radius: 8px; padding: 2px 8px; font-size: 10px; font-weight: 500; background: color-mix(in oklch, var(--warning) 15%, transparent); color: var(--warning); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--warning) 30%, transparent)">To approve</span>
+        </div>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--muted-foreground); flex-shrink: 0"><path d="M9 18l6-6-6-6"></path></svg>
+      </div>
+
+      <div style="display: flex; align-items: center; gap: 12px; padding: 13px 14px; border-bottom: 1px solid var(--border)">
+        <div style="display: flex; flex-direction: column; gap: 3px; flex-grow: 1; min-width: 0">
+          <div style="font-size: 14px; font-weight: 600">Sam Super</div>
+          <div class="tabular" style="font-size: 11px; color: var(--muted-foreground)">4 jobs &middot; 31.00 hrs &middot; $52.50/hr</div>
+        </div>
+        <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px">
+          <div class="tabular" style="font-size: 15px; font-weight: 650">$1,627.50</div>
+          <span style="display: inline-flex; border-radius: 8px; padding: 2px 8px; font-size: 10px; font-weight: 500; background: color-mix(in oklch, var(--success) 15%, transparent); color: var(--success); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--success) 30%, transparent)">Approved</span>
+        </div>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--muted-foreground); flex-shrink: 0"><path d="M9 18l6-6-6-6"></path></svg>
+      </div>
+
+      <div style="display: flex; align-items: center; gap: 12px; padding: 13px 14px; border-bottom: 1px solid var(--border)">
+        <div style="display: flex; flex-direction: column; gap: 3px; flex-grow: 1; min-width: 0">
+          <div style="font-size: 14px; font-weight: 600">Dan Reyes</div>
+          <div class="tabular" style="font-size: 11px; color: var(--muted-foreground)">2 jobs &middot; 21.00 hrs &middot; $45.00/hr</div>
+        </div>
+        <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px">
+          <div class="tabular" style="font-size: 15px; font-weight: 650">$945.00</div>
+          <span style="display: inline-flex; border-radius: 8px; padding: 2px 8px; font-size: 10px; font-weight: 500; background: color-mix(in oklch, var(--success) 15%, transparent); color: var(--success); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--success) 30%, transparent)">Approved</span>
+        </div>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--muted-foreground); flex-shrink: 0"><path d="M9 18l6-6-6-6"></path></svg>
+      </div>
+
+      <!-- The case the old screen could not show: somebody with a problem. -->
+      <div style="display: flex; align-items: center; gap: 12px; padding: 13px 14px">
+        <div style="display: flex; flex-direction: column; gap: 3px; flex-grow: 1; min-width: 0">
+          <div style="font-size: 14px; font-weight: 600">Bo Ross</div>
+          <div style="display: flex; align-items: center; gap: 5px">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color: var(--danger); flex-shrink: 0"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"></path><path d="M12 9v4M12 17h.01"></path></svg>
+            <div class="tabular" style="font-size: 11px; color: var(--danger)">1 job &middot; 8.00 hrs &middot; no rate set</div>
+          </div>
+        </div>
+        <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px">
+          <div class="tabular" style="font-size: 15px; font-weight: 650; color: var(--muted-foreground)">$0.00</div>
+          <span style="display: inline-flex; border-radius: 8px; padding: 2px 8px; font-size: 10px; font-weight: 500; background: color-mix(in oklch, var(--danger) 15%, transparent); color: var(--danger); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--danger) 30%, transparent)">Needs a rate</span>
+        </div>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--muted-foreground); flex-shrink: 0"><path d="M9 18l6-6-6-6"></path></svg>
+      </div>
+
+    </div>
+  </div>
+
+  <div style="display: flex; gap: 8px">
+    <div style="flex-grow: 1; display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-raised); font-size: 13px; font-weight: 500">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"></path><path d="M7 10l5 5 5-5M12 15V3"></path></svg>
+      Week .xlsx
+    </div>
+    <div style="flex-grow: 1; display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-raised); font-size: 13px; font-weight: 500">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"></path><path d="M7 10l5 5 5-5M12 15V3"></path></svg>
+      Month .xlsx
+    </div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

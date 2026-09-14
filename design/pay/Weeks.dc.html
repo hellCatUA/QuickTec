@@ -1,0 +1,169 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    :root {
+      --background: oklch(0.17 0.012 260);
+      --surface: oklch(0.21 0.014 260);
+      --surface-raised: oklch(0.25 0.016 260);
+      --foreground: oklch(0.96 0.005 260);
+      --muted: oklch(0.28 0.014 260);
+      --muted-foreground: oklch(0.7 0.018 260);
+      --border: oklch(0.31 0.016 260);
+      --primary: oklch(0.66 0.16 235);
+      --success: oklch(0.7 0.16 155);
+      --warning: oklch(0.79 0.15 85);
+    }
+    body {
+      margin: 0;
+      background: var(--background);
+      color: var(--foreground);
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+        "Helvetica Neue", Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    .tabular { font-variant-numeric: tabular-nums; }
+    a { color: var(--primary); text-decoration: none; }
+    a:hover { color: oklch(0.74 0.16 235); }
+  </style>
+</helmet>
+
+<div style="display: flex; flex-direction: column; gap: 16px; padding: 16px">
+
+  <div style="display: flex; flex-direction: column; gap: 2px">
+    <div style="font-size: 24px; font-weight: 650; letter-spacing: -0.01em">Pay</div>
+    <div style="font-size: 12px; color: var(--muted-foreground)">
+      What you have earned. Weeks run Monday to Sunday.
+    </div>
+  </div>
+
+  <div style="display: flex; gap: 2px; padding: 2px; background: var(--muted); border-radius: 10px">
+    <div style="flex-grow: 1; display: flex; align-items: center; justify-content: center; min-height: 32px; border-radius: 8px; background: var(--surface-raised); font-size: 13px; font-weight: 600">Weekly</div>
+    <div style="flex-grow: 1; display: flex; align-items: center; justify-content: center; min-height: 32px; border-radius: 8px; color: var(--muted-foreground); font-size: 13px; font-weight: 500">Monthly</div>
+  </div>
+
+  <!-- SEPTEMBER ------------------------------------------------------------ -->
+  <div style="display: flex; flex-direction: column; gap: 8px">
+    <div style="display: flex; align-items: baseline; gap: 8px; padding: 0 2px">
+      <div style="font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted-foreground); flex-grow: 1">September 2026</div>
+      <div class="tabular" style="font-size: 12px; color: var(--muted-foreground)">7 jobs &middot; 71.50 hrs</div>
+      <div class="tabular" style="font-size: 13px; font-weight: 600">$4,647.50</div>
+    </div>
+
+    <!-- the open week -->
+    <div style="border: 1px solid var(--primary); border-radius: 14px; background: var(--surface); padding: 14px; display: flex; align-items: center; gap: 12px">
+      <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 48px; flex-shrink: 0">
+        <div class="tabular" style="font-size: 17px; font-weight: 650; color: var(--primary)">38</div>
+        <div style="font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted-foreground)">week</div>
+      </div>
+      <div style="width: 1px; align-self: stretch; background: var(--border)"></div>
+      <div style="display: flex; flex-direction: column; gap: 3px; flex-grow: 1; min-width: 0">
+        <div class="tabular" style="font-size: 14px; font-weight: 600">Sep 14 &ndash; 20</div>
+        <div class="tabular" style="font-size: 12px; color: var(--muted-foreground)">3 jobs &middot; 24.50 hrs</div>
+        <div style="display: flex; align-items: center; gap: 5px">
+          <span style="width: 6px; height: 6px; border-radius: 999px; background: var(--primary)"></span>
+          <span style="font-size: 11px; color: var(--primary)">Still running</span>
+        </div>
+      </div>
+      <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 3px">
+        <div class="tabular" style="font-size: 17px; font-weight: 650">$1,592.50</div>
+        <div class="tabular" style="font-size: 11px; color: var(--muted-foreground)">+$86.40 reimb</div>
+      </div>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--muted-foreground); flex-shrink: 0"><path d="M9 18l6-6-6-6"></path></svg>
+    </div>
+
+    <div style="border: 1px solid var(--border); border-radius: 14px; background: var(--surface); padding: 14px; display: flex; align-items: center; gap: 12px">
+      <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 48px; flex-shrink: 0">
+        <div class="tabular" style="font-size: 17px; font-weight: 650">37</div>
+        <div style="font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted-foreground)">week</div>
+      </div>
+      <div style="width: 1px; align-self: stretch; background: var(--border)"></div>
+      <div style="display: flex; flex-direction: column; gap: 3px; flex-grow: 1; min-width: 0">
+        <div class="tabular" style="font-size: 14px; font-weight: 600">Sep 7 &ndash; 13</div>
+        <div class="tabular" style="font-size: 12px; color: var(--muted-foreground)">2 jobs &middot; 16.00 hrs</div>
+        <div style="display: flex; align-items: center; gap: 5px">
+          <span style="width: 6px; height: 6px; border-radius: 999px; background: var(--success)"></span>
+          <span style="font-size: 11px; color: var(--success)">Approved</span>
+        </div>
+      </div>
+      <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 3px">
+        <div class="tabular" style="font-size: 17px; font-weight: 650">$1,040.00</div>
+        <div class="tabular" style="font-size: 11px; color: var(--muted-foreground)">paid Oct 5</div>
+      </div>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--muted-foreground); flex-shrink: 0"><path d="M9 18l6-6-6-6"></path></svg>
+    </div>
+
+    <div style="border: 1px solid var(--border); border-radius: 14px; background: var(--surface); padding: 14px; display: flex; align-items: center; gap: 12px">
+      <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 48px; flex-shrink: 0">
+        <div class="tabular" style="font-size: 17px; font-weight: 650">36</div>
+        <div style="font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted-foreground)">week</div>
+      </div>
+      <div style="width: 1px; align-self: stretch; background: var(--border)"></div>
+      <div style="display: flex; flex-direction: column; gap: 3px; flex-grow: 1; min-width: 0">
+        <div class="tabular" style="font-size: 14px; font-weight: 600">Aug 31 &ndash; Sep 6</div>
+        <div class="tabular" style="font-size: 12px; color: var(--muted-foreground)">2 jobs &middot; 31.00 hrs</div>
+        <div style="display: flex; align-items: center; gap: 5px">
+          <span style="width: 6px; height: 6px; border-radius: 999px; background: var(--warning)"></span>
+          <span style="font-size: 11px; color: var(--warning)">Waiting on approval</span>
+        </div>
+      </div>
+      <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 3px">
+        <div class="tabular" style="font-size: 17px; font-weight: 650">$2,015.00</div>
+      </div>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--muted-foreground); flex-shrink: 0"><path d="M9 18l6-6-6-6"></path></svg>
+    </div>
+  </div>
+
+  <!-- AUGUST --------------------------------------------------------------- -->
+  <div style="display: flex; flex-direction: column; gap: 8px">
+    <div style="display: flex; align-items: baseline; gap: 8px; padding: 0 2px">
+      <div style="font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted-foreground); flex-grow: 1">August 2026</div>
+      <div class="tabular" style="font-size: 12px; color: var(--muted-foreground)">11 jobs &middot; 158.00 hrs</div>
+      <div class="tabular" style="font-size: 13px; font-weight: 600">$9,880.00</div>
+    </div>
+
+    <div style="border: 1px solid var(--border); border-radius: 14px; background: var(--surface); padding: 14px; display: flex; align-items: center; gap: 12px">
+      <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 48px; flex-shrink: 0">
+        <div class="tabular" style="font-size: 17px; font-weight: 650">35</div>
+        <div style="font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted-foreground)">week</div>
+      </div>
+      <div style="width: 1px; align-self: stretch; background: var(--border)"></div>
+      <div style="display: flex; flex-direction: column; gap: 3px; flex-grow: 1; min-width: 0">
+        <div class="tabular" style="font-size: 14px; font-weight: 600">Aug 24 &ndash; 30</div>
+        <div class="tabular" style="font-size: 12px; color: var(--muted-foreground)">3 jobs &middot; 39.50 hrs</div>
+        <div style="display: flex; align-items: center; gap: 5px">
+          <span style="width: 6px; height: 6px; border-radius: 999px; background: var(--success)"></span>
+          <span style="font-size: 11px; color: var(--success)">Paid</span>
+        </div>
+      </div>
+      <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 3px">
+        <div class="tabular" style="font-size: 17px; font-weight: 650">$2,567.50</div>
+        <div class="tabular" style="font-size: 11px; color: var(--muted-foreground)">Sep 21</div>
+      </div>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--muted-foreground); flex-shrink: 0"><path d="M9 18l6-6-6-6"></path></svg>
+    </div>
+
+    <div style="border: 1px solid var(--border); border-radius: 14px; background: var(--surface); padding: 14px; display: flex; align-items: center; gap: 12px; opacity: 0.72">
+      <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 48px; flex-shrink: 0">
+        <div class="tabular" style="font-size: 17px; font-weight: 650">34</div>
+        <div style="font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted-foreground)">week</div>
+      </div>
+      <div style="width: 1px; align-self: stretch; background: var(--border)"></div>
+      <div style="display: flex; flex-direction: column; gap: 3px; flex-grow: 1; min-width: 0">
+        <div class="tabular" style="font-size: 14px; font-weight: 600">Aug 17 &ndash; 23</div>
+        <div style="font-size: 12px; color: var(--muted-foreground)">Nothing worked</div>
+      </div>
+      <div class="tabular" style="font-size: 15px; font-weight: 600; color: var(--muted-foreground)">&mdash;</div>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

@@ -1,0 +1,115 @@
+{
+  "pages": [
+    {
+      "id": "page-1",
+      "name": "Pay"
+    },
+    {
+      "id": "page-2",
+      "name": "Payroll & roles"
+    }
+  ],
+  "artboards": [
+    {
+      "file": "Main.dc.html",
+      "title": "Pay \u00b7 a week",
+      "page": "page-1",
+      "x": 0,
+      "y": 0,
+      "w": 430,
+      "h": 930
+    },
+    {
+      "file": "Weeks.dc.html",
+      "title": "Pay \u00b7 the weeks",
+      "page": "page-1",
+      "x": 510,
+      "y": 0,
+      "w": 430,
+      "h": 650
+    },
+    {
+      "file": "Monthly.dc.html",
+      "title": "Pay \u00b7 a month",
+      "page": "page-1",
+      "x": 1020,
+      "y": 0,
+      "w": 430,
+      "h": 785
+    },
+    {
+      "file": "WeekDays.dc.html",
+      "title": "Pay \u00b7 day by day",
+      "page": "page-1",
+      "x": 1530,
+      "y": 0,
+      "w": 430,
+      "h": 640
+    },
+    {
+      "file": "Payroll.dc.html",
+      "title": "Payroll \u00b7 a week",
+      "page": "page-2",
+      "x": 0,
+      "y": 0,
+      "w": 430,
+      "h": 785
+    },
+    {
+      "file": "PayrollPerson.dc.html",
+      "title": "Payroll \u00b7 one person",
+      "page": "page-2",
+      "x": 510,
+      "y": 0,
+      "w": 430,
+      "h": 895
+    },
+    {
+      "file": "Supervisor.dc.html",
+      "title": "Direct supervisor",
+      "page": "page-2",
+      "x": 1020,
+      "y": 0,
+      "w": 430,
+      "h": 640
+    }
+  ],
+  "annotations": [
+    {
+      "id": "pay-live",
+      "page": "page-1",
+      "x": 0,
+      "y": -150,
+      "w": 430,
+      "text": "Pay is read-only and computed live from the time records \u2014 the same way /pay/stats already works.\n\nThat is the fix for the empty page: it no longer waits for anyone to press Build. Payroll status is shown as a line, not as a gate."
+    },
+    {
+      "id": "pay-blocks",
+      "page": "page-1",
+      "x": 510,
+      "y": -150,
+      "w": 940,
+      "text": "The week blocks you asked about: week number, dates, job count, hours, money and where the week stands \u2014 grouped under a month header carrying the month's own total. A week belongs to the month its Monday falls in, so these figures match the existing monthly export."
+    },
+    {
+      "id": "payroll-week",
+      "page": "page-2",
+      "x": 0,
+      "y": -170,
+      "w": 940,
+      "text": "Payroll opens on a WEEK, not a person \u2014 the manager's real question is \"who do I owe this week\". One Build covers everybody, and somebody with no rate is called out in red instead of quietly showing $0.00.\n\nTapping a row opens that person's week, where approving is the first thing on screen rather than below three cards."
+    },
+    {
+      "id": "supervisor-rule",
+      "page": "page-2",
+      "x": 1020,
+      "y": -170,
+      "w": 430,
+      "text": "Direct Supervisor now lists only people who can approve payroll: managers and administrators.\n\nThe warning block is the migration case \u2014 people whose current supervisor no longer qualifies. Worth deciding whether we move them automatically or make you do it."
+    }
+  ],
+  "launch": {
+    "view": "canvas",
+    "page": "page-1"
+  }
+}

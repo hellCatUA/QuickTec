@@ -1,0 +1,118 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    :root {
+      --background: oklch(0.17 0.012 260);
+      --surface: oklch(0.21 0.014 260);
+      --surface-raised: oklch(0.25 0.016 260);
+      --foreground: oklch(0.96 0.005 260);
+      --muted: oklch(0.28 0.014 260);
+      --muted-foreground: oklch(0.7 0.018 260);
+      --border: oklch(0.31 0.016 260);
+      --input: oklch(0.26 0.016 260);
+      --primary: oklch(0.66 0.16 235);
+      --success: oklch(0.7 0.16 155);
+      --warning: oklch(0.79 0.15 85);
+      --danger: oklch(0.64 0.2 25);
+    }
+    body {
+      margin: 0;
+      background: var(--background);
+      color: var(--foreground);
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+        "Helvetica Neue", Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    .tabular { font-variant-numeric: tabular-nums; }
+    a { color: var(--primary); text-decoration: none; }
+    a:hover { color: oklch(0.74 0.16 235); }
+  </style>
+</helmet>
+
+<div style="display: flex; flex-direction: column; gap: 16px; padding: 16px">
+
+  <div style="display: flex; flex-direction: column; gap: 2px">
+    <div style="font-size: 20px; font-weight: 650; letter-spacing: -0.01em">Terry Tech</div>
+    <div style="font-size: 12px; color: var(--muted-foreground)">Tech &middot; terry@417group.org</div>
+  </div>
+
+  <!-- The field, with the list it may now offer -->
+  <div style="display: flex; flex-direction: column; gap: 6px">
+    <div style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted-foreground)">Direct supervisor</div>
+
+    <div style="display: flex; align-items: center; gap: 10px; min-height: 44px; border: 1px solid var(--primary); border-radius: 10px; background: var(--input); padding: 0 12px">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--muted-foreground); flex-shrink: 0"><circle cx="11" cy="11" r="8"></circle><path d="M21 21l-4.35-4.35"></path></svg>
+      <div style="font-size: 14px; flex-grow: 1">Bo Ross</div>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--muted-foreground); flex-shrink: 0"><path d="M6 9l6 6 6-6"></path></svg>
+    </div>
+
+    <div style="border: 1px solid var(--border); border-radius: 10px; background: var(--surface); overflow: hidden; display: flex; flex-direction: column">
+      <div style="display: flex; align-items: center; gap: 10px; padding: 11px 12px; border-bottom: 1px solid var(--border); background: var(--surface-raised)">
+        <div style="display: flex; flex-direction: column; gap: 1px; flex-grow: 1">
+          <div style="font-size: 14px; font-weight: 600">Bo Ross</div>
+          <div style="font-size: 11px; color: var(--muted-foreground)">Manager</div>
+        </div>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary)"><path d="M20 6L9 17l-5-5"></path></svg>
+      </div>
+      <div style="display: flex; align-items: center; gap: 10px; padding: 11px 12px; border-bottom: 1px solid var(--border)">
+        <div style="display: flex; flex-direction: column; gap: 1px; flex-grow: 1">
+          <div style="font-size: 14px; font-weight: 600">Ann Vela</div>
+          <div style="font-size: 11px; color: var(--muted-foreground)">Manager</div>
+        </div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 10px; padding: 11px 12px">
+        <div style="display: flex; flex-direction: column; gap: 1px; flex-grow: 1">
+          <div style="font-size: 14px; font-weight: 600">417 System</div>
+          <div style="font-size: 11px; color: var(--muted-foreground)">Administrator</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="font-size: 11px; color: var(--muted-foreground); line-height: 1.5; padding: 0 2px">
+      Only people who can approve payroll appear here. A supervisor runs the work;
+      the money is signed off by a manager or an administrator.
+    </div>
+  </div>
+
+  <!-- What somebody hits if their existing supervisor no longer qualifies -->
+  <div style="display: flex; flex-direction: column; gap: 8px">
+    <div style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted-foreground)">Existing people who need a new one</div>
+    <div style="border: 1px solid color-mix(in oklch, var(--warning) 45%, var(--border)); border-radius: 14px; background: color-mix(in oklch, var(--warning) 6%, var(--surface)); padding: 14px; display: flex; flex-direction: column; gap: 10px">
+      <div style="display: flex; align-items: flex-start; gap: 8px">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--warning); flex-shrink: 0; margin-top: 1px"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"></path><path d="M12 9v4M12 17h.01"></path></svg>
+        <div style="font-size: 12px; line-height: 1.5; flex-grow: 1">
+          <span class="tabular" style="font-weight: 600">3 people</span> report to somebody who can no longer approve their pay.
+          Their weeks will sit unapproved until this is changed.
+        </div>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 6px; padding-left: 24px">
+        <div style="display: flex; align-items: baseline; gap: 8px">
+          <div style="font-size: 12px; font-weight: 600; flex-grow: 1">Dan Reyes</div>
+          <div style="font-size: 11px; color: var(--muted-foreground)">&rarr; Sam Super (Supervisor)</div>
+        </div>
+        <div style="display: flex; align-items: baseline; gap: 8px">
+          <div style="font-size: 12px; font-weight: 600; flex-grow: 1">Marta Ortiz</div>
+          <div style="font-size: 11px; color: var(--muted-foreground)">&rarr; Sam Super (Supervisor)</div>
+        </div>
+        <div style="display: flex; align-items: baseline; gap: 8px">
+          <div style="font-size: 12px; font-weight: 600; flex-grow: 1">Terry Tech</div>
+          <div style="font-size: 11px; color: var(--muted-foreground)">&rarr; Sam Super (Supervisor)</div>
+        </div>
+      </div>
+      <div style="display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-raised); font-size: 13px; font-weight: 500; margin-left: 24px">
+        Move all three to a manager
+      </div>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>
