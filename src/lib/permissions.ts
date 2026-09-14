@@ -309,15 +309,15 @@ export const DEFAULT_ROLE_GRANTS: Record<
     "export.text": "PROJECT",
     "export.zip": "PROJECT",
     "export.internal_wo": "PROJECT",
-    "export.pay": "REPORTS",
-    "pay.view_rates": "REPORTS",
-    "pay.edit_rates": "REPORTS",
-    "payroll.view": "REPORTS",
-    "payroll.run": "REPORTS",
-    // Deliberately REPORTS and not PROJECT: a supervisor pays the techs who
-    // report to them, not every tech who happens to be on their project.
-    "payroll.approve": "REPORTS",
-    "payroll.mark_received": "REPORTS",
+    // Money is deliberately own-only. A supervisor can no longer be anybody's
+    // Direct Supervisor (see SUPERVISOR_ROLES), so REPORTS here resolved to
+    // nothing but themselves — which is not "a supervisor pays their techs",
+    // it is "a supervisor sets their own pay rate". Paying is a manager's or
+    // an administrator's job; running a project is a supervisor's.
+    "export.pay": "OWN",
+    "pay.view_rates": "OWN",
+    "payroll.view": "OWN",
+    "payroll.mark_received": "OWN",
     "mileage.submit": "OWN",
     "mileage.view": "REPORTS",
     "project.manage": "PROJECT",
@@ -364,10 +364,20 @@ export const DEFAULT_ROLE_GRANTS: Record<
     "audit.view": "ALL",
   },
 
+  // Runs the company's money and its accounts. Gets the whole payroll cycle,
+  // not a read-only view of it: an administrator who can be somebody's Direct
+  // Supervisor but cannot approve their week is a dead end with no way out,
+  // which is exactly how a week ends up stuck on "waiting on" an account that
+  // can never act.
   ADMINISTRATOR: {
     "job.view": "ALL",
+    "export.pay": "ALL",
     "pay.view_rates": "ALL",
+    "pay.edit_rates": "ALL",
     "payroll.view": "ALL",
+    "payroll.run": "ALL",
+    "payroll.approve": "ALL",
+    "payroll.mark_received": "ALL",
     "users.manage": "ALL",
     "settings.company": "ALL",
     "settings.integrations": "ALL",

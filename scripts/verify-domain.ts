@@ -388,14 +388,47 @@ async function main() {
     return where ? db.job.count({ where }) : 0;
   }
 
+  /** Whether one job falls inside what that scope lets the user see. */
+  async function sees(userId: string, scope: "OWN" | "REPORTS", jobId: string) {
+    const user = {
+      id: userId,
+      grants: new Map([["job.view", scope]]),
+      projectGrants: new Map(),
+      scopedProjectIds: [],
+    } as never;
+    const where = await jobScopeWhere(user, "job.view");
+    if (!where) return false;
+    return (await db.job.count({ where: { AND: [where, { id: jobId }] } })) === 1;
+  }
+
   const total = await db.job.count();
   check("tech OWN sees only their own", await countFor(tech.id, "OWN"), 1);
-  check("supervisor REPORTS sees the tech's job", await countFor(sup.id, "REPORTS"), 1);
+
+  // REPORTS follows directSupervisorId, and the tech now reports to the
+  // manager: only somebody who can approve payroll may hold that link. Asked
+  // about one job rather than counted, because the manager raised most of the
+  // fixtures and would pass a count on authorship alone.
   check(
-    "supervisor PROJECT also sees project jobs",
+    "REPORTS reaches a report's job",
+    await sees(boss.id, "REPORTS", noProject[0].id),
+    true,
+  );
+  check(
+    "a supervisor has no reports to reach",
+    await sees(sup.id, "REPORTS", noProject[0].id),
+    false,
+  );
+  check(
+    "and REPORTS gives them nothing beyond their own",
+    await countFor(sup.id, "REPORTS"),
+    await countFor(sup.id, "OWN"),
+  );
+  check(
+    "but PROJECT still shows them everything on their project",
     await countFor(sup.id, "PROJECT"),
-    // 1 tech job + 5 project jobs (2 originals, 2 revisits, 1 tz job)
-    6,
+    // 5 project jobs: 2 originals, 2 revisits, 1 tz job. The tech's job has no
+    // project, so it is not among them — which is the point of the pair above.
+    5,
   );
   check("manager ALL sees everything", await countFor(boss.id, "ALL"), total);
 
@@ -1637,6 +1670,93 @@ async function main() {
     true,
   );
 
+  // --- who may be asked to pay somebody -----------------------------------
+  // The Direct Supervisor is the person who approves and pays a week, so the
+  // only people who can hold it are the ones who can approve payroll. The old
+  // picker offered anybody who was not a tech, which let a week be routed to
+  // an account that could never act on it.
+  {
+    const { canSupervise, SUPERVISOR_ROLES, supervisionsToFix } = await import(
+      "@/lib/supervisors"
+    );
+
+    check("a manager may be a direct supervisor", canSupervise("MANAGER"), true);
+    check(
+      "so may an administrator, who now runs payroll",
+      canSupervise("ADMINISTRATOR"),
+      true,
+    );
+    check(
+      "a supervisor may not — they run projects, not payroll",
+      canSupervise("SUPERVISOR"),
+      false,
+    );
+    check("nor a tech", canSupervise("TECH"), false);
+    check("nor an accountant, who only reads", canSupervise("ACCOUNTANT"), false);
+
+    // The rule and the grants have to agree, or the picker offers somebody the
+    // approve action will then refuse.
+    for (const role of SUPERVISOR_ROLES) {
+      check(
+        `${role} can actually approve a week`,
+        can(asRole(role), "payroll.approve"),
+        true,
+      );
+    }
+
+    check(
+      "an administrator can build a week",
+      can(asRole("ADMINISTRATOR"), "payroll.run"),
+      true,
+    );
+    check(
+      "and record what arrived",
+      can(asRole("ADMINISTRATOR"), "payroll.mark_received"),
+      true,
+    );
+    check(
+      "a supervisor sees pay, but only their own",
+      DEFAULT_ROLE_GRANTS.SUPERVISOR["payroll.view"],
+      "OWN",
+    );
+    check(
+      "and cannot set anybody's rate, including their own",
+      can(asRole("SUPERVISOR"), "pay.edit_rates"),
+      false,
+    );
+
+    // Nothing is moved automatically, so the ones that need a decision have to
+    // be findable. Put the tech back under Sam, who can no longer approve, and
+    // check they are named — then put them back where the fixtures left them,
+    // because everything after this depends on that routing.
+    const before = await db.user.findUniqueOrThrow({
+      where: { id: tech.id },
+      select: { directSupervisorId: true },
+    });
+
+    await db.user.update({
+      where: { id: tech.id },
+      data: { directSupervisorId: sup.id },
+    });
+    const flagged = await supervisionsToFix();
+    check(
+      "somebody reporting to a supervisor is named for fixing",
+      flagged.some((entry) => entry.id === tech.id),
+      true,
+    );
+
+    await db.user.update({
+      where: { id: tech.id },
+      data: { directSupervisorId: before.directSupervisorId },
+    });
+    const afterFix = await supervisionsToFix();
+    check(
+      "and stops being named once they report to a manager",
+      afterFix.some((entry) => entry.id === tech.id),
+      false,
+    );
+  }
+
   // --- time and earnings --------------------------------------------------
   const {
     assignmentTotals,
@@ -2248,7 +2368,7 @@ async function main() {
   check(
     "the week routes to the tech's direct supervisor",
     built.supervisorId,
-    sup.id,
+    boss.id,
   );
 
   // An override is a decision; rebuilding recomputes hours but leaves it alone.

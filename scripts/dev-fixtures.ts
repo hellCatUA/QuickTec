@@ -52,16 +52,19 @@ async function main() {
     },
   });
 
+  // The tech reports to the manager, not to Sam Super: only somebody who can
+  // approve payroll may be a Direct Supervisor, and a SUPERVISOR no longer can.
+  // Sam still runs the projects the tech works on, which is a different job.
   const tech = await db.user.upsert({
     where: { email: "tech@417group.org" },
-    update: { directSupervisorId: sup.id },
+    update: { directSupervisorId: boss.id },
     create: {
       email: "tech@417group.org",
       name: "Terry Tech",
       nextcloudSub: "sub-tech",
       baseRole: "TECH",
       timeZone: TZ,
-      directSupervisorId: sup.id,
+      directSupervisorId: boss.id,
       defaultPayType: "HOURLY",
       defaultPayRate: "45.00",
     },

@@ -57,7 +57,7 @@ export default async function RatesPage() {
     <div className="mx-auto flex max-w-3xl flex-col gap-4">
       <PageHeader
         title="Pay rates"
-        backHref="/pay"
+        backHref="/payroll"
         description="Most specific wins: a per-job override, then project, then client, then the tech's default. Travel money is set per job or project — never as a personal default."
       />
 

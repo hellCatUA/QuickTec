@@ -1,4 +1,5 @@
 import {
+  Banknote,
   Car,
   CircleUser,
   ClipboardList,
@@ -25,6 +26,7 @@ export const NAV_ICONS = {
   directory: FolderKanban,
   mileage: Car,
   pay: Wallet,
+  payroll: Banknote,
   settings: Settings,
 } as const;
 

@@ -13,6 +13,7 @@ import {
 } from "@/lib/password";
 import { PERMISSION_KEYS, type Permission } from "@/lib/permissions";
 import { requirePermission } from "@/lib/session";
+import { canSupervise } from "@/lib/supervisors";
 import { BaseRole, PermissionScope } from "@prisma-client";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
@@ -128,6 +129,30 @@ export async function updateUser(
 
   if (data.directSupervisorId === userId) {
     return { ok: false, error: "A user cannot be their own supervisor." };
+  }
+
+  // Enforced here and not only in the picker: this is the rule that keeps a
+  // week from sitting forever on somebody who can never approve it.
+  if (data.directSupervisorId) {
+    const candidate = await db.user.findUnique({
+      where: { id: data.directSupervisorId },
+      select: { name: true, baseRole: true, active: true },
+    });
+    if (!candidate) {
+      return { ok: false, error: "That supervisor does not exist." };
+    }
+    if (!candidate.active) {
+      return {
+        ok: false,
+        error: `${candidate.name} is deactivated and cannot approve anyone's week.`,
+      };
+    }
+    if (!canSupervise(candidate.baseRole)) {
+      return {
+        ok: false,
+        error: `${candidate.name} cannot approve payroll, so they cannot be a direct supervisor. Pick a manager or an administrator.`,
+      };
+    }
   }
 
   // A supervisor cycle would make payroll routing loop forever, so walk the

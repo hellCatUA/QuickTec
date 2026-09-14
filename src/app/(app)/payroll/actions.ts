@@ -39,7 +39,12 @@ async function reachable(
   return { all: false, ids: [user.id, ...(await reportIds(user.id))] };
 }
 
+/**
+ * Both sides of the same money. A manager approving a week has to change what
+ * the tech sees on Pay, or the tech is told to wait on a week that is settled.
+ */
 function touch() {
+  revalidatePath("/payroll");
   revalidatePath("/pay");
 }
 
@@ -93,6 +98,65 @@ export async function runPayroll(formData: FormData): Promise<ActionResult> {
   return ok(periodId);
 }
 
+/**
+ * Builds every person in the week at once.
+ *
+ * The old screen built one tech at a time, which meant a manager closing a week
+ * had to visit each person to find out whether there was anything to close. The
+ * week is the unit of work, so it is the unit of the button.
+ */
+export async function runPayrollForWeek(
+  formData: FormData,
+): Promise<ActionResult> {
+  const user = await getSessionUser();
+  if (!user) return fail("Not signed in.");
+
+  const allowed = await reachable(user, "payroll.run");
+  if (!allowed) return fail("You cannot run payroll.");
+
+  const company = await getCompanySettings();
+  const anchor = parseZonedDate(
+    String(formData.get("week") ?? ""),
+    company.defaultTimeZone,
+  );
+  if (!anchor) return fail("That week could not be read.");
+  const week = weekRange(anchor, company.defaultTimeZone);
+
+  const people = await db.user.findMany({
+    where: {
+      ...(allowed.all ? {} : { id: { in: allowed.ids } }),
+      assignments: {
+        some: {
+          visits: { some: { clockInAt: { gte: week.start, lt: week.end } } },
+        },
+      },
+    },
+    select: { id: true },
+  });
+
+  if (people.length === 0) return fail("Nobody worked in this week.");
+
+  for (const person of people) {
+    const periodId = await buildPayrollPeriod({
+      userId: person.id,
+      week,
+      timeZone: company.defaultTimeZone,
+      payLagWeeks: company.payLagWeeks,
+    });
+
+    await recordAudit({
+      actorId: user.id,
+      entityType: "PayrollPeriod",
+      entityId: periodId,
+      action: "payroll_built",
+      detail: { userId: person.id, weekStart: week.start.toISOString() },
+    });
+  }
+
+  touch();
+  return ok();
+}
+
 export async function approvePayroll(formData: FormData): Promise<ActionResult> {
   const user = await getSessionUser();
   if (!user) return fail("Not signed in.");
@@ -142,7 +206,7 @@ export async function approvePayroll(formData: FormData): Promise<ActionResult> 
         kind: "payroll.fallback_approval",
         title: `${user.name} approved ${period.user.name}'s week`,
         body: "A manager approved a week for one of your techs.",
-        href: "/pay",
+        href: "/payroll",
       },
     });
   }
@@ -451,7 +515,7 @@ export async function savePayRate(
     detail: { projectId: projectId ?? null, clientId: clientId ?? null, payType, rate },
   });
 
-  revalidatePath("/pay/rates");
+  revalidatePath("/payroll/rates");
   return ok();
 }
 
@@ -481,6 +545,6 @@ export async function deletePayRate(formData: FormData): Promise<ActionResult> {
     action: "rate_removed",
   });
 
-  revalidatePath("/pay/rates");
+  revalidatePath("/payroll/rates");
   return ok();
 }

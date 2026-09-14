@@ -33,6 +33,12 @@ export function buildNavItems(user: SessionUser): NavItem[] {
   if (can(user, "payroll.view")) {
     secondary.push({ href: "/pay", label: "Pay", icon: "pay" });
   }
+  // Payroll is a separate destination from Pay because it answers a separate
+  // question for a separate person: what the company owes, not what I earned.
+  // Gated on being able to see past yourself — Pay already covers own money.
+  if (can(user, "payroll.view", { minScope: "REPORTS" })) {
+    secondary.push({ href: "/payroll", label: "Payroll", icon: "payroll" });
+  }
   if (can(user, "client.manage") || can(user, "project.manage")) {
     secondary.push({ href: "/directory", label: "Directory", icon: "directory" });
   }
