@@ -155,6 +155,7 @@ model User {
   scopeChecks           JobScopeCheck[]
   reviewChecks          JobReviewCheck[]     @relation("JobReviewChecker")
   returnedJobs          Job[]                @relation("JobReviewNote")
+  preparedCheckouts     Job[]                @relation("JobCheckoutPrepared")
   uploads               Attachment[]
   auditEvents           AuditEvent[]
   notifications         Notification[]
@@ -797,6 +798,17 @@ model Job {
   releaseCode          String?
   noReleaseCode        Boolean @default(false)
   returnTrackingNumber String?
+
+  /// Somebody ran the checkout steps without clocking out — the answers and the
+  /// signatures are already on the job, waiting for the tech to leave.
+  ///
+  /// Stamped so the summary can say who did it and when. The tech who clocks
+  /// out an hour later is entitled to see whose answers they are about to
+  /// submit, and preparing is the one part of checkout somebody else may have
+  /// done while they were still working.
+  checkoutPreparedAt   DateTime?
+  checkoutPreparedById String?
+  checkoutPreparedBy   User?     @relation("JobCheckoutPrepared", fields: [checkoutPreparedById], references: [id], onDelete: SetNull)
 
   /// Merged narrative assembled by the Lead Tech or Direct Supervisor from the
   /// per-assignment Work Performed entries. Falls back to concatenation.

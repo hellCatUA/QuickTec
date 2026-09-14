@@ -108,6 +108,12 @@ async function main() {
       outcome: null,
       releaseCode: null,
       noReleaseCode: false,
+      // A prepared checkout left behind sends the clock-out to the summary
+      // rather than the wizard, so the first checkout check fails about the run
+      // before it rather than about the code.
+      internalStatus: null,
+      checkoutPreparedAt: null,
+      checkoutPreparedById: null,
     },
   });
 
@@ -277,6 +283,205 @@ async function main() {
     .catch(() => null);
   check("file is refused without a session", anonResponse?.status(), 401);
   await anonymous.close();
+
+  // --- preparing a checkout, and what the clock-out does with it -----------
+  // Preparing used to write only the signatures, so the outcome and the release
+  // code were collected from the person on site and then dropped — and the
+  // clock-out asked for all of it again. The loop was real, not imagined.
+  await page.reload({ waitUntil: "domcontentloaded" });
+
+  await page.getByRole("button", { name: "Job settings" }).click();
+  await page.getByRole("link", { name: "Prepare checkout" }).click();
+  await page.waitForSelector("text=Step 1 of 5", { timeout: 20_000 });
+  check(
+    "preparing stops short of the clock-out",
+    await page.getByText(/nothing is clocked out/).isVisible(),
+    true,
+  );
+
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Completed" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.locator("#release-code").fill("RLS-PREP-1");
+  await page.getByRole("button", { name: "Continue" }).click();
+
+  const prepModName = page.locator("#mod-name");
+  if (await prepModName.count()) {
+    await prepModName.fill("Dana Reyes");
+  } else {
+    await page.locator("#mod-picker").selectOption({ index: 0 });
+  }
+  await drawSignature(page);
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.waitForSelector("text=Signing as", { timeout: 30_000 });
+  await drawSignature(page);
+  await page.getByRole("button", { name: "Done" }).click();
+  await page
+    .getByRole("button", { name: "Clock out", exact: true })
+    .waitFor({ timeout: 30_000 });
+
+  const draft = await db.job.findUniqueOrThrow({
+    where: { id: assignment.jobId },
+    select: {
+      outcome: true,
+      releaseCode: true,
+      checkoutPreparedAt: true,
+      checkoutPreparedById: true,
+    },
+  });
+  check("preparing keeps the outcome", draft.outcome, "COMPLETED");
+  check("and the release code", draft.releaseCode, "RLS-PREP-1");
+  check("and stamps who prepared it", draft.checkoutPreparedById, tech.id);
+  check(
+    "and when",
+    draft.checkoutPreparedAt !== null,
+    true,
+  );
+  // Also in the timeline by now, so the one beside the clock is asked for by
+  // position rather than by text alone.
+  check(
+    "the clock says so without being opened",
+    await page.getByText("Checkout prepared").first().isVisible(),
+    true,
+  );
+  check(
+    "and nobody has been clocked out",
+    (await db.visit.findFirstOrThrow({ where: { assignmentId: assignment.id } }))
+      .clockOutAt,
+    null,
+  );
+
+  // The point of the whole change: Clock out now answers rather than asks.
+  await page.getByRole("button", { name: "Clock out", exact: true }).click();
+  await page.waitForSelector("text=Checkout is already prepared", {
+    timeout: 20_000,
+  });
+  check(
+    "it is a summary, not the wizard again",
+    await page.getByText(/Step 1 of/).count(),
+    0,
+  );
+  check(
+    "the outcome is on it",
+    await page.getByText("Completed").first().isVisible(),
+    true,
+  );
+  // The code is on the job page and in the text report too, so it is asked
+  // for inside the summary card rather than anywhere on screen.
+  const summaryCard = page.locator("div", {
+    has: page.getByText("Checkout is already prepared"),
+  });
+  check(
+    "so is the release code",
+    await summaryCard.getByText("RLS-PREP-1").first().isVisible(),
+    true,
+  );
+  check(
+    "and who prepared it",
+    await page.getByText(/Prepared by/).isVisible(),
+    true,
+  );
+  check(
+    "the MOD who signed is named",
+    await summaryCard.getByText("Dana Reyes").first().isVisible(),
+    true,
+  );
+
+  // Changing one answer reopens the steps with the rest already filled in.
+  await page.getByRole("button", { name: /Change or add/ }).click();
+  await page.waitForSelector("text=Step 1 of 6", { timeout: 20_000 });
+  await page.getByRole("button", { name: "Continue" }).click();
+  // Selected renders as the primary variant, so the class is the only honest
+  // way to ask "is this the one already chosen".
+  check(
+    "the outcome is carried into the edit rather than asked again",
+    (
+      (await page
+        .getByRole("button", { name: "Completed" })
+        .getAttribute("class")) ?? ""
+    ).includes("bg-primary"),
+    true,
+  );
+  await page.getByRole("button", { name: "Back" }).click();
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await page
+    .getByRole("button", { name: "Clock out", exact: true })
+    .waitFor({ timeout: 20_000 });
+
+  // A second tech on the job, whose signature is theirs and not this tech's to
+  // remove. Added straight to the database: putting somebody on a crew is a
+  // different screen's job and is checked there.
+  const mate = await db.user.findUniqueOrThrow({
+    where: { email: "tech2@417group.org" },
+  });
+  const mateAssignment = await db.jobAssignment.create({
+    data: {
+      jobId: assignment.jobId,
+      userId: mate.id,
+      payType: "HOURLY",
+      payRate: "52",
+    },
+  });
+  await db.signature.create({
+    data: {
+      jobId: assignment.jobId,
+      kind: "TECH",
+      assignmentId: mateAssignment.id,
+      signerName: mate.name,
+      signedAt: new Date(),
+    },
+  });
+
+  // And throwing it away takes the signatures with it: a job signed off for an
+  // outcome nobody chose is worse than one with nothing on it yet.
+  await page.getByRole("button", { name: "Clock out", exact: true }).click();
+  await page.waitForSelector("text=Checkout is already prepared", {
+    timeout: 20_000,
+  });
+  await page.getByRole("button", { name: /Start again/ }).click();
+  await page.getByRole("button", { name: "Clear and start again" }).click();
+  await page.waitForSelector("text=Step 1 of 6", { timeout: 20_000 });
+
+  const cleared = await db.job.findUniqueOrThrow({
+    where: { id: assignment.jobId },
+    select: {
+      outcome: true,
+      releaseCode: true,
+      checkoutPreparedAt: true,
+      internalStatus: true,
+    },
+  });
+  check("clearing drops the outcome", cleared.outcome, null);
+  check("and the release code", cleared.releaseCode, null);
+  check("and the stamp", cleared.checkoutPreparedAt, null);
+  check(
+    "and your own signatures go with it",
+    await db.signature.count({
+      where: {
+        jobId: assignment.jobId,
+        OR: [{ kind: "MOD" }, { assignment: { userId: tech.id } }],
+      },
+    }),
+    0,
+  );
+  // Somebody else's is not yours to rub out, even on the same job.
+  check(
+    "but not the other tech's",
+    await db.signature.count({
+      where: { jobId: assignment.jobId, assignmentId: mateAssignment.id },
+    }),
+    1,
+  );
+
+  // Put back, so the guided checkout below runs on one tech as it always has.
+  await db.signature.deleteMany({ where: { assignmentId: mateAssignment.id } });
+  await db.jobAssignment.delete({ where: { id: mateAssignment.id } });
+  check(
+    "but the tech is still on the clock",
+    (await db.visit.findFirstOrThrow({ where: { assignmentId: assignment.id } }))
+      .clockOutAt,
+    null,
+  );
 
   // --- guided checkout ----------------------------------------------------
   await page.reload({ waitUntil: "domcontentloaded" });

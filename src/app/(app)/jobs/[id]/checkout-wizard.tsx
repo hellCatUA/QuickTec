@@ -22,7 +22,11 @@ import {
 import { Field, Input, Select } from "@/components/ui/field";
 import { OUTCOME_META } from "@/lib/job-status";
 import type { JobOutcome } from "@prisma-client";
-import { addPointOfContact, completeCheckout } from "./actions";
+import {
+  addPointOfContact,
+  completeCheckout,
+  saveCheckoutDraft,
+} from "./actions";
 import { ClockPicker } from "./clock-picker";
 import { saveSignature } from "./upload-actions";
 
@@ -191,6 +195,29 @@ export function CheckoutWizard({
       return false;
     }
     setTechDone(true);
+    return true;
+  }
+
+  /**
+   * Preparing keeps its answers. It used to write only the signatures, so the
+   * outcome and the release code were asked for on site and then lost — which
+   * is what made the clock-out later feel like being sent round the loop again.
+   */
+  async function saveDraft() {
+    const result = await run(async () => {
+      const formData = new FormData();
+      formData.set("jobId", jobId);
+      formData.set("outcome", outcome);
+      formData.set("releaseCode", noReleaseCode ? "" : releaseCode);
+      formData.set("noReleaseCode", String(noReleaseCode));
+      formData.set("revisitRequired", String(revisitRequired));
+      return saveCheckoutDraft(null, formData);
+    });
+
+    if (!result?.ok) {
+      setError(result?.error ?? "Could not save what you have filled in.");
+      return false;
+    }
     return true;
   }
 
@@ -514,6 +541,7 @@ export function CheckoutWizard({
                 }
 
                 if (mode === "prepare" && step === "tech") {
+                  if (!(await saveDraft())) return;
                   onClose();
                   return;
                 }

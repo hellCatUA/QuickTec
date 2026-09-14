@@ -1,11 +1,16 @@
 "use client";
 
 import { ClipboardCheck } from "lucide-react";
+import { useRouter } from "next/navigation";
 import * as React from "react";
-import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import type { VisitInput } from "@/lib/time-tracking";
 import type { JobOutcome, PayType } from "@prisma-client";
 import { CheckoutWizard, type ModOption } from "./checkout-wizard";
+import {
+  CheckoutSummary,
+  type PreparedCheckout,
+} from "./checkout-summary";
 import { TimeClock } from "./time-clock";
 
 /**
@@ -16,6 +21,11 @@ import { TimeClock } from "./time-clock";
  * checkout" runs the same steps and stops short of the clock-out, which is
  * what a tech needs when the manager is available now but the work will run on
  * for another hour.
+ *
+ * Once a checkout has been prepared, Clock out shows what is already on the job
+ * rather than asking for it again. Being walked back through five steps you
+ * answered an hour ago reads as the app having forgotten — and until the
+ * answers were actually kept, it had.
  */
 export function TimePanel({
   jobId,
@@ -31,6 +41,8 @@ export function TimePanel({
   canClock,
   serverNow,
   checkout,
+  prepared,
+  openPrepare,
 }: {
   jobId: string;
   timeZone: string;
@@ -56,10 +68,56 @@ export function TimePanel({
     canOverrideMissing: boolean;
     canSetOutcome: boolean;
   };
+  /** Null until somebody has run the steps without clocking out. */
+  prepared: PreparedCheckout | null;
+  /** The "..." menu asked for the prepare run, by way of the URL. */
+  openPrepare: boolean;
 }) {
-  const [wizard, setWizard] = React.useState<"checkout" | "prepare" | null>(null);
+  const router = useRouter();
+  const [ownWizard, setOwnWizard] = React.useState<"checkout" | null>(null);
+  const [summary, setSummary] = React.useState(false);
+
+  // Derived rather than seeded into state: the "..." menu asks for the prepare
+  // run by navigating, and navigating to the same page does not remount this
+  // component — so a useState initialiser would read the old URL and the menu
+  // item would appear to do nothing.
+  const wizard: "checkout" | "prepare" | null = openPrepare
+    ? "prepare"
+    : ownWizard;
 
   const onSite = visits.some((visit) => visit.clockOutAt === null);
+
+  /** Drops ?checkout=prepare so a refresh does not reopen the wizard. */
+  function close() {
+    setOwnWizard(null);
+    setSummary(false);
+    if (openPrepare) router.replace(`/jobs/${jobId}`, { scroll: false });
+  }
+
+  if (summary && prepared) {
+    return (
+      <CheckoutSummary
+        jobId={jobId}
+        timeZone={timeZone}
+        intervalMinutes={intervalMinutes}
+        prepared={prepared}
+        missingRequired={checkout.missingRequired}
+        canOverrideMissing={checkout.canOverrideMissing}
+        onEdit={() => {
+          setSummary(false);
+          setOwnWizard("checkout");
+        }}
+        onCleared={() => {
+          // Cleared means there is nothing left to summarise, so the wizard
+          // opens on step one rather than dropping the tech back on the clock
+          // with no explanation of what just happened.
+          setSummary(false);
+          setOwnWizard("checkout");
+        }}
+        onCancel={close}
+      />
+    );
+  }
 
   if (wizard) {
     return (
@@ -77,7 +135,7 @@ export function TimePanel({
         outcome={checkout.outcome}
         revisitRequired={checkout.revisitRequired}
         canOverrideMissing={checkout.canOverrideMissing}
-        onClose={() => setWizard(null)}
+        onClose={close}
       />
     );
   }
@@ -98,19 +156,28 @@ export function TimePanel({
         canClock={canClock}
         serverNow={serverNow}
         onRequestCheckout={
-          checkout.canSetOutcome ? () => setWizard("checkout") : undefined
+          checkout.canSetOutcome
+            ? () => (prepared ? setSummary(true) : setOwnWizard("checkout"))
+            : undefined
         }
       />
 
-      {onSite && checkout.canSetOutcome ? (
-        <Button
+      {/* Said on the clock itself, because it changes what the red button
+          does: one more tap and the day is closed. */}
+      {onSite && prepared ? (
+        <button
           type="button"
-          variant="ghost"
-          size="sm"
-          onClick={() => setWizard("prepare")}
+          className="flex items-center gap-2 self-start rounded-lg px-1 py-0.5 text-left"
+          onClick={() => setSummary(true)}
         >
-          <ClipboardCheck /> Prepare checkout
-        </Button>
+          <Badge variant="primary">
+            <ClipboardCheck className="size-3" /> Checkout prepared
+          </Badge>
+          <span className="text-xs text-muted-foreground">
+            {prepared.preparedBy ? `by ${prepared.preparedBy} · ` : ""}
+            {prepared.preparedAt}
+          </span>
+        </button>
       ) : null}
     </div>
   );

@@ -1,6 +1,13 @@
 "use client";
 
-import { CircleCheck, MoreHorizontal, Repeat, SlidersHorizontal, X } from "lucide-react";
+import {
+  CircleCheck,
+  ClipboardCheck,
+  MoreHorizontal,
+  Repeat,
+  SlidersHorizontal,
+  X,
+} from "lucide-react";
 import Link from "next/link";
 import * as React from "react";
 import { Button } from "@/components/ui/button";
@@ -9,13 +16,14 @@ export type JobMenuItem = {
   href: string;
   label: string;
   hint: string;
-  icon: "portal" | "revisit" | "approval";
+  icon: "portal" | "revisit" | "approval" | "checkout";
 };
 
 const ICONS = {
   portal: SlidersHorizontal,
   revisit: Repeat,
   approval: CircleCheck,
+  checkout: ClipboardCheck,
 } as const;
 
 /**

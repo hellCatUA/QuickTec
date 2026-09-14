@@ -81,13 +81,16 @@ export async function generateMetadata({
 
 export default async function JobPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ checkout?: string }>;
 }) {
   const user = await getSessionUser();
   if (!user) redirect("/signin");
 
   const { id } = await params;
+  const query = await searchParams;
 
   const job = await db.job.findUnique({
     where: { id },
@@ -109,6 +112,8 @@ export default async function JobPage({
       scopeOfWork: true,
       releaseCode: true,
       noReleaseCode: true,
+      checkoutPreparedAt: true,
+      checkoutPreparedBy: { select: { name: true } },
       returnTrackingNumber: true,
       workPerformedMerged: true,
       breakPaid: true,
@@ -270,6 +275,8 @@ export default async function JobPage({
           kind: true,
           signerName: true,
           skipped: true,
+          skippedReason: true,
+          signedAt: true,
           pointOfContactId: true,
           assignment: { select: { userId: true } },
         },
@@ -539,7 +546,28 @@ export default async function JobPage({
   // Three destinations rather than three drawers. Everything the menu points
   // at is a page of its own, because a sheet over a long page on a phone is
   // two scroll containers fighting over one finger.
+  //
+  // Preparing a checkout is here rather than beside the clock: it is something
+  // done to the job, it is not what most days need, and a second button next to
+  // the red one is a second thing to read before pressing the red one.
+  const onSiteNow = Boolean(
+    mine?.visits.some((visit) => visit.clockOutAt === null),
+  );
   const menuItems = [
+    ...(onSiteNow && canSetOutcome
+      ? [
+          {
+            href: `/jobs/${job.id}?checkout=prepare`,
+            label: job.checkoutPreparedAt
+              ? "Redo the prepared checkout"
+              : "Prepare checkout",
+            hint: job.checkoutPreparedAt
+              ? "Go through the steps again; what is already answered is filled in."
+              : "Outcome, release code and signatures now; clock out when you actually leave.",
+            icon: "checkout" as const,
+          },
+        ]
+      : []),
     ...(canFixClocks || canSetPay
       ? [
           {
@@ -736,6 +764,34 @@ export default async function JobPage({
             canOverrideMissing,
             canSetOutcome,
           }}
+          prepared={
+            job.checkoutPreparedAt
+              ? {
+                  outcome: job.outcome,
+                  releaseCode: job.releaseCode,
+                  noReleaseCode: job.noReleaseCode,
+                  revisitRequired: job.internalStatus === "REVISIT_REQUIRED",
+                  signatures: job.signatures
+                    .filter(
+                      (signature) =>
+                        signature.kind === "MOD" ||
+                        signature.assignment?.userId === user.id,
+                    )
+                    .map((signature) => ({
+                      kind: signature.kind as "MOD" | "TECH",
+                      signerName: signature.signerName,
+                      signedAt: signature.signedAt
+                        ? usDateTimeInZone(signature.signedAt, zone)
+                        : null,
+                      skipped: signature.skipped,
+                      skippedReason: signature.skippedReason,
+                    })),
+                  preparedAt: usDateTimeInZone(job.checkoutPreparedAt, zone),
+                  preparedBy: job.checkoutPreparedBy?.name ?? null,
+                }
+              : null
+          }
+          openPrepare={query.checkout === "prepare"}
         />
       ) : null}
 

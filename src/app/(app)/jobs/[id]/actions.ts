@@ -440,6 +440,151 @@ export async function completeCheckout(
 }
 
 /**
+ * The same answers, saved without clocking out.
+ *
+ * "Prepare checkout" used to write only the signatures, so the outcome, the
+ * release code and the revisit flag were collected from the person standing on
+ * site and then dropped — and the tech pressing Clock out an hour later was
+ * asked every question over again. Keeping them is what lets the clock-out show
+ * what is already there instead of a second run through the wizard.
+ *
+ * Missing deliverables are not a blocker here, unlike at the real checkout: the
+ * point of preparing is to catch the MOD before they leave, and the photos can
+ * still be taken afterwards. The stop stays where the job actually closes.
+ */
+export async function saveCheckoutDraft(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  const parsed = checkoutSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return fail(z.prettifyError(parsed.error));
+
+  const { jobId, outcome, releaseCode, revisitRequired } = parsed.data;
+  const noReleaseCode = parsed.data.noReleaseCode === "true";
+
+  const context = await loadContext(jobId);
+  if (!context) return fail("Job not found.");
+  const { user, job } = context;
+
+  if (!(await canOnJob(user, "job.set_outcome_status", job))) {
+    return fail("You cannot set the outcome on this job.");
+  }
+
+  await db.job.update({
+    where: { id: jobId },
+    data: {
+      outcome,
+      releaseCode: noReleaseCode ? null : (releaseCode ?? null),
+      noReleaseCode,
+      ...(job.internalStatus === "RESCHEDULED"
+        ? {}
+        : revisitRequired
+          ? { internalStatus: "REVISIT_REQUIRED" as const }
+          : { internalStatus: null }),
+      checkoutPreparedAt: new Date(),
+      checkoutPreparedById: user.id,
+    },
+  });
+
+  await recordAudit({
+    actorId: user.id,
+    entityType: "Job",
+    entityId: jobId,
+    jobId,
+    action: "checkout_prepared",
+    detail: { outcome, noReleaseCode, revisitRequired },
+  });
+
+  touch(jobId);
+  return ok;
+}
+
+/**
+ * Throws a prepared checkout away so it can be done again from scratch.
+ *
+ * Deliberately takes the signatures with it. A prepared checkout is one act —
+ * these answers, signed by these people — and clearing the answers while
+ * leaving somebody's signature attached would produce a job signed off for an
+ * outcome nobody chose. The audit trail keeps the fact that it happened.
+ *
+ * The revisit flag is only cleared if this is what set it; a job already moved
+ * to Rescheduled has a return trip booked, and this is not the place to unbook
+ * it.
+ */
+export async function clearPreparedCheckout(
+  formData: FormData,
+): Promise<ActionResult> {
+  const jobId = String(formData.get("jobId") ?? "");
+
+  const context = await loadContext(jobId);
+  if (!context) return fail("Job not found.");
+  const { user, job } = context;
+
+  if (!(await canOnJob(user, "job.set_outcome_status", job))) {
+    return fail("You cannot change the outcome on this job.");
+  }
+  // Read apart from the shared context, which deliberately carries only what
+  // every permission check needs.
+  const prepared = await db.job.findUniqueOrThrow({
+    where: { id: jobId },
+    select: { checkoutPreparedAt: true },
+  });
+  if (!prepared.checkoutPreparedAt) return fail("Nothing has been prepared yet.");
+
+  // The MOD signed the job, so that goes with the job's answers. A tech
+  // signature belongs to the person who drew it: on a two-tech job, clearing
+  // your own prepared checkout must not rub out your colleague's name.
+  const mine = { jobId, assignment: { userId: user.id } } as const;
+  const signatureScope = {
+    jobId,
+    OR: [{ kind: "MOD" as const }, mine],
+  };
+
+  // Attachments go with the signatures rather than being left behind: an
+  // orphaned signature image is a file nobody can reach and nobody deletes.
+  const signatures = await db.signature.findMany({
+    where: signatureScope,
+    select: { id: true, attachmentId: true, signerName: true },
+  });
+
+  await db.signature.deleteMany({ where: signatureScope });
+  const attachmentIds = signatures
+    .map((signature) => signature.attachmentId)
+    .filter((id): id is string => id !== null);
+  if (attachmentIds.length > 0) {
+    await db.attachment.deleteMany({ where: { id: { in: attachmentIds } } });
+  }
+
+  await db.job.update({
+    where: { id: jobId },
+    data: {
+      outcome: null,
+      releaseCode: null,
+      noReleaseCode: false,
+      ...(job.internalStatus === "REVISIT_REQUIRED"
+        ? { internalStatus: null }
+        : {}),
+      checkoutPreparedAt: null,
+      checkoutPreparedById: null,
+    },
+  });
+
+  await recordAudit({
+    actorId: user.id,
+    entityType: "Job",
+    entityId: jobId,
+    jobId,
+    action: "checkout_cleared",
+    detail: {
+      signaturesRemoved: signatures.map((signature) => signature.signerName),
+    },
+  });
+
+  touch(jobId);
+  return ok;
+}
+
+/**
  * Required deliverable sections with nothing in them. Job-level rules win over
  * the project's, matching what the job page shows.
  */
