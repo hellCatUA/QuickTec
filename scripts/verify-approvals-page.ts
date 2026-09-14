@@ -80,6 +80,12 @@ async function main() {
     where: { status: "PENDING", job: { siteId: { not: site.id } } },
     data: { status: "REJECTED" },
   });
+  // Rejecting is not enough for the tech's own: the outgoing tab is theirs by
+  // authorship and shows answered requests too, so another suite's leftover
+  // would sit in it alongside the one this suite is about.
+  await db.changeRequest.deleteMany({
+    where: { requestedById: tech.user.id },
+  });
   await db.job.updateMany({
     where: {
       siteId: { not: site.id },
@@ -177,12 +183,14 @@ async function main() {
     data: { jobId: othersJob.id, userId: boss.user.id, payType: "HOURLY" },
   });
 
-  // 5. A draft payroll week for the tech, which is their supervisor's to pay.
+  // 5. A draft payroll week for the tech, which is their direct supervisor's
+  //    to pay — and that is now the manager: only somebody who can approve
+  //    payroll may hold the link.
   const week = weekRange(new Date("2026-05-13T12:00:00Z"), TZ);
   await db.payrollPeriod.create({
     data: {
       userId: tech.user.id,
-      supervisorId: sup.user.id,
+      supervisorId: boss.user.id,
       weekStart: week.start,
       weekEnd: week.end,
       status: "DRAFT",
@@ -241,43 +249,65 @@ async function main() {
     true,
   );
   check(
-    "the supervisor sees the ad-hoc job",
-    await supPage.locator("text=Ad-hoc call out").isVisible(),
-    true,
-  );
-  check(
     "the supervisor sees the report waiting on review",
     await supPage.locator("text=Reports to review").isVisible(),
     true,
   );
+  // Payroll follows the direct-supervisor link and a supervisor can no longer
+  // hold one, so weeks are not theirs to approve and are not in their queue.
   check(
-    "the supervisor sees their report's payroll week",
-    await supPage.locator("text=Payroll weeks").isVisible(),
-    true,
+    "a supervisor is not given payroll weeks to approve",
+    await supPage.locator("text=Payroll weeks").count(),
+    0,
+  );
+  // Consequence of the same rule, stated rather than left to be discovered: an
+  // ad-hoc job with no project reached a supervisor only through the report
+  // chain, so it now falls to whoever actually pays that tech.
+  check(
+    "nor a report's project-less ad-hoc job",
+    await supPage.locator("text=Ad-hoc call out").count(),
+    0,
   );
   check(
     "the count adds up",
-    await supPage.locator("text=4 items waiting on you.").isVisible(),
+    await supPage.locator("text=2 items waiting on you.").isVisible(),
+    true,
+  );
+
+  // --- and the payroll week is the manager's -------------------------------
+  const bossPage = await pageFor(boss.token);
+  await bossPage.goto(`${BASE}/approvals`, { waitUntil: "domcontentloaded" });
+
+  check(
+    "the manager is given the payroll week",
+    await bossPage.locator("text=Payroll weeks").isVisible(),
+    true,
+  );
+  check(
+    "and the ad-hoc job",
+    await bossPage.locator("text=Ad-hoc call out").isVisible(),
     true,
   );
 
   // The link has to resolve to the same week it was built for: a date parsed
   // as UTC midnight is the afternoon before in Los Angeles, and the week
-  // silently comes out one early.
-  await supPage
+  // silently comes out one early. It now opens Payroll rather than Pay — the
+  // week is a decision, and decisions moved off the tech's own screen.
+  await bossPage
     .getByRole("link", { name: new RegExp(tech.user.name ?? "Tech") })
     .last()
     .click();
-  await supPage.waitForURL(/\/pay\?/, { timeout: 20_000 });
+  await bossPage.waitForURL(/\/payroll\//, { timeout: 20_000 });
+  const opened = new URL(bossPage.url());
   check(
     "the payroll link opens the week it was filed under",
-    new URL(supPage.url()).searchParams.get("week"),
+    opened.searchParams.get("week"),
     "2026-05-11",
   );
   check(
     "and lands on the right person",
-    new URL(supPage.url()).searchParams.get("user"),
-    tech.user.id,
+    opened.pathname,
+    `/payroll/${tech.user.id}`,
   );
 
   // --- site history ---------------------------------------------------------
@@ -376,10 +406,12 @@ async function main() {
   });
   check("the tech is on the revisit", added.userId, tech.user.id);
   check("the first person on is the lead", added.isLead, true);
+  // Whoever put them on the job is not thereby their approver: the assignment
+  // carries the tech's own Direct Supervisor, which is now the manager.
   check(
     "their approver is their direct supervisor",
     added.supervisorId,
-    sup.user.id,
+    boss.user.id,
   );
   check(
     "the assignment is on the timeline",
@@ -761,15 +793,15 @@ async function main() {
   await db.notification.deleteMany({ where: { projectId: project.id } });
   await db.auditEvent.deleteMany({ where: { projectId: project.id } });
 
-  const bossPage = await pageFor(boss.token);
-  await bossPage.goto(`${BASE}/projects/${project.id}/settings`, {
+  const managerPage = await pageFor(boss.token);
+  await managerPage.goto(`${BASE}/projects/${project.id}/settings`, {
     waitUntil: "domcontentloaded",
   });
-  await bossPage
+  await managerPage
     .locator(`select[name="managerId"]`)
     .selectOption(sup.user.id);
-  await bossPage.getByRole("button", { name: "Save project" }).click();
-  await bossPage.waitForTimeout(2500);
+  await managerPage.getByRole("button", { name: "Save project" }).click();
+  await managerPage.waitForTimeout(2500);
 
   check(
     "the project manager was recorded",
@@ -799,12 +831,12 @@ async function main() {
   );
 
   // Handing it to somebody else tells both of them.
-  await bossPage.reload({ waitUntil: "domcontentloaded" });
-  await bossPage
+  await managerPage.reload({ waitUntil: "domcontentloaded" });
+  await managerPage
     .locator(`select[name="managerId"]`)
     .selectOption(boss.user.id);
-  await bossPage.getByRole("button", { name: "Save project" }).click();
-  await bossPage.waitForTimeout(2500);
+  await managerPage.getByRole("button", { name: "Save project" }).click();
+  await managerPage.waitForTimeout(2500);
 
   const handedOver = await db.notification.findFirst({
     where: {
@@ -830,9 +862,9 @@ async function main() {
 
   // Re-saving without touching the manager must not nag anybody again.
   const before = await db.notification.count({ where: { projectId: project.id } });
-  await bossPage.reload({ waitUntil: "domcontentloaded" });
-  await bossPage.getByRole("button", { name: "Save project" }).click();
-  await bossPage.waitForTimeout(2500);
+  await managerPage.reload({ waitUntil: "domcontentloaded" });
+  await managerPage.getByRole("button", { name: "Save project" }).click();
+  await managerPage.waitForTimeout(2500);
   check(
     "saving without changing the manager notifies nobody",
     await db.notification.count({ where: { projectId: project.id } }),
@@ -842,28 +874,28 @@ async function main() {
   // --- the representing company's PM/PC -------------------------------------
   // The person a tech rings when the door is locked. Ours is the project
   // manager above; this one works for the other company and has no account.
-  await bossPage.goto(`${BASE}/projects/${project.id}/settings`, {
+  await managerPage.goto(`${BASE}/projects/${project.id}/settings`, {
     waitUntil: "load",
   });
-  await bossPage.waitForTimeout(1000);
+  await managerPage.waitForTimeout(1000);
 
-  await bossPage.locator("#pmContactId").click();
-  await bossPage.locator("#pmContactId").fill("Dana Whitfield");
-  await bossPage.getByText("Add Dana Whitfield").click();
-  await bossPage.locator("#pm-title").fill("Project coordinator");
-  await bossPage.locator("#pm-phone").fill("206-555-0114");
-  await bossPage.getByRole("button", { name: "Save contact" }).click();
-  await bossPage.waitForTimeout(1500);
+  await managerPage.locator("#pmContactId").click();
+  await managerPage.locator("#pmContactId").fill("Dana Whitfield");
+  await managerPage.getByText("Add Dana Whitfield").click();
+  await managerPage.locator("#pm-title").fill("Project coordinator");
+  await managerPage.locator("#pm-phone").fill("206-555-0114");
+  await managerPage.getByRole("button", { name: "Save contact" }).click();
+  await managerPage.waitForTimeout(1500);
 
   check(
     "their contact details come with them once picked",
     // Dashes are for reading; a tel: link dials digits.
-    await bossPage.locator('a[href="tel:2065550114"]').isVisible(),
+    await managerPage.locator('a[href="tel:2065550114"]').isVisible(),
     true,
   );
 
-  await bossPage.getByRole("button", { name: "Save project" }).click();
-  await bossPage.waitForTimeout(2500);
+  await managerPage.getByRole("button", { name: "Save project" }).click();
+  await managerPage.waitForTimeout(2500);
 
   const withPm = await db.project.findUniqueOrThrow({
     where: { id: project.id },
@@ -937,92 +969,92 @@ async function main() {
   // --- the project page is a page about the project -------------------------
   // Its settings used to sit on top of the work, so the list of jobs — the
   // reason anybody opens it — was below four forms.
-  await bossPage.goto(`${BASE}/projects/${project.id}`, { waitUntil: "load" });
-  await bossPage.waitForTimeout(1000);
+  await managerPage.goto(`${BASE}/projects/${project.id}`, { waitUntil: "load" });
+  await managerPage.waitForTimeout(1000);
 
   check(
     "the overview does not carry the settings forms",
-    await bossPage.locator('select[name="managerId"]').count(),
+    await managerPage.locator('select[name="managerId"]').count(),
     0,
   );
   check(
     "they are behind a settings button",
-    await bossPage.getByRole("link", { name: "Settings" }).isVisible(),
+    await managerPage.getByRole("link", { name: "Settings" }).isVisible(),
     true,
   );
   check(
     "the rep company PM/PC is on the overview",
-    await bossPage
+    await managerPage
       .getByRole("heading", { name: "Rep Company PM/PC" })
       .isVisible(),
     true,
   );
   check(
     "the jobs are searchable",
-    await bossPage
+    await managerPage
       .getByPlaceholder("Search by WO, title, site, city or who is on it…")
       .isVisible(),
     true,
   );
   check(
     "the list can be narrowed to what is still coming",
-    await bossPage.getByRole("button", { name: /^Scheduled/ }).isVisible(),
+    await managerPage.getByRole("button", { name: /^Scheduled/ }).isVisible(),
     true,
   );
-  await bossPage.getByRole("button", { name: /^Completed/ }).click();
-  await bossPage.waitForTimeout(300);
+  await managerPage.getByRole("button", { name: /^Completed/ }).click();
+  await managerPage.waitForTimeout(300);
   check(
     "and to what is behind us",
-    await bossPage.getByText("Finished last month").isVisible(),
+    await managerPage.getByText("Finished last month").isVisible(),
     true,
   );
   check(
     "which leaves the unfinished one out",
-    await bossPage.getByText("Job under the coordinator").count(),
+    await managerPage.getByText("Job under the coordinator").count(),
     0,
   );
-  await bossPage.getByRole("button", { name: /^All/ }).click();
-  await bossPage.waitForTimeout(300);
+  await managerPage.getByRole("button", { name: /^All/ }).click();
+  await managerPage.waitForTimeout(300);
 
-  await bossPage
+  await managerPage
     .getByPlaceholder("Search by WO, title, site, city or who is on it…")
     .fill("under the coordinator");
-  await bossPage.waitForTimeout(300);
+  await managerPage.waitForTimeout(300);
   check(
     "and searching narrows the list",
-    await bossPage.getByText("Job under the coordinator").isVisible(),
+    await managerPage.getByText("Job under the coordinator").isVisible(),
     true,
   );
 
   // --- job settings, kept apart from the project's own details --------------
-  await bossPage.goto(`${BASE}/projects/${project.id}/settings`, {
+  await managerPage.goto(`${BASE}/projects/${project.id}/settings`, {
     waitUntil: "load",
   });
-  await bossPage.waitForTimeout(1000);
+  await managerPage.waitForTimeout(1000);
 
   check(
     "there is a block for how its jobs are filled in",
-    await bossPage
+    await managerPage
       .getByRole("heading", { name: "In Project Jobs Settings" })
       .isVisible(),
     true,
   );
   check(
     "deliverables read as requirements there",
-    await bossPage.getByText("Deliverables Requirements").isVisible(),
+    await managerPage.getByText("Deliverables Requirements").isVisible(),
     true,
   );
   check(
     "breaks are called Paid Breaks",
-    await bossPage.getByText("Paid Breaks").isVisible(),
+    await managerPage.getByText("Paid Breaks").isVisible(),
     true,
   );
 
-  await bossPage.locator("#defaultJobTitle").fill("Register swap");
-  await bossPage.locator("#defaultPayType").selectOption("HOURLY");
-  await bossPage.locator("#defaultPayRate").fill("52.50");
-  await bossPage.getByRole("button", { name: "Save job settings" }).click();
-  await bossPage.waitForTimeout(2500);
+  await managerPage.locator("#defaultJobTitle").fill("Register swap");
+  await managerPage.locator("#defaultPayType").selectOption("HOURLY");
+  await managerPage.locator("#defaultPayRate").fill("52.50");
+  await managerPage.getByRole("button", { name: "Save job settings" }).click();
+  await managerPage.waitForTimeout(2500);
 
   const prefill = await db.project.findUniqueOrThrow({
     where: { id: project.id },

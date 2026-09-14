@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "prisma generate && next build",
     "start": "next start",
+    "serve": "sh scripts/dev-serve.sh",
     "lint": "eslint .",
     "typecheck": "prisma generate && tsc --noEmit",
     "db:generate": "prisma generate",

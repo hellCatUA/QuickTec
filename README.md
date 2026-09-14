@@ -44,7 +44,11 @@ the client-facing report, the full job archive, and the weekly pay journal.
   company's own PDF work order
 - Pay rates by tech, project and client, with per-job overrides
 - Mileage tracker with trip categories and odometer photos
-- Weekly payroll approved by the direct supervisor, with per-job overrides and
+- **Pay**: what one person earned, read live from their own time records rather
+  than from a payroll run, weekly or monthly, day by day and job by job, with
+  how far along payroll is so a figure that can still move says so
+- **Payroll**: what the company owes, a week across everybody at a time, built
+  in one go, approved by the direct supervisor, with per-job overrides and
   Received/REDUCED recorded for both the week and each job
 - Pay journal spreadsheet, weekly or monthly, and per-tech statistics
 - Crew management on a live job: add a tech, move the lead, take somebody off
@@ -125,10 +129,13 @@ Three layers combine into an answer:
 
 Two rules worth knowing:
 
-- **Payroll follows the direct supervisor, never the project.** A supervisor
-  approves pay for the techs who report to them, wherever those techs worked
-  that week. Manager approval is possible as a fallback and is flagged as such
-  so the supervisor can see who paid their tech.
+- **Payroll follows the direct supervisor, never the project.** The direct
+  supervisor approves pay for the techs who report to them, wherever those
+  techs worked that week. Because that link is what decides who pays, only a
+  Manager or an Administrator can hold it — somebody who cannot approve a week
+  is not an answer to "who pays this tech", and a week routed to one would sit
+  forever with nobody able to act on it. Manager approval on somebody else's
+  report is possible as a fallback and is flagged as such.
 - **Empty planned fields can be filled by anyone assigned; populated ones
   cannot.** Changing a field that already has a value requires
   `job.edit_planned_fields`, otherwise it becomes a change request for a
@@ -236,7 +243,8 @@ npm run dev
 | `npm run fixtures` | Test people, company and job the browser suites run against |
 | `npm run verify` | Integration check for numbering, dates, time, money and scope |
 | `npm run verify:ui` | Drives the time clock and checkout in a real browser |
-| `npm run verify:pay` | Drives payroll approval and payment in a real browser |
+| `npm run verify:pay` | Drives Pay and Payroll in a real browser, including who is offered which |
+| `npm run serve` | Serves the standalone build on 3000, for the browser suites |
 | `npm run verify:approvals` | Drives the approvals inbox, site history and crew changes in a real browser |
 | `npm run verify:auth` | Runs the OIDC handshake against a stand-in NextCloud |
 | `npm run verify:forms` | Fills a company's sign-off sheet, no database or browser needed |
@@ -258,9 +266,13 @@ browser suites drive, so run `npm run fixtures` after it and before them.
 npm run db:seed
 QUICKTEC_ALLOW_DESTRUCTIVE_VERIFY=1 npm run verify
 QUICKTEC_ALLOW_DESTRUCTIVE_VERIFY=1 npm run fixtures
-npm run build && npm start &
+npm run build && npm run serve &
 npm run verify:ui && npm run verify:pay && npm run verify:approvals && npm run verify:form-pages
 ```
+
+`npm run serve` rather than `npm start`: the build is `output: "standalone"`,
+which `next start` refuses to run. It copies the static assets into place,
+frees port 3000 if something is still holding it, and starts the built server.
 
 `fixtures` writes people called things like `tech@417group.org` and belongs
 nowhere near a live database, which is why it carries the same opt-in. It is

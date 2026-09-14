@@ -7,7 +7,6 @@ import {
   isoDateInZone,
   parseZonedDate,
   startOfWeekMonday,
-  usDateInZone,
 } from "@/lib/datetime";
 import { db } from "@/lib/db";
 import { dayLabel, hours, money, shortDate, weekSpan } from "@/lib/pay-format";
@@ -212,7 +211,7 @@ export default async function PayrollPersonPage({
                   ? isoDateInZone(period.receivedDate, zone)
                   : null,
                 expectedPayDate: period.expectedPayDate
-                  ? usDateInZone(period.expectedPayDate, zone)
+                  ? shortDate(period.expectedPayDate, zone)
                   : null,
                 note: period.note,
                 approvedBy: period.approvedBy?.name ?? null,

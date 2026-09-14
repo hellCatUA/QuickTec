@@ -519,7 +519,7 @@ export default async function ApprovalsPage({
             {payrollPeriods.map((period) => (
               <Link
                 key={period.id}
-                href={`/pay?user=${period.user.id}&week=${isoDateInZone(period.weekStart, zone)}`}
+                href={`/payroll/${period.user.id}?week=${isoDateInZone(period.weekStart, zone)}`}
                 className="flex flex-wrap items-center gap-2 rounded-lg border border-border p-2 text-sm transition-colors hover:border-primary/50"
               >
                 <span className="font-medium">{period.user.name}</span>

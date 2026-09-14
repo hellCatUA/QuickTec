@@ -70,6 +70,36 @@ async function main() {
     },
   });
 
+  // An administrator with somebody under them. The role runs the money, so the
+  // suites need one to prove it can actually build, approve and record a week
+  // rather than only read them — which is what it could do before.
+  const admin = await db.user.upsert({
+    where: { email: "admin@417group.org" },
+    update: {},
+    create: {
+      email: "admin@417group.org",
+      name: "Ada Minns",
+      nextcloudSub: "sub-admin",
+      baseRole: "ADMINISTRATOR",
+      timeZone: TZ,
+    },
+  });
+
+  await db.user.upsert({
+    where: { email: "tech2@417group.org" },
+    update: { directSupervisorId: admin.id },
+    create: {
+      email: "tech2@417group.org",
+      name: "Tina Two",
+      nextcloudSub: "sub-tech2",
+      baseRole: "TECH",
+      timeZone: TZ,
+      directSupervisorId: admin.id,
+      defaultPayType: "HOURLY",
+      defaultPayRate: "52.00",
+    },
+  });
+
   const client = await db.client.upsert({
     where: { name: "Mettel" },
     update: {},
@@ -192,7 +222,7 @@ async function main() {
   });
 
   console.log(
-    `fixtures ready — ${[boss, sup, tech].map((u) => u.email).join(", ")}\n` +
+    `fixtures ready — ${[boss, sup, admin, tech].map((u) => u.email).join(", ")}\n` +
       `  client ${client.name}, customer ${customer.code} #${site.siteNumber}\n` +
       `  project ${project.name}\n` +
       `  job ${job.intWoId} (${job.id})`,

@@ -258,7 +258,7 @@ export function PeriodPanel({
                   className="ml-auto"
                   onClick={() => setReceiving(true)}
                 >
-                  <Wallet /> Record what arrived
+                  <Wallet /> Record the week
                 </Button>
               ) : null}
             </div>
@@ -493,6 +493,9 @@ function LineCard({
               <Pencil /> Override amount
             </Button>
           ) : null}
+          {/* Named for its scope. The week has a button with the same job, and
+              three "Record what arrived" on one screen is three chances to
+              record against the wrong thing. */}
           {canMarkReceived && periodStatus !== "DRAFT" ? (
             <Button
               type="button"
@@ -501,7 +504,7 @@ function LineCard({
               className="flex-1"
               onClick={() => setReceiving((open) => !open)}
             >
-              <Wallet /> Record what arrived
+              <Wallet /> Record for this job
             </Button>
           ) : null}
         </div>
