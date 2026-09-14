@@ -2293,6 +2293,168 @@ async function main() {
     0,
   );
 
+  // --- what a person earned, read from the clock ---------------------------
+  // Pay used to be read out of PayrollPeriod, so on a deployment where nobody
+  // had ever pressed Build every tech saw an empty page for every week they had
+  // ever worked. These figures come from the visits instead; payroll is shown
+  // alongside as a stage rather than being the source.
+  {
+    const { isoWeek, loadPayWeek, loadPayMonth, loadPayWeeks } = await import(
+      "@/lib/pay-period"
+    );
+    const { startOfWeekMonday } = await import("@/lib/datetime");
+
+    // Week numbers people can check against a calendar, including the three
+    // that catch a naive implementation: the turn of the year both ways, and a
+    // 53-week year.
+    const wk = (iso: string) =>
+      isoWeek(startOfWeekMonday(new Date(`${iso}T12:00:00Z`), TZ), TZ);
+    check("Sep 14 2026 is week 38", wk("2026-09-14"), 38);
+    check("Aug 31 2026 is week 36", wk("2026-08-31"), 36);
+    check("Jan 1 2026 still belongs to week 1", wk("2026-01-01"), 1);
+    check("2026 runs to a week 53", wk("2026-12-28"), 53);
+    check("and Jan 4 2027 starts again at 1", wk("2027-01-04"), 1);
+
+    const payAssignment = await db.jobAssignment.findFirstOrThrow({
+      where: { userId: tech.id },
+      select: { id: true },
+    });
+    await db.visit.deleteMany({ where: { assignmentId: payAssignment.id } });
+    await db.payrollPeriod.deleteMany({ where: { userId: tech.id } });
+    await db.jobAssignment.update({
+      where: { id: payAssignment.id },
+      data: { payType: "HOURLY", payRate: "65" },
+    });
+
+    // Monday 14 September, 8:00am to 4:30pm, half an hour of it unpaid.
+    const worked = await db.visit.create({
+      data: {
+        assignmentId: payAssignment.id,
+        clockInAt: new Date("2026-09-14T15:00:00Z"),
+        clockOutAt: new Date("2026-09-14T23:30:00Z"),
+      },
+    });
+    await db.breakPeriod.create({
+      data: {
+        visitId: worked.id,
+        startAt: new Date("2026-09-14T19:00:00Z"),
+        endAt: new Date("2026-09-14T19:30:00Z"),
+        paid: false,
+      },
+    });
+
+    const mid = new Date("2026-09-16T12:00:00Z");
+    const week = await loadPayWeek({
+      userId: tech.id,
+      weekStart: startOfWeekMonday(mid, TZ),
+      timeZone: TZ,
+      payLagWeeks: 3,
+      now: mid,
+    });
+
+    check("the week knows its number", week.week, 38);
+    check("8.00 hrs paid", (week.totals.paidMinutes / 60).toFixed(2), "8.00");
+    check("8.50 hrs on site", (week.totals.onsiteMinutes / 60).toFixed(2), "8.50");
+    check("$520.00 earned", (week.totals.earnedCents / 100).toFixed(2), "520.00");
+    // Against time on site, not paid time: the unpaid half hour still cost them
+    // the afternoon and should drag the figure down.
+    check(
+      "blended against the whole day",
+      (week.totals.blendedHourlyCents! / 100).toFixed(2),
+      "61.18",
+    );
+    check("seven days whatever happened", week.days.length, 7);
+    check(
+      "the work lands on its own day",
+      (week.days[0].earnedCents / 100).toFixed(2),
+      "520.00",
+    );
+    check("and on no other", week.days[1].earnedCents, 0);
+    check("with nothing in payroll yet", week.state.stage, "recorded");
+    check("and the week still open", week.state.running, true);
+
+    const september = await loadPayMonth({
+      userId: tech.id,
+      year: 2026,
+      month: 9,
+      timeZone: TZ,
+      payLagWeeks: 3,
+      now: mid,
+    });
+    check(
+      "the month carries the same money",
+      (september.period.totals.earnedCents / 100).toFixed(2),
+      "520.00",
+    );
+    check(
+      "September is its four weeks, newest first",
+      september.weeks.map((one) => one.week).join(","),
+      "40,39,38,37",
+    );
+    // The rule the whole design rests on, asserted from both sides.
+    check(
+      "the week of Aug 31 is not September's",
+      september.weeks.some((one) => one.week === 36),
+      false,
+    );
+    const august = await loadPayMonth({
+      userId: tech.id,
+      year: 2026,
+      month: 8,
+      timeZone: TZ,
+      payLagWeeks: 3,
+      now: mid,
+    });
+    check(
+      "it is August's, by its Monday",
+      august.weeks.some((one) => one.week === 36),
+      true,
+    );
+
+    const groups = await loadPayWeeks({
+      userId: tech.id,
+      timeZone: TZ,
+      payLagWeeks: 3,
+      count: 6,
+      now: mid,
+    });
+    check(
+      "the list is grouped by month",
+      groups.map((one) => `${one.month.year}-${one.month.month}`).join(" "),
+      "2026-9 2026-8",
+    );
+    check(
+      "and keeps the weeks nobody worked",
+      groups.reduce((total, one) => total + one.weeks.length, 0),
+      6,
+    );
+    check("newest week first", groups[0].weeks[0].week, 38);
+
+    // Once payroll has it, the stage moves and the money does not.
+    await buildPayrollPeriod({
+      userId: tech.id,
+      week: { start: week.start, end: week.end },
+      timeZone: TZ,
+      payLagWeeks: 3,
+    });
+    const reread = await loadPayWeek({
+      userId: tech.id,
+      weekStart: week.start,
+      timeZone: TZ,
+      payLagWeeks: 3,
+      now: mid,
+    });
+    check("building it moves the stage on", reread.state.stage, "review");
+    check(
+      "without changing what was earned",
+      reread.totals.earnedCents,
+      week.totals.earnedCents,
+    );
+
+    await db.payrollPeriod.deleteMany({ where: { userId: tech.id } });
+    await db.visit.deleteMany({ where: { assignmentId: payAssignment.id } });
+  }
+
   // --- mileage ------------------------------------------------------------
   const { availableCategories, milesBetween, mileageAmount, MILEAGE_META } =
     await import("@/lib/mileage");
