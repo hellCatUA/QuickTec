@@ -1,0 +1,217 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    :root {
+      --background: oklch(0.17 0.012 260);
+      --surface: oklch(0.21 0.014 260);
+      --surface-raised: oklch(0.25 0.016 260);
+      --foreground: oklch(0.96 0.005 260);
+      --muted: oklch(0.28 0.014 260);
+      --muted-foreground: oklch(0.7 0.018 260);
+      --border: oklch(0.31 0.016 260);
+      --primary: oklch(0.66 0.16 235);
+      --success: oklch(0.7 0.16 155);
+    }
+    body {
+      margin: 0;
+      background: var(--background);
+      color: var(--foreground);
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+        "Helvetica Neue", Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    .tabular { font-variant-numeric: tabular-nums; }
+    a { color: var(--primary); text-decoration: none; }
+    a:hover { color: oklch(0.74 0.16 235); }
+  </style>
+</helmet>
+
+<!-- The same screen as the open week, in the state it ends up in. Nothing here
+     is a different page: only the tracker, the sentence under it and the money
+     have moved on. -->
+<div style="display: flex; flex-direction: column; gap: 16px; padding: 16px">
+
+  <div style="display: flex; flex-direction: column; gap: 2px">
+    <div style="font-size: 24px; font-weight: 650; letter-spacing: -0.01em">Pay</div>
+    <div style="font-size: 12px; color: var(--muted-foreground)">
+      What you have earned. Weeks run Monday to Sunday.
+    </div>
+  </div>
+
+  <div style="display: flex; gap: 2px; padding: 2px; background: var(--muted); border-radius: 10px">
+    <div style="flex-grow: 1; display: flex; align-items: center; justify-content: center; min-height: 44px; border-radius: 8px; background: var(--surface-raised); color: var(--foreground); font-size: 13px; font-weight: 600">Weekly</div>
+    <div style="flex-grow: 1; display: flex; align-items: center; justify-content: center; min-height: 44px; border-radius: 8px; color: var(--muted-foreground); font-size: 13px; font-weight: 500">Monthly</div>
+  </div>
+
+  <div style="display: flex; align-items: center; gap: 10px">
+    <div style="display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); flex-shrink: 0">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--muted-foreground)"><path d="M15 18l-6-6 6-6"></path></svg>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 1px; flex-grow: 1; min-width: 0">
+      <div style="font-size: 16px; font-weight: 600">Week of Aug 17</div>
+      <div class="tabular" style="font-size: 12px; color: var(--muted-foreground)">W34 &middot; Aug 17 &ndash; 23</div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 7px; min-height: 44px; padding: 0 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-raised); flex-shrink: 0">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--muted-foreground)"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"></path><path d="M7 10l5 5 5-5M12 15V3"></path></svg>
+      <span class="tabular" style="font-size: 12px; font-weight: 500">W34 .xlsx</span>
+    </div>
+  </div>
+
+  <div style="border: 1px solid var(--border); border-radius: 14px; background: var(--surface); padding: 16px; display: flex; flex-direction: column; gap: 4px">
+    <div style="font-size: 11px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted-foreground)">Earned</div>
+    <div class="tabular" style="font-size: 34px; font-weight: 650; line-height: 1.1; letter-spacing: -0.02em">$1,137.50</div>
+    <div style="font-size: 12px; color: var(--muted-foreground)">
+      no reimbursements &middot; paid
+      <span class="tabular" style="color: var(--foreground)">Sep 13</span>
+    </div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px">
+    <div style="border: 1px solid var(--border); border-radius: 14px; background: var(--surface); padding: 14px; display: flex; flex-direction: column; gap: 3px">
+      <div style="font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted-foreground)">Hours paid</div>
+      <div class="tabular" style="font-size: 22px; font-weight: 600">17.50</div>
+    </div>
+    <div style="border: 1px solid var(--border); border-radius: 14px; background: var(--surface); padding: 14px; display: flex; flex-direction: column; gap: 3px">
+      <div style="font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted-foreground)">Jobs</div>
+      <div class="tabular" style="font-size: 22px; font-weight: 600">2</div>
+    </div>
+    <div style="border: 1px solid var(--border); border-radius: 14px; background: var(--surface); padding: 14px; display: flex; flex-direction: column; gap: 3px">
+      <div style="font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted-foreground)">On site</div>
+      <div class="tabular" style="font-size: 22px; font-weight: 600">18.00</div>
+    </div>
+    <div style="border: 1px solid var(--border); border-radius: 14px; background: var(--surface); padding: 14px; display: flex; flex-direction: column; gap: 3px">
+      <div style="font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted-foreground)">Blended</div>
+      <div class="tabular" style="font-size: 22px; font-weight: 600">$63.19</div>
+    </div>
+  </div>
+
+  <!-- All four behind it. The same four dots, filled. -->
+  <div style="border: 1px solid color-mix(in oklch, var(--success) 35%, var(--border)); border-radius: 14px; background: color-mix(in oklch, var(--success) 5%, var(--surface)); padding: 14px; display: flex; flex-direction: column; gap: 10px">
+    <div style="display: flex; align-items: center">
+      <span style="width: 11px; height: 11px; border-radius: 999px; background: var(--success); flex-shrink: 0"></span>
+      <span style="flex-grow: 1; height: 2px; background: var(--success)"></span>
+      <span style="width: 11px; height: 11px; border-radius: 999px; background: var(--success); flex-shrink: 0"></span>
+      <span style="flex-grow: 1; height: 2px; background: var(--success)"></span>
+      <span style="width: 11px; height: 11px; border-radius: 999px; background: var(--success); flex-shrink: 0"></span>
+      <span style="flex-grow: 1; height: 2px; background: var(--success)"></span>
+      <span style="width: 13px; height: 13px; border-radius: 999px; background: var(--success); box-shadow: 0 0 0 3px color-mix(in oklch, var(--success) 22%, transparent); flex-shrink: 0"></span>
+    </div>
+    <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px">
+      <div style="font-size: 11px; color: var(--muted-foreground)">Recorded</div>
+      <div style="font-size: 11px; color: var(--muted-foreground); text-align: center">In review</div>
+      <div style="font-size: 11px; color: var(--muted-foreground); text-align: center">Approved</div>
+      <div style="font-size: 11px; font-weight: 600; color: var(--success); text-align: right">Paid</div>
+    </div>
+    <div style="font-size: 12px; color: var(--muted-foreground); line-height: 1.5; border-top: 1px solid color-mix(in oklch, var(--success) 25%, var(--border)); padding-top: 10px">
+      Approved by Bo Ross on Aug 25, paid on Sep 13. This week is settled and
+      will not change.
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 8px">
+    <div style="display: flex; align-items: baseline; gap: 8px">
+      <div style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted-foreground); flex-grow: 1">Day by day</div>
+      <div class="tabular" style="font-size: 11px; color: var(--muted-foreground)">hours</div>
+    </div>
+
+    <div style="border: 1px solid var(--border); border-radius: 14px; background: var(--surface); padding: 14px; display: flex; flex-direction: column; gap: 11px">
+      <div style="display: flex; flex-direction: column; gap: 5px">
+        <div style="display: flex; align-items: baseline; gap: 8px">
+          <div class="tabular" style="font-size: 12px; font-weight: 600; width: 46px; flex-shrink: 0">Mon 17</div>
+          <div style="font-size: 12px; color: var(--muted-foreground); flex-grow: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">Fibre splice enclosure</div>
+          <div class="tabular" style="font-size: 12px; color: var(--muted-foreground)">8.00</div>
+          <div class="tabular" style="font-size: 13px; font-weight: 600; width: 66px; text-align: right; flex-shrink: 0">$520.00</div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px">
+          <div style="width: 46px; flex-shrink: 0"></div>
+          <div style="flex-grow: 1; height: 8px; border-radius: 999px; background: var(--muted); overflow: hidden">
+            <div style="width: 84%; height: 100%; border-radius: 999px; background: var(--success)"></div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 5px">
+        <div style="display: flex; align-items: baseline; gap: 8px">
+          <div class="tabular" style="font-size: 12px; font-weight: 600; width: 46px; flex-shrink: 0">Thu 20</div>
+          <div style="font-size: 12px; color: var(--muted-foreground); flex-grow: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">Camera head replacement</div>
+          <div class="tabular" style="font-size: 12px; color: var(--muted-foreground)">9.50</div>
+          <div class="tabular" style="font-size: 13px; font-weight: 600; width: 66px; text-align: right; flex-shrink: 0">$617.50</div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px">
+          <div style="width: 46px; flex-shrink: 0"></div>
+          <div style="flex-grow: 1; height: 8px; border-radius: 999px; background: var(--muted); overflow: hidden">
+            <div style="width: 100%; height: 100%; border-radius: 999px; background: var(--success)"></div>
+          </div>
+        </div>
+      </div>
+
+      <div style="height: 1px; background: var(--border)"></div>
+
+      <div style="display: flex; align-items: center; gap: 8px">
+        <div class="tabular" style="font-size: 12px; width: 46px; flex-shrink: 0; color: var(--muted-foreground)">Tue 18</div>
+        <div style="font-size: 12px; color: var(--muted-foreground); flex-grow: 1">No work</div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px">
+        <div class="tabular" style="font-size: 12px; width: 46px; flex-shrink: 0; color: var(--muted-foreground)">Wed 19</div>
+        <div style="font-size: 12px; color: var(--muted-foreground); flex-grow: 1">No work</div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px">
+        <div class="tabular" style="font-size: 12px; width: 46px; flex-shrink: 0; color: var(--muted-foreground)">Fri 21</div>
+        <div style="font-size: 12px; color: var(--muted-foreground); flex-grow: 1">No work</div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px">
+        <div class="tabular" style="font-size: 12px; width: 46px; flex-shrink: 0; color: var(--muted-foreground)">Sat 22</div>
+        <div style="font-size: 12px; color: var(--muted-foreground); flex-grow: 1">No work</div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px">
+        <div class="tabular" style="font-size: 12px; width: 46px; flex-shrink: 0; color: var(--muted-foreground)">Sun 23</div>
+        <div style="font-size: 12px; color: var(--muted-foreground); flex-grow: 1">No work</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 8px">
+    <div style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted-foreground)">That week&rsquo;s jobs</div>
+
+    <div style="border: 1px solid var(--border); border-radius: 14px; background: var(--surface); padding: 14px; display: flex; flex-direction: column; gap: 6px">
+      <div style="display: flex; align-items: baseline; gap: 8px">
+        <div class="tabular" style="font-size: 12px; color: var(--muted-foreground); width: 54px; flex-shrink: 0">Mon 17</div>
+        <div style="font-size: 14px; font-weight: 600; flex-grow: 1; min-width: 0">Fibre splice enclosure</div>
+        <div class="tabular" style="font-size: 15px; font-weight: 600; flex-shrink: 0">$520.00</div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px; padding-left: 62px">
+        <div class="tabular" style="font-size: 12px; color: var(--muted-foreground)">2608-PRJ12-0031</div>
+        <div style="font-size: 12px; color: var(--muted-foreground)">&middot; TSA #4471</div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 6px; padding-left: 62px">
+        <div class="tabular" style="font-size: 12px; color: var(--muted-foreground)">7:30a &ndash; 4:00p &middot; 8.00 hrs &middot; $65.00/hr</div>
+      </div>
+    </div>
+
+    <div style="border: 1px solid var(--border); border-radius: 14px; background: var(--surface); padding: 14px; display: flex; flex-direction: column; gap: 6px">
+      <div style="display: flex; align-items: baseline; gap: 8px">
+        <div class="tabular" style="font-size: 12px; color: var(--muted-foreground); width: 54px; flex-shrink: 0">Thu 20</div>
+        <div style="font-size: 14px; font-weight: 600; flex-grow: 1; min-width: 0">Camera head replacement</div>
+        <div class="tabular" style="font-size: 15px; font-weight: 600; flex-shrink: 0">$617.50</div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px; padding-left: 62px">
+        <div class="tabular" style="font-size: 12px; color: var(--muted-foreground)">2608-PRJ12-0035</div>
+        <div style="font-size: 12px; color: var(--muted-foreground)">&middot; Mettel #118</div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px; padding-left: 62px">
+        <div class="tabular" style="font-size: 12px; color: var(--muted-foreground)">8:00a &ndash; 5:30p &middot; 9.50 hrs &middot; $65.00/hr</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

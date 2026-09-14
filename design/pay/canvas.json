@@ -17,7 +17,7 @@
       "x": 0,
       "y": 0,
       "w": 430,
-      "h": 950
+      "h": 1348
     },
     {
       "file": "Weeks.dc.html",
@@ -35,16 +35,16 @@
       "x": 1020,
       "y": 0,
       "w": 430,
-      "h": 862
+      "h": 982
     },
     {
-      "file": "WeekDays.dc.html",
-      "title": "Pay · day by day",
+      "file": "WeekSettled.dc.html",
+      "title": "Pay · a settled week",
       "page": "page-1",
       "x": 1530,
       "y": 0,
       "w": 430,
-      "h": 651
+      "h": 1199
     },
     {
       "file": "Payroll.dc.html",
@@ -81,7 +81,7 @@
       "x": 0,
       "y": -150,
       "w": 430,
-      "text": "Pay is read-only and computed live from the time records — the same way /pay/stats already works.\n\nThat is the fix for the empty page: it no longer waits for anyone to press Build. Payroll status is shown as a line, not as a gate."
+      "text": "Pay is read-only and computed live from the time records — the same way /pay/stats already works, so it never waits for anyone to press Build.\n\nBecause the figures can still move, the screen says how far along the week is: recorded, in review, approved, paid. Export sits in the corner and hands you whatever the period row is showing."
     },
     {
       "id": "pay-blocks",
@@ -108,12 +108,12 @@
       "text": "Direct Supervisor now lists only people who can approve payroll: managers and administrators.\n\nThe warning block is the migration case — people whose current supervisor no longer qualifies. Worth deciding whether we move them automatically or make you do it."
     },
     {
-      "id": "week-days",
+      "id": "same-page",
       "page": "page-1",
       "x": 1530,
       "y": -150,
       "w": 430,
-      "text": "Tapping a week from either view lands here: the same stats, then the week broken down by day, bars scaled to the longest day.\n\nDays with nothing on them are listed rather than skipped — a gap in a list is a question, an empty row is an answer."
+      "text": "The same screen as the open week, in the state it ends up in. Arriving from the week list or from a month lands on this one page either way — the day breakdown is a section of it, not a screen of its own.\n\nOnly the tracker, the sentence under it and the money have moved on."
     }
   ],
   "launch": {
