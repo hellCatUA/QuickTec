@@ -1,3 +1,4 @@
+import { formatAddress, siteLabel } from "@/lib/address";
 import {
   isoDateInZone,
   startOfWeekMonday,
@@ -15,7 +16,7 @@ import {
   type WeekRange,
 } from "@/lib/payroll";
 import { assignmentTotals, visitTotals } from "@/lib/time-tracking";
-import type { PayType } from "@prisma-client";
+import type { JobOutcome, PayType } from "@prisma-client";
 
 /**
  * What one person earned in a stretch of time, worked out from the clock.
@@ -80,8 +81,14 @@ export type PayJob = {
   jobId: string;
   intWoId: string;
   title: string;
-  /** "TSA #4471" — who the work was for, as the job page writes it. */
-  customer: string;
+  /** The company that dispatched the work and pays for it. */
+  repCompany: string;
+  /** "TSA #4471" — the end brand and its location, as every export writes it. */
+  site: string;
+  /** One line, the way the report and the maps link spell it. */
+  address: string;
+  /** How the job ended, once somebody has said. */
+  outcome: JobOutcome | null;
   clockInAt: Date;
   clockOutAt: Date | null;
   paidMinutes: number;
@@ -182,8 +189,19 @@ async function jobsInRange(
           id: true,
           intWoId: true,
           title: true,
+          outcome: true,
+          client: { select: { name: true } },
           customer: { select: { code: true } },
-          site: { select: { siteNumber: true } },
+          site: {
+            select: {
+              siteNumber: true,
+              addressLine1: true,
+              addressLine2: true,
+              city: true,
+              state: true,
+              postalCode: true,
+            },
+          },
           reimbursements: {
             where: { assignment: { userId } },
             select: { type: true, label: true, amount: true },
@@ -225,7 +243,13 @@ async function jobsInRange(
       jobId: assignment.job.id,
       intWoId: assignment.job.intWoId,
       title: assignment.job.title,
-      customer: `${assignment.job.customer.code} #${assignment.job.site.siteNumber ?? "—"}`,
+      repCompany: assignment.job.client.name,
+      site: siteLabel(
+        assignment.job.customer.code,
+        assignment.job.site.siteNumber ?? "—",
+      ),
+      address: formatAddress(assignment.job.site),
+      outcome: assignment.job.outcome,
       clockInAt: first.clockInAt,
       clockOutAt: last.clockOutAt,
       paidMinutes: Math.round(totals.paidMinutes),

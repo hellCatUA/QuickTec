@@ -181,7 +181,7 @@ export default async function PayrollPersonPage({
             jobId: job.jobId,
             title: job.title,
             intWoId: job.intWoId,
-            customer: job.customer,
+            customer: `${job.repCompany} · ${job.site}`,
             day: dayLabel(job.clockInAt, zone),
             hours: hours(job.paidMinutes),
             payType: job.payType,

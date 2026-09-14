@@ -1574,7 +1574,9 @@ async function main() {
   // author cannot approve reports. That reads as an implementation detail and
   // is in fact the whole policy — a tech's ad-hoc job waits for a supervisor,
   // and anybody who could approve it afterwards may as well raise it approved.
-  const { DEFAULT_ROLE_GRANTS } = await import("@/lib/permissions");
+  const { DEFAULT_ROLE_GRANTS, PERMISSION_KEYS } = await import(
+    "@/lib/permissions",
+  );
   const { can } = await import("@/lib/session");
 
   function asRole(role: keyof typeof DEFAULT_ROLE_GRANTS) {
@@ -1679,6 +1681,50 @@ async function main() {
     const { canSupervise, SUPERVISOR_ROLES, supervisionsToFix } = await import(
       "@/lib/supervisors"
     );
+
+    // The grants as the database actually holds them, not as the defaults
+    // table describes them. A migration that writes RoleGrant rows runs before
+    // `db seed` on a fresh install, and the seed skips any permission that
+    // already has a row — so writing one role's grant in a migration can starve
+    // every other role of theirs. It did: a new deployment came up with payroll
+    // granted to ADMINISTRATOR and nobody else, and a manager could not run
+    // payroll on their own install.
+    const solitary = await db.roleGrant.groupBy({
+      by: ["permission"],
+      _count: { role: true },
+      where: { permission: { in: PERMISSION_KEYS } },
+    });
+    const holders = new Map(
+      solitary.map((row) => [row.permission, row._count.role]),
+    );
+    const starved = PERMISSION_KEYS.filter((permission) => {
+      const expected = (
+        Object.values(DEFAULT_ROLE_GRANTS) as Partial<
+          Record<string, string>
+        >[]
+      ).filter((grants) => grants[permission] !== undefined).length;
+      return expected > 1 && (holders.get(permission) ?? 0) <= 1;
+    });
+    check(
+      "no permission is held by one role where the defaults give it to several",
+      starved.join(", ") || "none",
+      "none",
+    );
+
+    // The consequence, stated in the terms somebody would report it in.
+    const managerGrants = await db.roleGrant.findMany({
+      where: { role: "MANAGER" },
+      select: { permission: true },
+    });
+    const managerHas = new Set(managerGrants.map((row) => row.permission));
+    for (const permission of [
+      "payroll.run",
+      "payroll.approve",
+      "payroll.mark_received",
+      "export.pay",
+    ] as const) {
+      check(`a manager holds ${permission}`, managerHas.has(permission), true);
+    }
 
     check("a manager may be a direct supervisor", canSupervise("MANAGER"), true);
     check(

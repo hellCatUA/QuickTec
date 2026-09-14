@@ -136,13 +136,29 @@ export function EarnedCard({
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({
+  label,
+  value,
+  unit,
+}: {
+  label: string;
+  value: string;
+  /** Set where the number means nothing without it, like a rate. */
+  unit?: string;
+}) {
   return (
     <div className="flex flex-col gap-0.5 rounded-xl border border-border bg-surface p-3.5">
       <div className="text-[0.6875rem] uppercase tracking-[0.06em] text-muted-foreground">
         {label}
       </div>
-      <div className="text-[1.375rem] font-semibold tabular-nums">{value}</div>
+      <div className="text-[1.375rem] font-semibold tabular-nums">
+        {value}
+        {unit ? (
+          <span className="text-sm font-medium text-muted-foreground">
+            {unit}
+          </span>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -153,6 +169,8 @@ export function StatsGrid({ totals }: { totals: PayTotals }) {
       <Stat label="Hours paid" value={hours(totals.paidMinutes)} />
       <Stat label="Jobs" value={String(totals.jobs)} />
       <Stat label="On site" value={hours(totals.onsiteMinutes)} />
+      {/* Everything earned over every hour on site, so it says /hr like any
+          other rate — without the unit it reads as a total, which it is not. */}
       <Stat
         label="Blended"
         value={
@@ -160,6 +178,7 @@ export function StatsGrid({ totals }: { totals: PayTotals }) {
             ? "—"
             : money(totals.blendedHourlyCents)
         }
+        unit={totals.blendedHourlyCents === null ? undefined : "/hr"}
       />
     </div>
   );
