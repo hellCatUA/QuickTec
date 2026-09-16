@@ -4,6 +4,7 @@ import { hours, money } from "@/lib/pay-format";
 import {
   PAY_STAGES,
   PAY_STAGE_LABEL,
+  payTotal,
   type PayStage,
   type PayState,
   type PayTotals,
@@ -125,11 +126,13 @@ export function EarnedCard({
 }) {
   return (
     <div className="flex flex-col gap-1 rounded-xl border border-border bg-surface p-4">
+      {/* "Total" rather than "Earned": it now carries expenses too, and a
+          hotel bill handed back is not something anybody earned. */}
       <div className="text-[0.6875rem] font-medium uppercase tracking-[0.06em] text-muted-foreground">
-        Earned
+        Total
       </div>
       <div className="text-4xl font-semibold leading-tight tracking-tight tabular-nums">
-        {money(totals.earnedCents)}
+        {money(payTotal(totals))}
       </div>
       <div className="text-xs text-muted-foreground">{note}</div>
     </div>

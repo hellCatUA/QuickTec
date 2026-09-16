@@ -2646,6 +2646,31 @@ async function main() {
         "214.00",
       );
 
+      // The job card leads with what the job paid, so the two readings have to
+      // be one addition apart and nothing else.
+      const { jobTotal, payTotal } = await import("@/lib/pay-period");
+      check(
+        "a job's total is its labour plus what it claimed back",
+        (jobTotal(claimedWeek.jobs[0]) / 100).toFixed(2),
+        "734.00",
+      );
+      check(
+        "and the week's is the same sum at week scale",
+        (payTotal(claimedWeek.totals) / 100).toFixed(2),
+        "734.00",
+      );
+      // The day rows are a column under that headline, so they carry it too.
+      check(
+        "the day it was worked carries both halves",
+        (
+          claimedWeek.days.reduce(
+            (sum, day) => sum + day.earnedCents + day.expensesCents,
+            0,
+          ) / 100
+        ).toFixed(2),
+        "734.00",
+      );
+
       await db.reimbursement.deleteMany({
         where: { assignmentId: payAssignment.id },
       });

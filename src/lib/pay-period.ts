@@ -129,9 +129,31 @@ export type PayDay = {
   /** Midnight in the site's own reckoning, so it sorts and labels correctly. */
   at: Date;
   paidMinutes: number;
+  /** Labour only. */
   earnedCents: number;
+  /** What was claimed back on that day's jobs. */
+  expensesCents: number;
   titles: string[];
 };
+
+/**
+ * Labour plus what was claimed back — what the period actually pays.
+ *
+ * Kept as a function rather than a field on PayTotals because it is a reading
+ * of the two numbers, not a third one: every screen that shows it also shows
+ * the split, and a stored total is one more thing that can disagree.
+ */
+export function payTotal(totals: PayTotals): number {
+  return totals.earnedCents + totals.reimbursedCents;
+}
+
+/** The same, for one job. */
+export function jobTotal(job: PayJob): number {
+  return (
+    job.earnedCents +
+    job.reimbursements.reduce((sum, one) => sum + one.cents, 0)
+  );
+}
 
 export type PayPeriod = {
   kind: "week" | "month";
@@ -431,7 +453,13 @@ export async function loadPayWeek(input: {
   const days: PayDay[] = [];
   for (let offset = 0; offset < 7; offset++) {
     const at = new Date(range.start.getTime() + offset * 86_400_000);
-    days.push({ at, paidMinutes: 0, earnedCents: 0, titles: [] });
+    days.push({
+      at,
+      paidMinutes: 0,
+      earnedCents: 0,
+      expensesCents: 0,
+      titles: [],
+    });
   }
 
   const dayOf = new Map(
@@ -443,6 +471,10 @@ export async function loadPayWeek(input: {
     if (!day) continue;
     day.paidMinutes += job.paidMinutes;
     day.earnedCents += job.earnedCents;
+    day.expensesCents += job.reimbursements.reduce(
+      (sum, one) => sum + one.cents,
+      0,
+    );
     day.titles.push(job.title);
   }
 

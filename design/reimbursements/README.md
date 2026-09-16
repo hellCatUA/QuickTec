@@ -1,8 +1,8 @@
 # Job expenses on the Pay screen
 
 Three ways to show a job's reimbursements as a statement instead of the green
-`+$86.40 travel` chips. **B was chosen and is built** — `src/app/(app)/pay/
-week-view.tsx`. A and C are kept as what was weighed against it.
+`+$86.40 travel` chips. **C is built**, with B's per-kind icons — `src/app/
+(app)/pay/week-view.tsx`. A and B are kept as what was weighed against it.
 
 Published at https://claude.ai/artifact/MjLqCvTpnn1UByTEtbMCCB
 
@@ -10,8 +10,8 @@ Published at https://claude.ai/artifact/MjLqCvTpnn1UByTEtbMCCB
 | --- | --- |
 | `Today.dc.html` | What it did before, one expense and five |
 | `Main.dc.html` | **A** — the expenses as their own small receipt inside the card |
-| `Ledger.dc.html` | **B** — expenses as more of the card's own icon rows · **built** |
-| `Statement.dc.html` | **C** — headline becomes the job total, a tear-off strip itemises it |
+| `Ledger.dc.html` | **B** — expenses as more of the card's own icon rows (its icons were kept) |
+| `Statement.dc.html` | **C** — headline becomes the job total, a tear-off strip itemises it · **built** |
 
 Every artboard shows a job with one expense and a job with five, because five
 is where the chips fall over and where any replacement has to still read.
@@ -42,9 +42,19 @@ the expenses under it. C makes it the job total instead, which is the honest
 statement reading — and then `/pay`'s Earned card has to lead with the total
 too, or the job cards stop adding up to it.
 
-B was chosen. The card's amount still means labour; the expenses are rows of
-the card like any other, and the sum is written out underneath so the two
-numbers meet.
+C was chosen, carrying B's per-kind icons into the strip. The card's amount is
+now what the job paid, and the strip under it says what that was made of —
+labour first, then every expense.
+
+Two knock-ons, both taken: the hours and the rate moved off the clock row onto
+the strip's labour line rather than being said twice three rows apart, and
+every other figure on Pay had to follow the same reading — the week and month
+headline, the week blocks, the day rows. The headline card is labelled **Total**
+rather than Earned, because a hotel bill handed back is not something anybody
+earned.
+
+A job with nothing claimed keeps the plain card: a one-line statement whose
+only line repeats the heading is worse than no statement.
 
 Still on chips, and not part of what was agreed: the job cards on
 `/payroll/<id>`, which show the same expenses to whoever is approving the week.

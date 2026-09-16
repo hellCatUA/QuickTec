@@ -9,6 +9,7 @@ import {
   weekSpan,
 } from "@/lib/pay-format";
 import {
+  payTotal,
   sumTotals,
   type PayWeekSummary,
   type PayTotals,
@@ -42,8 +43,10 @@ function payoutNote(week: PayWeekSummary, timeZone: string): string {
       : "approved";
   }
   if (state.stage === "review") return "not approved yet";
+  // The amount beside this already includes the expenses, so the note says how
+  // much of it they were rather than announcing them as an extra.
   return week.totals.reimbursedCents > 0
-    ? `+${money(week.totals.reimbursedCents)} reimbursed`
+    ? `${money(week.totals.reimbursedCents)} of it expenses`
     : "not submitted yet";
 }
 
@@ -109,7 +112,7 @@ function WeekBlock({
       ) : (
         <div className="flex shrink-0 flex-col items-end gap-0.5">
           <div className="text-[1.0625rem] font-semibold tabular-nums">
-            {money(week.totals.earnedCents)}
+            {money(payTotal(week.totals))}
           </div>
           <div className="text-[0.6875rem] tabular-nums text-muted-foreground">
             {payoutNote(week, timeZone)}
@@ -152,7 +155,7 @@ export function WeeksView({
                 {hours(totals.paidMinutes)} hrs
               </span>
               <span className="text-[0.8125rem] font-semibold tabular-nums">
-                {money(totals.earnedCents)}
+                {money(payTotal(totals))}
               </span>
             </div>
 

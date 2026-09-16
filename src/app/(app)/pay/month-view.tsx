@@ -12,6 +12,7 @@ import {
 import {
   PAY_STAGES,
   PAY_STAGE_LABEL,
+  payTotal,
   type PayPeriod,
   type PayStage,
   type PayWeekSummary,
@@ -120,7 +121,7 @@ function WeekRow({
           empty ? "text-muted-foreground" : "",
         )}
       >
-        {empty ? "—" : money(week.totals.earnedCents)}
+        {empty ? "—" : money(payTotal(week.totals))}
       </div>
       {empty ? null : (
         <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
@@ -164,14 +165,17 @@ export function MonthView({
           <>
             {period.totals.reimbursedCents > 0 ? (
               <>
-                plus{" "}
+                <span className="tabular-nums text-foreground">
+                  {money(period.totals.earnedCents)}
+                </span>{" "}
+                labour +{" "}
                 <span className="tabular-nums text-foreground">
                   {money(period.totals.reimbursedCents)}
                 </span>{" "}
-                reimbursed
+                expenses
               </>
             ) : (
-              "no reimbursements"
+              "no expenses claimed"
             )}
             {running > 0
               ? ` · ${running === 1 ? "one week still running" : `${running} weeks still running`}`

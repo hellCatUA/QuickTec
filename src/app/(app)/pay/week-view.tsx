@@ -9,6 +9,7 @@ import {
   Paperclip,
   SquareParking,
   Ticket,
+  Wrench,
   type LucideIcon,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -20,7 +21,12 @@ import {
   money,
   shortDate,
 } from "@/lib/pay-format";
-import type { PayExpense, PayJob, PayPeriod } from "@/lib/pay-period";
+import {
+  jobTotal,
+  type PayExpense,
+  type PayJob,
+  type PayPeriod,
+} from "@/lib/pay-period";
 import { cn } from "@/lib/utils";
 import { EarnedCard, StageTracker, StatsGrid } from "./pay-chrome";
 
@@ -76,17 +82,23 @@ function EarnedNote({
 }) {
   const { totals, state } = period;
 
+  // The split behind the headline, which is now the total. Written out rather
+  // than left for somebody to do, because it is two different kinds of money:
+  // hours worked, and a hotel bill handed back.
   const reimbursed =
     totals.reimbursedCents > 0 ? (
       <>
-        plus{" "}
+        <span className="tabular-nums text-foreground">
+          {money(totals.earnedCents)}
+        </span>{" "}
+        labour +{" "}
         <span className="tabular-nums text-foreground">
           {money(totals.reimbursedCents)}
         </span>{" "}
-        reimbursed
+        expenses
       </>
     ) : (
-      "no reimbursements"
+      "no expenses claimed"
     );
 
   const payout =
@@ -155,7 +167,7 @@ function DayByDay({
                 {hours(day.paidMinutes)}
               </div>
               <div className="w-[4.125rem] shrink-0 text-right text-[0.8125rem] font-semibold tabular-nums">
-                {money(day.earnedCents)}
+                {money(day.earnedCents + day.expensesCents)}
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -214,9 +226,13 @@ const EXPENSE_ICON: Record<PayExpense["kind"], LucideIcon> = {
  * One job in the week.
  *
  * The date stays in its own column and the detail stays indented under the
- * title, as it was. What changed is only that each line of detail now leads
- * with an icon and the lines are given room to breathe — enough to tell them
- * apart at a glance, which is what they were short of.
+ * title. Where money was claimed back, the card grows a statement across its
+ * foot — labour first, then every expense — and the figure at the top becomes
+ * what the job actually paid, so the two agree instead of sitting there
+ * unreconciled.
+ *
+ * A job with nothing claimed keeps the plain card: a one-line statement whose
+ * only line repeats the heading is worse than no statement.
  */
 function JobCard({
   job,
@@ -238,22 +254,20 @@ function JobCard({
         ? `${money(Math.round(Number(job.payRate) * 100))} flat`
         : `${money(Math.round(Number(job.payRate) * 100))}/hr`;
 
-  const expensesCents = job.reimbursements.reduce(
-    (sum, one) => sum + one.cents,
-    0,
-  );
+  const claimed = job.reimbursements.length > 0;
 
   return (
-    <div className="flex flex-col gap-2 rounded-xl border border-border bg-surface p-3.5">
+    <div className="flex flex-col gap-2 overflow-hidden rounded-xl border border-border bg-surface p-3.5">
       <div className="flex items-baseline gap-2">
         <div className="w-[3.375rem] shrink-0 text-xs tabular-nums text-muted-foreground">
           {dayLabel(job.clockInAt, timeZone)}
         </div>
         <div className="min-w-0 flex-1 text-sm font-semibold">{job.title}</div>
-        {/* A touch larger than the title and nothing else: it is the number
-            the page exists for, but it is not a different kind of thing. */}
+        {/* What the job paid, all in. A touch larger than the title and nothing
+            else: it is the number the page exists for, but it is not a
+            different kind of thing. */}
         <div className="shrink-0 text-base font-semibold tabular-nums">
-          {money(job.earnedCents)}
+          {money(jobTotal(job))}
         </div>
       </div>
 
@@ -274,9 +288,17 @@ function JobCard({
 
         <div className="flex items-start gap-2">
           <Clock className="mt-px size-3.5 shrink-0" />
+          {/* The hours and the rate move down to the labour line when there is
+              a statement, rather than being said twice three rows apart. */}
           <span className="min-w-0 tabular-nums">
-            {span} · {hours(job.paidMinutes)} hrs
-            {showRates ? ` · ${rate}` : null}
+            {span}
+            {claimed ? null : (
+              <>
+                {" · "}
+                {hours(job.paidMinutes)} hrs
+                {showRates ? ` · ${rate}` : null}
+              </>
+            )}
           </span>
         </div>
 
@@ -284,50 +306,50 @@ function JobCard({
           <FileText className="mt-px size-3.5 shrink-0" />
           <span className="min-w-0 tabular-nums">{job.intWoId}</span>
         </div>
-
-        {/* Expenses are more of the same rows, not chips: the icon says which
-            kind, the paperclip says a receipt was photographed, and the amounts
-            line up in one column so the week can be read down it. */}
-        {job.reimbursements.map((one, index) => {
-          const Icon = EXPENSE_ICON[one.kind];
-          return (
-            <div key={`${one.kind}-${index}`} className="flex items-start gap-2">
-              <Icon className="mt-px size-3.5 shrink-0" />
-              <span className="min-w-0 flex-1">{expenseLabel(one)}</span>
-              {one.hasReceipt ? (
-                <Paperclip
-                  className="mt-0.5 size-3 shrink-0"
-                  aria-label="Receipt attached"
-                />
-              ) : null}
-              <span className="shrink-0 tabular-nums text-foreground">
-                {money(one.cents)}
-              </span>
-            </div>
-          );
-        })}
-
-        {expensesCents > 0 ? (
-          <>
-            <div className="h-px bg-border" />
-            {/* The sum written out, because the amount at the top of the card is
-                labour only and two numbers that never meet are a question. */}
-            <div className="flex items-baseline gap-2">
-              <span className="min-w-0 flex-1 tabular-nums">
-                Labour {money(job.earnedCents)} + expenses{" "}
-                {money(expensesCents)}
-              </span>
-              <span className="shrink-0 text-[0.8125rem] font-semibold tabular-nums text-foreground">
-                {money(job.earnedCents + expensesCents)}
-              </span>
-            </div>
-          </>
-        ) : null}
       </div>
 
       {job.payType === "NON_BILLABLE" ? (
         <div className="pl-[3.875rem]">
           <Badge variant="danger">No pay rate set for this job</Badge>
+        </div>
+      ) : null}
+
+      {/* The tear-off. Full width of the card, so it reads as its own thing:
+          what the job was made of, in the order payroll buckets it. */}
+      {claimed ? (
+        <div className="-mx-3.5 -mb-3.5 mt-1.5 flex flex-col gap-2 border-t border-border bg-surface-raised px-3.5 py-3 text-xs text-muted-foreground">
+          <div className="flex items-start gap-2">
+            <Wrench className="mt-px size-3.5 shrink-0" />
+            <span className="min-w-0 flex-1 tabular-nums">
+              Labour · {hours(job.paidMinutes)} hrs
+              {showRates ? ` @ ${rate}` : null}
+            </span>
+            <span className="shrink-0 tabular-nums text-foreground">
+              {money(job.earnedCents)}
+            </span>
+          </div>
+
+          {job.reimbursements.map((one, index) => {
+            const Icon = EXPENSE_ICON[one.kind];
+            return (
+              <div
+                key={`${one.kind}-${index}`}
+                className="flex items-start gap-2"
+              >
+                <Icon className="mt-px size-3.5 shrink-0" />
+                <span className="min-w-0 flex-1">{expenseLabel(one)}</span>
+                {one.hasReceipt ? (
+                  <Paperclip
+                    className="mt-0.5 size-3 shrink-0"
+                    aria-label="Receipt attached"
+                  />
+                ) : null}
+                <span className="shrink-0 tabular-nums text-foreground">
+                  {money(one.cents)}
+                </span>
+              </div>
+            );
+          })}
         </div>
       ) : null}
     </div>
