@@ -1,45 +1,36 @@
 import type { Metadata, Viewport } from "next";
 import { themeInitScript } from "@/components/theme";
-import { APP_NAME, getCompanySettings } from "@/lib/company";
+import { APP_NAME } from "@/lib/company";
 import "./globals.css";
 
 /**
- * Built rather than declared, so the App icon setting reaches the browser tab.
- *
- * A configured icon is listed ahead of the bundled one rather than replacing
- * it: browsers walk the list and take the first they can render, so an SVG
- * that a given one will not touch falls through to what we ship instead of
- * leaving the tab blank.
+ * Static on purpose. This runs for every prerendered page, and a production
+ * build has no database — reading the company row here is what broke
+ * `next build` on /_not-found. The configurable icon sits behind /icon, which
+ * is a request-time route, so the tab follows the setting without the build
+ * ever needing to connect.
  */
-export async function generateMetadata(): Promise<Metadata> {
-  const company = await getCompanySettings();
-  const icons = [
-    ...(company.appIconUrl ? [{ url: company.appIconUrl }] : []),
-    { url: "/icons/icon.svg" },
-  ];
-
-  return {
-    title: {
-      default: APP_NAME,
-      template: `%s · ${APP_NAME}`,
-    },
-    description: "Field service time tracking and reporting.",
-    manifest: "/manifest.webmanifest",
-    applicationName: APP_NAME,
-    appleWebApp: {
-      capable: true,
-      title: company.name,
-      // Lets the app draw under the status bar once saved to the iPhone home
-      // screen, matching the dark background.
-      statusBarStyle: "black-translucent",
-    },
-    formatDetection: { telephone: false },
-    icons: {
-      icon: icons,
-      apple: company.appIconUrl ?? "/icons/apple-touch-icon.png",
-    },
-  };
-}
+export const metadata: Metadata = {
+  title: {
+    default: APP_NAME,
+    template: `%s · ${APP_NAME}`,
+  },
+  description: "Field service time tracking and reporting.",
+  manifest: "/manifest.webmanifest",
+  applicationName: APP_NAME,
+  appleWebApp: {
+    capable: true,
+    title: APP_NAME,
+    // Lets the app draw under the status bar once saved to the iPhone home
+    // screen, matching the dark background.
+    statusBarStyle: "black-translucent",
+  },
+  formatDetection: { telephone: false },
+  icons: {
+    icon: "/icon",
+    apple: "/icon",
+  },
+};
 
 export const viewport: Viewport = {
   width: "device-width",

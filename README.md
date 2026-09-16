@@ -237,6 +237,7 @@ npm run dev
 | --- | --- |
 | `npm run dev` | Dev server |
 | `npm run build` | `prisma generate` + production build |
+| `npm run build:offline` | The same build with no database reachable, as the image builds |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run db:migrate` | Create and apply a migration |
 | `npm run db:seed` | Seed role grants and company row (idempotent) |
@@ -258,6 +259,16 @@ release has newly added, and deletes grants for ones it has retired.
 
 `npm run verify` is destructive — it wipes jobs and counters to test numbering —
 so it refuses to start without `QUICKTEC_ALLOW_DESTRUCTIVE_VERIFY=1`.
+
+**The production build must not need a database.** `docker compose build` runs
+`next build` with nothing behind `DATABASE_URL`, and `next build` prerenders
+`/_not-found` and `/offline` — so a query in the root layout, in its metadata,
+or at module scope in anything they pull in does not fail a page, it fails the
+build, in a container, after the code is pushed. `npm run build:offline` is that
+build with the database deliberately unreachable; run it before a deploy if you
+have touched the root layout or anything it imports. Request-time routes are
+free to query as they like: that is what `/icon` and `/manifest.webmanifest`
+are for.
 
 The order matters, and only in one way: `npm run verify` deletes the job the
 browser suites drive, so run `npm run fixtures` after it and before them.

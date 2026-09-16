@@ -360,6 +360,31 @@ async function main() {
     "2026-10-26T07:00:00.000Z",
   );
 
+  // --- the build must not need a database ---------------------------------
+  // `next build` prerenders /_not-found and /offline, and the production image
+  // builds with no database behind it. Anything the root layout does at module
+  // or metadata level runs during that prerender, so a query there does not
+  // fail a page — it fails the build, in a container, after the code is pushed.
+  // It happened: generateMetadata read the company row for the favicon.
+  //
+  // Checked as source rather than by building, because the build takes minutes
+  // and this is one line either way. `npm run build:offline` is the real thing.
+  {
+    const { readFile } = await import("node:fs/promises");
+    const rootLayout = await readFile("src/app/layout.tsx", "utf8");
+
+    check(
+      "the root layout's metadata is static",
+      /export\s+(async\s+)?function\s+generateMetadata/.test(rootLayout),
+      false,
+    );
+    check(
+      "and it reaches for nothing that needs one",
+      /from\s+"@\/lib\/db"|getCompanySettings/.test(rootLayout),
+      false,
+    );
+  }
+
   // --- scope filtering ----------------------------------------------------
   const { jobScopeWhere } = await import("@/lib/scope");
   const { getSessionUser } = await import("@/lib/session");

@@ -2672,8 +2672,9 @@ async function main() {
     // favicon, so the point of the checks is that they stay apart.
     const mark =
       "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='28'%3E%3Crect width='120' height='28' fill='%231e8cff'/%3E%3C/svg%3E";
-    const icon =
-      "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64'%3E%3Crect width='64' height='64' fill='%236b7684'/%3E%3C/svg%3E";
+    // A real path rather than a data: URI: /icon has to be able to send a
+    // browser somewhere, and a data: URI is not a Location.
+    const icon = "/icons/icon-192.png";
 
     await db.companySettings.update({
       where: { id: "singleton" },
@@ -2732,10 +2733,31 @@ async function main() {
       true,
     );
 
+    // The tab icon sits behind a fixed address so the root layout's metadata
+    // can stay static — a query there runs during prerender, and the container
+    // builds with no database.
+    const tabIcon = await planner.request.get(`${BASE}/icon`, {
+      maxRedirects: 0,
+    });
+    check("the tab icon redirects", tabIcon.status(), 307);
+    check(
+      "to the configured one",
+      new URL(tabIcon.headers()["location"], BASE).pathname,
+      icon,
+    );
+
     await db.companySettings.update({
       where: { id: "singleton" },
       data: { headerLogoUrl: null, appIconUrl: null },
     });
+    const fallbackIcon = await planner.request.get(`${BASE}/icon`, {
+      maxRedirects: 0,
+    });
+    check(
+      "and falls back to the bundled one when nothing is set",
+      new URL(fallbackIcon.headers()["location"], BASE).pathname,
+      "/icons/icon.svg",
+    );
     await planner.reload({ waitUntil: "load" });
     check(
       "with no wordmark set the name comes back",

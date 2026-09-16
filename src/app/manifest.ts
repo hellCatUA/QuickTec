@@ -17,7 +17,18 @@ import { getCompanySettings } from "@/lib/company";
 export const dynamic = "force-dynamic";
 
 export default async function manifest(): Promise<MetadataRoute.Manifest> {
-  const company = await getCompanySettings();
+  // Never throws. force-dynamic keeps this out of the build, but the manifest
+  // is also fetched on a cold start behind a database that may not be up yet,
+  // and a home-screen icon is not worth failing the request over.
+  let company: { name: string; appIconUrl: string | null } = {
+    name: "QuickTec",
+    appIconUrl: null,
+  };
+  try {
+    company = await getCompanySettings();
+  } catch {
+    // Bundled defaults below.
+  }
 
   const configured: MetadataRoute.Manifest["icons"] = company.appIconUrl
     ? [{ src: company.appIconUrl, sizes: "any", purpose: "any" }]
