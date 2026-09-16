@@ -1,0 +1,115 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    :root {
+      --background: oklch(0.17 0.012 260);
+      --surface: oklch(0.21 0.014 260);
+      --surface-raised: oklch(0.25 0.016 260);
+      --foreground: oklch(0.96 0.005 260);
+      --muted: oklch(0.28 0.014 260);
+      --muted-foreground: oklch(0.7 0.018 260);
+      --border: oklch(0.31 0.016 260);
+      --primary: oklch(0.66 0.16 235);
+      --success: oklch(0.7 0.16 155);
+      --warning: oklch(0.79 0.15 85);
+    }
+    body {
+      margin: 0;
+      background: var(--background);
+      color: var(--foreground);
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+        "Helvetica Neue", Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    .tab { font-variant-numeric: tabular-nums; }
+    a { color: var(--primary); text-decoration: none; }
+    a:hover { color: oklch(0.74 0.16 235); }
+  </style>
+</helmet>
+
+<div style="display: flex; flex-direction: column; gap: 14px; padding: 16px">
+
+  <div style="display: flex; flex-direction: column; gap: 4px">
+    <div style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted-foreground)">What it does now</div>
+    <div style="font-size: 12px; color: var(--muted-foreground); line-height: 1.5">
+      A green chip per expense, under everything else. It says the amount and a
+      word. It does not say there is a receipt photo attached, it does not carry
+      the note, and it never adds up with the $650.00 above it.
+    </div>
+  </div>
+
+  <!-- One expense -->
+  <div style="display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); padding: 14px">
+    <div style="display: flex; align-items: baseline; gap: 8px">
+      <div class="tab" style="width: 54px; flex-shrink: 0; font-size: 12px; color: var(--muted-foreground)">Tue 15</div>
+      <div style="flex-grow: 1; min-width: 0; font-size: 14px; font-weight: 600">Riser cable pull</div>
+      <div class="tab" style="flex-shrink: 0; font-size: 16px; font-weight: 600">$422.50</div>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 8px; padding-left: 62px; font-size: 12px; color: var(--muted-foreground)">
+      <div style="display: flex; align-items: flex-start; gap: 8px">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-top: 1px; flex-shrink: 0"><rect width="16" height="20" x="4" y="2" rx="2"></rect><path d="M9 22v-4h6v4"></path><path d="M8 6h.01"></path><path d="M16 6h.01"></path><path d="M12 6h.01"></path><path d="M12 10h.01"></path><path d="M12 14h.01"></path><path d="M16 10h.01"></path><path d="M16 14h.01"></path><path d="M8 10h.01"></path><path d="M8 14h.01"></path></svg>
+        <span style="min-width: 0">Mettel &middot; TSA #4471</span>
+      </div>
+      <div style="display: flex; align-items: flex-start; gap: 8px">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-top: 1px; flex-shrink: 0"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+        <span style="min-width: 0">200 W Rowland St, Covina, CA 91723</span>
+      </div>
+      <div style="display: flex; align-items: flex-start; gap: 8px">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-top: 1px; flex-shrink: 0"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+        <span class="tab" style="min-width: 0">7:45 AM &ndash; 2:15 PM &middot; 6.50 hrs &middot; $65.00/hr</span>
+      </div>
+      <div style="display: flex; align-items: flex-start; gap: 8px">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-top: 1px; flex-shrink: 0"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path><path d="M16 13H8"></path><path d="M16 17H8"></path><path d="M10 9H8"></path></svg>
+        <span class="tab" style="min-width: 0">2609-PRJ12-0901</span>
+      </div>
+    </div>
+    <div style="display: flex; flex-wrap: wrap; gap: 6px; padding-left: 62px">
+      <span style="display: inline-flex; align-items: center; gap: 4px; border-radius: 8px; padding: 2px 8px; font-size: 12px; font-weight: 500; background: color-mix(in oklch, var(--success) 15%, transparent); color: var(--success); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--success) 30%, transparent)"><span class="tab">+$86.40</span> travel</span>
+    </div>
+  </div>
+
+  <!-- Five expenses, which is where it falls over -->
+  <div style="display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); padding: 14px">
+    <div style="display: flex; align-items: baseline; gap: 8px">
+      <div class="tab" style="width: 54px; flex-shrink: 0; font-size: 12px; color: var(--muted-foreground)">Wed 16</div>
+      <div style="flex-grow: 1; min-width: 0; font-size: 14px; font-weight: 600">Starlink INS</div>
+      <div class="tab" style="flex-shrink: 0; font-size: 16px; font-weight: 600">$650.00</div>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 8px; padding-left: 62px; font-size: 12px; color: var(--muted-foreground)">
+      <div style="display: flex; align-items: flex-start; gap: 8px">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-top: 1px; flex-shrink: 0"><rect width="16" height="20" x="4" y="2" rx="2"></rect><path d="M9 22v-4h6v4"></path><path d="M8 6h.01"></path><path d="M16 6h.01"></path><path d="M12 6h.01"></path><path d="M12 10h.01"></path><path d="M12 14h.01"></path><path d="M16 10h.01"></path><path d="M16 14h.01"></path><path d="M8 10h.01"></path><path d="M8 14h.01"></path></svg>
+        <span style="min-width: 0">Mettel &middot; TSA #4471</span>
+      </div>
+      <div style="display: flex; align-items: flex-start; gap: 8px">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-top: 1px; flex-shrink: 0"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+        <span style="min-width: 0">22280 Opportunity Way, March Air Reserve Base, CA 92518</span>
+      </div>
+      <div style="display: flex; align-items: flex-start; gap: 8px">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-top: 1px; flex-shrink: 0"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+        <span class="tab" style="min-width: 0">6:30 AM &ndash; 5:00 PM &middot; 10.00 hrs &middot; $65.00/hr</span>
+      </div>
+      <div style="display: flex; align-items: flex-start; gap: 8px">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-top: 1px; flex-shrink: 0"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path><path d="M16 13H8"></path><path d="M16 17H8"></path><path d="M10 9H8"></path></svg>
+        <span class="tab" style="min-width: 0">2609-PRJ12-0902</span>
+      </div>
+    </div>
+    <div style="display: flex; flex-wrap: wrap; gap: 6px; padding-left: 62px">
+      <span style="display: inline-flex; align-items: center; gap: 4px; border-radius: 8px; padding: 2px 8px; font-size: 12px; font-weight: 500; background: color-mix(in oklch, var(--success) 15%, transparent); color: var(--success); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--success) 30%, transparent)"><span class="tab">+$45.00</span> travel</span>
+      <span style="display: inline-flex; align-items: center; gap: 4px; border-radius: 8px; padding: 2px 8px; font-size: 12px; font-weight: 500; background: color-mix(in oklch, var(--success) 15%, transparent); color: var(--success); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--success) 30%, transparent)"><span class="tab">+$12.00</span> parking</span>
+      <span style="display: inline-flex; align-items: center; gap: 4px; border-radius: 8px; padding: 2px 8px; font-size: 12px; font-weight: 500; background: color-mix(in oklch, var(--success) 15%, transparent); color: var(--success); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--success) 30%, transparent)"><span class="tab">+$6.50</span> toll</span>
+      <span style="display: inline-flex; align-items: center; gap: 4px; border-radius: 8px; padding: 2px 8px; font-size: 12px; font-weight: 500; background: color-mix(in oklch, var(--success) 15%, transparent); color: var(--success); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--success) 30%, transparent)"><span class="tab">+$154.00</span> holiday inn</span>
+      <span style="display: inline-flex; align-items: center; gap: 4px; border-radius: 8px; padding: 2px 8px; font-size: 12px; font-weight: 500; background: color-mix(in oklch, var(--success) 15%, transparent); color: var(--success); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--success) 30%, transparent)"><span class="tab">+$3.00</span> cat 6a 3ft</span>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

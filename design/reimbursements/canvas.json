@@ -1,0 +1,60 @@
+{
+  "artboards": [
+    {
+      "file": "Today.dc.html",
+      "title": "Today · the chips",
+      "x": 0,
+      "y": 0,
+      "w": 430,
+      "h": 700
+    },
+    {
+      "file": "Main.dc.html",
+      "title": "A · Receipt block",
+      "x": 510,
+      "y": 0,
+      "w": 430,
+      "h": 790
+    },
+    {
+      "file": "Ledger.dc.html",
+      "title": "B · Ledger rows",
+      "x": 1020,
+      "y": 0,
+      "w": 430,
+      "h": 760
+    },
+    {
+      "file": "Statement.dc.html",
+      "title": "C · Statement footer",
+      "x": 1530,
+      "y": 0,
+      "w": 430,
+      "h": 830
+    }
+  ],
+  "annotations": [
+    {
+      "id": "brief",
+      "x": 0,
+      "y": -190,
+      "w": 430,
+      "text": "The thing being replaced.\n\nFour expense types exist — Material, Parking, Toll, Hotel — plus Travel, which rides on the assignment. Parking, Toll and Hotel always have a receipt photo; Material and Travel do not. Material and Hotel carry a name the tech typed. Any of them can carry a note.\n\nA chip shows one of those five facts."
+    },
+    {
+      "id": "pick",
+      "x": 510,
+      "y": -190,
+      "w": 940,
+      "text": "A and B keep the big number meaning labour, as it does today, and add the expenses beneath it. They differ only in whether the expenses get a container of their own.\n\nA groups them and can be read at a glance from its header subtotal. B adds no furniture but needs an icon per type, and on the five-expense job its rows run into the four above them."
+    },
+    {
+      "id": "tradeoff",
+      "x": 1530,
+      "y": -190,
+      "w": 430,
+      "text": "C is the real statement: the headline is what the job paid, the strip itemises it, labour included.\n\nIt is the only one that changes what a number already on screen means — and the week's Earned card would have to follow. Worth it if you want Pay to read as a payslip rather than an hours log."
+    }
+  ],
+  "launch": { "view": "canvas" }
+}

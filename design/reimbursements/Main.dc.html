@@ -1,0 +1,172 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    :root {
+      --background: oklch(0.17 0.012 260);
+      --surface: oklch(0.21 0.014 260);
+      --surface-raised: oklch(0.25 0.016 260);
+      --foreground: oklch(0.96 0.005 260);
+      --muted: oklch(0.28 0.014 260);
+      --muted-foreground: oklch(0.7 0.018 260);
+      --border: oklch(0.31 0.016 260);
+      --primary: oklch(0.66 0.16 235);
+      --success: oklch(0.7 0.16 155);
+    }
+    body {
+      margin: 0;
+      background: var(--background);
+      color: var(--foreground);
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+        "Helvetica Neue", Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    .tab { font-variant-numeric: tabular-nums; }
+    a { color: var(--primary); text-decoration: none; }
+    a:hover { color: oklch(0.74 0.16 235); }
+  </style>
+</helmet>
+
+<div style="display: flex; flex-direction: column; gap: 14px; padding: 16px">
+
+  <div style="display: flex; flex-direction: column; gap: 4px">
+    <div style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted-foreground)">Option A &middot; Receipt block</div>
+    <div style="font-size: 12px; color: var(--muted-foreground); line-height: 1.5">
+      The expenses become their own small statement, set into the card the way a
+      receipt is stapled to a claim. Amounts right-aligned in one column, a
+      paperclip where a photo was taken, and a closing line that ties the whole
+      thing back to the number at the top.
+    </div>
+  </div>
+
+  <!-- One expense -->
+  <div style="display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); padding: 14px">
+    <div style="display: flex; align-items: baseline; gap: 8px">
+      <div class="tab" style="width: 54px; flex-shrink: 0; font-size: 12px; color: var(--muted-foreground)">Tue 15</div>
+      <div style="flex-grow: 1; min-width: 0; font-size: 14px; font-weight: 600">Riser cable pull</div>
+      <div class="tab" style="flex-shrink: 0; font-size: 16px; font-weight: 600">$422.50</div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 8px; padding-left: 62px; font-size: 12px; color: var(--muted-foreground)">
+      <div style="display: flex; align-items: flex-start; gap: 8px">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-top: 1px; flex-shrink: 0"><rect width="16" height="20" x="4" y="2" rx="2"></rect><path d="M9 22v-4h6v4"></path><path d="M8 6h.01"></path><path d="M16 6h.01"></path><path d="M12 6h.01"></path><path d="M12 10h.01"></path><path d="M12 14h.01"></path><path d="M16 10h.01"></path><path d="M16 14h.01"></path><path d="M8 10h.01"></path><path d="M8 14h.01"></path></svg>
+        <span style="min-width: 0">Mettel &middot; TSA #4471</span>
+      </div>
+      <div style="display: flex; align-items: flex-start; gap: 8px">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-top: 1px; flex-shrink: 0"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+        <span style="min-width: 0">200 W Rowland St, Covina, CA 91723</span>
+      </div>
+      <div style="display: flex; align-items: flex-start; gap: 8px">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-top: 1px; flex-shrink: 0"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+        <span class="tab" style="min-width: 0">7:45 AM &ndash; 2:15 PM &middot; 6.50 hrs &middot; $65.00/hr</span>
+      </div>
+      <div style="display: flex; align-items: flex-start; gap: 8px">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-top: 1px; flex-shrink: 0"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path><path d="M16 13H8"></path><path d="M16 17H8"></path><path d="M10 9H8"></path></svg>
+        <span class="tab" style="min-width: 0">2609-PRJ12-0901</span>
+      </div>
+    </div>
+
+    <!-- The receipt. Header has no subtotal when there is only one line to sum. -->
+    <div style="margin-left: 62px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-raised); padding: 10px 12px; display: flex; flex-direction: column; gap: 7px">
+      <div style="display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted-foreground)">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z"></path><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8"></path><path d="M12 17.5v-11"></path></svg>
+        Expenses
+      </div>
+
+      <div style="display: flex; align-items: baseline; gap: 10px; font-size: 12px">
+        <span style="flex-grow: 1; min-width: 0">Travel</span>
+        <span class="tab" style="flex-shrink: 0">$86.40</span>
+      </div>
+
+      <div style="height: 1px; background: var(--border)"></div>
+
+      <div style="display: flex; align-items: baseline; gap: 10px; font-size: 12px">
+        <span style="flex-grow: 1; min-width: 0; color: var(--muted-foreground)">With labour, this job paid</span>
+        <span class="tab" style="flex-shrink: 0; font-size: 13px; font-weight: 600">$508.90</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Five expenses -->
+  <div style="display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); padding: 14px">
+    <div style="display: flex; align-items: baseline; gap: 8px">
+      <div class="tab" style="width: 54px; flex-shrink: 0; font-size: 12px; color: var(--muted-foreground)">Wed 16</div>
+      <div style="flex-grow: 1; min-width: 0; font-size: 14px; font-weight: 600">Starlink INS</div>
+      <div class="tab" style="flex-shrink: 0; font-size: 16px; font-weight: 600">$650.00</div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 8px; padding-left: 62px; font-size: 12px; color: var(--muted-foreground)">
+      <div style="display: flex; align-items: flex-start; gap: 8px">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-top: 1px; flex-shrink: 0"><rect width="16" height="20" x="4" y="2" rx="2"></rect><path d="M9 22v-4h6v4"></path><path d="M8 6h.01"></path><path d="M16 6h.01"></path><path d="M12 6h.01"></path><path d="M12 10h.01"></path><path d="M12 14h.01"></path><path d="M16 10h.01"></path><path d="M16 14h.01"></path><path d="M8 10h.01"></path><path d="M8 14h.01"></path></svg>
+        <span style="min-width: 0">Mettel &middot; TSA #4471</span>
+      </div>
+      <div style="display: flex; align-items: flex-start; gap: 8px">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-top: 1px; flex-shrink: 0"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+        <span style="min-width: 0">22280 Opportunity Way, March Air Reserve Base, CA 92518</span>
+      </div>
+      <div style="display: flex; align-items: flex-start; gap: 8px">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-top: 1px; flex-shrink: 0"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+        <span class="tab" style="min-width: 0">6:30 AM &ndash; 5:00 PM &middot; 10.00 hrs &middot; $65.00/hr</span>
+      </div>
+      <div style="display: flex; align-items: flex-start; gap: 8px">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-top: 1px; flex-shrink: 0"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path><path d="M16 13H8"></path><path d="M16 17H8"></path><path d="M10 9H8"></path></svg>
+        <span class="tab" style="min-width: 0">2609-PRJ12-0902</span>
+      </div>
+    </div>
+
+    <div style="margin-left: 62px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-raised); padding: 10px 12px; display: flex; flex-direction: column; gap: 7px">
+      <!-- The subtotal sits in the header so a glance is enough. -->
+      <div style="display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted-foreground)">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z"></path><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8"></path><path d="M12 17.5v-11"></path></svg>
+        <span style="flex-grow: 1">Expenses &middot; 5</span>
+        <span class="tab" style="letter-spacing: 0; text-transform: none; color: var(--foreground)">$220.50</span>
+      </div>
+
+      <div style="display: flex; align-items: baseline; gap: 10px; font-size: 12px">
+        <span style="flex-grow: 1; min-width: 0">Travel</span>
+        <span class="tab" style="flex-shrink: 0">$45.00</span>
+      </div>
+
+      <div style="display: flex; align-items: baseline; gap: 10px; font-size: 12px">
+        <span style="flex-grow: 1; min-width: 0">Parking</span>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0; color: var(--muted-foreground); align-self: center"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
+        <span class="tab" style="flex-shrink: 0">$12.00</span>
+      </div>
+
+      <div style="display: flex; align-items: baseline; gap: 10px; font-size: 12px">
+        <span style="flex-grow: 1; min-width: 0">Toll</span>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0; color: var(--muted-foreground); align-self: center"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
+        <span class="tab" style="flex-shrink: 0">$6.50</span>
+      </div>
+
+      <!-- Type stays the label; the name the tech typed is what identifies it. -->
+      <div style="display: flex; align-items: baseline; gap: 10px; font-size: 12px">
+        <span style="flex-grow: 1; min-width: 0">Hotel &middot; <span style="color: var(--muted-foreground)">Holiday Inn</span></span>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0; color: var(--muted-foreground); align-self: center"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
+        <span class="tab" style="flex-shrink: 0">$154.00</span>
+      </div>
+
+      <div style="display: flex; align-items: baseline; gap: 10px; font-size: 12px">
+        <span style="flex-grow: 1; min-width: 0">Material &middot; <span style="color: var(--muted-foreground)">Cat 6A 3Ft</span></span>
+        <span class="tab" style="flex-shrink: 0">$3.00</span>
+      </div>
+
+      <div style="height: 1px; background: var(--border)"></div>
+
+      <div style="display: flex; align-items: baseline; gap: 10px; font-size: 12px">
+        <span style="flex-grow: 1; min-width: 0; color: var(--muted-foreground)">With labour, this job paid</span>
+        <span class="tab" style="flex-shrink: 0; font-size: 13px; font-weight: 600">$870.50</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>
