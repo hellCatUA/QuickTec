@@ -1,12 +1,9 @@
 import { Building, Clock, FileText, MapPin } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { isoDateInZone } from "@/lib/datetime";
-import { OUTCOME_META } from "@/lib/job-status";
 import {
   clockTime,
   dayLabel,
   hours,
-  longDayLabel,
   money,
   shortDate,
 } from "@/lib/pay-format";
@@ -192,42 +189,12 @@ function DayByDay({
 }
 
 /**
- * The week's jobs under the day each was worked.
+ * One job in the week.
  *
- * Already sorted by clock-in, so the days come out in order without sorting
- * again — and a day with two jobs on it keeps them together, which is what the
- * old per-card date column was trying and failing to say.
- */
-function groupByDay(
-  jobs: PayJob[],
-  timeZone: string,
-): { key: string; label: string; jobs: PayJob[] }[] {
-  const days: { key: string; label: string; jobs: PayJob[] }[] = [];
-
-  for (const job of jobs) {
-    const key = isoDateInZone(job.clockInAt, timeZone);
-    const last = days[days.length - 1];
-    if (last?.key === key) {
-      last.jobs.push(job);
-    } else {
-      days.push({
-        key,
-        label: longDayLabel(job.clockInAt, timeZone),
-        jobs: [job],
-      });
-    }
-  }
-
-  return days;
-}
-
-/**
- * One job, as the day actually went.
- *
- * Laid out down the page rather than indented off a date column: the date is
- * the group heading now, and the column it used to need was pushing every other
- * line into a narrow gutter. Each row leads with an icon so the eye can find the
- * one it wants — who it was for, where, when — without reading the others.
+ * The date stays in its own column and the detail stays indented under the
+ * title, as it was. What changed is only that each line of detail now leads
+ * with an icon and the lines are given room to breathe — enough to tell them
+ * apart at a glance, which is what they were short of.
  */
 function JobCard({
   job,
@@ -238,6 +205,10 @@ function JobCard({
   timeZone: string;
   showRates: boolean;
 }) {
+  const span = job.clockOutAt
+    ? `${clockTime(job.clockInAt, timeZone)} – ${clockTime(job.clockOutAt, timeZone)}`
+    : `${clockTime(job.clockInAt, timeZone)} – still on the clock`;
+
   const rate =
     job.payType === "NON_BILLABLE"
       ? "no rate set"
@@ -246,25 +217,26 @@ function JobCard({
         : `${money(Math.round(Number(job.payRate) * 100))}/hr`;
 
   return (
-    <div className="flex flex-col gap-2.5 rounded-xl border border-border bg-surface p-4">
-      <div className="flex items-start gap-2">
-        <h3 className="min-w-0 flex-1 text-[0.9375rem] font-semibold leading-snug">
-          {job.title}
-        </h3>
-        {job.outcome ? (
-          <Badge variant={OUTCOME_META[job.outcome].variant}>
-            {OUTCOME_META[job.outcome].label.toUpperCase()}
-          </Badge>
-        ) : null}
+    <div className="flex flex-col gap-2 rounded-xl border border-border bg-surface p-3.5">
+      <div className="flex items-baseline gap-2">
+        <div className="w-[3.375rem] shrink-0 text-xs tabular-nums text-muted-foreground">
+          {dayLabel(job.clockInAt, timeZone)}
+        </div>
+        <div className="min-w-0 flex-1 text-sm font-semibold">{job.title}</div>
+        {/* A touch larger than the title and nothing else: it is the number
+            the page exists for, but it is not a different kind of thing. */}
+        <div className="shrink-0 text-base font-semibold tabular-nums">
+          {money(job.earnedCents)}
+        </div>
       </div>
 
-      <div className="flex flex-col gap-1.5 text-xs text-muted-foreground">
+      <div className="flex flex-col gap-2 pl-[3.875rem] text-xs text-muted-foreground">
         {/* The company that sent the work, then the brand and site it was at —
             the same two things, in the same order, as every export. */}
         <div className="flex items-start gap-2">
           <Building className="mt-px size-3.5 shrink-0" />
           <span className="min-w-0">
-            <span className="text-foreground">{job.repCompany}</span> · {job.site}
+            {job.repCompany} · {job.site}
           </span>
         </div>
 
@@ -274,39 +246,27 @@ function JobCard({
         </div>
 
         <div className="flex items-start gap-2">
-          <FileText className="mt-px size-3.5 shrink-0" />
+          <Clock className="mt-px size-3.5 shrink-0" />
           <span className="min-w-0 tabular-nums">
-            {job.intWoId}
+            {span} · {hours(job.paidMinutes)} hrs
             {showRates ? ` · ${rate}` : null}
           </span>
         </div>
-      </div>
 
-      {/* What was worked and what it came to, on one line: the two halves of
-          the same sentence, and the only two numbers most people are after. */}
-      <div className="flex items-baseline gap-3 border-t border-border pt-2.5">
-        <div className="flex min-w-0 flex-1 items-baseline gap-2 text-xs text-muted-foreground">
-          <Clock className="size-3.5 shrink-0 translate-y-0.5" />
-          <span className="tabular-nums">
-            {clockTime(job.clockInAt, timeZone)} →{" "}
-            {job.clockOutAt
-              ? clockTime(job.clockOutAt, timeZone)
-              : "still on the clock"}
-          </span>
-          <span className="tabular-nums">{hours(job.paidMinutes)} hrs</span>
+        <div className="flex items-start gap-2">
+          <FileText className="mt-px size-3.5 shrink-0" />
+          <span className="min-w-0 tabular-nums">{job.intWoId}</span>
         </div>
-
-        <span className="shrink-0 text-base font-semibold tabular-nums text-success">
-          {money(job.earnedCents)}
-        </span>
       </div>
 
       {job.payType === "NON_BILLABLE" ? (
-        <Badge variant="danger">No pay rate set for this job</Badge>
+        <div className="pl-[3.875rem]">
+          <Badge variant="danger">No pay rate set for this job</Badge>
+        </div>
       ) : null}
 
       {job.reimbursements.length > 0 ? (
-        <div className="flex flex-wrap gap-1.5">
+        <div className="flex flex-wrap gap-1.5 pl-[3.875rem]">
           {job.reimbursements.map((one, index) => (
             <Badge key={`${one.label}-${index}`} variant="success">
               <span className="tabular-nums">+{money(one.cents)}</span>{" "}
@@ -343,7 +303,7 @@ export function WeekView({
       />
       <DayByDay period={period} timeZone={timeZone} now={now} />
 
-      <section className="flex flex-col gap-3">
+      <section className="flex flex-col gap-2">
         <h2 className="text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
           {period.jobs.length === 0
             ? "Jobs"
@@ -357,20 +317,13 @@ export function WeekView({
             Nothing clocked in this week.
           </div>
         ) : (
-          groupByDay(period.jobs, timeZone).map((day) => (
-            <div key={day.key} className="flex flex-col gap-2">
-              <h3 className="text-[0.6875rem] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-                {day.label}
-              </h3>
-              {day.jobs.map((job) => (
-                <JobCard
-                  key={job.assignmentId}
-                  job={job}
-                  timeZone={timeZone}
-                  showRates={showRates}
-                />
-              ))}
-            </div>
+          period.jobs.map((job) => (
+            <JobCard
+              key={job.assignmentId}
+              job={job}
+              timeZone={timeZone}
+              showRates={showRates}
+            />
           ))
         )}
       </section>

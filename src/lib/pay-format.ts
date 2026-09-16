@@ -49,16 +49,6 @@ export function dayLabel(date: Date, timeZone: string): string {
   return `${find("weekday")} ${find("day")}`;
 }
 
-/** "MONDAY, AUG 3" — the heading over a day's jobs. */
-export function longDayLabel(date: Date, timeZone: string): string {
-  return new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    weekday: "long",
-    month: "short",
-    day: "numeric",
-  }).format(date);
-}
-
 /** "8:00 AM" */
 export function clockTime(date: Date, timeZone: string): string {
   return new Intl.DateTimeFormat("en-US", {
