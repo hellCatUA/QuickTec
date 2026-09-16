@@ -1,13 +1,26 @@
-import { Building, Clock, FileText, MapPin } from "lucide-react";
+import {
+  BedDouble,
+  Building,
+  Car,
+  Clock,
+  FileText,
+  MapPin,
+  Package,
+  Paperclip,
+  SquareParking,
+  Ticket,
+  type LucideIcon,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   clockTime,
   dayLabel,
+  expenseLabel,
   hours,
   money,
   shortDate,
 } from "@/lib/pay-format";
-import type { PayJob, PayPeriod } from "@/lib/pay-period";
+import type { PayExpense, PayJob, PayPeriod } from "@/lib/pay-period";
 import { cn } from "@/lib/utils";
 import { EarnedCard, StageTracker, StatsGrid } from "./pay-chrome";
 
@@ -188,6 +201,15 @@ function DayByDay({
   );
 }
 
+/** One icon per kind, so the row's text can be the name rather than the word. */
+const EXPENSE_ICON: Record<PayExpense["kind"], LucideIcon> = {
+  TRAVEL: Car,
+  PARKING: SquareParking,
+  TOLL: Ticket,
+  HOTEL: BedDouble,
+  MATERIAL: Package,
+};
+
 /**
  * One job in the week.
  *
@@ -215,6 +237,11 @@ function JobCard({
       : job.payType === "FLAT"
         ? `${money(Math.round(Number(job.payRate) * 100))} flat`
         : `${money(Math.round(Number(job.payRate) * 100))}/hr`;
+
+  const expensesCents = job.reimbursements.reduce(
+    (sum, one) => sum + one.cents,
+    0,
+  );
 
   return (
     <div className="flex flex-col gap-2 rounded-xl border border-border bg-surface p-3.5">
@@ -257,22 +284,50 @@ function JobCard({
           <FileText className="mt-px size-3.5 shrink-0" />
           <span className="min-w-0 tabular-nums">{job.intWoId}</span>
         </div>
+
+        {/* Expenses are more of the same rows, not chips: the icon says which
+            kind, the paperclip says a receipt was photographed, and the amounts
+            line up in one column so the week can be read down it. */}
+        {job.reimbursements.map((one, index) => {
+          const Icon = EXPENSE_ICON[one.kind];
+          return (
+            <div key={`${one.kind}-${index}`} className="flex items-start gap-2">
+              <Icon className="mt-px size-3.5 shrink-0" />
+              <span className="min-w-0 flex-1">{expenseLabel(one)}</span>
+              {one.hasReceipt ? (
+                <Paperclip
+                  className="mt-0.5 size-3 shrink-0"
+                  aria-label="Receipt attached"
+                />
+              ) : null}
+              <span className="shrink-0 tabular-nums text-foreground">
+                {money(one.cents)}
+              </span>
+            </div>
+          );
+        })}
+
+        {expensesCents > 0 ? (
+          <>
+            <div className="h-px bg-border" />
+            {/* The sum written out, because the amount at the top of the card is
+                labour only and two numbers that never meet are a question. */}
+            <div className="flex items-baseline gap-2">
+              <span className="min-w-0 flex-1 tabular-nums">
+                Labour {money(job.earnedCents)} + expenses{" "}
+                {money(expensesCents)}
+              </span>
+              <span className="shrink-0 text-[0.8125rem] font-semibold tabular-nums text-foreground">
+                {money(job.earnedCents + expensesCents)}
+              </span>
+            </div>
+          </>
+        ) : null}
       </div>
 
       {job.payType === "NON_BILLABLE" ? (
         <div className="pl-[3.875rem]">
           <Badge variant="danger">No pay rate set for this job</Badge>
-        </div>
-      ) : null}
-
-      {job.reimbursements.length > 0 ? (
-        <div className="flex flex-wrap gap-1.5 pl-[3.875rem]">
-          {job.reimbursements.map((one, index) => (
-            <Badge key={`${one.label}-${index}`} variant="success">
-              <span className="tabular-nums">+{money(one.cents)}</span>{" "}
-              {one.label.toLowerCase()}
-            </Badge>
-          ))}
         </div>
       ) : null}
     </div>

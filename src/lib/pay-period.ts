@@ -16,7 +16,7 @@ import {
   type WeekRange,
 } from "@/lib/payroll";
 import { assignmentTotals, visitTotals } from "@/lib/time-tracking";
-import type { JobOutcome, PayType } from "@prisma-client";
+import type { JobOutcome, PayType, ReimbursementType } from "@prisma-client";
 
 /**
  * What one person earned in a stretch of time, worked out from the clock.
@@ -76,6 +76,32 @@ export type PayTotals = {
   blendedHourlyCents: number | null;
 };
 
+/**
+ * One expense on a job, with enough to write a line of a statement.
+ *
+ * It used to be a label and an amount, which is what a green chip could hold.
+ * The rest was on the job all along: which of the four kinds it was, the name
+ * the tech typed for a material or a hotel, and whether there is a photo of the
+ * receipt — parking, tolls and hotels always have one, and being able to say so
+ * is most of what makes this a claim rather than a number.
+ */
+export type PayExpense = {
+  /** TRAVEL is not a Reimbursement row: it rides on the assignment. */
+  kind: "TRAVEL" | ReimbursementType;
+  /** What the tech called it. Only materials and hotels have one. */
+  label: string | null;
+  cents: number;
+  hasReceipt: boolean;
+};
+
+const EXPENSE_ORDER: Record<PayExpense["kind"], number> = {
+  TRAVEL: 0,
+  PARKING: 1,
+  TOLL: 2,
+  HOTEL: 3,
+  MATERIAL: 4,
+};
+
 export type PayJob = {
   assignmentId: string;
   jobId: string;
@@ -95,7 +121,7 @@ export type PayJob = {
   payType: PayType;
   payRate: string;
   earnedCents: number;
-  reimbursements: { label: string; cents: number }[];
+  reimbursements: PayExpense[];
 };
 
 /** One day of the period, whether or not anything happened on it. */
@@ -204,7 +230,14 @@ async function jobsInRange(
           },
           reimbursements: {
             where: { assignment: { userId } },
-            select: { type: true, label: true, amount: true },
+            select: {
+              type: true,
+              label: true,
+              amount: true,
+              // Only whether there is one. The statement says a receipt was
+              // taken; looking at it is the job page's business.
+              _count: { select: { attachments: true } },
+            },
           },
         },
       },
@@ -225,18 +258,31 @@ async function jobsInRange(
     const first = assignment.visits[0];
     const last = assignment.visits[assignment.visits.length - 1];
 
-    const reimbursements = assignment.job.reimbursements.map((entry) => ({
-      label: entry.label ?? entry.type,
-      cents: toCents(entry.amount),
-    }));
+    const reimbursements: PayExpense[] = assignment.job.reimbursements.map(
+      (entry) => ({
+        kind: entry.type,
+        label: entry.label,
+        cents: toCents(entry.amount),
+        hasReceipt: entry._count.attachments > 0,
+      }),
+    );
     // Travel is carried by the assignment rather than claimed as an expense,
-    // so it has no row of its own to borrow a label from.
+    // so it has no row of its own, no name and never a receipt.
     if (assignment.travelReimbursement) {
-      reimbursements.unshift({
-        label: "Travel",
+      reimbursements.push({
+        kind: "TRAVEL",
+        label: null,
         cents: toCents(assignment.travelReimbursement),
+        hasReceipt: false,
       });
     }
+    // A fixed order rather than whatever the database hands back, so the same
+    // job reads the same way twice and a week can be scanned down. It is the
+    // order payroll already buckets them in — travel, parking and tolls, hotel,
+    // materials — so a statement and a payroll line agree.
+    reimbursements.sort(
+      (a, b) => EXPENSE_ORDER[a.kind] - EXPENSE_ORDER[b.kind],
+    );
 
     return {
       assignmentId: assignment.id,

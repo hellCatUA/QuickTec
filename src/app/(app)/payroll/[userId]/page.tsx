@@ -9,7 +9,14 @@ import {
   startOfWeekMonday,
 } from "@/lib/datetime";
 import { db } from "@/lib/db";
-import { dayLabel, hours, money, shortDate, weekSpan } from "@/lib/pay-format";
+import {
+  dayLabel,
+  expenseLabel,
+  hours,
+  money,
+  shortDate,
+  weekSpan,
+} from "@/lib/pay-format";
 import {
   isoWeek,
   loadPayWeek,
@@ -188,7 +195,7 @@ export default async function PayrollPersonPage({
             payRate: job.payRate,
             earned: money(job.earnedCents),
             reimbursements: job.reimbursements.map((one) => ({
-              label: one.label,
+              label: expenseLabel(one),
               amount: money(one.cents),
             })),
           })),

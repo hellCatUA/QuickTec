@@ -2550,6 +2550,111 @@ async function main() {
     });
     check("a week that has not started is not running", ahead.state.running, false);
 
+    // --- what an expense carries, and in what order ------------------------
+    // The green chip it replaced could hold an amount and a word. A statement
+    // line needs the kind, the name the tech typed, and whether a receipt was
+    // photographed — parking, tolls and hotels always have one.
+    {
+      const { expenseLabel } = await import("@/lib/pay-format");
+
+      await db.reimbursement.deleteMany({
+        where: { assignmentId: payAssignment.id },
+      });
+      const claimed = await db.jobAssignment.findUniqueOrThrow({
+        where: { id: payAssignment.id },
+        select: { jobId: true },
+      });
+
+      // Entered out of order on purpose: the reading order is the app's, not
+      // the order somebody happened to claim them in.
+      for (const [type, label, amount] of [
+        ["MATERIAL", "Cat 6A 3Ft", "3.00"],
+        ["HOTEL", "Holiday Inn", "154.00"],
+        ["PARKING", null, "12.00"],
+      ] as const) {
+        const entry = await db.reimbursement.create({
+          data: {
+            jobId: claimed.jobId,
+            assignmentId: payAssignment.id,
+            type,
+            label,
+            amount,
+          },
+        });
+        // Only parking gets a photo here, so "has a receipt" is not just
+        // "exists".
+        if (type === "PARKING") {
+          await db.attachment.create({
+            data: {
+              reimbursementId: entry.id,
+              storagePath: `verify/${entry.id}.jpg`,
+              originalName: "receipt.jpg",
+              mimeType: "image/jpeg",
+              sizeBytes: 16,
+              uploadedById: tech.id,
+            },
+          });
+        }
+      }
+      await db.jobAssignment.update({
+        where: { id: payAssignment.id },
+        data: { travelReimbursement: "45.00" },
+      });
+
+      const claimedWeek = await loadPayWeek({
+        userId: tech.id,
+        weekStart: week.start,
+        timeZone: TZ,
+        payLagWeeks: 3,
+        now: mid,
+      });
+      const expenses = claimedWeek.jobs[0].reimbursements;
+
+      check(
+        "expenses read in payroll's own order",
+        expenses.map((one) => one.kind).join(","),
+        "TRAVEL,PARKING,HOTEL,MATERIAL",
+      );
+      check(
+        "a hotel is named by what the tech typed",
+        expenseLabel(expenses[2]),
+        "Holiday Inn",
+      );
+      check(
+        "parking has no name, so it keeps the word",
+        expenseLabel(expenses[1]),
+        "Parking",
+      );
+      check(
+        "and travel, which is not a claim at all",
+        expenseLabel(expenses[0]),
+        "Travel",
+      );
+      check(
+        "the photographed one says it has a receipt",
+        expenses[1].hasReceipt,
+        true,
+      );
+      check(
+        "and the ones without a photo do not",
+        expenses.filter((one) => one.hasReceipt).length,
+        1,
+      );
+      check(
+        "the week's reimbursed total is all four",
+        (claimedWeek.totals.reimbursedCents / 100).toFixed(2),
+        "214.00",
+      );
+
+      await db.reimbursement.deleteMany({
+        where: { assignmentId: payAssignment.id },
+      });
+      await db.jobAssignment.update({
+        where: { id: payAssignment.id },
+        data: { travelReimbursement: null },
+      });
+    }
+
     const september = await loadPayMonth({
       userId: tech.id,
       year: 2026,

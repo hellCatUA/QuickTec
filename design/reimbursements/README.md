@@ -1,15 +1,16 @@
-# Job expenses on the Pay screen — proposed
+# Job expenses on the Pay screen
 
 Three ways to show a job's reimbursements as a statement instead of the green
-`+$86.40 travel` chips. Not built — these are for agreeing the shape first.
+`+$86.40 travel` chips. **B was chosen and is built** — `src/app/(app)/pay/
+week-view.tsx`. A and C are kept as what was weighed against it.
 
 Published at https://claude.ai/artifact/MjLqCvTpnn1UByTEtbMCCB
 
 | File | Artboard |
 | --- | --- |
-| `Today.dc.html` | What it does now, one expense and five |
+| `Today.dc.html` | What it did before, one expense and five |
 | `Main.dc.html` | **A** — the expenses as their own small receipt inside the card |
-| `Ledger.dc.html` | **B** — expenses as more of the card's own icon rows |
+| `Ledger.dc.html` | **B** — expenses as more of the card's own icon rows · **built** |
 | `Statement.dc.html` | **C** — headline becomes the job total, a tear-off strip itemises it |
 
 Every artboard shows a job with one expense and a job with five, because five
@@ -27,15 +28,26 @@ of it:
   `MATERIAL` and Travel never do.
 - `MATERIAL` and `HOTEL` carry a name the tech typed ("Cat 6A 3Ft", "Holiday
   Inn"); `PARKING` and `TOLL` have none, and export under the type itself.
-- Any of them can carry a note. None of the options below show it yet — that
-  is an open question.
+- Any of them can carry a note. **Still not shown** — nothing on Pay has room
+  for it, and it was left out of all three options deliberately.
 
-## The one real decision
+Expenses read in a fixed order — travel, parking, tolls, hotel, materials —
+which is the order payroll already buckets them in, so a statement and a
+payroll line agree.
+
+## The decision that was made
 
 A and B leave the card's big number meaning labour, as it does today, and add
 the expenses under it. C makes it the job total instead, which is the honest
 statement reading — and then `/pay`'s Earned card has to lead with the total
 too, or the job cards stop adding up to it.
+
+B was chosen. The card's amount still means labour; the expenses are rows of
+the card like any other, and the sum is written out underneath so the two
+numbers meet.
+
+Still on chips, and not part of what was agreed: the job cards on
+`/payroll/<id>`, which show the same expenses to whoever is approving the week.
 
 The figures in the mockups are invented to load the format; they are not from
 the database.

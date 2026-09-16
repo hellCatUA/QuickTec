@@ -1,4 +1,5 @@
 import { isoDateInZone, zonedParts } from "@/lib/datetime";
+import type { PayExpense } from "@/lib/pay-period";
 
 /**
  * How money, hours and periods are written on the Pay and Payroll screens.
@@ -7,6 +8,25 @@ import { isoDateInZone, zonedParts } from "@/lib/datetime";
  * shown as "W36 · Aug 31 – Sep 6" to a tech and as something else to the
  * manager approving it is how two people end up talking about different weeks.
  */
+
+const EXPENSE_KIND_LABEL: Record<PayExpense["kind"], string> = {
+  TRAVEL: "Travel",
+  PARKING: "Parking",
+  TOLL: "Toll",
+  HOTEL: "Hotel",
+  MATERIAL: "Material",
+};
+
+/**
+ * What a statement line calls an expense.
+ *
+ * The name the tech typed wins where there is one — "Holiday Inn" says more
+ * than "Hotel", and the icon beside it has already said which kind it is.
+ * Parking and tolls have no name to use, so they keep the word.
+ */
+export function expenseLabel(expense: PayExpense): string {
+  return expense.label?.trim() || EXPENSE_KIND_LABEL[expense.kind];
+}
 
 /** "$1,592.50". Cents in, because that is what the domain works in. */
 export function money(cents: number): string {
