@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { CompanyMark } from "@/components/company-mark";
 import { Card, CardContent } from "@/components/ui/card";
+import { COMPANY_MARK_BASE } from "@/lib/brand";
 import { brandLine } from "@/lib/company";
 import { db } from "@/lib/db";
 import { hashSetupToken } from "@/lib/password";
@@ -28,7 +29,7 @@ export default async function SetPasswordPage({
   const company = await db.companySettings
     .findUnique({
       where: { id: "singleton" },
-      select: { name: true, logoUrl: true },
+      select: { name: true, logoUrl: true, logoScale: true },
     })
     .catch(() => null);
 
@@ -58,7 +59,9 @@ export default async function SetPasswordPage({
         <CompanyMark
           logoUrl={company?.logoUrl}
           name={company?.name}
-          className="size-16 rounded-xl text-2xl"
+          size={COMPANY_MARK_BASE.auth}
+          scale={company?.logoScale}
+          className="rounded-xl text-2xl"
         />
         <h1 className="text-xl font-semibold">{brandLine(company?.name)}</h1>
       </div>

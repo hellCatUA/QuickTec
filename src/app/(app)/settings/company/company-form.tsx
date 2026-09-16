@@ -13,15 +13,19 @@ import {
 import { Field, Input, Select } from "@/components/ui/field";
 import { PhoneInput } from "@/components/ui/phone-input";
 import { StateField } from "@/components/ui/state-picker";
+import { COMPANY_MARK_BASE, HEADER_WORDMARK_BASE } from "@/lib/brand";
 import { US_TIME_ZONES } from "@/lib/us-regions";
 import { updateCompanySettings, type ActionResult } from "../actions";
+import { BrandAssetField } from "./brand-asset-field";
 
 const TIME_ZONES = US_TIME_ZONES.map((entry) => entry.value);
 
 type CompanyFormValues = {
   name: string;
   logoUrl: string | null;
+  logoScale: number;
   headerLogoUrl: string | null;
+  headerLogoScale: number;
   appIconUrl: string | null;
   showCompanyNameInHeader: boolean;
   addressLine1: string | null;
@@ -101,42 +105,44 @@ export function CompanyForm({ company }: { company: CompanyFormValues }) {
         <CardHeader>
           <CardTitle>Brand assets</CardTitle>
           <CardDescription>
-            All three are shown exactly as supplied, on both the dark and the
-            light theme — nothing is recoloured or inverted. A two-colour mark
-            that is inverted comes back with its accent as the opposite colour,
-            so a file that only works on one background will only work on one
-            theme. An SVG with its own light and dark rules, or artwork that
-            holds up on both, is the way to have one file do it.
+            Each one is previewed at the size it is actually drawn, on both
+            themes. The company logo is inverted on the light theme, which is
+            what makes a mark cut for dark backgrounds readable there; the
+            wordmark and the app icon are shown exactly as supplied, because
+            inverting a two-colour lockup turns its accent into the opposite
+            colour. The scale is there for artwork that carries its own padding
+            — the same file can read a size smaller than another at 100%.
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2">
-          <Field
+          <BrandAssetField
             label="Company logo"
-            htmlFor="logoUrl"
             hint="Whose deployment this is. Shown as a square beside the product, on the header, sign-in and password pages."
-            className="sm:col-span-2"
-          >
-            <Input
-              id="logoUrl"
-              name="logoUrl"
-              defaultValue={company.logoUrl ?? ""}
-              placeholder="https://…"
-            />
-          </Field>
+            urlName="logoUrl"
+            urlDefault={company.logoUrl ?? ""}
+            scaleName="logoScale"
+            scaleDefault={company.logoScale}
+            surfaces={[
+              { base: COMPANY_MARK_BASE.header, where: "in the header" },
+              { base: COMPANY_MARK_BASE.auth, where: "on sign-in" },
+            ]}
+            shape="square"
+            invertsOnLight
+          />
 
-          <Field
+          <BrandAssetField
             label="Header wordmark"
-            htmlFor="headerLogoUrl"
-            hint="Stands in for the QuickTec text in the header. A wide lockup; it is drawn at 28px tall, so give it room. Leave empty for the text."
-            className="sm:col-span-2"
-          >
-            <Input
-              id="headerLogoUrl"
-              name="headerLogoUrl"
-              defaultValue={company.headerLogoUrl ?? ""}
-              placeholder="https://…"
-            />
-          </Field>
+            hint="Stands in for the QuickTec text in the header. A wide lockup — leave it empty for the text."
+            urlName="headerLogoUrl"
+            urlDefault={company.headerLogoUrl ?? ""}
+            scaleName="headerLogoScale"
+            scaleDefault={company.headerLogoScale}
+            surfaces={[
+              { base: HEADER_WORDMARK_BASE, where: "tall in the header" },
+            ]}
+            shape="wide"
+            invertsOnLight={false}
+          />
 
           <Field
             label="App icon"

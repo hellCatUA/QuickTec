@@ -6,6 +6,11 @@ import { BottomNav, SideNav } from "@/components/app-nav";
 import { CompanyMark } from "@/components/company-mark";
 import { ConnectionStatus } from "@/components/connection-status";
 import { ServiceWorkerRegistrar } from "@/components/service-worker";
+import {
+  brandSize,
+  COMPANY_MARK_BASE,
+  HEADER_WORDMARK_BASE,
+} from "@/lib/brand";
 import { APP_NAME, brandLine } from "@/lib/company";
 import { db } from "@/lib/db";
 import { buildNavItems } from "@/lib/nav";
@@ -36,7 +41,9 @@ export default async function AppLayout({
     select: {
       name: true,
       logoUrl: true,
+      logoScale: true,
       headerLogoUrl: true,
+      headerLogoScale: true,
       showCompanyNameInHeader: true,
     },
   });
@@ -67,7 +74,9 @@ export default async function AppLayout({
           <CompanyMark
             logoUrl={company?.logoUrl}
             name={company?.name}
-            className="size-10 text-sm"
+            size={COMPANY_MARK_BASE.header}
+            scale={company?.logoScale}
+            className="text-sm"
           />
           {/* The company owns the deployment, QuickTec is what it is running.
               Whether both are spelled out is a setting: a long company name
@@ -89,7 +98,13 @@ export default async function AppLayout({
               <img
                 src={company.headerLogoUrl}
                 alt={APP_NAME}
-                className="h-7 w-auto shrink-0 object-contain"
+                style={{
+                  height: brandSize(
+                    HEADER_WORDMARK_BASE,
+                    company.headerLogoScale,
+                  ),
+                }}
+                className="w-auto shrink-0 object-contain"
               />
             </span>
           ) : (

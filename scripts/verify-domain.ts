@@ -385,6 +385,40 @@ async function main() {
     );
   }
 
+  // --- brand scale --------------------------------------------------------
+  // A percent knob, because a supplied logo carries padding of its own and no
+  // two files carry the same amount. The clamp is the point: the column is a
+  // plain integer, and a row edited by hand is the one path to a header three
+  // screens tall on every page of the app at once.
+  {
+    const { brandSize, clampBrandScale, COMPANY_MARK_BASE, HEADER_WORDMARK_BASE } =
+      await import("@/lib/brand");
+
+    check("a scale of 100 leaves the box alone", brandSize(40, 100), 40);
+    check("and half of it is half", brandSize(40, 50), 20);
+    check(
+      "the header wordmark follows the same arithmetic",
+      brandSize(HEADER_WORDMARK_BASE, 150),
+      42,
+    );
+    // The two surfaces move together off one setting, which is why the scale
+    // is a percent and not a pixel height.
+    check(
+      "one setting sizes both surfaces",
+      [
+        brandSize(COMPANY_MARK_BASE.header, 125),
+        brandSize(COMPANY_MARK_BASE.auth, 125),
+      ].join("/"),
+      "50/80",
+    );
+
+    check("nothing set means 100", clampBrandScale(null), 100);
+    check("and so does a value that is not a number", clampBrandScale(NaN), 100);
+    check("an absurd row is held to the maximum", clampBrandScale(5000), 200);
+    check("and zero to the minimum", clampBrandScale(0), 50);
+    check("a fraction lands on a whole percent", clampBrandScale(87.6), 88);
+  }
+
   // --- scope filtering ----------------------------------------------------
   const { jobScopeWhere } = await import("@/lib/scope");
   const { getSessionUser } = await import("@/lib/session");

@@ -5,6 +5,7 @@ import { callbackUri, discoveryUrl, signIn, SIGNIN_ERRORS } from "@/auth";
 import { CompanyMark } from "@/components/company-mark";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { COMPANY_MARK_BASE } from "@/lib/brand";
 import { brandLine } from "@/lib/company";
 import { db } from "@/lib/db";
 import { probeDiscovery, reportConfigProblems } from "@/lib/env";
@@ -102,7 +103,7 @@ export default async function SignInPage({
   const company = await db.companySettings
     .findUnique({
       where: { id: "singleton" },
-      select: { name: true, logoUrl: true },
+      select: { name: true, logoUrl: true, logoScale: true },
     })
     .catch(() => null);
 
@@ -112,7 +113,9 @@ export default async function SignInPage({
         <CompanyMark
           logoUrl={company?.logoUrl}
           name={company?.name}
-          className="size-16 rounded-xl text-2xl"
+          size={COMPANY_MARK_BASE.auth}
+          scale={company?.logoScale}
+          className="rounded-xl text-2xl"
         />
         <div className="text-center">
           <h1 className="text-xl font-semibold">{brandLine(company?.name)}</h1>

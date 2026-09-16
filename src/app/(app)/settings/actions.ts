@@ -3,6 +3,11 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { diffFields, recordAudit } from "@/lib/audit";
+import {
+  BRAND_SCALE_DEFAULT,
+  BRAND_SCALE_MAX,
+  BRAND_SCALE_MIN,
+} from "@/lib/brand";
 import { db } from "@/lib/db";
 import { flag, optionalText, phoneText } from "@/lib/form";
 import {
@@ -19,10 +24,27 @@ import { BaseRole, PermissionScope } from "@prisma-client";
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
 
+/**
+ * Percent, held to the range the slider offers.
+ *
+ * `.default` rather than required: the sliders are always in the form, but a
+ * page left open across a deploy submits whatever markup it was served, and
+ * losing an unrelated settings save to a field that was not on screen is a
+ * worse outcome than quietly taking the default.
+ */
+const brandScale = z.coerce
+  .number()
+  .int()
+  .min(BRAND_SCALE_MIN)
+  .max(BRAND_SCALE_MAX)
+  .default(BRAND_SCALE_DEFAULT);
+
 const companySchema = z.object({
   name: z.string().trim().min(1, "Company name is required"),
   logoUrl: optionalText,
+  logoScale: brandScale,
   headerLogoUrl: optionalText,
+  headerLogoScale: brandScale,
   appIconUrl: optionalText,
   addressLine1: optionalText,
   addressLine2: optionalText,

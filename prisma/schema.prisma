@@ -234,6 +234,10 @@ model CompanySettings {
   /// instead of it.
   logoUrl String?
 
+  /// How big logoUrl is drawn, in percent of the box the code picks for it
+  /// (40px in the header, 64px on the sign-in pages). See src/lib/brand.ts.
+  logoScale Int @default(100)
+
   /// The product's own wordmark, standing in for the "QuickTec" text in the
   /// header. Separate from logoUrl because they are two different brands: one
   /// says whose deployment this is, the other says what it is running.
@@ -241,6 +245,10 @@ model CompanySettings {
   /// Shown as supplied on both themes — no inversion, which on a two-colour
   /// mark turns the accent into its opposite (a blue reads orange).
   headerLogoUrl String?
+
+  /// How tall headerLogoUrl is drawn, in percent of 28px. Width follows the
+  /// artwork. See src/lib/brand.ts.
+  headerLogoScale Int @default(100)
 
   /// The tab favicon and the home-screen icon. Its own field rather than
   /// reusing either logo: those are wide lockups, and this is a square asked

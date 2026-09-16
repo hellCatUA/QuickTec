@@ -801,7 +801,18 @@ async function main() {
   });
   await db.companySettings.update({
     where: { id: "singleton" },
-    data: { name: "417 Group" },
+    // The brand assets go with it. The wordmark replaces the very text these
+    // checks read, so a run that died inside the brand section below — or a
+    // developer who left a logo configured — fails the next run here, about
+    // something it never touched.
+    data: {
+      name: "417 Group",
+      logoUrl: null,
+      logoScale: 100,
+      headerLogoUrl: null,
+      headerLogoScale: 100,
+      appIconUrl: null,
+    },
   });
   await page.goto(`${BASE}/dashboard`, { waitUntil: "domcontentloaded" });
 
@@ -2746,9 +2757,95 @@ async function main() {
       icon,
     );
 
+    // --- the size knob ----------------------------------------------------
+    // A supplied logo carries its own padding, so the same file can read a
+    // size smaller than another at 100%. The setting is what cancels that out,
+    // and the only thing worth proving is that the number reaches the pixels.
+    const wordmarkBox = async () =>
+      (await planner.locator(`header img[src="${mark}"]`).boundingBox())!;
+
+    check("a wordmark is 28px tall at 100%", Math.round((await wordmarkBox()).height), 28);
+
     await db.companySettings.update({
       where: { id: "singleton" },
-      data: { headerLogoUrl: null, appIconUrl: null },
+      data: { headerLogoScale: 150 },
+    });
+    await planner.reload({ waitUntil: "load" });
+    check("and 42px at 150%", Math.round((await wordmarkBox()).height), 42);
+    // Height only: a lockup squeezed to a set width is a different logo.
+    check(
+      "with its width following the artwork",
+      Math.round((await wordmarkBox()).width),
+      180,
+    );
+
+    // The company logo is the other knob, and the two do not touch.
+    await db.companySettings.update({
+      where: { id: "singleton" },
+      data: { logoUrl: "/icons/icon-192.png", logoScale: 100 },
+    });
+    await planner.reload({ waitUntil: "load" });
+    const markBox = async () =>
+      (await planner
+        .locator('header img[src="/icons/icon-192.png"]')
+        .boundingBox())!;
+    check("the company logo is 40px in the header", Math.round((await markBox()).height), 40);
+
+    await db.companySettings.update({
+      where: { id: "singleton" },
+      data: { logoScale: 75 },
+    });
+    await planner.reload({ waitUntil: "load" });
+    check("and 30px at 75%", Math.round((await markBox()).height), 30);
+    check(
+      "while the wordmark stays where it was put",
+      Math.round((await wordmarkBox()).height),
+      42,
+    );
+
+    // The column is a plain integer and a hand-edited row is the one path to a
+    // header three screens tall on every page of the app at once.
+    await db.companySettings.update({
+      where: { id: "singleton" },
+      data: { logoScale: 5000 },
+    });
+    await planner.reload({ waitUntil: "load" });
+    check(
+      "an absurd row is held to the maximum",
+      Math.round((await markBox()).height),
+      80,
+    );
+
+    // And the knob is reachable from the settings page, which is the only
+    // place anyone will ever turn it. A slider posts a string; the column is an
+    // integer, and the gap between the two is exactly where a setting quietly
+    // stops saving.
+    await planner.goto(`${BASE}/settings/company`, { waitUntil: "load" });
+    await planner.waitForTimeout(600);
+    await planner.locator("#logoScale").fill("125");
+    await planner.locator("#headerLogoScale").fill("90");
+    await planner.getByRole("button", { name: "Save changes" }).click();
+    await planner.getByText("Saved").waitFor({ timeout: 15_000 });
+
+    const saved = await db.companySettings.findUniqueOrThrow({
+      where: { id: "singleton" },
+      select: { logoScale: true, headerLogoScale: true },
+    });
+    check(
+      "the settings page saves both scales",
+      `${saved.logoScale}/${saved.headerLogoScale}`,
+      "125/90",
+    );
+
+    await db.companySettings.update({
+      where: { id: "singleton" },
+      data: {
+        headerLogoUrl: null,
+        appIconUrl: null,
+        logoUrl: null,
+        logoScale: 100,
+        headerLogoScale: 100,
+      },
     });
     const fallbackIcon = await planner.request.get(`${BASE}/icon`, {
       maxRedirects: 0,
