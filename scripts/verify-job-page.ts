@@ -2665,6 +2665,86 @@ async function main() {
       where: { id: "singleton" },
       data: { showCompanyNameInHeader: true },
     });
+
+    // --- the brand assets, which are three jobs and so three settings ------
+    // A wordmark in the header, an icon in the tab, and the company's own logo
+    // beside them. Conflating any two is how a wide lockup ends up as a
+    // favicon, so the point of the checks is that they stay apart.
+    const mark =
+      "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='28'%3E%3Crect width='120' height='28' fill='%231e8cff'/%3E%3C/svg%3E";
+    const icon =
+      "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64'%3E%3Crect width='64' height='64' fill='%236b7684'/%3E%3C/svg%3E";
+
+    await db.companySettings.update({
+      where: { id: "singleton" },
+      data: { headerLogoUrl: mark, appIconUrl: icon },
+    });
+    await planner.reload({ waitUntil: "load" });
+
+    check(
+      "a header wordmark stands in for the app's name",
+      await planner
+        .locator(`header img[src="${mark}"]`)
+        .isVisible(),
+      true,
+    );
+    check(
+      "which is then not also spelled out",
+      await planner
+        .locator("header")
+        .getByText("QuickTec", { exact: true })
+        .count(),
+      0,
+    );
+    // The company still owns the deployment, so its name stays beside it.
+    check(
+      "the company's name is still there",
+      await planner.locator("header").getByText("417 Group").isVisible(),
+      true,
+    );
+    // Nothing is inverted: flipping a two-colour mark turns its accent into
+    // the opposite colour, which is how a blue logo goes orange on light.
+    check(
+      "and the artwork is shown as supplied",
+      await planner
+        .locator(`header img[src="${mark}"]`)
+        .evaluate((el) => el.className.includes("invert")),
+      false,
+    );
+
+    const manifest = await planner.request.get(`${BASE}/manifest.webmanifest`);
+    const body = (await manifest.json()) as {
+      icons: { src: string; purpose?: string }[];
+    };
+    check("the manifest is served", manifest.status(), 200);
+    check(
+      "the configured icon is offered first",
+      body.icons[0]?.src,
+      icon,
+    );
+    // The bundled one is padded for Android's crop; a file of unknown shape
+    // handed over as the only maskable source is a guaranteed bad crop.
+    check(
+      "and the padded bundled icon still covers maskable",
+      body.icons.some(
+        (one) => one.purpose === "maskable" && one.src.startsWith("/icons/"),
+      ),
+      true,
+    );
+
+    await db.companySettings.update({
+      where: { id: "singleton" },
+      data: { headerLogoUrl: null, appIconUrl: null },
+    });
+    await planner.reload({ waitUntil: "load" });
+    check(
+      "with no wordmark set the name comes back",
+      await planner
+        .locator("header")
+        .getByText("417 Group | QuickTec")
+        .isVisible(),
+      true,
+    );
   });
 
   // --- the dashboard is about the work -------------------------------------

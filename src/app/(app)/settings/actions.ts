@@ -22,6 +22,8 @@ export type ActionResult = { ok: true } | { ok: false; error: string };
 const companySchema = z.object({
   name: z.string().trim().min(1, "Company name is required"),
   logoUrl: optionalText,
+  headerLogoUrl: optionalText,
+  appIconUrl: optionalText,
   addressLine1: optionalText,
   addressLine2: optionalText,
   city: optionalText,

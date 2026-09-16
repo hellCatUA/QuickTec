@@ -230,7 +230,22 @@ model CompanySettings {
   id String @id @default("singleton")
 
   name    String  @default("QuickTec")
+  /// The company that owns this deployment. Shown beside the product, never
+  /// instead of it.
   logoUrl String?
+
+  /// The product's own wordmark, standing in for the "QuickTec" text in the
+  /// header. Separate from logoUrl because they are two different brands: one
+  /// says whose deployment this is, the other says what it is running.
+  ///
+  /// Shown as supplied on both themes — no inversion, which on a two-colour
+  /// mark turns the accent into its opposite (a blue reads orange).
+  headerLogoUrl String?
+
+  /// The tab favicon and the home-screen icon. Its own field rather than
+  /// reusing either logo: those are wide lockups, and this is a square asked
+  /// to survive being 16px across and rounded off by an OS.
+  appIconUrl String?
 
   /// Whether the header reads "<Company> | QuickTec" or just the logo and
   /// QuickTec. A long company name eats the whole bar on a phone, and the logo

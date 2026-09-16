@@ -1,28 +1,45 @@
 import type { Metadata, Viewport } from "next";
 import { themeInitScript } from "@/components/theme";
+import { APP_NAME, getCompanySettings } from "@/lib/company";
 import "./globals.css";
 
-export const metadata: Metadata = {
-  title: {
-    default: "QuickTec",
-    template: "%s · QuickTec",
-  },
-  description: "Field service time tracking and reporting.",
-  manifest: "/manifest.webmanifest",
-  applicationName: "QuickTec",
-  appleWebApp: {
-    capable: true,
-    title: "QuickTec",
-    // Lets the app draw under the status bar once saved to the iPhone home
-    // screen, matching the dark background.
-    statusBarStyle: "black-translucent",
-  },
-  formatDetection: { telephone: false },
-  icons: {
-    icon: "/icons/icon.svg",
-    apple: "/icons/apple-touch-icon.png",
-  },
-};
+/**
+ * Built rather than declared, so the App icon setting reaches the browser tab.
+ *
+ * A configured icon is listed ahead of the bundled one rather than replacing
+ * it: browsers walk the list and take the first they can render, so an SVG
+ * that a given one will not touch falls through to what we ship instead of
+ * leaving the tab blank.
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  const company = await getCompanySettings();
+  const icons = [
+    ...(company.appIconUrl ? [{ url: company.appIconUrl }] : []),
+    { url: "/icons/icon.svg" },
+  ];
+
+  return {
+    title: {
+      default: APP_NAME,
+      template: `%s · ${APP_NAME}`,
+    },
+    description: "Field service time tracking and reporting.",
+    manifest: "/manifest.webmanifest",
+    applicationName: APP_NAME,
+    appleWebApp: {
+      capable: true,
+      title: company.name,
+      // Lets the app draw under the status bar once saved to the iPhone home
+      // screen, matching the dark background.
+      statusBarStyle: "black-translucent",
+    },
+    formatDetection: { telephone: false },
+    icons: {
+      icon: icons,
+      apple: company.appIconUrl ?? "/icons/apple-touch-icon.png",
+    },
+  };
+}
 
 export const viewport: Viewport = {
   width: "device-width",

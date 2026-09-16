@@ -10,7 +10,10 @@ const VERSION = "quicktec-v1";
 const SHELL_CACHE = `${VERSION}-shell`;
 const ASSET_CACHE = `${VERSION}-assets`;
 
-const SHELL_URLS = ["/offline", "/manifest.webmanifest", "/icons/icon.svg"];
+// The manifest is no longer in here: it is built per deployment now, so a copy
+// frozen at install time would keep serving the icon somebody just replaced.
+// Nothing needs it offline — it is read when the app is added to a home screen.
+const SHELL_URLS = ["/offline", "/icons/icon.svg"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

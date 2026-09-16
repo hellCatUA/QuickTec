@@ -33,8 +33,22 @@ export default async function AppLayout({
 
   const company = await db.companySettings.findUnique({
     where: { id: "singleton" },
-    select: { name: true, logoUrl: true, showCompanyNameInHeader: true },
+    select: {
+      name: true,
+      logoUrl: true,
+      headerLogoUrl: true,
+      showCompanyNameInHeader: true,
+    },
   });
+
+  // Only the company's half of the brand line: the product's half is the
+  // wordmark itself when one is set.
+  const ownName = (company?.name ?? "").trim();
+  const companyNameForHeader =
+    company?.showCompanyNameInHeader === false ||
+    ownName.toLowerCase() === APP_NAME.toLowerCase()
+      ? null
+      : ownName;
 
   const items = buildNavItems(user);
   const canManageSettings =
@@ -58,12 +72,33 @@ export default async function AppLayout({
           {/* The company owns the deployment, QuickTec is what it is running.
               Whether both are spelled out is a setting: a long company name
               eats the whole bar on a phone, and the logo already says whose
-              deployment this is. */}
-          <span className="truncate text-lg font-semibold tracking-tight">
-            {company?.showCompanyNameInHeader === false
-              ? APP_NAME
-              : brandLine(company?.name)}
-          </span>
+              deployment this is.
+
+              With a wordmark uploaded, the product's half of that line becomes
+              the artwork and only the company name stays as text — set as-is,
+              never inverted: flipping a two-colour mark turns its accent into
+              the opposite colour. */}
+          {company?.headerLogoUrl ? (
+            <span className="flex min-w-0 items-center gap-2">
+              {companyNameForHeader ? (
+                <span className="truncate text-lg font-semibold tracking-tight text-muted-foreground">
+                  {companyNameForHeader}
+                </span>
+              ) : null}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={company.headerLogoUrl}
+                alt={APP_NAME}
+                className="h-7 w-auto shrink-0 object-contain"
+              />
+            </span>
+          ) : (
+            <span className="truncate text-lg font-semibold tracking-tight">
+              {company?.showCompanyNameInHeader === false
+                ? APP_NAME
+                : brandLine(company?.name)}
+            </span>
+          )}
         </Link>
 
         <div className="ml-auto flex items-center gap-2">

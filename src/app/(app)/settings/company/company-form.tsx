@@ -21,6 +21,8 @@ const TIME_ZONES = US_TIME_ZONES.map((entry) => entry.value);
 type CompanyFormValues = {
   name: string;
   logoUrl: string | null;
+  headerLogoUrl: string | null;
+  appIconUrl: string | null;
   showCompanyNameInHeader: boolean;
   addressLine1: string | null;
   addressLine2: string | null;
@@ -74,20 +76,6 @@ export function CompanyForm({ company }: { company: CompanyFormValues }) {
               required
             />
           </Field>
-          <Field
-            label="Logo URL"
-            htmlFor="logoUrl"
-            hint="File upload arrives with the storage layer; a URL works today."
-            className="sm:col-span-2"
-          >
-            <Input
-              id="logoUrl"
-              name="logoUrl"
-              defaultValue={company.logoUrl ?? ""}
-              placeholder="https://…"
-            />
-          </Field>
-
           <label className="flex items-center gap-3 sm:col-span-2">
             <input
               type="checkbox"
@@ -104,6 +92,65 @@ export function CompanyForm({ company }: { company: CompanyFormValues }) {
               </span>
             </span>
           </label>
+        </CardContent>
+      </Card>
+
+      {/* Three assets doing three jobs, which is why they are three fields and
+          not one. Conflating them is how a wide wordmark ends up as a favicon. */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Brand assets</CardTitle>
+          <CardDescription>
+            All three are shown exactly as supplied, on both the dark and the
+            light theme — nothing is recoloured or inverted. A two-colour mark
+            that is inverted comes back with its accent as the opposite colour,
+            so a file that only works on one background will only work on one
+            theme. An SVG with its own light and dark rules, or artwork that
+            holds up on both, is the way to have one file do it.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4 sm:grid-cols-2">
+          <Field
+            label="Company logo"
+            htmlFor="logoUrl"
+            hint="Whose deployment this is. Shown as a square beside the product, on the header, sign-in and password pages."
+            className="sm:col-span-2"
+          >
+            <Input
+              id="logoUrl"
+              name="logoUrl"
+              defaultValue={company.logoUrl ?? ""}
+              placeholder="https://…"
+            />
+          </Field>
+
+          <Field
+            label="Header wordmark"
+            htmlFor="headerLogoUrl"
+            hint="Stands in for the QuickTec text in the header. A wide lockup; it is drawn at 28px tall, so give it room. Leave empty for the text."
+            className="sm:col-span-2"
+          >
+            <Input
+              id="headerLogoUrl"
+              name="headerLogoUrl"
+              defaultValue={company.headerLogoUrl ?? ""}
+              placeholder="https://…"
+            />
+          </Field>
+
+          <Field
+            label="App icon"
+            htmlFor="appIconUrl"
+            hint="The browser tab and the home-screen icon. Square, and legible at 16px — a wordmark shrunk this far is a smudge, so use the mark alone."
+            className="sm:col-span-2"
+          >
+            <Input
+              id="appIconUrl"
+              name="appIconUrl"
+              defaultValue={company.appIconUrl ?? ""}
+              placeholder="https://…"
+            />
+          </Field>
         </CardContent>
       </Card>
 
