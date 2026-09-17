@@ -2,8 +2,32 @@
 
 Published: https://claude.ai/artifact/CnwgZ5oLiVyPpYVEScAZvY
 
-Three directions for the job page a technician sees while they are on the job.
-Nothing here is in the code yet.
+Agreed but **not in the code yet**. Three tabs:
+
+```
+Details  ·  Notes  ·  Deliverables ③
+```
+
+## What was decided
+
+- **Assignment Details → Details.**
+- **Points of contact merges into Details**, sitting under the details themselves,
+  with Dispatch info folded in with it. That is what takes the switcher from four
+  names to three, and it is why the tab bar no longer has to scroll.
+- **Work Performed → Notes.** The card inside keeps the name `Work performed`,
+  because that is what the exports call it; the tab is the label on the drawer.
+- Reimbursements, which had no home among the original four names, land under
+  Deliverables: a claim is the same gesture as a deliverable, a thing plus the
+  photo that proves it.
+
+### Why `Notes` and not `Report`
+
+`Report` is already taken in this app — the client-facing report, the Exports
+card, the `Report .txt` button — so a tab called Report that is not the report is
+a trap. `Work` says nothing on a page where every tab is work. `Notes` is the
+shortest name that is still accurate about the action: the tech writes free text.
+Runner-up if `Notes` reads too casual for text that reaches the client report:
+`Summary`.
 
 ## The measurement everything rests on
 
@@ -30,46 +54,32 @@ On a job with **no photos**, nothing filled in and one person on the crew. A rea
 job with ten deliverable sections of photos is several times this. Reproduce with
 a Playwright page at that viewport and `document.body.scrollHeight`.
 
-The number that matters is not 4,222 but 1,152: Exports, Timeline, Crew and
-Time & schedule, none of which a technician opens on site, and all of which can
-go before a single tab is drawn.
+The number that matters is not 4,222 but **1,152**: Exports, Timeline, Crew and
+Time & schedule, none of which a technician opens on site, and all of which leave
+before a single tab is drawn. Tabs over the whole page would only hide five
+screens behind three taps.
+
+## Two things the tabs must not break
+
+- **The clock never goes behind a tab.** It is the one thing that is
+  time-critical.
+- **The tab bar carries what is outstanding** (`Deliverables ③`), and the clock
+  card says *3 required still missing before you can close* and jumps straight
+  there. Without that, tabs actively hide the reason you cannot leave.
 
 ## Artboards
 
 | File | What it is |
 | --- | --- |
-| `Before.dc.html` | Where the 4,222px goes, and which parts a tech actually reaches for |
-| `Main.dc.html` | **B — recommended.** Tabs are clickable |
-| `Literal.dc.html` | **A** — the four tabs exactly as named in the brief, including where they strain. Clickable |
-| `Stages.dc.html` | **C** — the same switcher ordered by the job's flow rather than by document type |
-| `Desktop.dc.html` | B at 1100px, to show it scales without a second design |
+| `Main.dc.html` | The agreed design. Tabs are clickable |
+| `Map.dc.html` | What lives on which tab, what is pinned, what leaves |
+| `Before.dc.html` | Where the 4,222px goes today |
+| `Desktop.dc.html` | The same three tabs at 1100px |
+| `Literal.dc.html` | Not chosen — four tabs unmerged, including where they strain |
+| `Stages.dc.html` | Not chosen — Arrive / On site / Wrap up instead of topics |
 
-## The three directions
-
-**A — Assignment Details · POC · Work Performed · Deliverables.** The brief as
-written. Honest problems, drawn rather than argued: the four names do not fit one
-row at 390px so the bar scrolls and Deliverables starts off-screen; POC is three
-rows given a whole tab while the address it pairs with is on another; Scope of
-work and Work performed are the same task one tab apart; and Time & schedule,
-Crew, Dispatch, Exports and Timeline are none of the four names, so they pile
-back up under the tabs and the page is long again.
-
-**B — Details · Work · Deliverables · Expenses.** Cut first, split second.
-Exports, Timeline, Crew and Time & schedule leave the technician's view; POC and
-Dispatch merge into one "Who to call" beside the address; the twelve-field
-Assignment details card becomes a short "Where" plus a collapsed "Job reference".
-Two things the tabs do that a plain tab bar does not:
-
-- the clock is never behind a tab — it is the one thing that is time-critical;
-- the tab bar carries what is outstanding (`Deliverables ③`), and the clock card
-  says *3 required still missing before you can close* and links straight to it.
-  Without that, tabs actively hide the reason you cannot leave.
-
-**C — Arrive · On site · Wrap up.** Same switcher, different question: tabs ask
-"which topic", this asks "what now", and it moves itself as the clock starts and
-checkout begins. Serials, return labels, sign-off and expenses all sit under
-Wrap up, so nothing is offered before it can be answered. Steps stay tappable, so
-it is not a wizard.
+The small blue `was its own tab` markers on `Main` are review annotations, not
+shipping UI.
 
 ## Style
 
@@ -87,8 +97,9 @@ Edit the `.dc.html` files, then:
 SKILL=<design skill base dir>
 node "$SKILL/seed-canvas.mjs" --template "$SKILL/payload.template.html" \
   --out job-technician-view.html --title "Job — Technician View" \
-  --artboard Main.dc.html --artboard Before.dc.html --artboard Literal.dc.html \
-  --artboard Stages.dc.html --artboard Desktop.dc.html --canvas canvas.json
+  --artboard Main.dc.html --artboard Map.dc.html --artboard Before.dc.html \
+  --artboard Desktop.dc.html --artboard Literal.dc.html --artboard Stages.dc.html \
+  --canvas canvas.json
 ```
 
 The seeded `job-technician-view.html` is ~2.5 MB and git-ignored; the artboards

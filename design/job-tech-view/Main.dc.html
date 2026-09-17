@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <script src="./support.js"></script>
-<title>Technician View — recommended</title>
+<title>Technician View — agreed</title>
 <style>
   :root{
     --background: oklch(0.17 0.012 260);
@@ -28,115 +28,100 @@
     font-size:14px;line-height:1.45;display:flex;flex-direction:column;
   }
 
-  /* ---- app chrome, as it already is ---- */
   .appbar{display:flex;align-items:center;gap:8px;padding:8px 16px;
     border-bottom:1px solid var(--border);background:var(--surface);flex:none}
   .logo{width:40px;height:40px;border-radius:6px;background:var(--primary);
-    color:var(--primary-foreground);display:flex;align-items:center;justify-content:center;
-    font-weight:700;font-size:14px}
+    color:var(--primary-foreground);display:flex;align-items:center;justify-content:center;font-weight:700}
   .wordmark{font-size:18px;font-weight:600;letter-spacing:-.01em}
-  .avatar{margin-left:auto;display:flex;align-items:center;gap:6px;
-    font-size:12px;color:var(--muted-foreground)}
-  .avatar b{width:32px;height:32px;border-radius:999px;background:var(--muted);
-    color:var(--foreground);display:flex;align-items:center;justify-content:center;font-size:11px}
+  .avatar{margin-left:auto;width:32px;height:32px;border-radius:999px;background:var(--muted);
+    display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--muted-foreground)}
 
   .scroll{flex:1;overflow:hidden;display:flex;flex-direction:column}
-
-  /* ---- the part that never moves ---- */
   .pinned{padding:16px 16px 0;flex:none}
   .head{display:flex;align-items:flex-start;gap:12px}
   .back{width:32px;height:32px;border-radius:10px;display:flex;align-items:center;
     justify-content:center;color:var(--muted-foreground);flex:none;margin-top:2px}
-  .head h1{font-size:18px;font-weight:600;letter-spacing:-.01em}
-  .head p{font-size:14px;color:var(--muted-foreground)}
   .dots{width:32px;height:32px;border-radius:10px;display:flex;align-items:center;
     justify-content:center;color:var(--muted-foreground);flex:none;font-size:18px;letter-spacing:1px}
+  .head h1{font-size:18px;font-weight:600;letter-spacing:-.01em}
+  .head p{font-size:14px;color:var(--muted-foreground)}
+  .grow{flex:1;min-width:0}
 
   .badges{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
-  .badge{display:inline-flex;align-items:center;gap:4px;border-radius:8px;
-    padding:2px 8px;font-size:12px;font-weight:500;background:var(--muted);color:var(--muted-foreground)}
+  .badge{display:inline-flex;align-items:center;gap:4px;border-radius:8px;padding:2px 8px;
+    font-size:12px;font-weight:500;background:var(--muted);color:var(--muted-foreground)}
   .badge.warn{background:color-mix(in oklch,var(--warning) 15%,transparent);color:var(--warning);
     box-shadow:inset 0 0 0 1px color-mix(in oklch,var(--warning) 30%,transparent)}
   .badge.ok{background:color-mix(in oklch,var(--success) 15%,transparent);color:var(--success);
     box-shadow:inset 0 0 0 1px color-mix(in oklch,var(--success) 30%,transparent)}
 
-  /* ---- clock: the one thing that is never behind a tab ---- */
   .clock{margin-top:12px;border:1px solid color-mix(in oklch,var(--success) 50%,transparent);
     border-radius:14px;background:var(--surface);overflow:hidden}
-  .clock .body{padding:14px 16px;display:flex;flex-direction:column;gap:12px}
+  .clock .cbody{padding:14px 16px;display:flex;flex-direction:column;gap:12px}
   .since{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
   .cap{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted-foreground);font-weight:500}
   .since .val{font-size:14px;font-weight:500;font-variant-numeric:tabular-nums}
   .figures{display:flex;align-items:flex-end;justify-content:space-between;gap:16px}
   .fig .n{font-size:30px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.1}
-  .fig.money .n{color:var(--success)}
   .fig.money{text-align:right}
+  .fig.money .n{color:var(--success)}
   .btns{display:flex;gap:8px}
-  .btn{flex:1;min-height:52px;border-radius:10px;display:flex;align-items:center;
-    justify-content:center;gap:8px;font-size:16px;font-weight:500;border:1px solid transparent}
+  .btn{flex:1;min-height:52px;border-radius:10px;display:flex;align-items:center;justify-content:center;
+    gap:8px;font-size:16px;font-weight:500;border:1px solid transparent}
   .btn.secondary{background:var(--surface-raised);border-color:var(--border);color:var(--foreground)}
   .btn.danger{background:var(--danger);color:oklch(0.97 0.01 25)}
-  .btn.sm{min-height:36px;font-size:12px;padding:0 12px;flex:none}
-
-  /* the checkout blocker, read without opening anything */
-  .blocker{display:flex;align-items:center;gap:8px;padding:10px 16px;
-    border-top:1px solid var(--border);background:var(--surface-raised);
-    font-size:12px;color:var(--warning);cursor:pointer}
+  .blocker{display:flex;align-items:center;gap:8px;padding:10px 16px;border-top:1px solid var(--border);
+    background:var(--surface-raised);font-size:12px;color:var(--warning);cursor:pointer}
   .blocker .arrow{margin-left:auto;color:var(--muted-foreground)}
 
-  /* ---- the switcher ---- */
-  .tabs{display:flex;gap:2px;margin:12px 0 0;padding:3px;border:1px solid var(--border);
+  /* three tabs, so nothing is cut off and nothing has to scroll */
+  .tabs{display:flex;gap:2px;margin-top:12px;padding:3px;border:1px solid var(--border);
     border-radius:10px;background:var(--surface-raised)}
-  .tab{flex:1;min-height:36px;border-radius:8px;display:flex;align-items:center;
-    justify-content:center;gap:5px;font-size:12px;font-weight:500;color:var(--muted-foreground);
-    white-space:nowrap;cursor:pointer;transition:background .15s,color .15s}
+  .tab{flex:1;min-height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;
+    gap:5px;font-size:13px;font-weight:500;color:var(--muted-foreground);white-space:nowrap;
+    cursor:pointer;transition:background .15s,color .15s}
   .tab[aria-selected="true"]{background:var(--primary);color:var(--primary-foreground);font-weight:600}
   .pill{min-width:16px;height:16px;border-radius:999px;padding:0 4px;font-size:10px;font-weight:600;
     display:flex;align-items:center;justify-content:center;
     background:color-mix(in oklch,var(--warning) 22%,transparent);color:var(--warning)}
   .tab[aria-selected="true"] .pill{background:rgba(0,0,0,.22);color:var(--primary-foreground)}
 
-  /* ---- tab bodies ---- */
   .pane{flex:1;overflow:auto;padding:12px 16px 16px;display:none;flex-direction:column;gap:12px}
   .pane.on{display:flex}
   .card{border:1px solid var(--border);border-radius:14px;background:var(--surface)}
   .card > h2{font-size:14px;font-weight:600;letter-spacing:-.01em;padding:14px 16px;
-    border-bottom:1px solid var(--border)}
+    border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px}
   .card .c{padding:14px 16px;display:flex;flex-direction:column;gap:12px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
   .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.04em;font-weight:500;color:var(--muted-foreground)}
   .link{color:var(--primary)}
-  .row{display:flex;align-items:center;gap:10px}
-  .grow{flex:1;min-width:0}
   .sub{font-size:12px;color:var(--muted-foreground)}
-  .ico{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-width:1.75;
-    stroke-linecap:round;stroke-linejoin:round}
-  .sep{height:1px;background:var(--border);margin:2px 0}
-
-  .person{display:flex;align-items:center;gap:10px}
+  .row{display:flex;align-items:center;gap:10px}
+  .item{display:flex;align-items:center;gap:10px;padding:10px 0}
+  .item + .item{border-top:1px solid var(--border)}
+  .add{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--primary)}
   .call{width:36px;height:36px;border-radius:10px;border:1px solid var(--border);
     background:var(--surface-raised);display:flex;align-items:center;justify-content:center;color:var(--primary)}
-  .add{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--primary)}
+  .ico{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-width:1.75;
+    stroke-linecap:round;stroke-linejoin:round}
+  .check{width:20px;height:20px;border-radius:6px;border:1.5px solid var(--border);flex:none}
+  .check.done{background:var(--success);border-color:var(--success)}
+  .thumb{width:44px;height:44px;border-radius:8px;background:var(--muted);border:1px solid var(--border)}
+  textarea.ta{width:100%;min-height:110px;border-radius:10px;border:1px solid var(--border);
+    background:var(--input);color:var(--foreground);padding:10px 12px;font:inherit;font-size:14px;resize:none}
 
   details.more{border:1px solid var(--border);border-radius:14px;background:var(--surface)}
-  details.more > summary{list-style:none;cursor:pointer;padding:14px 16px;display:flex;
-    align-items:center;gap:8px;font-size:14px;font-weight:600}
+  details.more > summary{list-style:none;cursor:pointer;padding:14px 16px;display:flex;align-items:center;
+    gap:8px;font-size:14px;font-weight:600}
   details.more > summary::-webkit-details-marker{display:none}
   details.more .c{padding:0 16px 14px;display:grid;grid-template-columns:1fr 1fr;gap:12px}
   details.more[open] > summary{border-bottom:1px solid var(--border);margin-bottom:14px}
   .chev{margin-left:auto;color:var(--muted-foreground);transition:transform .15s}
   details.more[open] .chev{transform:rotate(180deg)}
 
-  .item{display:flex;align-items:center;gap:10px;padding:10px 0}
-  .item + .item{border-top:1px solid var(--border)}
-  .check{width:20px;height:20px;border-radius:6px;border:1.5px solid var(--border);flex:none}
-  .check.done{background:var(--success);border-color:var(--success)}
-  .thumbs{display:flex;gap:6px}
-  .thumb{width:44px;height:44px;border-radius:8px;background:var(--muted);
-    border:1px solid var(--border)}
-  textarea.ta{width:100%;min-height:92px;border-radius:10px;border:1px solid var(--border);
-    background:var(--input);color:var(--foreground);padding:10px 12px;font:inherit;font-size:14px;resize:none}
+  .moved{display:flex;align-items:center;gap:6px;font-size:10px;font-weight:500;
+    color:var(--primary);margin-left:auto;text-transform:none;letter-spacing:0}
 
-  /* ---- bottom nav, as it already is ---- */
   .bottomnav{display:flex;border-top:1px solid var(--border);background:var(--surface);flex:none}
   .bn{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
     padding:8px 0;font-size:10px;font-weight:500;color:var(--muted-foreground)}
@@ -150,15 +135,13 @@
 <div class="appbar">
   <div class="logo">Q</div>
   <div class="wordmark">QuickTec</div>
-  <div class="avatar"><b>TT</b><span>Terry Tech<br>Tech</span></div>
+  <div class="avatar">TT</div>
 </div>
 
 <div class="scroll">
   <div class="pinned">
     <div class="head">
-      <div class="back">
-        <svg class="ico" viewBox="0 0 24 24" style="width:20px;height:20px"><path d="M15 18l-6-6 6-6"/></svg>
-      </div>
+      <div class="back"><svg class="ico" viewBox="0 0 24 24" style="width:20px;height:20px"><path d="M15 18l-6-6 6-6"/></svg></div>
       <div class="grow">
         <h1>Finished last quarter</h1>
         <p>QuickTec INT WO ID: 2607-0000-9004</p>
@@ -172,20 +155,11 @@
     </div>
 
     <div class="clock">
-      <div class="body">
-        <div class="since">
-          <span class="cap">On site since</span>
-          <span class="val">3:13 PM</span>
-        </div>
+      <div class="cbody">
+        <div class="since"><span class="cap">On site since</span><span class="val">3:13 PM</span></div>
         <div class="figures">
-          <div class="fig">
-            <div class="cap">Elapsed</div>
-            <div class="n">1:24:06</div>
-          </div>
-          <div class="fig money">
-            <div class="cap">Earned</div>
-            <div class="n">$63.00</div>
-          </div>
+          <div class="fig"><div class="cap">Elapsed</div><div class="n">1:24:06</div></div>
+          <div class="fig money"><div class="cap">Earned</div><div class="n">$63.00</div></div>
         </div>
         <div class="btns">
           <div class="btn secondary">
@@ -198,7 +172,7 @@
           </div>
         </div>
       </div>
-      <div class="blocker" onclick="pick('deliv')">
+      <div class="blocker" onclick="pick('del')">
         <svg class="ico" viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L14.7 3.9a2 2 0 00-3.4 0z"/></svg>
         <span><b>3 required</b> still missing before you can close</span>
         <span class="arrow">›</span>
@@ -206,18 +180,21 @@
     </div>
 
     <div class="tabs" role="tablist">
-      <div class="tab" role="tab" aria-selected="true"  onclick="pick('det')"   id="t-det">Details</div>
-      <div class="tab" role="tab" aria-selected="false" onclick="pick('work')"  id="t-work">Work</div>
-      <div class="tab" role="tab" aria-selected="false" onclick="pick('deliv')" id="t-deliv">Deliverables <span class="pill">3</span></div>
-      <div class="tab" role="tab" aria-selected="false" onclick="pick('exp')"   id="t-exp">Expenses</div>
+      <div class="tab" role="tab" aria-selected="true"  onclick="pick('det')" id="t-det">Details</div>
+      <div class="tab" role="tab" aria-selected="false" onclick="pick('not')" id="t-not">Notes</div>
+      <div class="tab" role="tab" aria-selected="false" onclick="pick('del')" id="t-del">Deliverables <span class="pill">3</span></div>
     </div>
   </div>
 
-  <!-- ============ DETAILS ============ -->
+  <!-- ================= DETAILS ================= -->
   <div class="pane on" id="p-det">
     <div class="card">
-      <h2>Where</h2>
+      <h2>Details</h2>
       <div class="c">
+        <div class="grid">
+          <div><div class="lbl">Company</div><div>NetCom Sub</div></div>
+          <div><div class="lbl">Customer</div><div>Starbucks</div></div>
+        </div>
         <div>
           <div class="lbl">Site ID</div>
           <div class="link">SBUX #24541</div>
@@ -229,127 +206,121 @@
             <span>1912 Pike Pl, Seattle, WA 98101</span>
           </div>
         </div>
-        <div class="row" style="gap:16px">
-          <div class="grow">
-            <div class="lbl">Scheduled</div>
-            <div>07-19 · 3:13 PM</div>
-          </div>
-          <div class="grow">
-            <div class="lbl">Estimate</div>
-            <div>1.00 hrs</div>
-          </div>
-        </div>
-        <div class="btn secondary" style="min-height:44px;font-size:14px">
-          <svg class="ico" viewBox="0 0 24 24"><path d="M3 11l19-9-9 19-2-8-8-2z"/></svg>
-          Open in Maps
+        <div class="grid">
+          <div><div class="lbl">Scheduled</div><div>07-19 · 3:13 PM</div></div>
+          <div><div class="lbl">Estimate</div><div>1.00 hrs</div></div>
         </div>
       </div>
     </div>
 
+    <!-- POC, merged in and sitting under the details as asked -->
     <div class="card">
-      <h2>Who to call</h2>
+      <h2>
+        Points of contact
+        <span class="moved">
+          <svg class="ico" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          was its own tab
+        </span>
+      </h2>
       <div class="c" style="gap:0">
         <div class="item" style="padding-top:0">
           <div class="grow">
-            <div class="row" style="gap:6px">
-              <span style="font-weight:500">MOD</span>
-              <span class="badge warn">Required</span>
-            </div>
+            <div class="row" style="gap:6px"><span style="font-weight:500">MOD</span><span class="badge warn">Required</span></div>
             <div class="sub">Manager On Duty — not added yet</div>
           </div>
           <span class="add">+ Add</span>
         </div>
         <div class="item">
-          <div class="grow">
-            <div style="font-weight:500">Dana Reyes</div>
-            <div class="sub">NOC · (206) 555-0134</div>
-          </div>
-          <div class="call">
-            <svg class="ico" viewBox="0 0 24 24"><path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1 1 .4 1.9.7 2.8a2 2 0 01-.5 2.1L8.1 9.9a16 16 0 006 6l1.3-1.3a2 2 0 012.1-.4c.9.3 1.8.6 2.8.7a2 2 0 011.7 2z"/></svg>
-          </div>
+          <div class="grow"><div style="font-weight:500">Dana Reyes</div><div class="sub">NOC · (206) 555-0134</div></div>
+          <div class="call"><svg class="ico" viewBox="0 0 24 24"><path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1 1 .4 1.9.7 2.8a2 2 0 01-.5 2.1L8.1 9.9a16 16 0 006 6l1.3-1.3a2 2 0 012.1-.4c.9.3 1.8.6 2.8.7a2 2 0 011.7 2z"/></svg></div>
         </div>
         <div class="item" style="padding-bottom:0">
-          <div class="grow">
-            <div style="font-weight:500">Bo Ross</div>
-            <div class="sub">Your supervisor · dispatch</div>
-          </div>
-          <div class="call">
-            <svg class="ico" viewBox="0 0 24 24"><path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1 1 .4 1.9.7 2.8a2 2 0 01-.5 2.1L8.1 9.9a16 16 0 006 6l1.3-1.3a2 2 0 012.1-.4c.9.3 1.8.6 2.8.7a2 2 0 011.7 2z"/></svg>
-          </div>
+          <div class="grow"><div style="font-weight:500">Bo Ross</div><div class="sub">Your supervisor · dispatch</div></div>
+          <div class="call"><svg class="ico" viewBox="0 0 24 24"><path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1 1 .4 1.9.7 2.8a2 2 0 01-.5 2.1L8.1 9.9a16 16 0 006 6l1.3-1.3a2 2 0 012.1-.4c.9.3 1.8.6 2.8.7a2 2 0 011.7 2z"/></svg></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Scope of work</h2>
+      <div class="c" style="gap:0">
+        <div class="item" style="padding-top:0">
+          <div class="check done"><svg class="ico" viewBox="0 0 24 24" style="width:20px;height:20px;stroke:oklch(0.16 0.02 260)"><path d="M20 6L9 17l-5-5"/></svg></div>
+          <div class="grow" style="color:var(--muted-foreground);text-decoration:line-through">Survey existing cabling</div>
+        </div>
+        <div class="item">
+          <div class="check"></div><div class="grow">Swap the failed AP at register 3</div>
+        </div>
+        <div class="item" style="padding-bottom:0">
+          <div class="check"></div><div class="grow">Confirm the drive-thru headset reconnects</div>
         </div>
       </div>
     </div>
 
     <details class="more">
-      <summary>
-        Job reference
-        <svg class="ico chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
-      </summary>
+      <summary>Job reference <svg class="ico chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></summary>
       <div class="c">
-        <div><div class="lbl">Company</div><div>NetCom Sub</div></div>
-        <div><div class="lbl">Customer</div><div>Starbucks</div></div>
         <div><div class="lbl">Ticket #</div><div class="sub">Missing</div></div>
         <div><div class="lbl">INC #</div><div class="sub">Not provided</div></div>
-        <div style="grid-column:1/-1"><div class="lbl">Crew</div><div>Terry Tech <span class="sub">· lead</span></div></div>
+        <div><div class="lbl">Project</div><div class="sub">No project</div></div>
+        <div><div class="lbl">Crew</div><div>Terry Tech</div></div>
         <div style="grid-column:1/-1"><div class="lbl">Work order</div><div class="link">2607-0000-9004.pdf</div></div>
       </div>
     </details>
   </div>
 
-  <!-- ============ WORK ============ -->
-  <div class="pane" id="p-work">
+  <!-- ================= NOTES ================= -->
+  <div class="pane" id="p-not">
     <div class="card">
-      <h2>Scope of work</h2>
-      <div class="c" style="gap:0">
-        <div class="item" style="padding-top:0">
-          <div class="check done">
-            <svg class="ico" viewBox="0 0 24 24" style="width:20px;height:20px;stroke:oklch(0.16 0.02 260)"><path d="M20 6L9 17l-5-5"/></svg>
-          </div>
-          <div class="grow" style="color:var(--muted-foreground);text-decoration:line-through">Survey existing cabling</div>
-        </div>
-        <div class="item">
-          <div class="check"></div>
-          <div class="grow">Swap the failed AP at register 3</div>
-        </div>
-        <div class="item" style="padding-bottom:0">
-          <div class="check"></div>
-          <div class="grow">Confirm the drive-thru headset reconnects</div>
-        </div>
+      <!-- The tab is the drawer label; the card keeps the name the exports use. -->
+      <h2>Work performed</h2>
+      <div class="c">
+        <textarea class="ta">Replaced AP at register 3, serial swapped. Drive-thru headset reconnected and tested with two orders. Old unit boxed for return.</textarea>
+        <div class="sub">Goes to the client report. Saved as you type.</div>
       </div>
     </div>
 
     <div class="card">
-      <h2>Work performed</h2>
-      <div class="c">
-        <div class="lbl">Your notes</div>
-        <textarea class="ta">Replaced AP at register 3, serial swapped. Drive-thru headset reconnected and tested with two orders.</textarea>
-        <div class="sub">Saved as you type · seen by the lead before it is merged.</div>
+      <h2>From the rest of the crew</h2>
+      <div class="c" style="gap:0">
+        <div class="item" style="padding-top:0;align-items:flex-start">
+          <div class="grow">
+            <div class="lbl">Alex Ruiz</div>
+            <div class="sub" style="color:var(--foreground)">Pulled the new drop to the ceiling tile above register 3.</div>
+          </div>
+        </div>
+        <div class="item" style="padding-bottom:0;align-items:flex-start">
+          <div class="grow">
+            <div class="lbl" style="color:var(--primary)">Merged by the lead</div>
+            <div class="sub">Not merged yet — the lead combines these into the one paragraph the client reads.</div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
 
-  <!-- ============ DELIVERABLES ============ -->
-  <div class="pane" id="p-deliv">
+  <!-- ================= DELIVERABLES ================= -->
+  <div class="pane" id="p-del">
     <div class="card">
-      <h2>Required</h2>
+      <h2>Required <span class="badge warn" style="margin-left:auto">3 missing</span></h2>
       <div class="c" style="gap:0">
         <div class="item" style="padding-top:0">
           <div class="grow">
-            <div class="row" style="gap:6px"><span style="font-weight:500">Pre-Install</span><span class="badge warn">Missing</span></div>
+            <div style="font-weight:500">Pre-Install</div>
             <div class="sub">Photos of the site before any work is done.</div>
           </div>
           <span class="add">+ Add</span>
         </div>
         <div class="item">
           <div class="grow">
-            <div class="row" style="gap:6px"><span style="font-weight:500">Post Install</span><span class="badge warn">Missing</span></div>
+            <div style="font-weight:500">Post Install</div>
             <div class="sub">Photos of the finished work.</div>
           </div>
           <span class="add">+ Add</span>
         </div>
         <div class="item" style="padding-bottom:0">
           <div class="grow">
-            <div class="row" style="gap:6px"><span style="font-weight:500">Sign Off</span><span class="badge warn">Missing</span></div>
+            <div style="font-weight:500">Sign Off</div>
             <div class="sub">The customer's own paperwork.</div>
           </div>
           <span class="add">+ Add</span>
@@ -363,9 +334,7 @@
         <div class="item" style="padding-top:0">
           <div class="grow">
             <div style="font-weight:500">Old Serials</div>
-            <div class="thumbs" style="margin-top:8px">
-              <div class="thumb"></div><div class="thumb"></div>
-            </div>
+            <div class="row" style="gap:6px;margin-top:8px"><div class="thumb"></div><div class="thumb"></div></div>
           </div>
           <span class="add">+ Add</span>
         </div>
@@ -373,9 +342,7 @@
           <div class="grow">
             <div style="font-weight:500">Return Labels</div>
             <div class="sub">1Z999AA10123456784</div>
-            <div class="thumbs" style="margin-top:8px">
-              <div class="thumb"></div><div class="thumb"></div>
-            </div>
+            <div class="row" style="gap:6px;margin-top:8px"><div class="thumb"></div><div class="thumb"></div></div>
           </div>
           <span class="add">+ Add</span>
         </div>
@@ -392,31 +359,28 @@
         </div>
       </div>
     </div>
-  </div>
 
-  <!-- ============ EXPENSES ============ -->
-  <div class="pane" id="p-exp">
+    <!-- Reimbursements had no home among the four names either. They land here
+         because a claim is the same gesture as a deliverable: a thing plus the
+         photo that proves it. -->
     <div class="card">
-      <h2>Claims</h2>
+      <h2>
+        Reimbursements
+        <span class="moved">
+          <svg class="ico" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          was its own card
+        </span>
+      </h2>
       <div class="c" style="gap:0">
         <div class="item" style="padding-top:0">
-          <div class="grow">
-            <div style="font-weight:500">Parking</div>
-            <div class="sub">Pike Place garage · receipt attached</div>
-          </div>
+          <div class="grow"><div style="font-weight:500">Parking</div><div class="sub">Pike Place garage · receipt attached</div></div>
           <div style="font-variant-numeric:tabular-nums;font-weight:500">$18.00</div>
         </div>
         <div class="item" style="padding-bottom:0">
-          <div class="grow">
-            <div style="font-weight:500">Material</div>
-            <div class="sub">Cat6 patch leads ×4</div>
-          </div>
-          <div style="font-variant-numeric:tabular-nums;font-weight:500">$24.40</div>
+          <div class="grow"><div class="add">+ Add claim</div></div>
         </div>
       </div>
     </div>
-    <div class="btn secondary" style="min-height:44px;font-size:14px">+ Add claim</div>
-    <div class="sub">Materials and parking reach the client report; hotels stay internal.</div>
   </div>
 </div>
 
@@ -430,7 +394,7 @@
 
 <script>
   function pick(which){
-    for (const key of ["det","work","deliv","exp"]){
+    for (const key of ["det","not","del"]){
       document.getElementById("t-"+key).setAttribute("aria-selected", String(key===which));
       document.getElementById("p-"+key).classList.toggle("on", key===which);
     }

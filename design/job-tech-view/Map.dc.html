@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<script src="./support.js"></script>
+<title>What lives where</title>
+<style>
+  :root{
+    --background: oklch(0.17 0.012 260);
+    --surface: oklch(0.21 0.014 260);
+    --surface-raised: oklch(0.25 0.016 260);
+    --foreground: oklch(0.96 0.005 260);
+    --muted: oklch(0.28 0.014 260);
+    --muted-foreground: oklch(0.7 0.018 260);
+    --border: oklch(0.31 0.016 260);
+    --primary: oklch(0.66 0.16 235);
+    --primary-foreground: oklch(0.16 0.02 260);
+    --success: oklch(0.7 0.16 155);
+    --warning: oklch(0.79 0.15 85);
+    --danger: oklch(0.64 0.2 25);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    width:1000px;height:720px;overflow:hidden;
+    background:var(--background);color:var(--foreground);
+    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    font-size:13px;line-height:1.45;padding:22px;display:flex;flex-direction:column;gap:14px;
+  }
+  h1{font-size:19px;font-weight:600;letter-spacing:-.01em}
+  .lede{font-size:13px;color:var(--muted-foreground)}
+  .lede b{color:var(--foreground);font-weight:600}
+
+  .cap{font-size:11px;text-transform:uppercase;letter-spacing:.04em;font-weight:500;color:var(--muted-foreground)}
+
+  /* ---- the band that is never behind a tab ---- */
+  .pinned{border:1px solid color-mix(in oklch,var(--success) 50%,transparent);border-radius:14px;
+    background:var(--surface);padding:12px 14px;display:flex;align-items:center;gap:16px}
+  .pinned .chunk{display:flex;flex-direction:column;gap:2px}
+  .pinned .chunk .v{font-size:13px}
+  .pinned .rule{width:1px;align-self:stretch;background:var(--border)}
+  .pinned .warnline{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--warning);margin-left:auto}
+  .mini{display:flex;gap:6px}
+  .mb{border-radius:8px;padding:5px 11px;font-size:12px;font-weight:500;border:1px solid transparent}
+  .mb.sec{background:var(--surface-raised);border-color:var(--border);color:var(--foreground)}
+  .mb.dan{background:var(--danger);color:oklch(0.97 0.01 25)}
+
+  /* ---- three columns ---- */
+  .cols{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;flex:1;min-height:0}
+  .col{border:1px solid var(--border);border-radius:14px;background:var(--surface);
+    display:flex;flex-direction:column;overflow:hidden}
+  .colhead{padding:12px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px}
+  .pillname{border-radius:8px;padding:5px 12px;font-size:13px;font-weight:600;
+    background:var(--primary);color:var(--primary-foreground)}
+  .count{margin-left:auto;font-size:11px;color:var(--muted-foreground);font-variant-numeric:tabular-nums}
+  .list{padding:4px 14px 12px;display:flex;flex-direction:column;overflow:auto}
+  .en{display:flex;gap:9px;padding:9px 0;align-items:flex-start}
+  .en + .en{border-top:1px solid var(--border)}
+  .en .ic{width:26px;height:26px;border-radius:8px;flex:none;background:var(--surface-raised);
+    border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--muted-foreground)}
+  .en .tx{flex:1;min-width:0}
+  .en .nm{font-size:13px;font-weight:500}
+  .en .ds{font-size:11px;color:var(--muted-foreground)}
+  .ico{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.75;
+    stroke-linecap:round;stroke-linejoin:round}
+  .tagmoved{display:inline-flex;align-items:center;gap:4px;border-radius:6px;padding:1px 6px;
+    font-size:10px;font-weight:500;margin-top:3px;
+    background:color-mix(in oklch,var(--primary) 16%,transparent);color:var(--primary)}
+  .tagreq{display:inline-flex;border-radius:6px;padding:1px 6px;font-size:10px;font-weight:500;
+    background:color-mix(in oklch,var(--warning) 16%,transparent);color:var(--warning);margin-top:3px}
+
+  /* ---- what leaves ---- */
+  .gone{border:1px dashed var(--border);border-radius:14px;padding:11px 14px;
+    display:flex;align-items:center;gap:14px}
+  .gone .ttl{font-size:12px;font-weight:600;color:var(--muted-foreground);flex:none}
+  .gone .chips{display:flex;flex-wrap:wrap;gap:6px;flex:1}
+  .chip{border:1px dashed var(--border);border-radius:8px;padding:3px 9px;font-size:11px;
+    color:var(--muted-foreground)}
+  .chip b{color:var(--foreground);font-weight:500}
+  .saved{font-size:11px;color:var(--success);font-weight:600;flex:none;text-align:right}
+  .saved .n{font-size:17px;display:block;font-variant-numeric:tabular-nums}
+</style>
+</head>
+<body>
+
+<div>
+  <h1>What lives where</h1>
+  <p class="lede">
+    Technician View, three tabs. <b>Points of contact</b> moves in under Details,
+    which is what takes the switcher from four names to three.
+  </p>
+</div>
+
+<div>
+  <div class="cap" style="margin-bottom:6px">Always on screen — never behind a tab</div>
+  <div class="pinned">
+    <div class="chunk"><span class="cap">Job</span><span class="v">Title · INT WO · status badges</span></div>
+    <div class="rule"></div>
+    <div class="chunk"><span class="cap">Elapsed</span><span class="v" style="font-size:17px;font-weight:600;font-variant-numeric:tabular-nums">1:24:06</span></div>
+    <div class="chunk"><span class="cap">Earned</span><span class="v" style="font-size:17px;font-weight:600;color:var(--success);font-variant-numeric:tabular-nums">$63.00</span></div>
+    <div class="rule"></div>
+    <div class="mini"><span class="mb sec">Break</span><span class="mb dan">Clock out</span></div>
+    <div class="warnline">
+      <svg class="ico" viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L14.7 3.9a2 2 0 00-3.4 0z"/></svg>
+      <span><b>3 required</b> still missing → jumps to Deliverables</span>
+    </div>
+  </div>
+</div>
+
+<div class="cols">
+
+  <div class="col">
+    <div class="colhead"><span class="pillname">Details</span><span class="count">what you read</span></div>
+    <div class="list">
+      <div class="en">
+        <div class="ic"><svg class="ico" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg></div>
+        <div class="tx">
+          <div class="nm">Details</div>
+          <div class="ds">Company, customer, Site ID, address, scheduled, estimate</div>
+          <span class="tagmoved">renamed from Assignment Details</span>
+        </div>
+      </div>
+      <div class="en">
+        <div class="ic"><svg class="ico" viewBox="0 0 24 24"><path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1 1 .4 1.9.7 2.8a2 2 0 01-.5 2.1L8.1 9.9a16 16 0 006 6l1.3-1.3a2 2 0 012.1-.4c.9.3 1.8.6 2.8.7a2 2 0 011.7 2z"/></svg></div>
+        <div class="tx">
+          <div class="nm">Points of contact</div>
+          <div class="ds">MOD, NOC, PM/PC — and Dispatch info folded in with them</div>
+          <span class="tagmoved">moved here from its own tab</span>
+        </div>
+      </div>
+      <div class="en">
+        <div class="ic"><svg class="ico" viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg></div>
+        <div class="tx">
+          <div class="nm">Scope of work</div>
+          <div class="ds">The checklist, ticked as you go</div>
+        </div>
+      </div>
+      <div class="en">
+        <div class="ic"><svg class="ico" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></div>
+        <div class="tx">
+          <div class="nm">Job reference</div>
+          <div class="ds">Ticket #, INC #, project, crew, work order PDF</div>
+          <span class="tagmoved">collapsed — opened only when asked for</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="colhead"><span class="pillname">Notes</span><span class="count">what you write</span></div>
+    <div class="list">
+      <div class="en">
+        <div class="ic"><svg class="ico" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg></div>
+        <div class="tx">
+          <div class="nm">Work performed</div>
+          <div class="ds">Your free text. Goes to the client report</div>
+          <span class="tagmoved">card keeps this name — the tab is just the label</span>
+        </div>
+      </div>
+      <div class="en">
+        <div class="ic"><svg class="ico" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 00-3-3.9"/></svg></div>
+        <div class="tx">
+          <div class="nm">From the rest of the crew</div>
+          <div class="ds">What the others wrote, read-only</div>
+        </div>
+      </div>
+      <div class="en">
+        <div class="ic"><svg class="ico" viewBox="0 0 24 24"><path d="M7 8h10M7 12h10M7 16h6"/><rect x="3" y="3" width="18" height="18" rx="2"/></svg></div>
+        <div class="tx">
+          <div class="nm">Merged version</div>
+          <div class="ds">The one paragraph the client reads. Lead only</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="colhead"><span class="pillname">Deliverables ③</span><span class="count">what you attach</span></div>
+    <div class="list">
+      <div class="en">
+        <div class="ic"><svg class="ico" viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L14.7 3.9a2 2 0 00-3.4 0z"/></svg></div>
+        <div class="tx">
+          <div class="nm">Required, first</div>
+          <div class="ds">Pre-Install, Post Install, Sign Off</div>
+          <span class="tagreq">the count on the tab and on the clock</span>
+        </div>
+      </div>
+      <div class="en">
+        <div class="ic"><svg class="ico" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="15" rx="2"/><circle cx="12" cy="12" r="3"/><path d="M8 5l1.5-2h5L16 5"/></svg></div>
+        <div class="tx">
+          <div class="nm">The other sections</div>
+          <div class="ds">Issues, serials, return labels, equipment left, custom</div>
+        </div>
+      </div>
+      <div class="en">
+        <div class="ic"><svg class="ico" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg></div>
+        <div class="tx">
+          <div class="nm">Sign-off sheet &amp; signatures</div>
+          <div class="ds">The customer's paperwork, and who signed</div>
+        </div>
+      </div>
+      <div class="en">
+        <div class="ic"><svg class="ico" viewBox="0 0 24 24"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg></div>
+        <div class="tx">
+          <div class="nm">Release code · Reimbursements</div>
+          <div class="ds">A claim is the same gesture: a thing plus the photo that proves it</div>
+          <span class="tagmoved">reimbursements were a card of their own</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div class="gone">
+  <span class="ttl">Not in the<br>technician's view</span>
+  <div class="chips">
+    <span class="chip"><b>Exports</b> 561px — manager-facing</span>
+    <span class="chip"><b>Time &amp; schedule</b> 339px — the clock already says it</span>
+    <span class="chip"><b>Timeline</b> 127px — under “···”</span>
+    <span class="chip"><b>Crew card</b> 125px — one line in Job reference</span>
+  </div>
+  <span class="saved"><span class="n">1,152px</span>gone before a tab is drawn</span>
+</div>
+
+</body>
+</html>

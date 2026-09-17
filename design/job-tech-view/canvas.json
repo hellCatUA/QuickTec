@@ -1,40 +1,87 @@
 {
   "artboards": [
-    { "file": "Before.dc.html",  "x": 0,    "y": 0,   "w": 440,  "h": 844, "title": "Today — the problem" },
-    { "file": "Main.dc.html",    "x": 560,  "y": 0,   "w": 390,  "h": 844, "title": "B — recommended (tap the tabs)", "is_interactive": true },
-    { "file": "Literal.dc.html", "x": 1030, "y": 0,   "w": 390,  "h": 844, "title": "A — the four tabs as named", "is_interactive": true },
-    { "file": "Stages.dc.html",  "x": 1500, "y": 0,   "w": 390,  "h": 844, "title": "C — by stage, not by topic" },
-    { "file": "Desktop.dc.html", "x": 560,  "y": 964, "w": 1100, "h": 760, "title": "B with room — 1100px" }
+    {
+      "file": "Main.dc.html",
+      "x": 0,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "Agreed \u2014 tap the tabs",
+      "is_interactive": true
+    },
+    {
+      "file": "Map.dc.html",
+      "x": 510,
+      "y": 0,
+      "w": 1000,
+      "h": 720,
+      "title": "What lives where"
+    },
+    {
+      "file": "Before.dc.html",
+      "x": 1630,
+      "y": 0,
+      "w": 440,
+      "h": 844,
+      "title": "Today \u2014 the problem"
+    },
+    {
+      "file": "Desktop.dc.html",
+      "x": 0,
+      "y": 964,
+      "w": 1100,
+      "h": 760,
+      "title": "Agreed, with room \u2014 1100px"
+    },
+    {
+      "file": "Literal.dc.html",
+      "x": 1220,
+      "y": 964,
+      "w": 390,
+      "h": 844,
+      "title": "Not chosen \u2014 four tabs, unmerged",
+      "is_interactive": true
+    },
+    {
+      "file": "Stages.dc.html",
+      "x": 1690,
+      "y": 964,
+      "w": 390,
+      "h": 844,
+      "title": "Not chosen \u2014 by stage"
+    }
   ],
   "annotations": [
     {
-      "id": "brief",
+      "id": "agreed",
       "x": 0,
       "y": -210,
+      "w": 390,
+      "text": "AGREED\n\nDetails \u00b7 Notes \u00b7 Deliverables.\n\nPOC merged in under Details, which is what takes the switcher from four names to three. Assignment Details renamed to Details.\n\nTabs are clickable."
+    },
+    {
+      "id": "naming",
+      "x": 510,
+      "y": -210,
+      "w": 1000,
+      "text": "Work Performed -> Notes.  Report is already taken in this app (the client-facing report, the Exports card, the Report .txt button) so a tab called Report that is not the report is a trap. Work says nothing on a page where every tab is work. The card inside keeps the name Work performed, because that is what the exports call it.\n\nIf Notes reads too casual for text that reaches the client report, Summary is the runner-up."
+    },
+    {
+      "id": "why",
+      "x": 1630,
+      "y": -150,
       "w": 440,
-      "text": "Technician View for the job page.\n\nMeasured first: the page is 4,222px on a 390x844 phone — five screens, on a job with no photos and nothing filled in.\n\nThree directions, left to right. B is the one I would build."
+      "text": "Kept for the record: where the 4,222px goes, and why 1,152px of it leaves the technician's view before any tab is drawn."
     },
     {
-      "id": "pick-b",
-      "x": 560,
-      "y": -150,
-      "w": 390,
-      "text": "B: cut what a tech never opens, THEN split the rest. The clock never goes behind a tab, and the tab bar carries what is still missing."
-    },
-    {
-      "id": "pick-a",
-      "x": 1030,
-      "y": -150,
-      "w": 390,
-      "text": "A: exactly the four names from the brief, built honestly — including where it strains. The notes on each tab say where."
-    },
-    {
-      "id": "pick-c",
-      "x": 1500,
-      "y": -150,
-      "w": 390,
-      "text": "C: the same switcher ordered by the job's flow instead of by document type. It moves itself as you clock in and check out."
+      "id": "rejected",
+      "x": 1220,
+      "y": 830,
+      "w": 860,
+      "text": "Not chosen, kept for the record."
     }
   ],
-  "launch": { "view": "canvas" }
+  "launch": {
+    "view": "canvas"
+  }
 }
