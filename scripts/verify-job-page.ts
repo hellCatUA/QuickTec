@@ -2726,26 +2726,77 @@ async function main() {
 
     const manifest = await planner.request.get(`${BASE}/manifest.webmanifest`);
     const body = (await manifest.json()) as {
-      icons: { src: string; purpose?: string }[];
+      icons: { src: string; sizes?: string; purpose?: string }[];
     };
     check("the manifest is served", manifest.status(), 200);
-    // Offered alone, not merely first. A manifest icon list is a set of
-    // candidates and the browser picks the one that best fits the size it is
-    // after, so leaving the bundled entries in as a safety net does not leave
-    // them as a safety net: Chromium takes the scalable /icons/icon.svg over a
-    // configured raster every time, whatever the order. Which is how the tab
-    // showed the real icon — that goes through /icon — while "install this
-    // site as an app" kept offering the placeholder clock.
+    // Nothing here points at the uploaded file, and both of the arrangements
+    // that do are broken in their own way. Listing it beside the bundled set
+    // loses: an icon list is a set of candidates, not a priority order, and
+    // Chromium takes the scalable /icons/icon.svg over a configured raster
+    // every time — which is how the tab showed the real icon, through /icon,
+    // while "install this site as an app" kept offering the placeholder clock.
+    // Listing it alone loses harder: its real size is whatever somebody
+    // uploaded, and one that is too small, not square or gone costs the site
+    // its install offer outright.
     check(
-      "a configured icon is the only one the manifest offers",
-      body.icons.map((one) => one.src).join(","),
-      icon,
+      "the manifest points at rendered icons, never at the configured file",
+      body.icons.every((one) => one.src.startsWith("/app-icon/")),
+      true,
     );
     check(
-      "including for maskable, where the bundled one would be the wrong logo",
-      body.icons.some((one) => one.purpose === "maskable"),
-      false,
+      "and says which sizes it is promising",
+      body.icons.map((one) => `${one.sizes}/${one.purpose}`).join(" "),
+      "192x192/any 512x512/any 512x512/maskable",
     );
+    // Stamped with the setting, so changing the icon changes the address and
+    // an installed app is not left waiting for a cache to expire.
+    check(
+      "the addresses carry the setting",
+      new Set(body.icons.map((one) => new URL(one.src, BASE).searchParams.get("v")))
+        .size,
+      1,
+    );
+
+    // And the promise is kept. This is the whole reason the route exists: a
+    // manifest that declares 192x192 and serves something else costs the site
+    // its install offer, and the configured file is 192 square, so the 512
+    // entry is only true because it is rendered rather than linked.
+    const sharp = (await import("sharp")).default;
+    const drawn = async (name: string) => {
+      const response = await planner.request.get(`${BASE}/app-icon/${name}`);
+      const meta = await sharp(await response.body()).metadata();
+      return `${response.status()} ${meta.format} ${meta.width}x${meta.height}`;
+    };
+
+    check("the 192 icon is 192 square", await drawn("192.png"), "200 png 192x192");
+    check("the 512 icon is 512 square", await drawn("512.png"), "200 png 512x512");
+    check(
+      "and so is the maskable one",
+      await drawn("maskable.png"),
+      "200 png 512x512",
+    );
+    check(
+      "an address nobody promised is not served",
+      (await planner.request.get(`${BASE}/app-icon/999.png`)).status(),
+      404,
+    );
+
+    // The case that took the install button away: a configured icon that is
+    // simply not there. The bundled artwork has to stand in at the declared
+    // size rather than the route failing and the manifest lying.
+    await db.companySettings.update({
+      where: { id: "singleton" },
+      data: { appIconUrl: "/icons/nothing-is-here.png" },
+    });
+    check(
+      "a configured icon that 404s falls back at full size",
+      await drawn("512.png"),
+      "200 png 512x512",
+    );
+    await db.companySettings.update({
+      where: { id: "singleton" },
+      data: { appIconUrl: icon },
+    });
 
     // The tab icon sits behind a fixed address so the root layout's metadata
     // can stay static — a query there runs during prerender, and the container
@@ -2858,9 +2909,6 @@ async function main() {
       new URL(fallbackIcon.headers()["location"], BASE).pathname,
       "/icons/icon.svg",
     );
-    // The bundled set only comes back when there is nothing to replace it,
-    // maskable included — a padded icon cut for Android's crop is worth having
-    // right up until it would be standing in for somebody's real logo.
     const fallbackManifest = await planner.request.get(
       `${BASE}/manifest.webmanifest`,
     );
@@ -2868,15 +2916,17 @@ async function main() {
       icons: { src: string; purpose?: string }[];
     };
     check(
-      "and so does the bundled manifest set",
-      fallbackBody.icons.length > 1 &&
-        fallbackBody.icons.every((one) => one.src.startsWith("/icons/")),
+      "the manifest keeps the same three addresses with nothing configured",
+      fallbackBody.icons.every((one) => one.src.startsWith("/app-icon/")),
       true,
     );
+    // The addresses are fixed; what is behind them is not. A different setting
+    // has to produce a different URL or an installed app keeps the old icon.
     check(
-      "with the padded icon covering maskable again",
-      fallbackBody.icons.some((one) => one.purpose === "maskable"),
-      true,
+      "but not the same stamp",
+      new URL(fallbackBody.icons[0].src, BASE).searchParams.get("v") ===
+        new URL(body.icons[0].src, BASE).searchParams.get("v"),
+      false,
     );
     await planner.reload({ waitUntil: "load" });
     check(
