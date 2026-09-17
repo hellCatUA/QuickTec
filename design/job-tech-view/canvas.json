@@ -1,0 +1,40 @@
+{
+  "artboards": [
+    { "file": "Before.dc.html",  "x": 0,    "y": 0,   "w": 440,  "h": 844, "title": "Today — the problem" },
+    { "file": "Main.dc.html",    "x": 560,  "y": 0,   "w": 390,  "h": 844, "title": "B — recommended (tap the tabs)", "is_interactive": true },
+    { "file": "Literal.dc.html", "x": 1030, "y": 0,   "w": 390,  "h": 844, "title": "A — the four tabs as named", "is_interactive": true },
+    { "file": "Stages.dc.html",  "x": 1500, "y": 0,   "w": 390,  "h": 844, "title": "C — by stage, not by topic" },
+    { "file": "Desktop.dc.html", "x": 560,  "y": 964, "w": 1100, "h": 760, "title": "B with room — 1100px" }
+  ],
+  "annotations": [
+    {
+      "id": "brief",
+      "x": 0,
+      "y": -210,
+      "w": 440,
+      "text": "Technician View for the job page.\n\nMeasured first: the page is 4,222px on a 390x844 phone — five screens, on a job with no photos and nothing filled in.\n\nThree directions, left to right. B is the one I would build."
+    },
+    {
+      "id": "pick-b",
+      "x": 560,
+      "y": -150,
+      "w": 390,
+      "text": "B: cut what a tech never opens, THEN split the rest. The clock never goes behind a tab, and the tab bar carries what is still missing."
+    },
+    {
+      "id": "pick-a",
+      "x": 1030,
+      "y": -150,
+      "w": 390,
+      "text": "A: exactly the four names from the brief, built honestly — including where it strains. The notes on each tab say where."
+    },
+    {
+      "id": "pick-c",
+      "x": 1500,
+      "y": -150,
+      "w": 390,
+      "text": "C: the same switcher ordered by the job's flow instead of by document type. It moves itself as you clock in and check out."
+    }
+  ],
+  "launch": { "view": "canvas" }
+}

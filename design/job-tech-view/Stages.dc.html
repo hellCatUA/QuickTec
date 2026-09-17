@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<script src="./support.js"></script>
+<title>Technician View — by stage</title>
+<style>
+  :root{
+    --background: oklch(0.17 0.012 260);
+    --surface: oklch(0.21 0.014 260);
+    --surface-raised: oklch(0.25 0.016 260);
+    --foreground: oklch(0.96 0.005 260);
+    --muted: oklch(0.28 0.014 260);
+    --muted-foreground: oklch(0.7 0.018 260);
+    --border: oklch(0.31 0.016 260);
+    --input: oklch(0.26 0.016 260);
+    --primary: oklch(0.66 0.16 235);
+    --primary-foreground: oklch(0.16 0.02 260);
+    --success: oklch(0.7 0.16 155);
+    --warning: oklch(0.79 0.15 85);
+    --danger: oklch(0.64 0.2 25);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    width:390px;height:844px;overflow:hidden;
+    background:var(--background);color:var(--foreground);
+    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    font-size:14px;line-height:1.45;display:flex;flex-direction:column;
+  }
+  .appbar{display:flex;align-items:center;gap:8px;padding:8px 16px;
+    border-bottom:1px solid var(--border);background:var(--surface);flex:none}
+  .logo{width:40px;height:40px;border-radius:6px;background:var(--primary);
+    color:var(--primary-foreground);display:flex;align-items:center;justify-content:center;font-weight:700}
+  .wordmark{font-size:18px;font-weight:600;letter-spacing:-.01em}
+  .avatar{margin-left:auto;width:32px;height:32px;border-radius:999px;background:var(--muted);
+    display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--muted-foreground)}
+
+  .scroll{flex:1;overflow:hidden;display:flex;flex-direction:column}
+  .pinned{padding:16px 16px 0;flex:none}
+  .head{display:flex;align-items:flex-start;gap:12px}
+  .back,.dots{width:32px;height:32px;border-radius:10px;display:flex;align-items:center;
+    justify-content:center;color:var(--muted-foreground);flex:none}
+  .dots{font-size:18px;letter-spacing:1px}
+  .head h1{font-size:18px;font-weight:600;letter-spacing:-.01em}
+  .head p{font-size:14px;color:var(--muted-foreground)}
+  .grow{flex:1;min-width:0}
+  .cap{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted-foreground);font-weight:500}
+
+  .clock{margin-top:12px;border:1px solid color-mix(in oklch,var(--success) 50%,transparent);
+    border-radius:14px;background:var(--surface);padding:14px 16px;display:flex;
+    flex-direction:column;gap:12px}
+  .figures{display:flex;align-items:flex-end;justify-content:space-between;gap:16px}
+  .fig .n{font-size:30px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.1}
+  .fig.money{text-align:right}
+  .fig.money .n{color:var(--success)}
+  .btns{display:flex;gap:8px}
+  .btn{flex:1;min-height:52px;border-radius:10px;display:flex;align-items:center;justify-content:center;
+    gap:8px;font-size:16px;font-weight:500;border:1px solid transparent}
+  .btn.secondary{background:var(--surface-raised);border-color:var(--border);color:var(--foreground)}
+  .btn.danger{background:var(--danger);color:oklch(0.97 0.01 25)}
+  .btn.muted{background:var(--surface-raised);border-color:var(--border);color:var(--muted-foreground)}
+
+  /* the rail: the same switcher, ordered by the job instead of by topic */
+  .rail{display:flex;align-items:center;margin-top:14px;gap:0}
+  .step{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;cursor:pointer}
+  .dot{width:26px;height:26px;border-radius:999px;border:1.5px solid var(--border);
+    background:var(--surface);display:flex;align-items:center;justify-content:center;
+    font-size:11px;font-weight:600;color:var(--muted-foreground)}
+  .step .nm{font-size:11px;font-weight:500;color:var(--muted-foreground);white-space:nowrap}
+  .step.done .dot{background:var(--success);border-color:var(--success);color:oklch(0.16 0.02 260)}
+  .step.done .nm{color:var(--muted-foreground)}
+  .step.now .dot{background:var(--primary);border-color:var(--primary);color:var(--primary-foreground)}
+  .step.now .nm{color:var(--foreground);font-weight:600}
+  .bar{height:1.5px;flex:none;width:34px;background:var(--border);margin-bottom:18px;border-radius:2px}
+  .bar.done{background:var(--success)}
+
+  .pane{flex:1;overflow:auto;padding:14px 16px 16px;display:flex;flex-direction:column;gap:12px}
+  .card{border:1px solid var(--border);border-radius:14px;background:var(--surface)}
+  .card > h2{font-size:14px;font-weight:600;letter-spacing:-.01em;padding:14px 16px;
+    border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px}
+  .card .c{padding:14px 16px;display:flex;flex-direction:column;gap:12px}
+  .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.04em;font-weight:500;color:var(--muted-foreground)}
+  .sub{font-size:12px;color:var(--muted-foreground)}
+  .row{display:flex;align-items:center;gap:10px}
+  .item{display:flex;align-items:center;gap:10px;padding:10px 0}
+  .item + .item{border-top:1px solid var(--border)}
+  .add{font-size:12px;color:var(--primary)}
+  .ico{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-width:1.75;
+    stroke-linecap:round;stroke-linejoin:round}
+  .badge{display:inline-flex;align-items:center;gap:4px;border-radius:8px;padding:2px 8px;
+    font-size:12px;font-weight:500;background:var(--muted);color:var(--muted-foreground)}
+  .badge.warn{background:color-mix(in oklch,var(--warning) 15%,transparent);color:var(--warning);
+    box-shadow:inset 0 0 0 1px color-mix(in oklch,var(--warning) 30%,transparent)}
+  .badge.ok{background:color-mix(in oklch,var(--success) 15%,transparent);color:var(--success);
+    box-shadow:inset 0 0 0 1px color-mix(in oklch,var(--success) 30%,transparent)}
+  .check{width:20px;height:20px;border-radius:6px;border:1.5px solid var(--border);flex:none}
+  .check.done{background:var(--success);border-color:var(--success)}
+  .everything{display:flex;align-items:center;justify-content:center;gap:6px;
+    font-size:12px;color:var(--muted-foreground);padding:2px 0 0}
+
+  .note{border-left:2px solid var(--primary);padding:2px 0 2px 10px;font-size:11px;
+    color:var(--muted-foreground)}
+  .note b{color:var(--primary);font-weight:600}
+
+  .bottomnav{display:flex;border-top:1px solid var(--border);background:var(--surface);flex:none}
+  .bn{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
+    padding:8px 0;font-size:10px;font-weight:500;color:var(--muted-foreground)}
+  .bn.on{color:var(--primary)}
+  .bn svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.75;
+    stroke-linecap:round;stroke-linejoin:round}
+</style>
+</head>
+<body>
+
+<div class="appbar">
+  <div class="logo">Q</div>
+  <div class="wordmark">QuickTec</div>
+  <div class="avatar">TT</div>
+</div>
+
+<div class="scroll">
+  <div class="pinned">
+    <div class="head">
+      <div class="back"><svg class="ico" viewBox="0 0 24 24" style="width:20px;height:20px"><path d="M15 18l-6-6 6-6"/></svg></div>
+      <div class="grow">
+        <h1>Finished last quarter</h1>
+        <p>SBUX #24541 · 1912 Pike Pl</p>
+      </div>
+      <div class="dots">···</div>
+    </div>
+
+    <div class="clock">
+      <div class="figures">
+        <div class="fig"><div class="cap">Elapsed</div><div class="n">1:24:06</div></div>
+        <div class="fig money"><div class="cap">Earned</div><div class="n">$63.00</div></div>
+      </div>
+      <div class="btns">
+        <div class="btn secondary">Break</div>
+        <div class="btn danger">Clock out · 3 left</div>
+      </div>
+    </div>
+
+    <div class="rail">
+      <div class="step done">
+        <div class="dot"><svg class="ico" viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M20 6L9 17l-5-5"/></svg></div>
+        <div class="nm">Arrive</div>
+      </div>
+      <div class="bar done"></div>
+      <div class="step now">
+        <div class="dot">2</div>
+        <div class="nm">On site</div>
+      </div>
+      <div class="bar"></div>
+      <div class="step">
+        <div class="dot">3</div>
+        <div class="nm">Wrap up</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="pane">
+    <div class="card">
+      <h2>What you are here to do</h2>
+      <div class="c" style="gap:0">
+        <div class="item" style="padding-top:0">
+          <div class="check done"><svg class="ico" viewBox="0 0 24 24" style="width:20px;height:20px;stroke:oklch(0.16 0.02 260)"><path d="M20 6L9 17l-5-5"/></svg></div>
+          <div class="grow" style="color:var(--muted-foreground);text-decoration:line-through">Survey existing cabling</div>
+        </div>
+        <div class="item">
+          <div class="check"></div>
+          <div class="grow">Swap the failed AP at register 3</div>
+        </div>
+        <div class="item" style="padding-bottom:0">
+          <div class="check"></div>
+          <div class="grow">Confirm the drive-thru headset reconnects</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Photos <span class="badge warn" style="margin-left:auto">2 required</span></h2>
+      <div class="c" style="gap:0">
+        <div class="item" style="padding-top:0">
+          <div class="grow"><div style="font-weight:500">Pre-Install</div><div class="sub">Before any work is done</div></div>
+          <span class="add">+ Add</span>
+        </div>
+        <div class="item" style="padding-bottom:0">
+          <div class="grow"><div style="font-weight:500">Post Install</div><div class="sub">The finished work</div></div>
+          <span class="add">+ Add</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Notes</h2>
+      <div class="c"><div class="sub">Replaced AP at register 3, serial swapped…</div></div>
+    </div>
+
+    <div class="everything">
+      <svg class="ico" viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+      Show everything on this job
+    </div>
+
+    <p class="note">
+      <b>Same switcher, different question.</b> Tabs ask “which topic”; this asks
+      “what now”, and moves itself when you clock in or start checking out. Serials,
+      return labels, sign-off and expenses all live under Wrap&nbsp;up, so nothing
+      is offered before it can be answered.
+    </p>
+  </div>
+</div>
+
+<div class="bottomnav">
+  <div class="bn"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>Dashboard</div>
+  <div class="bn on"><svg viewBox="0 0 24 24"><path d="M9 3h6v4H9zM4 7h16v13H4z"/></svg>Jobs</div>
+  <div class="bn"><svg viewBox="0 0 24 24"><path d="M12 2l9 5-9 5-9-5 9-5zM3 12l9 5 9-5M3 17l9 5 9-5"/></svg>Projects</div>
+  <div class="bn"><svg viewBox="0 0 24 24"><path d="M4 4h16v12H5l-1 4z"/></svg>Approvals</div>
+  <div class="bn"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>More</div>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<script src="./support.js"></script>
+<title>Today — what the page is made of</title>
+<style>
+  :root{
+    --background: oklch(0.17 0.012 260);
+    --surface: oklch(0.21 0.014 260);
+    --surface-raised: oklch(0.25 0.016 260);
+    --foreground: oklch(0.96 0.005 260);
+    --muted: oklch(0.28 0.014 260);
+    --muted-foreground: oklch(0.7 0.018 260);
+    --border: oklch(0.31 0.016 260);
+    --primary: oklch(0.66 0.16 235);
+    --success: oklch(0.7 0.16 155);
+    --warning: oklch(0.79 0.15 85);
+    --danger: oklch(0.64 0.2 25);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    width:440px;height:844px;background:var(--background);color:var(--foreground);
+    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    font-size:13px;line-height:1.45;padding:20px;display:flex;flex-direction:column;gap:14px;
+  }
+  h1{font-size:18px;font-weight:600;letter-spacing:-.01em}
+  .lede{font-size:13px;color:var(--muted-foreground)}
+  .lede b{color:var(--foreground);font-weight:600}
+
+  .chart{display:flex;gap:12px;flex:1;min-height:0}
+  .ruler{width:56px;position:relative;flex:none;border-right:1px dashed var(--border)}
+  .screen{position:absolute;left:0;right:8px;border-top:1px dashed var(--border);
+    font-size:10px;color:var(--muted-foreground);padding-top:2px}
+  .bars{flex:1;display:flex;flex-direction:column;gap:2px}
+  .bar{border-radius:5px;display:flex;align-items:center;gap:8px;padding:0 9px;
+    background:var(--surface);border:1px solid var(--border);overflow:hidden;min-height:11px}
+  .bar .nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px}
+  .bar .px{font-size:10px;color:var(--muted-foreground);font-variant-numeric:tabular-nums;flex:none}
+
+  /* what a tech on site actually reaches for */
+  .keep{border-color:color-mix(in oklch,var(--primary) 45%,transparent);
+    background:color-mix(in oklch,var(--primary) 12%,var(--surface))}
+  /* folded into something else, or gone entirely, in Technician View */
+  .drop{border-style:dashed;color:var(--muted-foreground)}
+  .drop .nm{text-decoration:line-through;opacity:.75}
+
+  .key{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:11px;color:var(--muted-foreground)}
+  .k{display:flex;align-items:center;gap:6px}
+  .sw{width:14px;height:10px;border-radius:3px;border:1px solid var(--border);background:var(--surface)}
+  .sw.keep{border-color:color-mix(in oklch,var(--primary) 45%,transparent);
+    background:color-mix(in oklch,var(--primary) 12%,var(--surface))}
+  .sw.drop{border-style:dashed}
+
+  .tally{display:flex;gap:8px}
+  .t{flex:1;border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:9px 11px}
+  .t .n{font-size:19px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.15}
+  .t .c{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted-foreground);font-weight:500}
+  .t.good .n{color:var(--success)}
+  .foot{font-size:11px;color:var(--muted-foreground)}
+</style>
+</head>
+<body>
+
+<div>
+  <h1>Today: 4,222&nbsp;px of job</h1>
+  <p class="lede">
+    Measured in the running app at 390×844 — <b>five phone screens</b>, on a job with
+    no photos, nothing filled in and one person on the crew.
+  </p>
+</div>
+
+<div class="chart">
+  <div class="ruler">
+    <div class="screen" style="top:0">screen 1</div>
+    <div class="screen" style="top:112px">screen 2</div>
+    <div class="screen" style="top:224px">screen 3</div>
+    <div class="screen" style="top:336px">screen 4</div>
+    <div class="screen" style="top:448px">screen 5</div>
+  </div>
+
+  <div class="bars">
+    <div class="bar keep" style="height:30px"><span class="nm">Title, badges, clock</span><span class="px">226</span></div>
+    <div class="bar" style="height:114px"><span class="nm">Assignment details</span><span class="px">862</span></div>
+    <div class="bar keep" style="height:25px"><span class="nm">Dispatch info</span><span class="px">189</span></div>
+    <div class="bar keep" style="height:14px"><span class="nm">Scope of work</span><span class="px">107</span></div>
+    <div class="bar keep" style="height:44px"><span class="nm">Points of contact</span><span class="px">331</span></div>
+    <div class="bar keep" style="height:33px"><span class="nm">Work performed</span><span class="px">247</span></div>
+    <div class="bar drop" style="height:45px"><span class="nm">Time &amp; schedule</span><span class="px">339</span></div>
+    <div class="bar drop" style="height:17px"><span class="nm">Crew</span><span class="px">125</span></div>
+    <div class="bar keep" style="height:73px"><span class="nm">Deliverables</span><span class="px">552</span></div>
+    <div class="bar keep" style="height:25px"><span class="nm">Reimbursements</span><span class="px">191</span></div>
+    <div class="bar drop" style="height:74px"><span class="nm">Exports</span><span class="px">561</span></div>
+    <div class="bar drop" style="height:17px"><span class="nm">Timeline</span><span class="px">127</span></div>
+  </div>
+</div>
+
+<div class="key">
+  <span class="k"><span class="sw keep"></span> a tech reaches for this on site</span>
+  <span class="k"><span class="sw"></span> split — the driving half stays out, the rest collapses</span>
+  <span class="k"><span class="sw drop"></span> folded in, or manager-only</span>
+</div>
+
+<div class="tally">
+  <div class="t"><div class="c">Biggest card</div><div class="n">862</div><div class="c" style="text-transform:none;letter-spacing:0">Assignment details — 12 fields, four of them a tech never reads</div></div>
+  <div class="t good"><div class="c">Cut outright</div><div class="n">1,152</div><div class="c" style="text-transform:none;letter-spacing:0">Exports, Timeline, Crew and Time &amp; schedule, before a single tab is drawn</div></div>
+</div>
+
+<p class="foot">
+  Tabs alone would not fix this — they would hide five screens behind four taps.
+  The saving comes from cutting what a technician never opens first, and only then
+  splitting the rest.
+</p>
+
+</body>
+</html>
