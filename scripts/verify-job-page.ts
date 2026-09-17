@@ -2729,19 +2729,22 @@ async function main() {
       icons: { src: string; purpose?: string }[];
     };
     check("the manifest is served", manifest.status(), 200);
+    // Offered alone, not merely first. A manifest icon list is a set of
+    // candidates and the browser picks the one that best fits the size it is
+    // after, so leaving the bundled entries in as a safety net does not leave
+    // them as a safety net: Chromium takes the scalable /icons/icon.svg over a
+    // configured raster every time, whatever the order. Which is how the tab
+    // showed the real icon — that goes through /icon — while "install this
+    // site as an app" kept offering the placeholder clock.
     check(
-      "the configured icon is offered first",
-      body.icons[0]?.src,
+      "a configured icon is the only one the manifest offers",
+      body.icons.map((one) => one.src).join(","),
       icon,
     );
-    // The bundled one is padded for Android's crop; a file of unknown shape
-    // handed over as the only maskable source is a guaranteed bad crop.
     check(
-      "and the padded bundled icon still covers maskable",
-      body.icons.some(
-        (one) => one.purpose === "maskable" && one.src.startsWith("/icons/"),
-      ),
-      true,
+      "including for maskable, where the bundled one would be the wrong logo",
+      body.icons.some((one) => one.purpose === "maskable"),
+      false,
     );
 
     // The tab icon sits behind a fixed address so the root layout's metadata
@@ -2854,6 +2857,26 @@ async function main() {
       "and falls back to the bundled one when nothing is set",
       new URL(fallbackIcon.headers()["location"], BASE).pathname,
       "/icons/icon.svg",
+    );
+    // The bundled set only comes back when there is nothing to replace it,
+    // maskable included — a padded icon cut for Android's crop is worth having
+    // right up until it would be standing in for somebody's real logo.
+    const fallbackManifest = await planner.request.get(
+      `${BASE}/manifest.webmanifest`,
+    );
+    const fallbackBody = (await fallbackManifest.json()) as {
+      icons: { src: string; purpose?: string }[];
+    };
+    check(
+      "and so does the bundled manifest set",
+      fallbackBody.icons.length > 1 &&
+        fallbackBody.icons.every((one) => one.src.startsWith("/icons/")),
+      true,
+    );
+    check(
+      "with the padded icon covering maskable again",
+      fallbackBody.icons.some((one) => one.purpose === "maskable"),
+      true,
     );
     await planner.reload({ waitUntil: "load" });
     check(

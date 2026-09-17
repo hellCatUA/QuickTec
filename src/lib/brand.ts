@@ -15,6 +15,26 @@
  * screen icon by the OS, and neither takes our opinion on the matter.
  */
 
+/**
+ * A configured icon URL that something can actually be pointed at.
+ *
+ * The settings field takes free text. A data: URI renders fine in an `<img>`
+ * and is a reasonable thing to paste, but it is neither a Location a redirect
+ * can carry nor a manifest icon a browser will fetch, so it falls back to the
+ * bundled artwork rather than producing a broken icon.
+ */
+export function usableIconUrl(
+  configured: string | null | undefined,
+): string | null {
+  const url = configured?.trim();
+  if (!url) return null;
+  return url.startsWith("http://") ||
+    url.startsWith("https://") ||
+    url.startsWith("/")
+    ? url
+    : null;
+}
+
 export const BRAND_SCALE_DEFAULT = 100;
 export const BRAND_SCALE_MIN = 50;
 export const BRAND_SCALE_MAX = 200;

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { usableIconUrl } from "@/lib/brand";
 import { db } from "@/lib/db";
 
 /**
@@ -31,16 +32,10 @@ export async function GET(request: Request) {
     configured = null;
   }
 
-  // Only somewhere a browser can actually be sent. A data: URI is legal in the
-  // settings field and renders fine in an <img>, but it is not a Location a
-  // redirect can carry, so it falls back rather than failing.
-  const target =
-    configured &&
-    (configured.startsWith("http://") ||
-      configured.startsWith("https://") ||
-      configured.startsWith("/"))
-      ? configured
-      : BUNDLED;
+  // Only somewhere a browser can actually be sent — shared with the manifest,
+  // so the tab and the home screen can never disagree about whether a given
+  // setting is usable.
+  const target = usableIconUrl(configured) ?? BUNDLED;
 
   return NextResponse.redirect(new URL(target, request.url), {
     status: 307,
