@@ -1,0 +1,31 @@
+{
+  "artboards": [
+    { "file": "Main.dc.html",   "x": 0,    "y": 0,   "w": 390,  "h": 844, "title": "Proposed — tap Blank / A project", "is_interactive": true },
+    { "file": "Before.dc.html", "x": 510,  "y": 0,   "w": 560,  "h": 900, "title": "Today — and the bug, reproduced" },
+    { "file": "Draft.dc.html",  "x": 1190, "y": 0,   "w": 1020, "h": 740, "title": "The question I need answered" }
+  ],
+  "annotations": [
+    {
+      "id": "shape",
+      "x": 0,
+      "y": -230,
+      "w": 390,
+      "text": "PROPOSED\n\nOne choice at the top that fills five fields. Then only what is genuinely required — site and title. Everything else folded, with each row saying what is already in it.\n\nA footer that never scrolls away: when the draft last saved, what is still missing, and Create."
+    },
+    {
+      "id": "why",
+      "x": 510,
+      "y": -170,
+      "w": 560,
+      "text": "Measured, not guessed: 4,699px at 390x844, and the data loss reproduced in a browser. Four fields vanish on a refused submit — exactly the four with no React state behind them."
+    },
+    {
+      "id": "decide",
+      "x": 1190,
+      "y": -170,
+      "w": 1020,
+      "text": "Read this one first. Auto-saving as a draft is not a UI change — it decides what an unfinished job is to job lists, the dashboard, the calendar, exports and payroll. C keeps the blast radius to one new table."
+    }
+  ],
+  "launch": { "view": "canvas" }
+}

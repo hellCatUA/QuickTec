@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<script src="./support.js"></script>
+<title>Where a draft lives</title>
+<style>
+  :root{
+    --background: oklch(0.17 0.012 260);
+    --surface: oklch(0.21 0.014 260);
+    --surface-raised: oklch(0.25 0.016 260);
+    --foreground: oklch(0.96 0.005 260);
+    --muted: oklch(0.28 0.014 260);
+    --muted-foreground: oklch(0.7 0.018 260);
+    --border: oklch(0.31 0.016 260);
+    --primary: oklch(0.66 0.16 235);
+    --primary-foreground: oklch(0.16 0.02 260);
+    --success: oklch(0.7 0.16 155);
+    --warning: oklch(0.79 0.15 85);
+    --danger: oklch(0.64 0.2 25);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    width:1020px;height:740px;overflow:hidden;
+    background:var(--background);color:var(--foreground);
+    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    font-size:13px;line-height:1.45;padding:22px;display:flex;flex-direction:column;gap:14px;
+  }
+  h1{font-size:19px;font-weight:600;letter-spacing:-.01em}
+  .lede{font-size:13px;color:var(--muted-foreground)}
+  .lede b{color:var(--foreground);font-weight:600}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;
+    background:var(--surface-raised);border:1px solid var(--border);border-radius:5px;padding:0 4px}
+
+  .pivot{border:1px solid color-mix(in oklch,var(--warning) 45%,transparent);border-radius:12px;
+    background:color-mix(in oklch,var(--warning) 8%,var(--surface));padding:11px 14px;
+    display:flex;align-items:flex-start;gap:10px;font-size:12px}
+  .pivot .ic{color:var(--warning);flex:none;margin-top:1px}
+  .pivot b{color:var(--warning);font-weight:600}
+
+  .cols{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;flex:1;min-height:0}
+  .col{border:1px solid var(--border);border-radius:14px;background:var(--surface);
+    display:flex;flex-direction:column;overflow:hidden}
+  .col.pick{border-color:color-mix(in oklch,var(--success) 50%,transparent)}
+  .colhead{padding:12px 14px;border-bottom:1px solid var(--border)}
+  .colhead .t{font-size:14px;font-weight:600}
+  .colhead .s{font-size:11px;color:var(--muted-foreground);margin-top:2px}
+  .badge{display:inline-flex;border-radius:6px;padding:1px 7px;font-size:10px;font-weight:600;
+    margin-bottom:5px}
+  .badge.rec{background:color-mix(in oklch,var(--success) 16%,transparent);color:var(--success)}
+  .badge.ask{background:color-mix(in oklch,var(--primary) 16%,transparent);color:var(--primary)}
+  .list{padding:8px 14px 12px;display:flex;flex-direction:column;overflow:auto}
+  .pt{display:flex;gap:8px;padding:7px 0;font-size:12px;align-items:flex-start}
+  .pt + .pt{border-top:1px solid var(--border)}
+  .pt .m{flex:none;width:14px;text-align:center;font-weight:700;line-height:1.35}
+  .pt.good .m{color:var(--success)}
+  .pt.bad  .m{color:var(--danger)}
+  .pt.mid  .m{color:var(--warning)}
+  .pt .x{flex:1;min-width:0}
+</style>
+</head>
+<body>
+
+<div>
+  <h1>“Save as draft” — but where does the draft live?</h1>
+  <p class="lede">
+    Three answers, and they are not cosmetic: each one decides what an unfinished
+    job <b>is</b> to the rest of the app. This is the question I need answered before
+    I build it.
+  </p>
+</div>
+
+<div class="pivot">
+  <svg class="ic" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L14.7 3.9a2 2 0 00-3.4 0z"/></svg>
+  <span>
+    <b>What makes this sharp:</b> <code>allocateIntWo</code> <i>consumes</i> a counter —
+    the project's <code>intWoCounter</code> or the global yearly one. A number handed
+    to a draft that is then abandoned is gone, and the sequence on client paperwork
+    has a hole in it. <code>Job.intWoId</code> is also <code>NOT NULL</code> and unique today.
+  </span>
+</div>
+
+<div class="cols">
+
+  <div class="col">
+    <div class="colhead">
+      <span class="badge ask">A</span>
+      <div class="t">A real Job, numbered</div>
+      <div class="s">Row created on first keystroke, lifecycle DRAFT</div>
+    </div>
+    <div class="list">
+      <div class="pt good"><span class="m">+</span><span class="x">Simplest to build. The row already exists, so every later edit is the edit path that already works.</span></div>
+      <div class="pt good"><span class="m">+</span><span class="x">The draft is visible in Jobs, so somebody else can pick it up.</span></div>
+      <div class="pt bad"><span class="m">−</span><span class="x"><b>Burns an INT WO number per abandoned draft.</b> Open the page, change your mind, and 2607-P-9-0011 never exists.</span></div>
+      <div class="pt bad"><span class="m">−</span><span class="x">A job with no site and no company now flows through job lists, the dashboard, calendar sync, exports and payroll queries. Every one has to tolerate it.</span></div>
+      <div class="pt bad"><span class="m">−</span><span class="x">Somebody has to clean up the drafts nobody finished.</span></div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="colhead">
+      <span class="badge ask">B</span>
+      <div class="t">A real Job, unnumbered</div>
+      <div class="s">DRAFT row now, number allocated on Create</div>
+    </div>
+    <div class="list">
+      <div class="pt good"><span class="m">+</span><span class="x">No gaps in the numbering — the counter is only touched by a job that becomes real.</span></div>
+      <div class="pt good"><span class="m">+</span><span class="x">Still visible in Jobs, still handed over.</span></div>
+      <div class="pt bad"><span class="m">−</span><span class="x"><b>Needs <code>intWoId</code> to become nullable</b> — altering a NOT NULL column that carries a unique index, on a table with live data. The one migration shape I would rather not run a week after the last one.</span></div>
+      <div class="pt bad"><span class="m">−</span><span class="x">Same blast radius as A: half-filled jobs in every list and query.</span></div>
+      <div class="pt mid"><span class="m">~</span><span class="x">Everything that prints the INT WO now has to handle it being absent.</span></div>
+    </div>
+  </div>
+
+  <div class="col pick">
+    <div class="colhead">
+      <span class="badge rec">C — what I would build</span>
+      <div class="t">Not a Job yet</div>
+      <div class="s">A JobDraft row, per person; becomes a Job on Create</div>
+    </div>
+    <div class="list">
+      <div class="pt good"><span class="m">+</span><span class="x"><b>Nothing can be lost</b> — every keystroke is saved, which is the actual complaint.</span></div>
+      <div class="pt good"><span class="m">+</span><span class="x">No number burned, no gaps, no migration on <code>intWoId</code>.</span></div>
+      <div class="pt good"><span class="m">+</span><span class="x">Nothing half-made reaches job lists, the dashboard, calendars, exports or payroll. The blast radius is one new table.</span></div>
+      <div class="pt good"><span class="m">+</span><span class="x">The validation bug stops mattering: a refused submit reloads from the draft instead of resetting.</span></div>
+      <div class="pt mid"><span class="m">~</span><span class="x">A draft is yours until you create it. If two planners should be able to share one, that is A or B, not this.</span></div>
+      <div class="pt mid"><span class="m">~</span><span class="x">One more table, and a rule for when an untouched draft is cleared.</span></div>
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>

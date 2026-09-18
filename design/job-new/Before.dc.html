@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<script src="./support.js"></script>
+<title>Today — and the bug</title>
+<style>
+  :root{
+    --background: oklch(0.17 0.012 260);
+    --surface: oklch(0.21 0.014 260);
+    --surface-raised: oklch(0.25 0.016 260);
+    --foreground: oklch(0.96 0.005 260);
+    --muted: oklch(0.28 0.014 260);
+    --muted-foreground: oklch(0.7 0.018 260);
+    --border: oklch(0.31 0.016 260);
+    --primary: oklch(0.66 0.16 235);
+    --success: oklch(0.7 0.16 155);
+    --warning: oklch(0.79 0.15 85);
+    --danger: oklch(0.64 0.2 25);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    width:560px;height:900px;overflow:hidden;
+    background:var(--background);color:var(--foreground);
+    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    font-size:13px;line-height:1.45;padding:22px;display:flex;flex-direction:column;gap:14px;
+  }
+  h1{font-size:19px;font-weight:600;letter-spacing:-.01em}
+  .lede{font-size:13px;color:var(--muted-foreground)}
+  .lede b{color:var(--foreground);font-weight:600}
+  .cap{font-size:11px;text-transform:uppercase;letter-spacing:.04em;font-weight:500;color:var(--muted-foreground)}
+
+  .split{display:flex;gap:16px;flex:1;min-height:0}
+
+  /* left: where the 4,699px goes */
+  .bars{width:210px;flex:none;display:flex;flex-direction:column;gap:2px}
+  .bar{border-radius:5px;display:flex;align-items:center;gap:8px;padding:0 9px;
+    background:var(--surface);border:1px solid var(--border);overflow:hidden;min-height:12px}
+  .bar .nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px}
+  .bar .px{font-size:10px;color:var(--muted-foreground);font-variant-numeric:tabular-nums;flex:none}
+  .bar.big{border-color:color-mix(in oklch,var(--danger) 45%,transparent);
+    background:color-mix(in oklch,var(--danger) 10%,var(--surface))}
+
+  /* right: the bug */
+  .bug{flex:1;min-width:0;border:1px solid color-mix(in oklch,var(--danger) 45%,transparent);
+    border-radius:14px;background:var(--surface);display:flex;flex-direction:column;overflow:hidden}
+  .bug h2{font-size:14px;font-weight:600;padding:12px 14px;border-bottom:1px solid var(--border);
+    display:flex;align-items:center;gap:8px}
+  .bug h2 .tag{margin-left:auto;font-size:10px;font-weight:500;border-radius:6px;padding:1px 7px;
+    background:color-mix(in oklch,var(--danger) 18%,transparent);color:var(--danger)}
+  .bug .c{padding:12px 14px;display:flex;flex-direction:column;gap:10px;overflow:auto}
+  .fields{display:flex;flex-direction:column;gap:0}
+  .f{display:flex;align-items:center;gap:9px;padding:7px 0;font-size:12px}
+  .f + .f{border-top:1px solid var(--border)}
+  .f .k{width:112px;flex:none;color:var(--muted-foreground);font-size:11px;
+    text-transform:uppercase;letter-spacing:.03em}
+  .f .v{flex:1;min-width:0;font-variant-numeric:tabular-nums;white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis}
+  .f .r{flex:none;font-size:10px;font-weight:600;border-radius:6px;padding:1px 7px}
+  .f.lost .v{color:var(--danger);text-decoration:line-through}
+  .f.lost .r{background:color-mix(in oklch,var(--danger) 18%,transparent);color:var(--danger)}
+  .f.kept .r{background:color-mix(in oklch,var(--success) 16%,transparent);color:var(--success)}
+  .why{font-size:11px;color:var(--muted-foreground);border-left:2px solid var(--danger);padding-left:10px}
+  .why b{color:var(--danger);font-weight:600}
+
+  .tally{display:flex;gap:8px}
+  .t{flex:1;border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:9px 11px}
+  .t .n{font-size:19px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.15}
+  .t .c2{font-size:10px;color:var(--muted-foreground)}
+  .t.bad .n{color:var(--danger)}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;
+    background:var(--surface-raised);border:1px solid var(--border);border-radius:5px;padding:0 4px}
+</style>
+</head>
+<body>
+
+<div>
+  <h1>Today: 4,699&nbsp;px, and it eats your typing</h1>
+  <p class="lede">
+    Measured in the running app at 390×844 — <b>5.6 phone screens</b> of form
+    before anything can be created. Nine cards, everything on screen at once.
+  </p>
+</div>
+
+<div class="split">
+  <div>
+    <div class="cap" style="margin-bottom:6px">Where it goes</div>
+    <div class="bars">
+      <div class="bar big" style="height:110px"><span class="nm">Assignment details</span><span class="px">1099</span></div>
+      <div class="bar" style="height:46px"><span class="nm">Schedule</span><span class="px">457</span></div>
+      <div class="bar" style="height:31px"><span class="nm">Scope of work</span><span class="px">308</span></div>
+      <div class="bar" style="height:46px"><span class="nm">Paperwork</span><span class="px">455</span></div>
+      <div class="bar big" style="height:101px"><span class="nm">Deliverables</span><span class="px">1005</span></div>
+      <div class="bar" style="height:24px"><span class="nm">Assign techs</span><span class="px">235</span></div>
+      <div class="bar" style="height:18px"><span class="nm">Dispatch</span><span class="px">175</span></div>
+      <div class="bar" style="height:43px"><span class="nm">Pay</span><span class="px">429</span></div>
+      <div class="bar" style="height:12px"><span class="nm">Miscellaneous</span><span class="px">107</span></div>
+    </div>
+  </div>
+
+  <div class="bug">
+    <h2>
+      The data loss, reproduced
+      <span class="tag">confirmed</span>
+    </h2>
+    <div class="c">
+      <p style="font-size:12px;color:var(--muted-foreground)">
+        Filled five fields, left the site unpicked, pressed Create. The server
+        refused — and this is what the form looked like afterwards:
+      </p>
+
+      <div class="fields">
+        <div class="f lost"><span class="k">Assignment ID</span><span class="v">A-12345</span><span class="r">gone</span></div>
+        <div class="f lost"><span class="k">Ticket #</span><span class="v">TK-99887</span><span class="r">gone</span></div>
+        <div class="f lost"><span class="k">INC #</span><span class="v">INC0042</span><span class="r">gone</span></div>
+        <div class="f lost"><span class="k">Scope of work</span><span class="v">Swap the failed switch at rack 3</span><span class="r">gone</span></div>
+        <div class="f kept"><span class="k">Title</span><span class="v">Repro job</span><span class="r">kept</span></div>
+      </div>
+
+      <p class="why">
+        <b>Not random.</b> React resets a form after its action runs. The fields
+        that survive are the ones held in React state — title, the pickers, the
+        dates. The ones that vanish are plain <code>&lt;input&gt;</code>s with
+        nothing holding their value: Assignment ID, Ticket #, INC # and the
+        whole scope of work. Every extra ticket row goes with them.
+      </p>
+
+      <p class="why" style="border-color:var(--warning)">
+        <b style="color:var(--warning)">And one field is theatre.</b> The
+        Customer picker is not in the submitted schema at all. It filters the
+        site list, and the job's customer is taken from whichever site you
+        chose. It looks like data entry and is a search box.
+      </p>
+    </div>
+  </div>
+</div>
+
+<div class="tally">
+  <div class="t bad"><div class="n">4</div><div class="c2">fields wiped by a validation error — the four with no state behind them</div></div>
+  <div class="t"><div class="n">9</div><div class="c2">cards, all expanded, required and optional undifferentiated</div></div>
+  <div class="t"><div class="n">5</div><div class="c2">fields are genuinely required; the rest is optional or defaulted</div></div>
+</div>
+
+</body>
+</html>
