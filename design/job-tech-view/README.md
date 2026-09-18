@@ -8,9 +8,46 @@ Agreed but **not in the code yet**. Three tabs:
 Details  ·  Notes  ·  Deliverables ③
 ```
 
+### Assignment details, field by field
+
+```
+COMPANY            REP COMPANY
+CUSTOMER           SITE ID
+ADDRESS
+SCHEDULED          ESTIMATE
+ASSIGNMENT ID      TICKET #
+INC #
+<PAYING COMPANY> WO #        <- label follows the paying company
+<OUR COMPANY> INT WO ID
+```
+
+Assignment ID and Ticket # move up out of the collapsed Job reference, which is
+left holding project, crew and the work order PDF. The two work-order fields are
+drawn but **not settled** — how Rep Company and Paying Company appear on the
+report and in the INT WO ID is a separate decision.
+
+## Who is who
+
+```
+CUSTOMER -> REP COMPANY -> PAYING COMPANY -> WORKMARKET -> OUR COMPANY
+```
+
+- **Customer** — the brand whose site it is. `Customer` today.
+- **Rep Company** — NEW. Nothing models this yet.
+- **Paying Company** — what the app calls Rep Company today (`Client` in the
+  schema). They pay us. Shown to a technician as just **Company**, because a
+  tech does not need the rest of the chain.
+- **WorkMarket** — where we pick the job up. Outside the app.
+- **Our company** — `CompanySettings`.
+
+The hazard: after the rename the words "Rep Company" mean a DIFFERENT entity, so
+any surface still saying "Rep Company" while meaning `Client` becomes silently
+wrong rather than merely stale.
+
 ## What was decided
 
-- **Assignment Details → Details.**
+- **Tab reads `Details`, the block reads `Assignment details`** — short name on
+  the switcher, full name on the page.
 - **Points of contact merges into Details**, sitting under the details themselves,
   with Dispatch info folded in with it. That is what takes the switcher from four
   names to three, and it is why the tab bar no longer has to scroll.

@@ -21,7 +21,7 @@
   }
   *{box-sizing:border-box;margin:0;padding:0}
   body{
-    width:1000px;height:720px;overflow:hidden;
+    width:1000px;height:880px;overflow:hidden;
     background:var(--background);color:var(--foreground);
     font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
     font-size:13px;line-height:1.45;padding:22px;display:flex;flex-direction:column;gap:14px;
@@ -68,6 +68,22 @@
   .tagreq{display:inline-flex;border-radius:6px;padding:1px 6px;font-size:10px;font-weight:500;
     background:color-mix(in oklch,var(--warning) 16%,transparent);color:var(--warning);margin-top:3px}
 
+  /* ---- who is who ---- */
+  .chain{display:flex;align-items:stretch;gap:0}
+  .node{flex:1;border:1px solid var(--border);border-radius:12px;background:var(--surface);
+    padding:9px 11px;display:flex;flex-direction:column;gap:2px;min-width:0}
+  .node .nn{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .node .nd{font-size:10px;color:var(--muted-foreground)}
+  .node.newone{border-color:color-mix(in oklch,var(--warning) 55%,transparent);
+    background:color-mix(in oklch,var(--warning) 9%,var(--surface))}
+  .node.newone .nn{color:var(--warning)}
+  .node.renamed{border-color:color-mix(in oklch,var(--primary) 55%,transparent);
+    background:color-mix(in oklch,var(--primary) 10%,var(--surface))}
+  .node.renamed .nn{color:var(--primary)}
+  .node.outside{border-style:dashed;background:transparent}
+  .node.outside .nn{color:var(--muted-foreground)}
+  .arrow{display:flex;align-items:center;padding:0 7px;color:var(--muted-foreground);flex:none}
+
   /* ---- what leaves ---- */
   .gone{border:1px dashed var(--border);border-radius:14px;padding:11px 14px;
     display:flex;align-items:center;gap:14px}
@@ -88,6 +104,21 @@
     Technician View, three tabs. <b>Points of contact</b> moves in under Details,
     which is what takes the switcher from four names to three.
   </p>
+</div>
+
+<div>
+  <div class="cap" style="margin-bottom:6px">Who is who — the chain a job comes down</div>
+  <div class="chain">
+    <div class="node"><span class="nn">Customer</span><span class="nd">The brand whose site it is</span></div>
+    <div class="arrow">→</div>
+    <div class="node newone"><span class="nn">Rep Company</span><span class="nd">New — nothing models this yet</span></div>
+    <div class="arrow">→</div>
+    <div class="node renamed"><span class="nn">Paying Company</span><span class="nd">Today's Rep Company, renamed. Pays us</span></div>
+    <div class="arrow">→</div>
+    <div class="node outside"><span class="nn">WorkMarket</span><span class="nd">Where we pick it up. Outside the app</span></div>
+    <div class="arrow">→</div>
+    <div class="node"><span class="nn">Our company</span><span class="nd">Company settings</span></div>
+  </div>
 </div>
 
 <div>
@@ -114,9 +145,10 @@
       <div class="en">
         <div class="ic"><svg class="ico" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg></div>
         <div class="tx">
-          <div class="nm">Details</div>
-          <div class="ds">Company, customer, Site ID, address, scheduled, estimate</div>
-          <span class="tagmoved">renamed from Assignment Details</span>
+          <div class="nm">Assignment details</div>
+          <div class="ds">Company, Rep Company, customer, Site ID, address, scheduled,
+            estimate, Assignment ID, Ticket #, INC #, and the two work orders</div>
+          <span class="tagmoved">short name on the tab, full name on the block</span>
         </div>
       </div>
       <div class="en">
@@ -138,7 +170,7 @@
         <div class="ic"><svg class="ico" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></div>
         <div class="tx">
           <div class="nm">Job reference</div>
-          <div class="ds">Ticket #, INC #, project, crew, work order PDF</div>
+          <div class="ds">Project, crew, the work order PDF</div>
           <span class="tagmoved">collapsed — opened only when asked for</span>
         </div>
       </div>

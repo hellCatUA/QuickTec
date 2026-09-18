@@ -104,6 +104,7 @@
     background:var(--surface-raised);display:flex;align-items:center;justify-content:center;color:var(--primary)}
   .ico{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-width:1.75;
     stroke-linecap:round;stroke-linejoin:round}
+  .sep{height:1px;background:var(--border);margin:2px 0}
   .check{width:20px;height:20px;border-radius:6px;border:1.5px solid var(--border);flex:none}
   .check.done{background:var(--success);border-color:var(--success)}
   .thumb{width:44px;height:44px;border-radius:8px;background:var(--muted);border:1px solid var(--border)}
@@ -188,17 +189,20 @@
 
   <!-- ================= DETAILS ================= -->
   <div class="pane on" id="p-det">
+    <!-- Short name on the switcher, full name on the block. -->
     <div class="card">
-      <h2>Details</h2>
+      <h2>Assignment details</h2>
       <div class="c">
         <div class="grid">
+          <!-- Who pays us. Called Rep Company until now; just "Company" here,
+               because a tech does not need the rest of the chain. -->
           <div><div class="lbl">Company</div><div>NetCom Sub</div></div>
+          <div><div class="lbl">Rep Company</div><div>Federated Service Systems</div></div>
+
           <div><div class="lbl">Customer</div><div>Starbucks</div></div>
+          <div><div class="lbl">Site ID</div><div class="link">SBUX #24541</div></div>
         </div>
-        <div>
-          <div class="lbl">Site ID</div>
-          <div class="link">SBUX #24541</div>
-        </div>
+
         <div>
           <div class="lbl">Address</div>
           <div class="row link" style="gap:6px;margin-top:2px">
@@ -206,9 +210,29 @@
             <span>1912 Pike Pl, Seattle, WA 98101</span>
           </div>
         </div>
+
         <div class="grid">
           <div><div class="lbl">Scheduled</div><div>07-19 · 3:13 PM</div></div>
           <div><div class="lbl">Estimate</div><div>1.00 hrs</div></div>
+
+          <div><div class="lbl">Assignment ID</div><div>4471-A</div></div>
+          <div><div class="lbl">Ticket #</div><div>TK-55219</div></div>
+
+          <div><div class="lbl">INC #</div><div class="sub">Not provided</div></div>
+        </div>
+
+        <div class="sep"></div>
+
+        <!-- Two work orders: theirs and ours. The first takes its label from
+             the paying company, so it reads NetCom WO # here and something
+             else on the next job. -->
+        <div>
+          <div class="lbl">NetCom WO #</div>
+          <div>88213-4</div>
+        </div>
+        <div>
+          <div class="lbl">QuickTec INT WO ID</div>
+          <div>2607-0000-9004</div>
         </div>
       </div>
     </div>
@@ -260,8 +284,6 @@
     <details class="more">
       <summary>Job reference <svg class="ico chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></summary>
       <div class="c">
-        <div><div class="lbl">Ticket #</div><div class="sub">Missing</div></div>
-        <div><div class="lbl">INC #</div><div class="sub">Not provided</div></div>
         <div><div class="lbl">Project</div><div class="sub">No project</div></div>
         <div><div class="lbl">Crew</div><div>Terry Tech</div></div>
         <div style="grid-column:1/-1"><div class="lbl">Work order</div><div class="link">2607-0000-9004.pdf</div></div>
