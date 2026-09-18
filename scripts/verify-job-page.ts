@@ -873,14 +873,26 @@ async function main() {
       true,
     );
 
-    // Paying company: type, filter, pick. Clearing the project too,
-    // since choosing a company by hand is choosing to leave the project.
+    // Paying company: type, filter, pick. The picker only exists off a
+    // project — under one the company is inherited and shown as a fact — so
+    // this is also the switch to the blank path, which clears the project.
+    await planner.getByRole("tab", { name: "Blank" }).click();
+    await planner.waitForTimeout(300);
+    check(
+      "leaving the project clears the company it filled in",
+      await planner.locator('input[name="clientId"]').inputValue(),
+      "",
+    );
     await planner.locator("#clientId").click();
     await planner.locator("#clientId").fill("netcom");
     await planner.getByRole("option", { name: /NetCom/ }).click();
 
     // A job routinely answers to more than one ticket. The first is the
-    // primary; the plus adds the ones after it.
+    // primary; the plus adds the ones after it. They live in Numbers, which
+    // rests closed — the form opens with the five fields it cannot do without
+    // and nothing else.
+    await planner.locator("summary", { hasText: "Numbers" }).first().click();
+    await planner.waitForTimeout(250);
     await planner.locator("#ticketNumber").fill("S-1000");
     await planner.getByRole("button", { name: "Another ticket" }).click();
     await planner.locator("#extraTicket-0").fill("S-1001");
@@ -899,38 +911,46 @@ async function main() {
       true,
     );
 
-    // The customer is its own field now — it used to be reachable only by
-    // knowing a site number, which is the thing least likely to be to hand.
+    // The Customer picker is gone. It was never submitted — the job's customer
+    // comes from whichever site is chosen — and it filtered a list this
+    // control already searches by customer name. So the search is across
+    // every site, and the customer is asked for at the one moment it is
+    // genuinely needed: creating one.
     check(
-      "a site cannot be picked before the customer",
-      await planner.getByText("Pick the customer first").isVisible(),
-      true,
+      "the form no longer asks for a customer before a site",
+      await planner.locator("#customerId").count(),
+      0,
     );
-    await planner.locator("#customerId").click();
-    await planner.locator("#customerId-list").getByRole("option").first().click();
-    await planner.waitForTimeout(300);
+    check(
+      "and does not send one",
+      await planner.locator('input[name="customerId"]').count(),
+      0,
+    );
 
-    const pickedCustomerId = await planner
-      .locator('input[name="customerId"]')
-      .inputValue();
-    check("the customer can be chosen on its own", pickedCustomerId.length > 0, true);
-
-    // And the site list is that customer's sites, not everybody's.
     await planner.locator("#siteId").click();
     const offered = await planner
       .locator("#siteId-list")
       .getByRole("option")
       .allInnerTexts();
     await planner.keyboard.press("Escape");
-    const theirs = await db.site.findMany({
-      where: { customerId: pickedCustomerId, active: true },
-      select: { id: true },
+    const everySite = await db.site.count({ where: { active: true } });
+    check("every site is reachable", offered.length, everySite);
+
+    // Searching by the brand on the door still works, which is what the
+    // customer picker was really for.
+    const brand = await db.customer.findFirstOrThrow({
+      where: { sites: { some: { active: true } } },
+      select: { name: true },
     });
+    await planner.locator("#siteId").click();
+    await planner.locator("#siteId").fill(brand.name.slice(0, 5));
+    await planner.waitForTimeout(300);
     check(
-      "only that customer's sites are offered",
-      offered.length <= theirs.length,
+      "and a site can be found by its customer's name",
+      (await planner.locator("#siteId-list").getByRole("option").count()) > 0,
       true,
     );
+    await planner.keyboard.press("Escape");
 
     // Site: search for a number that does not exist yet and add it.
     const newNumber = String(Math.floor(Math.random() * 90000 + 10000));
@@ -942,6 +962,17 @@ async function main() {
       true,
     );
     await planner.getByText(`Add site #${newNumber}`).click();
+
+    // The customer is asked for here, where it is actually needed, instead of
+    // as a field everybody fills in to get past it.
+    check(
+      "creating a site asks who it belongs to",
+      await planner.locator("#newSiteCustomer").isVisible(),
+      true,
+    );
+    await planner.locator("#newSiteCustomer").click();
+    await planner.locator("#newSiteCustomer-list").getByRole("option").first().click();
+    await planner.waitForTimeout(300);
 
     await planner.locator("#qs-address").fill("1 Test Way");
     await planner.locator("#qs-city").fill("Tacoma");
@@ -960,6 +991,16 @@ async function main() {
       await planner.locator('input[name="siteId"]').inputValue(),
       created?.id,
     );
+
+    // Everything past the two required fields rests folded, so each section
+    // has to be opened before it can be filled — which is the whole point:
+    // the form opens at one and a half screens instead of five and a half.
+    async function openSection(title: string) {
+      const row = planner.locator("summary", { hasText: title }).first();
+      await row.click();
+      await planner.waitForTimeout(250);
+    }
+    await openSection("Schedule & crew");
 
     // Estimate in hours, not minutes.
     await planner.getByRole("button", { name: "4h" }).click();
@@ -993,11 +1034,12 @@ async function main() {
       1,
     );
 
-    // Paid Breaks lives in its own block now rather than tacked to the end of
-    // Scope of work, where it read as part of the scope.
+    // Paid Breaks lives with Pay & dispatch now rather than tacked to the end
+    // of Scope of work, where it read as part of the scope.
+    await openSection("Pay & dispatch");
     check(
-      "paid breaks are under Miscellaneous",
-      await planner.getByText("Miscellaneous").isVisible(),
+      "paid breaks are under Pay & dispatch",
+      await planner.getByText("Paid Breaks").isVisible(),
       true,
     );
     check(
@@ -1042,6 +1084,8 @@ async function main() {
     await planner.locator("#payType").selectOption("FLAT");
     await planner.locator("#payRate").fill("600");
     await planner.locator("#travelReimbursement").fill("75");
+
+    await openSection("Paperwork");
 
     // The work order usually arrives by email the evening before, so whoever
     // raises the job is holding it. Making them come back to the job page to
@@ -1178,10 +1222,14 @@ async function main() {
     // Nothing is preselected any more, so the company and the customer are
     // both part of filling it in — and the site list only exists once the
     // customer is known.
+    // The company picker only exists off a project; under one it is
+    // inherited and shown as a fact rather than asked for again.
+    await planner.getByRole("tab", { name: "Blank" }).click();
+    await planner.waitForTimeout(250);
     await planner.locator("#clientId").click();
     await planner.locator("#clientId-list").getByRole("option").first().click();
-    await planner.locator("#customerId").click();
-    await planner.locator("#customerId-list").getByRole("option").first().click();
+    // No customer step any more: the site picker searches every site and the
+    // job's customer comes from whichever one is chosen.
     await planner.waitForTimeout(300);
     await planner.locator("#siteId").click();
     await planner.locator("#siteId-list").getByRole("option").first().click();
@@ -1381,13 +1429,21 @@ async function main() {
     await planner.goto(`${BASE}/jobs/new`, { waitUntil: "load" });
     await planner.waitForTimeout(1500);
 
+    // The company picker only exists off a project; under one it is
+    // inherited and shown as a fact rather than asked for again.
+    await planner.getByRole("tab", { name: "Blank" }).click();
+    await planner.waitForTimeout(250);
     await planner.locator("#clientId").click();
     await planner.locator("#clientId-list").getByRole("option").first().click();
-    await planner.locator("#customerId").click();
-    await planner.locator("#customerId-list").getByRole("option").first().click();
+    // No customer step any more: the site picker searches every site and the
+    // job's customer comes from whichever one is chosen.
     await planner.waitForTimeout(300);
 
     await planner.getByRole("button", { name: "No SiteID" }).click();
+    // The customer is asked for in the create flow now rather than up front.
+    await planner.locator("#newSiteCustomer").click();
+    await planner.locator("#newSiteCustomer-list").getByRole("option").first().click();
+    await planner.waitForTimeout(300);
     await planner.locator("#qs-city").fill("Bellingham");
     await planner.getByRole("button", { name: "Add it without a number" }).click();
     await planner.waitForTimeout(2500);
@@ -2569,11 +2625,18 @@ async function main() {
     await planner.goto(`${BASE}/jobs/new`, { waitUntil: "load" });
     await planner.waitForTimeout(1500);
 
+    // The company picker only exists off a project; under one it is
+    // inherited and shown as a fact rather than asked for again.
+    await planner.getByRole("tab", { name: "Blank" }).click();
+    await planner.waitForTimeout(250);
     await planner.locator("#clientId").click();
     await planner.locator("#clientId").fill("netcom");
     await planner.getByRole("option", { name: /NetCom/ }).click();
     await planner.waitForTimeout(300);
 
+    // In Paperwork, which rests closed like everything else that is optional.
+    await planner.locator("summary", { hasText: "Paperwork" }).first().click();
+    await planner.waitForTimeout(300);
     check(
       "their standing form is offered",
       await planner.getByText("NetCom sign-off 2026").isVisible(),
@@ -2587,8 +2650,8 @@ async function main() {
       true,
     );
 
-    await planner.locator("#customerId").click();
-    await planner.locator("#customerId-list").getByRole("option").first().click();
+    // No customer step any more: the site picker searches every site and the
+    // job's customer comes from whichever one is chosen.
     await planner.waitForTimeout(300);
     await planner.locator("#siteId").click();
     await planner.locator("#siteId-list").getByRole("option").first().click();

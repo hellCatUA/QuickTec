@@ -23,6 +23,7 @@ import { Field, Input, Select, Textarea } from "@/components/ui/field";
 import { FormStatus, type SaveState } from "@/components/ui/form-status";
 import { describeJobDraft, type JobDraftPayload } from "@/lib/job-draft";
 import { draftLabel, useJobDraft } from "./use-job-draft";
+import { Section } from "./section";
 import { HoursPicker, Stepper } from "@/components/ui/stepper";
 import { formatIntWo } from "@/lib/int-wo-format";
 import { cn } from "@/lib/utils";
@@ -325,6 +326,60 @@ export function JobForm({
     );
   }
 
+  // Whether somebody arrived with a project in mind or is building a one-off.
+  // Starts on the project when there is one to pick, because that is the
+  // common case and the one that fills the most in.
+  const [startMode, setStartMode] = useState<"project" | "blank">(
+    projects.length > 0 ? "project" : "blank",
+  );
+
+  const deliverableSummaryCount = (deliverables ?? baseDeliverables).filter(
+    (rule) => rule.enabled,
+  ).length;
+
+  // A project carries these, so picking one answers them. Listed rather than
+  // applied silently: a field filled behind somebody's back is a field they
+  // check by hand anyway, which costs more than it saved.
+  const filledFromProject = selectedProject
+    ? [
+        { label: "Paying company", value: selectedProject.clientName },
+        {
+          label: "Breaks",
+          value: selectedProject.breakPaid ?? breakPaidByDefault ? "Paid" : "Unpaid",
+        },
+        {
+          label: "Deliverables",
+          value: `${deliverableSummaryCount} sections`,
+        },
+      ]
+    : [];
+
+  // What each closed section says about itself. A row that only gives its own
+  // name has to be opened to be checked, which is the scroll back again.
+  const filledNumbers = [externalAssignmentId, ticketNumber, incNumber].filter(
+    (one) => one.trim(),
+  ).length + extraTickets.filter((one) => one.trim()).length;
+  const numbersSummary =
+    filledNumbers > 0 ? `${filledNumbers} filled` : "3 optional";
+
+  const scheduleSummary = [
+    scheduledStart ? "scheduled" : "no date",
+    `${techsRequired} tech${techsRequired === 1 ? "" : "s"}`,
+    assignees.length > 0 ? `${assignees.length} assigned` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  const paperworkSummary = noWorkOrder
+    ? "no work order issued"
+    : pickedTemplates && pickedTemplates.length > 0
+      ? `${pickedTemplates.length} blank${pickedTemplates.length === 1 ? "" : "s"}`
+      : "nothing attached";
+
+  const deliverablesSummary = `${deliverableSummaryCount} on`;
+
+  const paySummary = payType ? "overridden for this job" : "default rates";
+
   // Offered rather than applied. Reopening the page and finding yesterday's
   // half-finished job already typed in is startling when what you wanted was a
   // new one — so it asks, and until it is answered the form is empty.
@@ -401,179 +456,246 @@ export function JobForm({
         </Card>
       ) : null}
 
+      {/* One choice that does the work of five. A project already carries the
+          paying company, the break policy, the deliverable rules and the pay
+          decision, so picking one fills them in rather than asking again. */}
       <Card>
         <CardHeader>
-          <CardTitle>Assignment details</CardTitle>
+          <CardTitle>Start from</CardTitle>
           {intWoPreview ? (
             <CardDescription>
               Internal work order number will be{" "}
               <span className="tabular font-medium text-foreground">
                 {intWoPreview}
-              </span>
+              </span>{" "}
+              — not issued until the job is created.
             </CardDescription>
           ) : null}
         </CardHeader>
-
-        <CardContent className="grid gap-4 sm:grid-cols-2">
-          <Field
-            label="Project"
-            htmlFor="projectId"
-            hint="Fills in the company and the customer. Leave it empty for one-off work — the job then uses the yearly counter and 0000 as the project ref."
-            className="sm:col-span-2"
+        <CardContent className="flex flex-col gap-4">
+          <div
+            role="tablist"
+            aria-label="Start from"
+            className="flex gap-0.5 rounded-lg border border-border bg-surface-raised p-0.5"
           >
-            <Combobox
-              id="projectId"
-              name="projectId"
-              value={projectId}
-              onChange={chooseProject}
-              placeholder="Search projects…"
-              emptyText="No project matches."
-              options={availableProjects.map((project) => ({
-                value: project.id,
-                label: project.name,
-                hint: project.externalProjectId
-                  ? `${project.clientName} · ${project.externalProjectId}`
-                  : project.clientName,
-                keywords: project.clientName,
-              }))}
-            />
-          </Field>
+            {([
+              ["project", "A project"],
+              ["blank", "Blank"],
+            ] as const).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                role="tab"
+                aria-selected={startMode === value}
+                onClick={() => {
+                  setStartMode(value);
+                  // Leaving the project leaves what it answered. Keeping the
+                  // company it chose while the project is gone is a job filed
+                  // against a company nobody picked.
+                  if (value === "blank") {
+                    chooseProject("");
+                    setClientId("");
+                    setRepCompanyId("");
+                    setPickedTemplates(null);
+                  }
+                }}
+                className={cn(
+                  "min-h-9 flex-1 rounded-md text-sm font-medium transition-colors",
+                  startMode === value
+                    ? "bg-primary font-semibold text-primary-foreground"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
 
-          <Field
-            label="Paying company"
-            htmlFor="clientId"
-            hint="Who dispatched the work and pays for it."
-          >
-            <Combobox
-              id="clientId"
-              name="clientId"
-              value={clientId}
-              onChange={(next) => {
-                setClientId(next);
-                setProjectId("");
-                setPickedTemplates(null);
-              }}
-              placeholder="Search paying companies…"
-              options={clients.map((client) => ({
-                value: client.id,
-                label: client.name,
-              }))}
-            />
-          </Field>
-
-          {/* Optional, and the only picker here that is. Plenty of jobs
-              arrive without anyone knowing who represented the customer, and
-              a guess on a form is worse than a blank. */}
-          <Field
-            label="Rep company"
-            htmlFor="repCompanyId"
-            hint="Who represents the customer above the paying company. Leave blank if you do not know."
-          >
-            <Combobox
-              id="repCompanyId"
-              name="repCompanyId"
-              value={repCompanyId}
-              onChange={setRepCompanyId}
-              placeholder="Search rep companies…"
-              options={repCompanies.map((repCompany) => ({
-                value: repCompany.id,
-                label: repCompany.name,
-              }))}
-            />
-          </Field>
-
-          <Field
-            label="Customer"
-            htmlFor="customerId"
-            hint="Whose site you visit — the brand on the door, not who pays."
-          >
-            <Combobox
-              id="customerId"
-              name="customerId"
-              value={customerId}
-              onChange={(next) => {
-                setCustomerId(next);
-                setSiteId("");
-              }}
-              placeholder="Search customers…"
-              options={customers.map((customer) => ({
-                value: customer.id,
-                label: customer.name,
-                hint: customer.code,
-              }))}
-            />
-          </Field>
-
-          <Field
-            label="Site ID"
-            htmlFor="siteId"
-            hint="Supplies the address on the report. Not there yet? Type the number and add it."
-            className="sm:col-span-2"
-          >
-            <SitePicker
-              sites={customerSites}
-              customerId={customerId}
-              customerName={customerName}
-              value={siteId}
-              onChange={setSiteId}
-              onCreated={(site) => setAddedSites((current) => [site, ...current])}
-            />
-          </Field>
-
-          <Field label="Job title" htmlFor="title" className="sm:col-span-2">
-            <Input
-              id="title"
-              name="title"
-              value={title}
-              onChange={(event) => {
-                setTitle(event.target.value);
-                setTitleTouched(true);
-              }}
-              placeholder="Switch replacement"
-              required
-              autoComplete="off"
-            />
-          </Field>
-
-          <Field
-            label="Assignment ID"
-            htmlFor="externalAssignmentId"
-            hint="The client's own ID for this work order. Shared by everyone on site."
-          >
-            <Input
-              id="externalAssignmentId"
-              name="externalAssignmentId"
-              placeholder="887766"
-              autoComplete="off"
-              value={externalAssignmentId}
-              onChange={(event) => setExternalAssignmentId(event.target.value)}
-            />
-          </Field>
-
-          <TicketNumbers
-            primary={ticketNumber}
-            onPrimary={setTicketNumber}
-            extras={extraTickets}
-            onExtras={setExtraTickets}
+          {startMode === "project" ? (
+        <Field
+          label="Project"
+          htmlFor="projectId"
+          hint="Fills in the company and the customer. Leave it empty for one-off work — the job then uses the yearly counter and 0000 as the project ref."
+          className="sm:col-span-2"
+        >
+          <Combobox
+            id="projectId"
+            name="projectId"
+            value={projectId}
+            onChange={chooseProject}
+            placeholder="Search projects…"
+            emptyText="No project matches."
+            options={availableProjects.map((project) => ({
+              value: project.id,
+              label: project.name,
+              hint: project.externalProjectId
+                ? `${project.clientName} · ${project.externalProjectId}`
+                : project.clientName,
+              keywords: project.clientName,
+            }))}
           />
+        </Field>
+          ) : null}
 
-          <Field label="INC #" htmlFor="incNumber" hint="Internal only.">
-            <Input
-              id="incNumber"
-              name="incNumber"
-              autoComplete="off"
-              value={incNumber}
-              onChange={(event) => setIncNumber(event.target.value)}
-            />
-          </Field>
+          {/* What the project just answered, said out loud. A field filled
+              silently is a field somebody checks by hand anyway. */}
+          {startMode === "project" && selectedProject ? (
+            <dl className="flex flex-col gap-0 text-sm">
+              {filledFromProject.map((entry) => (
+                <div
+                  key={entry.label}
+                  className="flex items-center gap-3 border-t border-border py-2 first:border-t-0"
+                >
+                  <dt className="w-28 shrink-0 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    {entry.label}
+                  </dt>
+                  <dd className="min-w-0 flex-1 truncate">{entry.value}</dd>
+                  <Badge variant="primary">project</Badge>
+                </div>
+              ))}
+            </dl>
+          ) : null}
+
+          {/* The project answered these, but the server still has to be told:
+              a value shown as text and never submitted is a job that cannot be
+              created. Hidden rather than disabled — a disabled input is left
+              out of the form data too. */}
+          {startMode === "project" ? (
+            <>
+              <input type="hidden" name="clientId" value={clientId} />
+              <input type="hidden" name="repCompanyId" value={repCompanyId} />
+            </>
+          ) : null}
+
+          {/* Off a project there is nothing to inherit, so it has to be asked. */}
+          {startMode === "blank" ? (
+            <div className="grid gap-4 sm:grid-cols-2">
+        <Field
+          label="Paying company"
+          htmlFor="clientId"
+          hint="Who dispatched the work and pays for it."
+        >
+          <Combobox
+            id="clientId"
+            name="clientId"
+            value={clientId}
+            onChange={(next) => {
+              setClientId(next);
+              setProjectId("");
+              setPickedTemplates(null);
+            }}
+            placeholder="Search paying companies…"
+            options={clients.map((client) => ({
+              value: client.id,
+              label: client.name,
+            }))}
+          />
+        </Field>
+        {/* Optional, and the only picker here that is. Plenty of jobs
+            arrive without anyone knowing who represented the customer, and
+            a guess on a form is worse than a blank. */}
+        <Field
+          label="Rep company"
+          htmlFor="repCompanyId"
+          hint="Who represents the customer above the paying company. Leave blank if you do not know."
+        >
+          <Combobox
+            id="repCompanyId"
+            name="repCompanyId"
+            value={repCompanyId}
+            onChange={setRepCompanyId}
+            placeholder="Search rep companies…"
+            options={repCompanies.map((repCompany) => ({
+              value: repCompany.id,
+              label: repCompany.name,
+            }))}
+          />
+        </Field>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 
+      {/* What the job cannot be made without, and nothing else. The Customer
+          picker that used to sit here is gone: it was never submitted — the
+          job's customer comes from the site — and the site search already
+          matches on the customer's name. */}
       <Card>
         <CardHeader>
-          <CardTitle>Schedule</CardTitle>
+          <CardTitle>The job</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2">
+        <Field
+          label="Site ID"
+          htmlFor="siteId"
+          hint="Supplies the address on the report. Not there yet? Type the number and add it."
+          className="sm:col-span-2"
+        >
+          <SitePicker
+            sites={allSites}
+            customers={customers}
+            suggestedCustomerId={customerId}
+            value={siteId}
+            onChange={setSiteId}
+            onCreated={(site) => setAddedSites((current) => [site, ...current])}
+          />
+        </Field>
+        <Field label="Job title" htmlFor="title" className="sm:col-span-2">
+          <Input
+            id="title"
+            name="title"
+            value={title}
+            onChange={(event) => {
+              setTitle(event.target.value);
+              setTitleTouched(true);
+            }}
+            placeholder="Switch replacement"
+            required
+            autoComplete="off"
+          />
+        </Field>
+        </CardContent>
+      </Card>
+
+      <Section title="Numbers" summary={numbersSummary}>
+        <div className="grid gap-4 sm:grid-cols-2">
+        <Field
+          label="Assignment ID"
+          htmlFor="externalAssignmentId"
+          hint="The client's own ID for this work order. Shared by everyone on site."
+        >
+          <Input
+            id="externalAssignmentId"
+            name="externalAssignmentId"
+            placeholder="887766"
+            autoComplete="off"
+            value={externalAssignmentId}
+            onChange={(event) => setExternalAssignmentId(event.target.value)}
+          />
+        </Field>
+
+        <TicketNumbers
+          primary={ticketNumber}
+          onPrimary={setTicketNumber}
+          extras={extraTickets}
+          onExtras={setExtraTickets}
+        />
+
+        <Field label="INC #" htmlFor="incNumber" hint="Internal only.">
+          <Input
+            id="incNumber"
+            name="incNumber"
+            autoComplete="off"
+            value={incNumber}
+            onChange={(event) => setIncNumber(event.target.value)}
+          />
+        </Field>
+        </div>
+      </Section>
+
+      <Section title="Schedule &amp; crew" summary={scheduleSummary}>
+        <div className="flex flex-col gap-4">
+          <div className="grid gap-4 sm:grid-cols-3">
           <Field
             label="Scheduled start"
             htmlFor="scheduledStart"
@@ -610,157 +732,9 @@ export function JobForm({
               presets={[2, 3]}
             />
           </Field>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Scope of work</CardTitle>
-          <CardDescription>
-            Markdown. A project&rsquo;s general scope is shown above this on the
-            job page. Checklist lines become tickable for the tech.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Textarea
-            name="scopeOfWork"
-            rows={6}
-            placeholder={"- [ ] Swap the failed switch\n- [ ] Label all patch leads"}
-            value={scopeOfWork}
-            onChange={(event) => setScopeOfWork(event.target.value)}
-          />
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Paperwork</CardTitle>
-          <CardDescription>
-            The paying company&rsquo;s own work order and sign-off sheet.
-            Files are attached from the job page once it exists — by whoever has
-            them, which is often the tech on the morning.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3">
-          {clientTemplates.length > 0 ? (
-            <div className="flex flex-col gap-2">
-              <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Their standing forms
-              </span>
-              {clientTemplates.map((template) => (
-                <label
-                  key={template.id}
-                  className="flex items-center gap-2 rounded-lg border border-border p-2 text-sm"
-                >
-                  <input
-                    type="checkbox"
-                    name="templateIds"
-                    value={template.id}
-                    checked={chosenTemplates.includes(template.id)}
-                    onChange={(event) =>
-                      setPickedTemplates(
-                        event.target.checked
-                          ? [...chosenTemplates, template.id]
-                          : chosenTemplates.filter((id) => id !== template.id),
-                      )
-                    }
-                    className="size-5 accent-[var(--color-primary)]"
-                  />
-                  <FileText className="size-4 shrink-0 text-muted-foreground" />
-                  <span className="min-w-0 flex-1 truncate">
-                    {template.label}
-                  </span>
-                  <Badge variant="neutral">
-                    {template.kind === "SIGN_OFF" ? "Sign-off" : "Work order"}
-                  </Badge>
-                </label>
-              ))}
-            </div>
-          ) : clientId ? (
-            <p className="text-sm text-muted-foreground">
-              This company has no standing forms saved. Add their sign-off sheet
-              in the directory and every job for them starts with it attached.
-            </p>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              Pick a paying company to see the forms saved against them.
-            </p>
-          )}
-
-          {/* The work order usually arrives by email the evening before, so
-              whoever is raising the job is often holding it. Making them come
-              back to the job page to attach it is how it ends up attached by
-              nobody. */}
-          <FilePick
-            id="workOrderFiles"
-            name="workOrderFiles"
-            label="Their work order"
-            hint="If you have the PDF now. It can also be added from the job page later, by whoever gets it."
-            disabled={noWorkOrder}
-          />
-
-          <FilePick
-            id="signOffFiles"
-            name="signOffFiles"
-            label="A sign-off sheet just for this job"
-            hint="Only if it differs from their standing one."
-          />
-
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              name="noWorkOrder"
-              checked={noWorkOrder}
-              onChange={(event) => setNoWorkOrder(event.target.checked)}
-              className="size-5 accent-[var(--color-primary)]"
-            />
-            No WO for this job
-          </label>
-          <span className="text-xs text-muted-foreground">
-            Says the company issued none, so the empty slot reads as a decision
-            rather than paperwork nobody chased. Attaching one later clears it.
-          </span>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Deliverables</CardTitle>
-          <CardDescription>
-            What the tech has to produce before checkout will let them finish.
-            {selectedProject
-              ? " Starts from the project's, and applies to this job alone."
-              : " These can still be changed from the job page afterwards."}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {/* Sent as one field so the server can tell an untouched checklist
-              from a deliberately empty one. */}
-          {deliverables ? (
-            <input
-              type="hidden"
-              name="deliverableRules"
-              value={JSON.stringify(deliverables)}
-            />
-          ) : null}
-
-          <DeliverableRules
-            rules={deliverables ?? baseDeliverables}
-            onChange={setDeliverables}
-          />
-        </CardContent>
-      </Card>
-
-      {canAssign ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Assign techs</CardTitle>
-            <CardDescription>
-              Pay rates resolve automatically from project, client and personal
-              defaults. The lead owns the merged Work Performed.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-3">
+          </div>
+          {canAssign ? (
+            <div className="flex flex-col gap-3 border-t border-border pt-4">
             {assignees.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 Nobody yet. A job can be planned now and crewed later.
@@ -841,36 +815,133 @@ export function JobForm({
                 check it is the right person.
               </div>
             ) : null}
-          </CardContent>
-        </Card>
-      ) : null}
+            </div>
+          ) : null}
+        </div>
+      </Section>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Dispatch</CardTitle>
-          <CardDescription>
-            Numbers a tech may need mid-job, for this job alone. Their own
-            supervisor is always shown first and does not need adding.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
+      <Section
+        title="Scope of work"
+        summary={scopeOfWork.trim() ? "written" : "empty"}
+        tone={scopeOfWork.trim() ? "neutral" : "warning"}
+      >
+          <Textarea
+            name="scopeOfWork"
+            rows={6}
+            placeholder={"- [ ] Swap the failed switch\n- [ ] Label all patch leads"}
+            value={scopeOfWork}
+            onChange={(event) => setScopeOfWork(event.target.value)}
+          />
+      </Section>
+
+      <Section title="Paperwork" summary={paperworkSummary}>
+        <div className="flex flex-col gap-4">
+          {clientTemplates.length > 0 ? (
+            <div className="flex flex-col gap-2">
+              <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Their standing forms
+              </span>
+              {clientTemplates.map((template) => (
+                <label
+                  key={template.id}
+                  className="flex items-center gap-2 rounded-lg border border-border p-2 text-sm"
+                >
+                  <input
+                    type="checkbox"
+                    name="templateIds"
+                    value={template.id}
+                    checked={chosenTemplates.includes(template.id)}
+                    onChange={(event) =>
+                      setPickedTemplates(
+                        event.target.checked
+                          ? [...chosenTemplates, template.id]
+                          : chosenTemplates.filter((id) => id !== template.id),
+                      )
+                    }
+                    className="size-5 accent-[var(--color-primary)]"
+                  />
+                  <FileText className="size-4 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1 truncate">
+                    {template.label}
+                  </span>
+                  <Badge variant="neutral">
+                    {template.kind === "SIGN_OFF" ? "Sign-off" : "Work order"}
+                  </Badge>
+                </label>
+              ))}
+            </div>
+          ) : clientId ? (
+            <p className="text-sm text-muted-foreground">
+              This company has no standing forms saved. Add their sign-off sheet
+              in the directory and every job for them starts with it attached.
+            </p>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Pick a paying company to see the forms saved against them.
+            </p>
+          )}
+
+          {/* The work order usually arrives by email the evening before, so
+              whoever is raising the job is often holding it. Making them come
+              back to the job page to attach it is how it ends up attached by
+              nobody. */}
+          <FilePick
+            id="workOrderFiles"
+            name="workOrderFiles"
+            label="Their work order"
+            hint="If you have the PDF now. It can also be added from the job page later, by whoever gets it."
+            disabled={noWorkOrder}
+          />
+
+          <FilePick
+            id="signOffFiles"
+            name="signOffFiles"
+            label="A sign-off sheet just for this job"
+            hint="Only if it differs from their standing one."
+          />
+
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              name="noWorkOrder"
+              checked={noWorkOrder}
+              onChange={(event) => setNoWorkOrder(event.target.checked)}
+              className="size-5 accent-[var(--color-primary)]"
+            />
+            No WO for this job
+          </label>
+          <span className="text-xs text-muted-foreground">
+            Says the company issued none, so the empty slot reads as a decision
+            rather than paperwork nobody chased. Attaching one later clears it.
+          </span>
+        </div>
+      </Section>
+
+      <Section title="Deliverables" summary={deliverablesSummary}>
+          {/* Sent as one field so the server can tell an untouched checklist
+              from a deliberately empty one. */}
+          {deliverables ? (
+            <input
+              type="hidden"
+              name="deliverableRules"
+              value={JSON.stringify(deliverables)}
+            />
+          ) : null}
+
+          <DeliverableRules
+            rules={deliverables ?? baseDeliverables}
+            onChange={setDeliverables}
+          />
+      </Section>
+
+      <Section title="Pay &amp; dispatch" summary={paySummary}>
+        <div className="flex flex-col gap-4">
           <DispatchList
             inherited={selectedProject?.dispatchContacts ?? []}
             companyDefaults={companyDispatch}
           />
-        </CardContent>
-      </Card>
-
-      {canSetPay ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Pay</CardTitle>
-            <CardDescription>
-              For this job only. Left blank, everybody on it keeps their own
-              rate — or the project&rsquo;s default where they have none.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-4 sm:grid-cols-2">
+          {canSetPay ? (
+            <div className="grid gap-4 border-t border-border pt-4 sm:grid-cols-2">
             <Field
               label="Pay type"
               htmlFor="payType"
@@ -921,15 +992,9 @@ export function JobForm({
                 placeholder="Leave blank for the project default"
               />
             </Field>
-          </CardContent>
-        </Card>
-      ) : null}
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Miscellaneous</CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-1">
+            </div>
+          ) : null}
+          <div className="flex flex-col gap-3 border-t border-border pt-4">
           <label className="flex items-center gap-2 text-sm">
             <input
               type="checkbox"
@@ -951,8 +1016,10 @@ export function JobForm({
                 : `Overriding the ${selectedProject.name} project, which says ${projectBreakPaid ? "paid" : "unpaid"}.`}
             </span>
           ) : null}
-        </CardContent>
-      </Card>
+          </div>
+        </div>
+      </Section>
+
 
       {state?.ok && state.warning && state.id ? (
         <div className="flex flex-col gap-2 rounded-lg bg-warning/15 p-3 text-sm text-warning ring-1 ring-inset ring-warning/30">

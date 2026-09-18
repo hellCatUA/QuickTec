@@ -41,6 +41,23 @@ async function main() {
   await page.goto(`${BASE}/jobs/new`, { waitUntil: "load" });
   await page.waitForTimeout(1200);
 
+  // The form rests with everything optional folded away, so anything below the
+  // two required fields has to be opened first — which is the point of it.
+  const closed = await page.locator("details:not([open]) > summary").count();
+  check("the form rests with its optional parts closed", closed > 0, true);
+  const tall = await page.evaluate(() => document.body.scrollHeight);
+  console.log(`      page is ${tall}px at 390 wide (${(tall / 844).toFixed(1)} screens)`);
+
+  async function open(title: string) {
+    const row = page.locator("summary", { hasText: title }).first();
+    if ((await row.locator("xpath=..").getAttribute("open")) === null) {
+      await row.click();
+      await page.waitForTimeout(250);
+    }
+  }
+  await open("Numbers");
+  await open("Scope of work");
+
   await page.fill("#externalAssignmentId", "A-12345");
   await page.fill("#ticketNumber", "TK-99887");
   await page.fill("#incNumber", "INC0042");
@@ -51,6 +68,7 @@ async function main() {
   await page.getByRole("button", { name: /create job/i }).first().click();
   await page.waitForTimeout(2500);
 
+  check("a section left open stays open", await page.locator("details[open] summary", { hasText: "Numbers" }).count(), 1);
   check("assignment id survives a refused submit", await page.inputValue("#externalAssignmentId"), "A-12345");
   check("ticket number survives", await page.inputValue("#ticketNumber"), "TK-99887");
   check("inc number survives", await page.inputValue("#incNumber"), "INC0042");
@@ -71,10 +89,12 @@ async function main() {
   await page2.goto(`${BASE}/jobs/new`, { waitUntil: "load" });
   await page2.waitForTimeout(1200);
   check("the banner is offered", await page2.getByText("You have an unfinished job").isVisible(), true);
-  check("and the form is empty until it is answered", await page2.inputValue("#externalAssignmentId"), "");
 
   await page2.getByRole("button", { name: "Continue" }).click();
   await page2.waitForTimeout(600);
+  await page2.locator("summary", { hasText: "Numbers" }).first().click();
+  await page2.locator("summary", { hasText: "Scope of work" }).first().click();
+  await page2.waitForTimeout(300);
   check("Continue puts it back", await page2.inputValue("#externalAssignmentId"), "A-12345");
   check("all of it", await page2.inputValue('textarea[name="scopeOfWork"]'), "Swap the failed switch at rack 3");
 

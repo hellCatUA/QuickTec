@@ -22,8 +22,14 @@ export type CustomerOption = { id: string; code: string; name: string };
 type Mode = { kind: "number"; query: string } | { kind: "unknown" };
 
 /**
- * Finds a site under the chosen customer, or adds the one just named on the
- * phone.
+ * Finds a site, or adds the one just named on the phone.
+ *
+ * It used to sit behind a Customer picker and refuse to do anything until one
+ * was chosen. That picker is gone — it was never submitted, the job's customer
+ * comes from the site, and it filtered a list this control already searches by
+ * customer name. So the search is across every site now, and the customer is
+ * only asked for at the one moment it is genuinely needed: creating a site,
+ * which has to belong to somebody.
  *
  * A site number is very often not known when the job is planned — it turns up
  * mid-call, or the tech reads it off the door. Making somebody leave the form,
@@ -33,21 +39,35 @@ type Mode = { kind: "number"; query: string } | { kind: "unknown" };
  */
 export function SitePicker({
   sites,
-  customerId,
-  customerName,
+  customers,
+  suggestedCustomerId,
   value,
   onChange,
   onCreated,
 }: {
-  /** Already narrowed to the chosen customer by the caller. */
+  /** Every site. The search matches site number, city and customer name. */
   sites: SiteOption[];
-  customerId: string;
-  customerName: string;
+  customers: { id: string; name: string; code: string }[];
+  /** From the project, when there is one. A starting point, not a filter. */
+  suggestedCustomerId: string;
   value: string;
   onChange: (siteId: string) => void;
   onCreated: (site: SiteOption) => void;
 }) {
   const [mode, setMode] = React.useState<Mode | null>(null);
+  // Only consulted while creating a site. Everything else here works without
+  // knowing the customer, because the site says who it belongs to.
+  //
+  // Held as an override rather than copied from the suggestion, so a project
+  // picked after this control mounted still comes through and a customer
+  // chosen by hand is not overwritten by it.
+  const [chosenCustomerId, setChosenCustomerId] = React.useState<string | null>(
+    null,
+  );
+  const customerId = chosenCustomerId ?? suggestedCustomerId;
+  const setCustomerId = setChosenCustomerId;
+  const customerName =
+    customers.find((one) => one.id === customerId)?.name ?? "";
   const [siteNumber, setSiteNumber] = React.useState("");
   const [address, setAddress] = React.useState("");
   const [city, setCity] = React.useState("");
@@ -111,17 +131,26 @@ export function SitePicker({
     });
   }
 
-  if (!customerId) {
-    return (
-      <p className="text-sm text-muted-foreground">
-        Pick the customer first — sites belong to one.
-      </p>
-    );
-  }
-
   if (mode !== null) {
     return (
       <div className="flex flex-col gap-3 rounded-lg border border-primary/40 bg-primary/5 p-3">
+        {/* The one thing a new site cannot be made without. Asked here, at the
+            moment it matters, rather than as a permanent field everybody fills
+            in to get past it. */}
+        <Field label="Customer" htmlFor="newSiteCustomer">
+          <Combobox
+            id="newSiteCustomer"
+            value={customerId}
+            onChange={setCustomerId}
+            placeholder="Search customers…"
+            options={customers.map((one) => ({
+              value: one.id,
+              label: one.name,
+              hint: one.code,
+            }))}
+          />
+        </Field>
+
         <div className="flex items-start gap-2 text-xs text-muted-foreground">
           <Info className="mt-0.5 size-3.5 shrink-0" />
           {mode.kind === "unknown" ? (
@@ -216,7 +245,7 @@ export function SitePicker({
         options={options}
         placeholder={
           sites.length === 0
-            ? `No sites on file for ${customerName} yet`
+            ? "No site matches"
             : "Search by site number or city…"
         }
         emptyText="No site matches."
