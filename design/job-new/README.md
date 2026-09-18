@@ -49,6 +49,18 @@ fixed by moving cards around.
 customer comes from `site.customerId` in the create action. It looks like data
 entry and is a search box.
 
+## Artboards
+
+| File | What it is |
+| --- | --- |
+| `Main.dc.html` | The form at rest, sections closed. Interactive |
+| `Sections.dc.html` | Every section opened, so the fields can be approved |
+| `DraftFlow.dc.html` | Coming back, saving, and a refused Create |
+| `Before.dc.html` | Today's 4,699px and the reproduced bug |
+| `Draft.dc.html` | Why C was chosen over A and B |
+
+Desktop comes after this is agreed.
+
 ## Proposed shape
 
 - **Start from** — one segmented choice, a project or blank. Picking a project
@@ -62,7 +74,21 @@ entry and is a search box.
 - **A footer that never scrolls away** — when the draft last saved, what is
   still missing, and Create.
 
-## The open question
+## Settled: option C
+
+A `JobDraft` row per person, saved as you type, promoted to a Job on Create.
+The INT WO number is shown as a preview and only taken from the counter when
+the job is created, so an abandoned draft leaves no gap in the sequence.
+
+Three states are designed on `DraftFlow.dc.html`: coming back to an unfinished
+draft, the footer while it saves, and a refused Create where nothing is lost.
+"Start fresh" keeps the old draft until Create is pressed — it is not thrown
+away behind your back.
+
+Still open, and decided my way unless you say otherwise: the rep company is
+taken from the project and can be changed per job, like the paying company.
+
+## Why C, for the record
 
 Where does a draft live? `allocateIntWo` *consumes* a counter — the project's
 `intWoCounter` or the global yearly one — so a number given to a draft that is
@@ -74,7 +100,7 @@ then abandoned leaves a hole in the sequence that reaches client paperwork.
 - **B.** A real Job, numbered on Create. No gaps, but `intWoId` must become
   nullable — altering a NOT NULL column under a unique index on live data.
 - **C.** Not a Job yet: a `JobDraft` row, per person, promoted on Create.
-  Recommended. Nothing lost, no number burned, no migration on `intWoId`,
+  **Chosen.** Nothing lost, no number burned, no migration on `intWoId`,
   blast radius of one new table. A draft is yours, not shared.
 
 ## Re-seeding
@@ -83,6 +109,6 @@ then abandoned leaves a hole in the sequence that reaches client paperwork.
 SKILL=<design skill base dir>
 node "$SKILL/seed-canvas.mjs" --template "$SKILL/payload.template.html" \
   --out new-job-form.html --title "New job — form rebuild" \
-  --artboard Main.dc.html --artboard Before.dc.html --artboard Draft.dc.html \
-  --canvas canvas.json
+  --artboard Main.dc.html --artboard Sections.dc.html --artboard DraftFlow.dc.html \
+  --artboard Before.dc.html --artboard Draft.dc.html --canvas canvas.json
 ```

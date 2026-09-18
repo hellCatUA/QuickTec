@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<script src="./support.js"></script>
+<title>The draft, on screen</title>
+<style>
+  :root{
+    --background: oklch(0.17 0.012 260);
+    --surface: oklch(0.21 0.014 260);
+    --surface-raised: oklch(0.25 0.016 260);
+    --foreground: oklch(0.96 0.005 260);
+    --muted: oklch(0.28 0.014 260);
+    --muted-foreground: oklch(0.7 0.018 260);
+    --border: oklch(0.31 0.016 260);
+    --input: oklch(0.26 0.016 260);
+    --primary: oklch(0.66 0.16 235);
+    --primary-foreground: oklch(0.16 0.02 260);
+    --success: oklch(0.7 0.16 155);
+    --warning: oklch(0.79 0.15 85);
+    --danger: oklch(0.64 0.2 25);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    width:1240px;height:880px;overflow:hidden;
+    background:var(--background);color:var(--foreground);
+    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    font-size:13px;line-height:1.45;padding:22px;display:flex;flex-direction:column;gap:14px;
+  }
+  h1{font-size:19px;font-weight:600;letter-spacing:-.01em}
+  .lede{font-size:13px;color:var(--muted-foreground)}
+  .lede b{color:var(--foreground);font-weight:600}
+
+  .three{display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px;flex:1;min-height:0}
+  .panel{display:flex;flex-direction:column;gap:8px;min-height:0}
+  .cap{font-size:11px;text-transform:uppercase;letter-spacing:.04em;font-weight:600;color:var(--muted-foreground)}
+  .cap span{font-weight:400;text-transform:none;letter-spacing:0}
+
+  /* a phone */
+  .phone{flex:1;min-height:0;border:1px solid var(--border);border-radius:18px;
+    background:var(--background);overflow:hidden;display:flex;flex-direction:column}
+  .bar{display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid var(--border);
+    background:var(--surface);flex:none}
+  .logo{width:26px;height:26px;border-radius:5px;background:var(--primary);color:var(--primary-foreground);
+    display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px}
+  .wm{font-size:14px;font-weight:600}
+  .body{flex:1;overflow:hidden;padding:12px;display:flex;flex-direction:column;gap:10px}
+  .h1{font-size:16px;font-weight:600}
+  .sub{font-size:11px;color:var(--muted-foreground)}
+
+  .card{border:1px solid var(--border);border-radius:12px;background:var(--surface);padding:11px 12px;
+    display:flex;flex-direction:column;gap:9px}
+  .lbl{font-size:10px;text-transform:uppercase;letter-spacing:.04em;font-weight:500;color:var(--muted-foreground)}
+  .inp{min-height:38px;border-radius:9px;border:1px solid var(--border);background:var(--input);
+    display:flex;align-items:center;padding:0 10px;font-size:13px}
+  .inp.ph{color:var(--muted-foreground)}
+  .inp.bad{border-color:var(--danger)}
+
+  /* the returning banner */
+  .resume{border:1px solid color-mix(in oklch,var(--primary) 50%,transparent);border-radius:12px;
+    background:color-mix(in oklch,var(--primary) 10%,var(--surface));padding:11px 12px;
+    display:flex;flex-direction:column;gap:9px}
+  .resume .t{font-size:13px;font-weight:600}
+  .resume .row{display:flex;gap:7px}
+  .b{min-height:36px;border-radius:9px;display:flex;align-items:center;justify-content:center;
+    font-size:13px;font-weight:500;border:1px solid transparent;padding:0 12px}
+  .b.primary{background:var(--primary);color:var(--primary-foreground);flex:1}
+  .b.ghost{background:transparent;border-color:var(--border);color:var(--muted-foreground)}
+
+  .err{border:1px solid color-mix(in oklch,var(--danger) 50%,transparent);border-radius:12px;
+    background:color-mix(in oklch,var(--danger) 10%,var(--surface));padding:10px 12px;
+    display:flex;gap:8px;font-size:12px;color:var(--danger);align-items:flex-start}
+  .err b{font-weight:600}
+
+  .foot{flex:none;border-top:1px solid var(--border);background:var(--surface);padding:9px 12px;
+    display:flex;flex-direction:column;gap:8px}
+  .saved{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted-foreground)}
+  .dot{width:6px;height:6px;border-radius:999px;flex:none}
+  .dot.ok{background:var(--success)}
+  .dot.busy{background:var(--warning)}
+  .saved .right{margin-left:auto}
+  .saved .right.warn{color:var(--warning)}
+  .fb{display:flex;gap:7px}
+  .fb .bin{width:40px;min-height:42px;border-radius:9px;border:1px solid var(--border);
+    background:var(--surface-raised);display:flex;align-items:center;justify-content:center;
+    color:var(--muted-foreground)}
+  .fb .go{flex:1;min-height:42px;border-radius:9px;background:var(--primary);color:var(--primary-foreground);
+    display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:600}
+  .ico{width:15px;height:15px;flex:none;stroke:currentColor;fill:none;stroke-width:1.75;
+    stroke-linecap:round;stroke-linejoin:round}
+
+  .kept{display:flex;flex-direction:column;gap:0;margin-top:2px}
+  .k{display:flex;gap:7px;padding:5px 0;font-size:11px;align-items:center}
+  .k + .k{border-top:1px solid var(--border)}
+  .k .n{width:76px;flex:none;color:var(--muted-foreground)}
+  .k .v{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .k .m{flex:none;font-size:10px;font-weight:600;color:var(--success)}
+
+  .foot-note{font-size:11px;color:var(--muted-foreground);border-left:2px solid var(--success);
+    padding-left:10px}
+  .foot-note b{color:var(--success);font-weight:600}
+</style>
+</head>
+<body>
+
+<div>
+  <h1>The draft, on screen</h1>
+  <p class="lede">
+    What option C actually adds. A <b>JobDraft</b> row per person, saved as you
+    type, promoted to a Job on Create — so a refused submit has nothing to lose.
+  </p>
+</div>
+
+<div class="three">
+
+  <!-- 1. coming back -->
+  <div class="panel">
+    <div class="cap">1 · Coming back <span>— you left it yesterday</span></div>
+    <div class="phone">
+      <div class="bar"><div class="logo">Q</div><div class="wm">QuickTec</div></div>
+      <div class="body">
+        <div><div class="h1">New job</div></div>
+
+        <div class="resume">
+          <div class="t">You have an unfinished job</div>
+          <div class="sub" style="color:var(--foreground)">Mettel elevator lines · Starbucks SBUX&nbsp;#24541</div>
+          <div class="sub">Saved yesterday at 16:20</div>
+          <div class="row">
+            <div class="b primary">Continue</div>
+            <div class="b ghost">Start fresh</div>
+          </div>
+        </div>
+
+        <div class="sub">
+          Start fresh keeps the old one until you press Create — it is not thrown
+          away behind your back.
+        </div>
+      </div>
+      <div class="foot">
+        <div class="saved"><span class="dot ok"></span>Draft from yesterday 16:20</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. while typing -->
+  <div class="panel">
+    <div class="cap">2 · While you type <span>— saved without being asked</span></div>
+    <div class="phone">
+      <div class="bar"><div class="logo">Q</div><div class="wm">QuickTec</div></div>
+      <div class="body">
+        <div><div class="h1">New job</div><div class="sub">2607-P-9-0011 · not issued yet</div></div>
+
+        <div class="card">
+          <div><div class="lbl">Site</div><div class="inp">SBUX #24541 · 1912 Pike Pl</div></div>
+          <div><div class="lbl">Title</div><div class="inp">Elevator phone line</div></div>
+        </div>
+
+        <div class="card">
+          <div class="lbl">Numbers</div>
+          <div class="inp">A-12345</div>
+        </div>
+
+        <div class="sub">
+          The INT WO number is shown as a preview. It is not taken from the
+          counter until the job is created, so an abandoned draft leaves no gap.
+        </div>
+      </div>
+      <div class="foot">
+        <div class="saved"><span class="dot busy"></span>Saving…<span class="right">all fields</span></div>
+        <div class="fb">
+          <div class="bin"><svg class="ico" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg></div>
+          <div class="go">Create job</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. refused submit -->
+  <div class="panel">
+    <div class="cap">3 · A refused Create <span>— the bug, gone</span></div>
+    <div class="phone">
+      <div class="bar"><div class="logo">Q</div><div class="wm">QuickTec</div></div>
+      <div class="body">
+        <div><div class="h1">New job</div></div>
+
+        <div class="err">
+          <svg class="ico" viewBox="0 0 24 24" style="margin-top:1px"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L14.7 3.9a2 2 0 00-3.4 0z"/></svg>
+          <span><b>Pick a site.</b> It sets the customer and the address, so the job cannot be made without one.</span>
+        </div>
+
+        <div class="card">
+          <div><div class="lbl">Site</div><div class="inp ph bad">Search site or customer…</div></div>
+        </div>
+
+        <div class="card">
+          <div class="lbl">Still here</div>
+          <div class="kept">
+            <div class="k"><span class="n">Assignment ID</span><span class="v">A-12345</span><span class="m">kept</span></div>
+            <div class="k"><span class="n">Ticket #</span><span class="v">TK-99887</span><span class="m">kept</span></div>
+            <div class="k"><span class="n">INC #</span><span class="v">INC0042</span><span class="m">kept</span></div>
+            <div class="k"><span class="n">Scope</span><span class="v">Swap the failed switch…</span><span class="m">kept</span></div>
+          </div>
+        </div>
+
+        <p class="foot-note">
+          <b>Nothing to lose.</b> The form reloads from the draft rather than
+          resetting, so it no longer matters that React clears a form after its
+          action runs.
+        </p>
+      </div>
+      <div class="foot">
+        <div class="saved"><span class="dot ok"></span>Draft saved 12:04<span class="right warn">Site still needed</span></div>
+        <div class="fb">
+          <div class="bin"><svg class="ico" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg></div>
+          <div class="go">Create job</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>

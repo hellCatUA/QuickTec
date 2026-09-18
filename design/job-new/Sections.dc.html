@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<script src="./support.js"></script>
+<title>Every section, open</title>
+<style>
+  :root{
+    --background: oklch(0.17 0.012 260);
+    --surface: oklch(0.21 0.014 260);
+    --surface-raised: oklch(0.25 0.016 260);
+    --foreground: oklch(0.96 0.005 260);
+    --muted: oklch(0.28 0.014 260);
+    --muted-foreground: oklch(0.7 0.018 260);
+    --border: oklch(0.31 0.016 260);
+    --input: oklch(0.26 0.016 260);
+    --primary: oklch(0.66 0.16 235);
+    --primary-foreground: oklch(0.16 0.02 260);
+    --success: oklch(0.7 0.16 155);
+    --warning: oklch(0.79 0.15 85);
+    --danger: oklch(0.64 0.2 25);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    width:390px;height:1900px;overflow:hidden;
+    background:var(--background);color:var(--foreground);
+    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    font-size:14px;line-height:1.45;padding:16px;display:flex;flex-direction:column;gap:12px;
+  }
+  .note{font-size:12px;color:var(--muted-foreground);border-left:2px solid var(--primary);
+    padding-left:10px}
+  .note b{color:var(--primary);font-weight:600}
+
+  .sec{border:1px solid var(--border);border-radius:14px;background:var(--surface)}
+  .sec > h2{font-size:14px;font-weight:600;letter-spacing:-.01em;padding:13px 16px;
+    border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px}
+  .sec > h2 .state{margin-left:auto;font-size:11px;color:var(--muted-foreground);font-weight:400}
+  .sec > h2 .state.warn{color:var(--warning)}
+  .c{padding:14px 16px;display:flex;flex-direction:column;gap:12px}
+  .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.04em;font-weight:500;color:var(--muted-foreground)}
+  .sub{font-size:12px;color:var(--muted-foreground)}
+  .row{display:flex;align-items:center;gap:10px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .grow{flex:1;min-width:0}
+  .ico{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-width:1.75;
+    stroke-linecap:round;stroke-linejoin:round}
+
+  .inp{min-height:44px;border-radius:10px;border:1px solid var(--border);background:var(--input);
+    display:flex;align-items:center;padding:0 12px;font-size:15px;margin-top:5px}
+  .inp.ph{color:var(--muted-foreground)}
+  .inp .chev{margin-left:auto;color:var(--muted-foreground)}
+  .ta{min-height:96px;border-radius:10px;border:1px solid var(--border);background:var(--input);
+    padding:10px 12px;font-size:14px;color:var(--muted-foreground);margin-top:5px;line-height:1.5}
+
+  .add{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--primary)}
+  .step{display:flex;align-items:center;gap:0;margin-top:5px;border:1px solid var(--border);
+    border-radius:10px;overflow:hidden;width:132px}
+  .step .b{width:44px;height:44px;display:flex;align-items:center;justify-content:center;
+    background:var(--surface-raised);font-size:18px;color:var(--muted-foreground)}
+  .step .n{flex:1;text-align:center;font-size:16px;font-variant-numeric:tabular-nums}
+
+  .person{display:flex;align-items:center;gap:10px;padding:9px 0}
+  .person + .person{border-top:1px solid var(--border)}
+  .av{width:32px;height:32px;border-radius:999px;background:var(--muted);flex:none;
+    display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--muted-foreground)}
+  .radio{width:20px;height:20px;border-radius:999px;border:1.5px solid var(--border);flex:none;
+    display:flex;align-items:center;justify-content:center}
+  .radio.on{border-color:var(--primary)}
+  .radio.on::after{content:"";width:10px;height:10px;border-radius:999px;background:var(--primary)}
+
+  .toggle{width:40px;height:24px;border-radius:999px;background:var(--muted);flex:none;
+    display:flex;align-items:center;padding:2px}
+  .toggle .k{width:20px;height:20px;border-radius:999px;background:var(--muted-foreground)}
+  .toggle.on{background:var(--primary);justify-content:flex-end}
+  .toggle.on .k{background:var(--primary-foreground)}
+
+  .chip{display:inline-flex;align-items:center;gap:5px;border-radius:8px;padding:3px 9px;
+    font-size:12px;font-weight:500;background:var(--muted);color:var(--muted-foreground)}
+  .chip.req{background:color-mix(in oklch,var(--warning) 15%,transparent);color:var(--warning);
+    box-shadow:inset 0 0 0 1px color-mix(in oklch,var(--warning) 30%,transparent)}
+  .file{display:flex;align-items:center;gap:9px;padding:9px 0;font-size:13px}
+  .file + .file{border-top:1px solid var(--border)}
+  .box{width:20px;height:20px;border-radius:6px;border:1.5px solid var(--border);flex:none}
+  .box.on{background:var(--primary);border-color:var(--primary)}
+</style>
+</head>
+<body>
+
+<p class="note">
+  <b>Every section opened at once.</b> On the phone these are closed until you
+  need one — this is the content, not the resting state.
+</p>
+
+<div class="sec">
+  <h2>Numbers <span class="state">3 optional</span></h2>
+  <div class="c">
+    <div class="grid2">
+      <div><div class="lbl">Assignment ID</div><div class="inp ph">887766</div></div>
+      <div><div class="lbl">Ticket #</div><div class="inp"></div></div>
+    </div>
+    <span class="add">
+      <svg class="ico" viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M12 5v14M5 12h14"/></svg>
+      Another ticket
+    </span>
+    <div style="width:calc(50% - 5px)"><div class="lbl">INC #</div><div class="inp"></div></div>
+    <div class="sub">Internal only. None of these block creating the job.</div>
+  </div>
+</div>
+
+<div class="sec">
+  <h2>Schedule &amp; crew <span class="state">Tue 15:00 · 1 tech</span></h2>
+  <div class="c">
+    <div><div class="lbl">Scheduled start</div><div class="inp">Tue 23 Jun · 3:00 PM <span class="chev">⌄</span></div></div>
+    <div class="grid2">
+      <div><div class="lbl">Estimate</div><div class="inp">1h 30m <span class="chev">⌄</span></div></div>
+      <div>
+        <div class="lbl">Techs required</div>
+        <div class="step"><div class="b">−</div><div class="n">1</div><div class="b">+</div></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="lbl" style="margin-bottom:2px">Who is going</div>
+      <div class="person">
+        <div class="av">TT</div>
+        <div class="grow"><div style="font-weight:500">Terry Tech</div><div class="sub">$45.00/hr</div></div>
+        <div class="radio on"></div>
+      </div>
+      <div class="person">
+        <div class="av">AR</div>
+        <div class="grow"><div style="font-weight:500">Alex Ruiz</div><div class="sub">$42.00/hr</div></div>
+        <div class="radio"></div>
+      </div>
+      <div class="sub" style="margin-top:6px">The filled circle is the lead.</div>
+    </div>
+
+    <span class="add">
+      <svg class="ico" viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M12 5v14M5 12h14"/></svg>
+      Add somebody
+    </span>
+  </div>
+</div>
+
+<div class="sec">
+  <h2>Scope of work <span class="state warn">empty</span></h2>
+  <div class="c">
+    <div class="ta">- [ ] Swap the failed switch<br>- [ ] Label all patch leads</div>
+    <div class="sub">Each line starting with <code>- [ ]</code> becomes something the tech ticks on site.</div>
+  </div>
+</div>
+
+<div class="sec">
+  <h2>Paperwork <span class="state">1 blank attached</span></h2>
+  <div class="c">
+    <div class="row">
+      <div class="toggle"><div class="k"></div></div>
+      <div class="grow"><div style="font-weight:500">No work order issued</div>
+        <div class="sub">Recorded on the job, so nobody goes looking for one.</div></div>
+    </div>
+    <div style="border-top:1px solid var(--border);padding-top:12px">
+      <div class="lbl" style="margin-bottom:2px">Blanks kept against Mettel</div>
+      <div class="file"><div class="box on">
+        <svg class="ico" viewBox="0 0 24 24" style="width:20px;height:20px;stroke:oklch(0.16 0.02 260)"><path d="M20 6L9 17l-5-5"/></svg>
+      </div><span class="grow">Mettel sign-off sheet</span><span class="chip">default</span></div>
+      <div class="file"><div class="box"></div><span class="grow">Elevator survey form</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="sec">
+  <h2>Deliverables <span class="state">6 on, 2 required</span></h2>
+  <div class="c" style="gap:0">
+    <div class="file" style="padding-top:0">
+      <div class="box on"><svg class="ico" viewBox="0 0 24 24" style="width:20px;height:20px;stroke:oklch(0.16 0.02 260)"><path d="M20 6L9 17l-5-5"/></svg></div>
+      <span class="grow">Pre-Install</span><span class="chip req">Required</span>
+    </div>
+    <div class="file">
+      <div class="box on"><svg class="ico" viewBox="0 0 24 24" style="width:20px;height:20px;stroke:oklch(0.16 0.02 260)"><path d="M20 6L9 17l-5-5"/></svg></div>
+      <span class="grow">Post Install</span><span class="chip req">Required</span>
+    </div>
+    <div class="file">
+      <div class="box on"><svg class="ico" viewBox="0 0 24 24" style="width:20px;height:20px;stroke:oklch(0.16 0.02 260)"><path d="M20 6L9 17l-5-5"/></svg></div>
+      <span class="grow">Old Serials</span><span class="chip">optional</span>
+    </div>
+    <div class="file" style="padding-bottom:0">
+      <div class="box"></div><span class="grow" style="color:var(--muted-foreground)">Return Labels</span>
+    </div>
+    <div class="sub" style="margin-top:10px">From the project. Changing them here changes this job only.</div>
+  </div>
+</div>
+
+<div class="sec">
+  <h2>Pay &amp; dispatch <span class="state">default</span></h2>
+  <div class="c">
+    <div>
+      <div class="lbl">Rate for this job</div>
+      <div class="inp">Each tech's own rate <span class="chev">⌄</span></div>
+      <div class="sub" style="margin-top:5px">Overrides the project and the personal rate for everyone on this job.</div>
+    </div>
+    <div style="border-top:1px solid var(--border);padding-top:12px">
+      <div class="lbl" style="margin-bottom:2px">Numbers to call</div>
+      <div class="file"><div class="box on"><svg class="ico" viewBox="0 0 24 24" style="width:20px;height:20px;stroke:oklch(0.16 0.02 260)"><path d="M20 6L9 17l-5-5"/></svg></div>
+        <span class="grow">NOC · Night desk</span><span class="chip">Mettel</span></div>
+      <span class="add" style="margin-top:8px">
+        <svg class="ico" viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M12 5v14M5 12h14"/></svg>
+        A number just for this job
+      </span>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

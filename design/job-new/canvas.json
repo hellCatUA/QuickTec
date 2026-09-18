@@ -1,8 +1,46 @@
 {
   "artboards": [
-    { "file": "Main.dc.html",   "x": 0,    "y": 0,   "w": 390,  "h": 844, "title": "Proposed — tap Blank / A project", "is_interactive": true },
-    { "file": "Before.dc.html", "x": 510,  "y": 0,   "w": 560,  "h": 900, "title": "Today — and the bug, reproduced" },
-    { "file": "Draft.dc.html",  "x": 1190, "y": 0,   "w": 1020, "h": 740, "title": "The question I need answered" }
+    {
+      "file": "Main.dc.html",
+      "x": 0,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "Proposed \u2014 tap Blank / A project",
+      "is_interactive": true
+    },
+    {
+      "file": "Sections.dc.html",
+      "x": 510,
+      "y": 0,
+      "w": 390,
+      "h": 1900,
+      "title": "Every section, opened"
+    },
+    {
+      "file": "DraftFlow.dc.html",
+      "x": 1020,
+      "y": 0,
+      "w": 1240,
+      "h": 880,
+      "title": "The draft, on screen"
+    },
+    {
+      "file": "Before.dc.html",
+      "x": 1020,
+      "y": 1060,
+      "w": 560,
+      "h": 900,
+      "title": "Today \u2014 and the bug, reproduced"
+    },
+    {
+      "file": "Draft.dc.html",
+      "x": 1700,
+      "y": 1060,
+      "w": 1020,
+      "h": 740,
+      "title": "Why C \u2014 settled"
+    }
   ],
   "annotations": [
     {
@@ -10,22 +48,31 @@
       "x": 0,
       "y": -230,
       "w": 390,
-      "text": "PROPOSED\n\nOne choice at the top that fills five fields. Then only what is genuinely required — site and title. Everything else folded, with each row saying what is already in it.\n\nA footer that never scrolls away: when the draft last saved, what is still missing, and Create."
+      "text": "PROPOSED \u2014 phone\n\nOne choice at the top that fills five fields. Then only what is required: site and title. Everything else folded, each closed row saying what is already in it.\n\nA footer that never scrolls away: when the draft last saved, what is still missing, and Create."
     },
     {
-      "id": "why",
+      "id": "open",
       "x": 510,
-      "y": -170,
-      "w": 560,
-      "text": "Measured, not guessed: 4,699px at 390x844, and the data loss reproduced in a browser. Four fields vanish on a refused submit — exactly the four with no React state behind them."
+      "y": -150,
+      "w": 390,
+      "text": "The same form with every section opened, so the actual fields can be approved. On the phone these stay closed until you need one."
     },
     {
-      "id": "decide",
-      "x": 1190,
-      "y": -170,
-      "w": 1020,
-      "text": "Read this one first. Auto-saving as a draft is not a UI change — it decides what an unfinished job is to job lists, the dashboard, the calendar, exports and payroll. C keeps the blast radius to one new table."
+      "id": "flow",
+      "x": 1020,
+      "y": -150,
+      "w": 1240,
+      "text": "Option C, agreed. A JobDraft row per person, saved as you type, promoted to a Job on Create. The INT WO number is a preview until then, so an abandoned draft leaves no gap in the sequence."
+    },
+    {
+      "id": "record",
+      "x": 1020,
+      "y": 1930,
+      "w": 1700,
+      "text": "Kept for the record: the measurement, the reproduced bug, and why C was chosen over A and B."
     }
   ],
-  "launch": { "view": "canvas" }
+  "launch": {
+    "view": "canvas"
+  }
 }
