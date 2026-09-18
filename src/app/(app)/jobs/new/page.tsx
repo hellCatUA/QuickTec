@@ -4,6 +4,7 @@ import { getCompanySettings } from "@/lib/company";
 import { db } from "@/lib/db";
 import { effectiveRules } from "@/lib/deliverables";
 import { can, getSessionUser } from "@/lib/session";
+import { readJobDraft } from "@/lib/job-draft";
 import { JobForm } from "./job-form";
 
 export const metadata = { title: "New job" };
@@ -23,6 +24,7 @@ export default async function NewJobPage() {
     templates,
     clientDispatch,
     repCompanies,
+    storedDraft,
   ] =
     await Promise.all([
     getCompanySettings(),
@@ -122,6 +124,12 @@ export default async function NewJobPage() {
       orderBy: { name: "asc" },
       select: { id: true, name: true },
     }),
+    // Whatever they were in the middle of. Read defensively: a draft written
+    // before a field existed has to open without complaint.
+    db.jobDraft.findUnique({
+      where: { userId: user.id },
+      select: { payload: true, updatedAt: true },
+    }),
   ]);
 
   // Without a site there is nothing to dispatch to, and the address that ends
@@ -151,6 +159,14 @@ export default async function NewJobPage() {
         needsApproval={!can(user, "job.approve_report")}
         clients={clients}
         repCompanies={repCompanies}
+        draft={
+          storedDraft
+            ? {
+                values: readJobDraft(storedDraft.payload),
+                savedAt: storedDraft.updatedAt.toISOString(),
+              }
+            : null
+        }
         sites={sites}
         projects={projects.map((project) => ({
           id: project.id,

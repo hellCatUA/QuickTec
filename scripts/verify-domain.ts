@@ -458,6 +458,57 @@ async function main() {
     );
   }
 
+  // --- the unfinished job form ---------------------------------------------
+  // A draft is written by whatever the form looked like that day and read back
+  // by whatever it looks like now. So the only thing worth checking hard is
+  // that an old or damaged payload opens as an empty form rather than a stack
+  // trace: somebody's Tuesday is not worth a 500, and it is not worth a blank
+  // page either.
+  {
+    const { readJobDraft, draftHasContent, describeJobDraft } = await import(
+      "@/lib/job-draft"
+    );
+
+    check(
+      "a payload from before a field existed still opens",
+      readJobDraft({ title: "Old draft" })?.title,
+      "Old draft",
+    );
+    check(
+      "and keeps only what it understands",
+      Object.keys(
+        readJobDraft({ title: "x", somethingWeRemoved: 42 }) ?? {},
+      ).join(","),
+      "title",
+    );
+    check("a payload of the wrong shape reads as no draft", readJobDraft({ title: 7 }), null);
+    check("and so does rubbish", readJobDraft("not an object"), null);
+    check("and null", readJobDraft(null), null);
+
+    // The offer to restore has to be worth making. The form sets techsRequired
+    // before anybody has typed anything, so a draft holding only that is a
+    // page that was opened and closed.
+    check("an untouched form is not worth restoring", draftHasContent({ techsRequired: 1 }), false);
+    check("nor is one with empty strings", draftHasContent({ title: "   ", incNumber: "" }), false);
+    check("one keystroke is", draftHasContent({ title: "A" }), true);
+    check("so is a picked site", draftHasContent({ siteId: "abc" }), true);
+
+    // Named by whatever is filled in, because a draft nobody recognises is one
+    // nobody will press Continue on.
+    check(
+      "a draft is named by what it has",
+      describeJobDraft({ title: "Elevator phone line", siteId: "s1" }, {
+        site: () => "SBUX #24541",
+      }),
+      "Elevator phone line · SBUX #24541",
+    );
+    check(
+      "and says so when it has nothing",
+      describeJobDraft({}),
+      "Nothing filled in yet",
+    );
+  }
+
   // --- the rep company -----------------------------------------------------
   // New, and optional everywhere. The whole point of the checks is that a job
   // without one is ordinary rather than broken: every job raised before the

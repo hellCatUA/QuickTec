@@ -21,6 +21,8 @@ import { Button } from "@/components/ui/button";
 import { Combobox } from "@/components/ui/combobox";
 import { Field, Input, Select, Textarea } from "@/components/ui/field";
 import { FormStatus, type SaveState } from "@/components/ui/form-status";
+import { describeJobDraft, type JobDraftPayload } from "@/lib/job-draft";
+import { draftLabel, useJobDraft } from "./use-job-draft";
 import { HoursPicker, Stepper } from "@/components/ui/stepper";
 import { formatIntWo } from "@/lib/int-wo-format";
 import { cn } from "@/lib/utils";
@@ -72,6 +74,7 @@ export function JobForm({
   needsApproval,
   clients,
   repCompanies,
+  draft: stored,
   sites,
   projects,
   techs,
@@ -87,6 +90,8 @@ export function JobForm({
   needsApproval: boolean;
   clients: Client[];
   repCompanies: Client[];
+  /** What they were in the middle of, if anything. */
+  draft: { values: JobDraftPayload | null; savedAt: string } | null;
   sites: SiteOption[];
   projects: Project[];
   techs: Tech[];
@@ -125,6 +130,42 @@ export function JobForm({
   const [addedSites, setAddedSites] = useState<SiteOption[]>([]);
   const [payType, setPayType] = useState("");
   const [payRate, setPayRate] = useState("");
+  // Controlled, all four of them, because uncontrolled was the bug: React
+  // resets a form once its action has run, so a refused submit came back with
+  // these blank while everything held in state survived.
+  const [externalAssignmentId, setExternalAssignmentId] = useState("");
+  const [ticketNumber, setTicketNumber] = useState("");
+  const [extraTickets, setExtraTickets] = useState<string[]>([]);
+  const [incNumber, setIncNumber] = useState("");
+  const [scopeOfWork, setScopeOfWork] = useState("");
+
+  // Everything the form holds, in one place. This is what is saved, and it is
+  // also the answer to the wiped-fields bug: a value that lives here survives a
+  // refused submit, and one that lives only in the DOM does not.
+  const draftPayload: JobDraftPayload = {
+    projectId,
+    clientId,
+    repCompanyId,
+    siteId,
+    title,
+    titleTouched,
+    externalAssignmentId,
+    ticketNumber,
+    extraTickets,
+    incNumber,
+    scheduledStart,
+    estimateMinutes,
+    techsRequired,
+    assignees,
+    leadId,
+    scopeOfWork,
+    noWorkOrder,
+    pickedTemplates,
+    deliverables,
+    breakPaidChoice,
+    payType,
+    payRate,
+  };
 
   const [state, formAction, pending] = useActionState<ActionResult | null, FormData>(
     async (prev, formData) => {
@@ -139,6 +180,12 @@ export function JobForm({
     },
     null,
   );
+
+  // Off once the job is on its way: saving a draft of a form that has just
+  // become a job writes back the row createJob has already deleted.
+  const draft = useJobDraft(draftPayload, { enabled: !pending && !state?.ok });
+  const savedLabel = draftLabel(draft);
+
 
   const selectedProject = projects.find((project) => project.id === projectId);
 
@@ -278,8 +325,82 @@ export function JobForm({
     );
   }
 
+  // Offered rather than applied. Reopening the page and finding yesterday's
+  // half-finished job already typed in is startling when what you wanted was a
+  // new one — so it asks, and until it is answered the form is empty.
+  const [restored, setRestored] = useState(false);
+  const offerRestore = Boolean(stored?.values) && !restored;
+
+  function restoreDraft() {
+    const values = stored?.values;
+    if (!values) return;
+    setProjectId(values.projectId ?? "");
+    setClientId(values.clientId ?? "");
+    setRepCompanyId(values.repCompanyId ?? "");
+    setSiteId(values.siteId ?? "");
+    setTitle(values.title ?? "");
+    setTitleTouched(values.titleTouched ?? false);
+    setExternalAssignmentId(values.externalAssignmentId ?? "");
+    setTicketNumber(values.ticketNumber ?? "");
+    setExtraTickets(values.extraTickets ?? []);
+    setIncNumber(values.incNumber ?? "");
+    setScheduledStart(values.scheduledStart ?? "");
+    setEstimateMinutes(values.estimateMinutes ?? null);
+    setTechsRequired(values.techsRequired ?? 1);
+    setAssignees(values.assignees ?? []);
+    setLeadId(values.leadId ?? "");
+    setScopeOfWork(values.scopeOfWork ?? "");
+    setNoWorkOrder(values.noWorkOrder ?? false);
+    setPickedTemplates(values.pickedTemplates ?? null);
+    setDeliverables((values.deliverables as EditableRule[] | null) ?? null);
+    setBreakPaidChoice(values.breakPaidChoice ?? null);
+    setPayType(values.payType ?? "");
+    setPayRate(values.payRate ?? "");
+    setRestored(true);
+  }
+
   return (
     <form action={formAction} className="flex flex-col gap-4">
+      {offerRestore ? (
+        <Card className="border-primary/50 bg-primary/5">
+          <CardContent className="flex flex-col gap-3">
+            <div>
+              <div className="text-sm font-semibold">
+                You have an unfinished job
+              </div>
+              <p className="text-sm text-muted-foreground">
+                {describeJobDraft(stored!.values!, {
+                  site: (id) =>
+                    allSites.find((one) => one.id === id)?.siteNumber ?? null,
+                  project: (id) =>
+                    projects.find((one) => one.id === id)?.name ?? null,
+                  client: (id) =>
+                    clients.find((one) => one.id === id)?.name ?? null,
+                })}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Saved {new Date(stored!.savedAt).toLocaleString()}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" onClick={restoreDraft}>
+                Continue
+              </Button>
+              {/* Not a delete. The old draft stays until this form is created,
+                  because throwing away somebody's typing to make room for
+                  typing is the bug this whole change exists to remove. */}
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setRestored(true)}
+              >
+                Start fresh
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
       <Card>
         <CardHeader>
           <CardTitle>Assignment details</CardTitle>
@@ -424,13 +545,26 @@ export function JobForm({
               name="externalAssignmentId"
               placeholder="887766"
               autoComplete="off"
+              value={externalAssignmentId}
+              onChange={(event) => setExternalAssignmentId(event.target.value)}
             />
           </Field>
 
-          <TicketNumbers />
+          <TicketNumbers
+            primary={ticketNumber}
+            onPrimary={setTicketNumber}
+            extras={extraTickets}
+            onExtras={setExtraTickets}
+          />
 
           <Field label="INC #" htmlFor="incNumber" hint="Internal only.">
-            <Input id="incNumber" name="incNumber" autoComplete="off" />
+            <Input
+              id="incNumber"
+              name="incNumber"
+              autoComplete="off"
+              value={incNumber}
+              onChange={(event) => setIncNumber(event.target.value)}
+            />
           </Field>
         </CardContent>
       </Card>
@@ -492,6 +626,8 @@ export function JobForm({
             name="scopeOfWork"
             rows={6}
             placeholder={"- [ ] Swap the failed switch\n- [ ] Label all patch leads"}
+            value={scopeOfWork}
+            onChange={(event) => setScopeOfWork(event.target.value)}
           />
         </CardContent>
       </Card>
@@ -839,6 +975,25 @@ export function JobForm({
         </div>
       ) : null}
 
+      {/* Said out loud, because an autosave nobody can see is indistinguishable
+          from no autosave — and the first time somebody closes the tab is a
+          bad time to find out which it was. */}
+      {savedLabel ? (
+        <p className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span
+            className={cn(
+              "size-2 shrink-0 rounded-full",
+              draft.kind === "saved"
+                ? "bg-success"
+                : draft.kind === "failed"
+                  ? "bg-warning"
+                  : "bg-muted-foreground",
+            )}
+          />
+          {savedLabel}
+        </p>
+      ) : null}
+
       <FormStatus
         state={state as SaveState}
         pending={pending}
@@ -915,8 +1070,19 @@ function FilePick({
  * ticket". The rest arrive as repeated fields, the way the dispatch rows do,
  * and are stored in the order they were typed.
  */
-function TicketNumbers() {
-  const [extras, setExtras] = React.useState<string[]>([]);
+function TicketNumbers({
+  primary,
+  onPrimary,
+  extras,
+  onExtras,
+}: {
+  primary: string;
+  onPrimary: (value: string) => void;
+  extras: string[];
+  onExtras: (next: string[]) => void;
+}) {
+  const setExtras = (update: (current: string[]) => string[]) =>
+    onExtras(update(extras));
 
   return (
     <div className="flex flex-col gap-2">
@@ -929,7 +1095,13 @@ function TicketNumbers() {
             : undefined
         }
       >
-        <Input id="ticketNumber" name="ticketNumber" autoComplete="off" />
+        <Input
+          id="ticketNumber"
+          name="ticketNumber"
+          autoComplete="off"
+          value={primary}
+          onChange={(event) => onPrimary(event.target.value)}
+        />
       </Field>
 
       {extras.map((value, index) => (

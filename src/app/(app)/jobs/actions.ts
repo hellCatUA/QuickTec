@@ -10,6 +10,7 @@ import { parseDatetimeLocalInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
 import { ruleSheet } from "@/lib/deliverables";
 import { flag, optionalText } from "@/lib/form";
+import { jobDraftSchema } from "@/lib/job-draft";
 import { copyTemplateToJob, storeDocument } from "@/lib/job-documents";
 import { loadReview } from "@/lib/job-review-data";
 import { flagsFingerprint, isReviewStep } from "@/lib/job-review";
@@ -24,8 +25,8 @@ import { formatPhone } from "@/lib/phone";
 import { REVISIT_CARRIES, type RevisitCarry } from "@/lib/revisit";
 import { canOnJob, resolveJobSupervisor } from "@/lib/scope";
 import { timeZoneForZip } from "@/lib/us-regions";
-import { can, requirePermission } from "@/lib/session";
-import { PayType } from "@prisma-client";
+import { can, getSessionUser, requirePermission } from "@/lib/session";
+import { PayType, type Prisma } from "@prisma-client";
 import { jobFormSchema } from "./schema";
 
 export type ActionResult =
@@ -388,6 +389,10 @@ export async function createJob(
       detail: { who: job.intWoId, to: input.title },
     });
   }
+
+  // The draft is what this job was before it existed. Now that it does, the
+  // draft is only a way to create it a second time by accident.
+  await db.jobDraft.deleteMany({ where: { userId: actor.id } });
 
   syncJobInBackground(job.id);
   revalidatePath("/jobs");
@@ -1329,4 +1334,59 @@ export async function quickCreateSite(
 
   revalidatePath("/jobs/new");
   return { ok: true, id: site.id, customerCode: site.customer.code };
+}
+
+// ---------------------------------------------------------------------------
+// The unfinished form
+// ---------------------------------------------------------------------------
+
+/**
+ * Keeps whatever is on the form right now.
+ *
+ * No permission check beyond being signed in: a draft is a scratchpad on your
+ * own account, it becomes nothing until Create is pressed, and createJob does
+ * the real check. Refusing to remember somebody's typing because they might
+ * not be allowed to submit it would lose the typing and teach them nothing.
+ *
+ * Failure is deliberately quiet. This runs on a timer while somebody types, and
+ * a toast every few seconds because the database blinked is worse than the
+ * missed save — the next keystroke tries again.
+ */
+export async function saveJobDraft(
+  payload: unknown,
+): Promise<{ ok: boolean; savedAt?: string }> {
+  const user = await getSessionUser();
+  if (!user) return { ok: false };
+
+  const parsed = jobDraftSchema.safeParse(payload);
+  if (!parsed.success) return { ok: false };
+
+  // Round-tripped through JSON so what lands in the column is what a JSON
+  // column can actually hold: the parsed object has `| undefined` on every
+  // key, and an undefined is not a JSON value, it is the absence of one.
+  const payloadJson = JSON.parse(
+    JSON.stringify(parsed.data),
+  ) as Prisma.InputJsonObject;
+
+  try {
+    const draft = await db.jobDraft.upsert({
+      where: { userId: user.id },
+      update: { payload: payloadJson },
+      create: { userId: user.id, payload: payloadJson },
+      select: { updatedAt: true },
+    });
+    return { ok: true, savedAt: draft.updatedAt.toISOString() };
+  } catch {
+    return { ok: false };
+  }
+}
+
+/** Thrown away only when somebody says so — never behind their back. */
+export async function discardJobDraft(): Promise<{ ok: boolean }> {
+  const user = await getSessionUser();
+  if (!user) return { ok: false };
+
+  await db.jobDraft.deleteMany({ where: { userId: user.id } });
+  revalidatePath("/jobs/new");
+  return { ok: true };
 }

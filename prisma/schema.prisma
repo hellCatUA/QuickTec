@@ -164,6 +164,7 @@ model User {
   approvedFormEntries   JobFormEntry[]       @relation("FormEntryApprover")
   calendarEvents        CalendarEvent[]
   passwordSetupTokens   PasswordSetupToken[]
+  jobDraft              JobDraft?
 
   @@index([baseRole, active])
   @@index([directSupervisorId])
@@ -785,6 +786,36 @@ enum JobInternalStatus {
   REVISIT_REQUIRED
   RESCHEDULED
   RESCHEDULE_CANCELLED
+}
+
+/// A new-job form somebody has not finished.
+///
+/// Deliberately NOT a Job. A Job row is load-bearing: it shows up in job lists,
+/// the dashboard, calendar sync, exports and payroll queries, and every one of
+/// those would have to tolerate a half-filled one. Worse, allocateIntWo
+/// *consumes* a counter, so a number handed to a draft that is then abandoned
+/// leaves a hole in a sequence that reaches client paperwork.
+///
+/// So the draft lives here until somebody presses Create, and the INT WO number
+/// on screen before that is a preview.
+///
+/// One per person: the form is a single place, and two drafts would need a
+/// picker to choose between them. A draft that should be handed over is a Job.
+model JobDraft {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// The whole form as the browser last had it.
+  ///
+  /// One JSON blob rather than a column per field, because the form grows a
+  /// field most weeks and a column each time is a migration each time — for
+  /// data nobody queries, reports on or keeps. Read back defensively: a draft
+  /// written before a field existed has to open without complaint.
+  payload Json
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Job {
