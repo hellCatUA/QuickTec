@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { encode } from "next-auth/jwt";
-import { chromium } from "playwright";
+import { chromium, type Page } from "playwright";
 import { db } from "@/lib/db";
 import { resolvePayRate } from "@/lib/pay-rates";
 import { weekRange } from "@/lib/payroll";
@@ -21,6 +21,23 @@ import { weekRange } from "@/lib/payroll";
 const BASE = process.env.BASE_URL ?? "http://127.0.0.1:3000";
 const TZ = "America/Los_Angeles";
 let failures = 0;
+
+/**
+ * Opens a collapsed <Section> by its heading. The job page keeps a planner's
+ * blocks shut until they are wanted, so anything reaching into one has to say
+ * so first; asking for a section already open is free.
+ */
+async function openSection(page: Page, title: string) {
+  const summary = page
+    .locator("summary", { hasText: new RegExp(`^${title}`) })
+    .first();
+  await summary.waitFor({ state: "visible", timeout: 15_000 });
+  const details = summary.locator("xpath=..");
+  if ((await details.getAttribute("open")) === null) {
+    await summary.click();
+    await page.waitForTimeout(150);
+  }
+}
 
 function check(label: string, actual: unknown, expected: unknown) {
   const ok = String(actual) === String(expected);
@@ -387,6 +404,7 @@ async function main() {
   await supPage.goto(`${BASE}/jobs/${revisit.id}`, {
     waitUntil: "domcontentloaded",
   });
+  await openSection(supPage, "Crew");
   check(
     "a revisit starts with nobody on it",
     await supPage.locator("text=Nobody assigned yet.").isVisible(),
@@ -459,6 +477,7 @@ async function main() {
   await supPage.goto(`${BASE}/jobs/${revisit.id}`, {
     waitUntil: "domcontentloaded",
   });
+  await openSection(supPage, "Crew");
   await supPage
     .getByRole("button", { name: `Take ${tech.user.name} off this job` })
     .click();

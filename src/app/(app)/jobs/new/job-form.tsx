@@ -23,7 +23,7 @@ import { Field, Input, Select, Textarea } from "@/components/ui/field";
 import { FormStatus, type SaveState } from "@/components/ui/form-status";
 import { describeJobDraft, type JobDraftPayload } from "@/lib/job-draft";
 import { draftLabel, useJobDraft } from "./use-job-draft";
-import { Section } from "./section";
+import { Section } from "@/components/ui/section";
 import { HoursPicker, Stepper } from "@/components/ui/stepper";
 import { formatIntWo } from "@/lib/int-wo-format";
 import { cn } from "@/lib/utils";

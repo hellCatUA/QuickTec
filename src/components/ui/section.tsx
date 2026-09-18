@@ -5,7 +5,7 @@ import * as React from "react";
 import { cn } from "@/lib/utils";
 
 /**
- * A part of the form that stays shut until somebody needs it.
+ * A block that stays shut until somebody needs it.
  *
  * The page was 4,699px at phone width — five and a half screens — with nine
  * cards all open at once, required and optional mixed together, when five

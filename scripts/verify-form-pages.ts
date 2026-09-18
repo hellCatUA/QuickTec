@@ -3,7 +3,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { encode } from "next-auth/jwt";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
-import { chromium } from "playwright";
+import { chromium, type Page } from "playwright";
 import { db } from "@/lib/db";
 import { absolutePath } from "@/lib/storage";
 
@@ -38,6 +38,19 @@ function check(label: string, actual: unknown, expected: unknown) {
   console.log(
     `${ok ? "PASS" : "FAIL"}  ${label}\n      got ${actual}${ok ? "" : `  want ${expected}`}`,
   );
+}
+
+/**
+ * Puts a job-page tab on screen. The job page is three tabs now, and only
+ * Details is showing when it loads — the sign-off blank is a deliverable.
+ */
+async function jobTab(page: Page, name: "Details" | "Notes" | "Deliverables") {
+  const button = page.getByRole("tab", { name: new RegExp(`^${name}`) });
+  await button.waitFor({ state: "visible", timeout: 15_000 });
+  if ((await button.getAttribute("aria-selected")) !== "true") {
+    await button.click();
+    await page.waitForTimeout(150);
+  }
 }
 
 function ok(label: string, condition: boolean) {
@@ -427,6 +440,7 @@ async function main() {
 
   await page.goto(`${BASE}/jobs/${job.id}`, { waitUntil: "domcontentloaded" });
 
+  await jobTab(page, "Deliverables");
   const review = page.getByRole("link", { name: /Fill it in and check it/ });
   ok("the job offers to fill the sheet in", await review.isVisible());
   await review.click();

@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { chromium } from "playwright";
+import { chromium, type Page } from "playwright";
 import { encode } from "next-auth/jwt";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
@@ -25,6 +25,36 @@ const BASE = process.env.BASE_URL ?? "http://127.0.0.1:3000";
 const JOB_URL = /\/jobs\/c[a-z0-9]{10,}$/;
 
 let failures = 0;
+
+/**
+ * Puts a job-page tab on screen before anything reaches into it.
+ *
+ * The job page is three tabs now, and only Details is showing when it loads.
+ * Everything below is written as "click the thing", which quietly stopped
+ * being true for two thirds of the page — so the tab comes first, and asking
+ * for one that is already open is free.
+ */
+async function tab(page: Page, name: "Details" | "Notes" | "Deliverables") {
+  const button = page.getByRole("tab", { name: new RegExp(`^${name}`) });
+  await button.waitFor({ state: "visible", timeout: 15_000 });
+  if ((await button.getAttribute("aria-selected")) !== "true") {
+    await button.click();
+    await page.waitForTimeout(150);
+  }
+}
+
+/** Opens a collapsed <Section> by its heading, if it is not open already. */
+async function openSection(page: Page, title: string | RegExp) {
+  const summary = page.locator("summary", {
+    hasText: typeof title === "string" ? new RegExp(`^${title}`) : title,
+  });
+  await summary.first().waitFor({ state: "visible", timeout: 15_000 });
+  const details = summary.first().locator("xpath=..");
+  if ((await details.getAttribute("open")) === null) {
+    await summary.first().click();
+    await page.waitForTimeout(150);
+  }
+}
 
 function check(label: string, actual: unknown, expected: unknown) {
   const ok = String(actual) === String(expected);
@@ -207,7 +237,11 @@ async function main() {
   await page.getByRole("button", { name: "Clock out", exact: true }).click();
   await page.waitForSelector("text=Step 1 of 6", { timeout: 15_000 });
 
-  const reviewText = await page.locator("text=Still missing").isVisible();
+  // Exact: the job page itself now carries a strip saying the same thing in a
+  // sentence, and this check is about the one inside the checkout.
+  const reviewText = await page
+    .getByText("Still missing", { exact: true })
+    .isVisible();
   check("review step flags missing deliverables", reviewText, true);
   check(
     "the missing list names Pre-Install",
@@ -229,6 +263,7 @@ async function main() {
     .toBuffer();
 
   async function upload(section: string) {
+    await tab(page, "Deliverables");
     await page.getByRole("button", { name: `Add to ${section}` }).click();
 
     // Not just the first file input on the page any more: the company's
@@ -642,6 +677,8 @@ async function main() {
   // --- exports ------------------------------------------------------------
   await page.reload({ waitUntil: "domcontentloaded" });
 
+  await tab(page, "Details");
+  await openSection(page, "Exports");
   check(
     "the report is on the page ready to copy",
     await page.locator("#text-report").isVisible(),
@@ -1259,16 +1296,25 @@ async function main() {
     await planner.goto(url, { waitUntil: "load" });
     await planner.waitForTimeout(1000);
 
+    // The paper itself rests in a drawer under Details; the numbers that name
+    // it are up in the block above, which is what gets quoted on the phone.
+    await tab(planner, "Details");
+    await openSection(planner, "Paperwork");
+
     check(
       "the WO has somewhere to go",
       await planner.getByText("No WO for this job.").first().isVisible(),
       true,
     );
+    // The sign-off is a deliverable, not paperwork — it is the thing the
+    // customer stands there to sign — so it lives on that tab.
+    await tab(planner, "Deliverables");
     check(
       "and so does their sign-off blank",
       await planner.getByText("Sign-off sheet").first().isVisible(),
       true,
     );
+    await tab(planner, "Details");
 
     await planner
       .locator("#doc-CLIENT_WORK_ORDER")
@@ -1293,6 +1339,7 @@ async function main() {
     );
     // Their document, not ours — stamping it would misrepresent it.
     check("and unstamped", stored?.watermarked, false);
+    await openSection(planner, "Paperwork");
     check(
       "and it is offered to open",
       await planner.getByRole("link", { name: "NetCom-WO-887766.pdf" }).isVisible(),
@@ -1309,6 +1356,7 @@ async function main() {
     check("the tech on the job can open it", fetched.status(), 200);
     await asTech.close();
 
+    await openSection(planner, "Paperwork");
     await planner
       .getByRole("button", { name: "Remove NetCom-WO-887766.pdf" })
       .click();
@@ -1322,6 +1370,7 @@ async function main() {
     // Nothing attached says so, and there is no button asking anybody to
     // declare it — the great majority of jobs simply never get one, and the
     // ones that do get theirs by somebody attaching it.
+    await openSection(planner, "Paperwork");
     check(
       "an empty slot says there is no work order",
       await planner.getByText("No WO for this job.").isVisible(),
@@ -1391,6 +1440,7 @@ async function main() {
 
     await planner.goto(url, { waitUntil: "load" });
     await planner.waitForTimeout(1000);
+    await openSection(planner, "Time");
 
     await planner
       .getByRole("radio", {
@@ -1617,6 +1667,7 @@ async function main() {
     // on the job at the time and then forgotten, so the next person added
     // arrived on their own rate — non-billable, in the usual case — and
     // somebody had to notice and re-apply it.
+    await openSection(planner, "Crew");
     await planner.getByRole("button", { name: "Add a tech" }).click();
     await planner.locator("#crew-add").click();
     const newcomer = await planner
@@ -1701,6 +1752,7 @@ async function main() {
 
     // Putting them back picks up whatever the job pays now, not what it paid
     // when they were taken off it.
+    await openSection(planner, "Crew");
     await planner
       .getByRole("button", { name: `Set pay for ${newcomer.split("\n")[0]}` })
       .click();
@@ -2095,6 +2147,7 @@ async function main() {
   await bossPage(browser, bossToken, async (planner) => {
     await planner.goto(url, { waitUntil: "load" });
     await planner.waitForTimeout(1000);
+    await tab(planner, "Deliverables");
 
     check(
       "the sections are folded away until somebody wants them",
@@ -2148,6 +2201,7 @@ async function main() {
 
     await planner.reload({ waitUntil: "domcontentloaded" });
     await planner.waitForTimeout(500);
+    await tab(planner, "Deliverables");
     check(
       "the tech is now shown the section",
       await planner.getByRole("button", { name: "Add to Old Serials" }).isVisible(),
@@ -2176,6 +2230,7 @@ async function main() {
     0,
   );
 
+  await tab(page, "Deliverables");
   await page.getByRole("button", { name: "Add to Return Labels" }).click();
   // By role as well as name: each row's remove button is labelled after the
   // number it removes, so "Tracking number 2" alone matches two elements.
@@ -2214,6 +2269,7 @@ async function main() {
   await bossPage(browser, bossToken, async (planner) => {
     await planner.goto(url, { waitUntil: "load" });
     await planner.waitForTimeout(1000);
+    await openSection(planner, "Crew");
 
     await planner.getByRole("button", { name: "Add a tech" }).click();
     await planner.locator("#crew-add").click();

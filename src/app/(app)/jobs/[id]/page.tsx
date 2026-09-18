@@ -50,6 +50,8 @@ import { ChangeRequests } from "./change-requests";
 import { CrewPanel } from "./crew-panel";
 import { DispatchPanel } from "./dispatch-panel";
 import { JobMenu } from "./job-menu";
+import { Section } from "@/components/ui/section";
+import { JobTabs } from "./job-tabs";
 import { BreakPay } from "./break-pay";
 import { JobDocuments } from "./job-documents";
 import { JobTickets } from "./tickets";
@@ -134,7 +136,12 @@ export default async function JobPage({
       parentJob: { select: { id: true, intWoId: true, title: true } },
       revisits: {
         orderBy: { revisitNumber: "asc" },
-        select: { id: true, intWoId: true, revisitNumber: true, lifecycle: true },
+        select: {
+          id: true,
+          intWoId: true,
+          revisitNumber: true,
+          lifecycle: true,
+        },
       },
       client: { select: { name: true } },
       repCompany: { select: { name: true } },
@@ -154,7 +161,9 @@ export default async function JobPage({
           // itself. Counted here so the page knows whether to offer it.
           sourceTemplate: {
             select: {
-              _count: { select: { placements: { where: { source: { not: null } } } } },
+              _count: {
+                select: { placements: { where: { source: { not: null } } } },
+              },
             },
           },
         },
@@ -252,7 +261,9 @@ export default async function JobPage({
           category: true,
           customLabel: true,
           textValue: true,
-          assignment: { select: { userId: true, user: { select: { name: true } } } },
+          assignment: {
+            select: { userId: true, user: { select: { name: true } } },
+          },
           attachments: {
             select: { id: true, mimeType: true, originalName: true },
           },
@@ -436,6 +447,13 @@ export default async function JobPage({
     (total, item) => total + item.attachments.length,
     0,
   );
+
+  // The customer's own work order, when somebody has attached it. There is no
+  // field to type its number into — the paper is the number — so the block
+  // above names the file and the drawer below holds it.
+  const clientWorkOrder =
+    job.documents.find((doc) => doc.jobDocumentKind === "CLIENT_WORK_ORDER") ??
+    null;
 
   /** Read-only, editable, fill-in or suggest — decided per field. */
   function actionFor(field: JobFieldName, value: string) {
@@ -704,7 +722,8 @@ export default async function JobPage({
           objection delivered only as a notification is read in a van and gone
           by the time anybody opens the job to act on it. */}
       {job.reviewNote &&
-      (job.lifecycle === "CHANGES_REQUESTED" || job.lifecycle === "REJECTED") ? (
+      (job.lifecycle === "CHANGES_REQUESTED" ||
+        job.lifecycle === "REJECTED") ? (
         <SentBack
           jobId={job.id}
           rejected={job.lifecycle === "REJECTED"}
@@ -823,487 +842,564 @@ export default async function JobPage({
         </Card>
       ) : null}
 
-      <Card>
-        <EditableBlock label="assignment details" canEdit={canManageJob}>
-        <CardHeader className="flex-row items-start justify-between gap-2">
-          <CardTitle>Assignment details</CardTitle>
-          <BlockEditToggle />
-        </CardHeader>
-        <CardContent>
-          <BlockBody>
-            <div className="grid gap-4 text-sm sm:grid-cols-2">
-              {/* Company is the one that pays us. The rep company is a link
-                  above them, and is blank on every job raised before it
-                  existed — Static already renders that as a dash. */}
-              <Static label="Company" value={job.client.name} />
-              <Static label="Rep Company" value={job.repCompany?.name ?? null} />
+      {/* Three drawers, and everything above them stays put — the title, the
+          badges and above all the clock, which is the one part that is
+          time-critical and the one part that must never be two taps away. */}
+      <JobTabs
+        missing={missingRequired}
+        details={
+          <>
+            <Card>
+              <EditableBlock label="assignment details" canEdit={canManageJob}>
+                <CardHeader className="flex-row items-start justify-between gap-2">
+                  <CardTitle>Assignment details</CardTitle>
+                  <BlockEditToggle />
+                </CardHeader>
+                <CardContent>
+                  <BlockBody>
+                    <div className="grid gap-4 text-sm sm:grid-cols-2">
+                      {/* Company is the one that pays us. The rep company is a link
+                        above them, and is blank on every job raised before it
+                        existed — Static already renders that as a dash. */}
+                      <Static label="Company" value={job.client.name} />
+                      <Static
+                        label="Rep Company"
+                        value={job.repCompany?.name ?? null}
+                      />
 
-              <Static label="Customer" value={job.customer.name} />
+                      <Static label="Customer" value={job.customer.name} />
 
-              {/* Where it is, in the order somebody driving there wants it:
-                  which site, then the address, then when they are due. */}
-              <div>
-                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  Site ID
-                </div>
-                {job.site.numberPending ? (
-                  <SiteNumberPrompt jobId={job.id} canSet={canClockHere} />
-                ) : (
-                  <Link
-                    href={`/sites/${job.siteId}`}
-                    className="text-primary underline-offset-4 hover:underline"
-                  >
-                    {siteLabel(job.customer.code, job.site.siteNumber)}
-                  </Link>
-                )}
-              </div>
-              <Static label={intWoFieldLabel(company)} value={job.intWoId} mono />
+                      {/* Where it is, in the order somebody driving there wants it:
+                        which site, then the address, then when they are due. */}
+                      <div>
+                        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                          Site ID
+                        </div>
+                        {job.site.numberPending ? (
+                          <SiteNumberPrompt
+                            jobId={job.id}
+                            canSet={canClockHere}
+                          />
+                        ) : (
+                          <Link
+                            href={`/sites/${job.siteId}`}
+                            className="text-primary underline-offset-4 hover:underline"
+                          >
+                            {siteLabel(job.customer.code, job.site.siteNumber)}
+                          </Link>
+                        )}
+                      </div>
 
-              <div className="sm:col-span-2">
-                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  Address
-                </div>
-                <a
-                  href={mapsUrl(job.site)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="mt-0.5 flex items-center gap-1 text-primary underline-offset-4 hover:underline"
-                >
-                  <MapPin className="size-3.5 shrink-0" />
-                  {formatAddress(job.site)}
-                </a>
-                {job.site.notes ? (
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {job.site.notes}
-                  </p>
+                      <div className="sm:col-span-2">
+                        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                          Address
+                        </div>
+                        <a
+                          href={mapsUrl(job.site)}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mt-0.5 flex items-center gap-1 text-primary underline-offset-4 hover:underline"
+                        >
+                          <MapPin className="size-3.5 shrink-0" />
+                          {formatAddress(job.site)}
+                        </a>
+                        {job.site.notes ? (
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {job.site.notes}
+                          </p>
+                        ) : null}
+                      </div>
+
+                      {editable(
+                        "scheduledStart",
+                        job.scheduledStart
+                          ? toDatetimeLocalInZone(job.scheduledStart, zone)
+                          : "",
+                        job.scheduledStart
+                          ? usDateTimeInZone(job.scheduledStart, zone)
+                          : undefined,
+                      )}
+                      {editable(
+                        "estimateMinutes",
+                        job.estimateMinutes ? String(job.estimateMinutes) : "",
+                        job.estimateMinutes
+                          ? `${(job.estimateMinutes / 60).toFixed(2)} hrs`
+                          : undefined,
+                      )}
+
+                      {editable(
+                        "externalAssignmentId",
+                        job.externalAssignmentId ?? "",
+                      )}
+                      {editable("ticketNumber", job.ticketNumber ?? "")}
+                      {/* One job routinely answers to more than one ticket. The first
+                        is the field above; these are the ones after it, and the plus
+                        stays offered even once there is one — a second turns up
+                        mid-job often enough. */}
+                      <JobTickets
+                        jobId={job.id}
+                        primary={job.ticketNumber}
+                        extras={job.extraTickets}
+                        canEdit={canFillMissing}
+                      />
+                      {editable("incNumber", job.incNumber ?? "")}
+
+                      {/* The two work-order numbers close the block, in the order
+                        they are quoted: ours first, then theirs. */}
+                      <Static
+                        label={intWoFieldLabel(company)}
+                        value={job.intWoId}
+                        mono
+                      />
+                      <Static
+                        label={`${job.client.name} work order`}
+                        value={clientWorkOrder?.originalName ?? null}
+                      />
+                    </div>
+                  </BlockBody>
+                </CardContent>
+              </EditableBlock>
+            </Card>
+
+            {/* The paperwork itself, and what the job hangs off. Both are read
+                on some jobs and none of it is read on a phone in a car park,
+                so it rests closed — the numbers are up in the block above, and
+                this is the copy of the paper behind them. */}
+            <Section
+              title="Paperwork &amp; project"
+              summary={
+                [
+                  job.project ? job.project.name : null,
+                  clientWorkOrder ? "work order attached" : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ") || "Nothing attached"
+              }
+            >
+              <div className="flex flex-col gap-3">
+                <Static
+                  label="Project"
+                  value={
+                    job.project
+                      ? `${job.project.name}${job.project.externalProjectId ? ` (${job.project.externalProjectId})` : ""}`
+                      : "No project"
+                  }
+                />
+
+                {canExportPdf ? (
+                  <div className="flex flex-col gap-1">
+                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      {company.intWoLabel} work order
+                    </div>
+                    <a
+                      href={`/api/jobs/${job.id}/export/pdf?inline=1`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex items-center gap-1.5 text-sm text-primary underline-offset-4 hover:underline"
+                    >
+                      <Printer className="size-3.5 shrink-0" />
+                      {job.intWoId}.pdf
+                    </a>
+                  </div>
                 ) : null}
+
+                <JobDocuments
+                  jobId={job.id}
+                  only="CLIENT_WORK_ORDER"
+                  canUpload={canUpload}
+                  documents={job.documents
+                    .filter((doc) => doc.jobDocumentKind !== null)
+                    .map((doc) => ({
+                      id: doc.id,
+                      kind: doc.jobDocumentKind as
+                        | "CLIENT_WORK_ORDER"
+                        | "SIGN_OFF",
+                      originalName: doc.originalName,
+                      sizeBytes: doc.sizeBytes,
+                      generated: doc.generated,
+                      fillableBoxes: doc.sourceTemplate?._count.placements ?? 0,
+                      templateId: doc.sourceTemplateId,
+                    }))}
+                />
               </div>
+            </Section>
 
-              {editable(
-                "scheduledStart",
-                job.scheduledStart
-                  ? toDatetimeLocalInZone(job.scheduledStart, zone)
-                  : "",
-                job.scheduledStart
-                  ? usDateTimeInZone(job.scheduledStart, zone)
-                  : undefined,
-              )}
-              {editable(
-                "estimateMinutes",
-                job.estimateMinutes ? String(job.estimateMinutes) : "",
-                job.estimateMinutes
-                  ? `${(job.estimateMinutes / 60).toFixed(2)} hrs`
-                  : undefined,
-              )}
+            <Card>
+              <CardHeader>
+                <CardTitle>Points of contact</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <PointsOfContact
+                  jobId={job.id}
+                  contacts={job.pointsOfContact}
+                  canEdit={canFillMissing}
+                />
+              </CardContent>
+            </Card>
 
-              {editable("externalAssignmentId", job.externalAssignmentId ?? "")}
-              {editable("ticketNumber", job.ticketNumber ?? "")}
-              {/* One job routinely answers to more than one ticket. The first
-                  is the field above; these are the ones after it, and the plus
-                  stays offered even once there is one — a second turns up
-                  mid-job often enough. */}
-              <JobTickets
+            {dispatch.length > 0 || canFillMissing ? (
+              <Card>
+                <CardHeader className="flex-row items-start justify-between gap-2">
+                  <CardTitle>Dispatch info</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {/* A number picked up mid-job is worth having whoever finds it, so
+                      anyone on the job may add one. Changing or removing one that is
+                      already there is a different matter — that is the number the
+                      rest of the crew is dialling. */}
+                  <DispatchPanel
+                    jobId={job.id}
+                    canEdit={canManageJob}
+                    canAdd={canFillMissing}
+                    contacts={dispatch}
+                  />
+                </CardContent>
+              </Card>
+            ) : null}
+
+            <Card>
+              <CardHeader className="flex-row items-start justify-between gap-2">
+                <CardTitle>Scope of work</CardTitle>
+                {/* The editor holds Markdown, which is worth writing and not worth
+                    reading: it used to sit above the rendered scope showing the same
+                    text with its punctuation still in. */}
+                {canManageJob &&
+                actionFor("scopeOfWork", job.scopeOfWork ?? "") !== "none" ? (
+                  <EditableField
+                    jobId={job.id}
+                    field="scopeOfWork"
+                    label="scope of work"
+                    value={job.scopeOfWork ?? ""}
+                    action={actionFor("scopeOfWork", job.scopeOfWork ?? "")}
+                    kind="markdown"
+                    hideValue
+                  />
+                ) : null}
+              </CardHeader>
+              <CardContent>
+                <ScopeOfWork
+                  jobId={job.id}
+                  generalScope={job.project?.generalScopeOfWork ?? null}
+                  jobScope={job.scopeOfWork}
+                  checkedKeys={job.scopeChecks.map((check) => check.lineKey)}
+                  canCheck={canClockHere}
+                />
+              </CardContent>
+            </Card>
+
+            {/* Everything past here is closed, not hidden. Nothing below
+                answers a question somebody asks while standing on a site, so
+                none of it should cost a scroll — but each of them answers one
+                sooner or later, and to the tech as much as to the planner:
+                the timeline is where the reviewer's last note is re-read, the
+                report is what gets pasted into the portal, and the crew is who
+                else is meant to be turning up. Hiding those by rank would only
+                mean asking somebody in the office to read them out. */}
+            <Section
+              title="Time &amp; schedule"
+              summary={
+                span.totalMinutes > 0
+                  ? `${(span.totalMinutes / 60).toFixed(2)} hrs`
+                  : span.open
+                    ? "Still on site"
+                    : "Not started"
+              }
+            >
+              <div className="grid gap-4 text-sm sm:grid-cols-3">
+                {/* When it was planned for now sits with the address, where somebody
+                      on their way there is already looking. */}
+                {editable("techsRequired", String(job.techsRequired))}
+
+                <Static
+                  label="Onsite (check in)"
+                  value={
+                    span.onsiteAt ? usTimeInZone(span.onsiteAt, zone) : null
+                  }
+                />
+                <Static
+                  label="Offsite (check out)"
+                  value={
+                    span.offsiteAt
+                      ? usTimeInZone(span.offsiteAt, zone)
+                      : span.open
+                        ? "Still on site"
+                        : null
+                  }
+                />
+                <Static
+                  label="Total time"
+                  value={
+                    span.totalMinutes > 0
+                      ? `${(span.totalMinutes / 60).toFixed(2)} hrs`
+                      : null
+                  }
+                />
+
+                {/* Return tracking is not here any more. It is recorded against the
+                      Return Labels deliverable, with the photo of the label beside it,
+                      which is where somebody standing at the box already is. The
+                      report still reads "Return track #" from either. */}
+                <BreakPay
+                  jobId={job.id}
+                  paid={job.breakPaid}
+                  canChange={canEditPlanned}
+                />
+              </div>
+            </Section>
+
+            <Section
+              title="Crew"
+              summary={
+                job.assignments.length === 1
+                  ? job.assignments[0].user.name
+                  : `${job.assignments.length} on the job`
+              }
+            >
+              {canAssign ? (
+                <p className="mb-3 text-sm text-muted-foreground">
+                  A revisit and an ad-hoc job both start empty. Adding someone
+                  copies their rate onto the job and puts it in their calendar.
+                </p>
+              ) : null}
+              <CrewPanel
                 jobId={job.id}
-                primary={job.ticketNumber}
-                extras={job.extraTickets}
-                canEdit={canFillMissing}
-              />
-              {editable("incNumber", job.incNumber ?? "")}
-              <Static
-                label="Project"
-                value={
-                  job.project
-                    ? `${job.project.name}${job.project.externalProjectId ? ` (${job.project.externalProjectId})` : ""}`
-                    : "No project"
-                }
-              />
-            </div>
-          </BlockBody>
-
-          {/* The paperwork the job answers to, with the job it belongs to
-              rather than in a block of its own further down the scroll. */}
-          <div className="mt-4 flex flex-col gap-3 border-t border-border pt-4">
-            {canExportPdf ? (
-              <div className="flex flex-col gap-1">
-                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  {company.intWoLabel} work order
-                </div>
-                <a
-                  href={`/api/jobs/${job.id}/export/pdf?inline=1`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex items-center gap-1.5 text-sm text-primary underline-offset-4 hover:underline"
-                >
-                  <Printer className="size-3.5 shrink-0" />
-                  {job.intWoId}.pdf
-                </a>
-              </div>
-            ) : null}
-
-            <JobDocuments
-              jobId={job.id}
-              only="CLIENT_WORK_ORDER"
-              canUpload={canUpload}
-              documents={job.documents
-                .filter((doc) => doc.jobDocumentKind !== null)
-                .map((doc) => ({
-                  id: doc.id,
-                  kind: doc.jobDocumentKind as "CLIENT_WORK_ORDER" | "SIGN_OFF",
-                  originalName: doc.originalName,
-                  sizeBytes: doc.sizeBytes,
-                  generated: doc.generated,
-                  fillableBoxes: doc.sourceTemplate?._count.placements ?? 0,
-                  templateId: doc.sourceTemplateId,
+                canAssign={canAssign}
+                canReassign={canReassign}
+                candidates={crewCandidates.map((person) => ({
+                  id: person.id,
+                  name: person.name,
+                  role: person.baseRole,
                 }))}
-            />
-          </div>
-        </CardContent>
-        </EditableBlock>
-      </Card>
+                canEditPay={canEditRates}
+                crew={job.assignments.map((assignment) => ({
+                  id: assignment.id,
+                  userId: assignment.user.id,
+                  name: assignment.user.name,
+                  payType: assignment.payType,
+                  payRate: assignment.payRate.toString(),
+                  travelReimbursement:
+                    assignment.travelReimbursement?.toString() ?? null,
+                  payNote: showPay ? assignment.payRateNote : null,
+                  overridden: assignment.payOverridden,
+                  isLead: assignment.isLead,
+                  onSite: jobSpan(assignment.visits, now).open,
+                  hasWorked:
+                    assignment.visits.length > 0 ||
+                    assignment._count.deliverables > 0,
+                  supervisorName: assignment.supervisor?.name ?? null,
+                  rate: showPay
+                    ? `${formatRate(assignment.payType, assignment.payRate.toString())}${
+                        assignment.travelReimbursement
+                          ? ` · travel $${Number(assignment.travelReimbursement).toFixed(2)}`
+                          : ""
+                      }`
+                    : null,
+                }))}
+              />
+            </Section>
 
-      {dispatch.length > 0 || canFillMissing ? (
-        <Card>
-          <CardHeader className="flex-row items-start justify-between gap-2">
-            <CardTitle>Dispatch info</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {/* A number picked up mid-job is worth having whoever finds it, so
-                anyone on the job may add one. Changing or removing one that is
-                already there is a different matter — that is the number the
-                rest of the crew is dialling. */}
-            <DispatchPanel
-              jobId={job.id}
-              canEdit={canManageJob}
-              canAdd={canFillMissing}
-              contacts={dispatch}
-            />
-          </CardContent>
-        </Card>
-      ) : null}
+            <Section
+              title="Timeline"
+              summary={`${timeline.length} entr${timeline.length === 1 ? "y" : "ies"}`}
+            >
+              <p className="mb-3 text-sm text-muted-foreground">
+                Created by {job.createdBy.name} on{" "}
+                {usDateTimeInZone(job.createdAt, zone)}
+              </p>
+              <Timeline rows={timeline} />
+            </Section>
 
-      <Card>
-        <CardHeader className="flex-row items-start justify-between gap-2">
-          <CardTitle>Scope of work</CardTitle>
-          {/* The editor holds Markdown, which is worth writing and not worth
-              reading: it used to sit above the rendered scope showing the same
-              text with its punctuation still in. */}
-          {canManageJob &&
-          actionFor("scopeOfWork", job.scopeOfWork ?? "") !== "none" ? (
-            <EditableField
-              jobId={job.id}
-              field="scopeOfWork"
-              label="scope of work"
-              value={job.scopeOfWork ?? ""}
-              action={actionFor("scopeOfWork", job.scopeOfWork ?? "")}
-              kind="markdown"
-              hideValue
-            />
-          ) : null}
-        </CardHeader>
-        <CardContent>
-          <ScopeOfWork
-            jobId={job.id}
-            generalScope={job.project?.generalScopeOfWork ?? null}
-            jobScope={job.scopeOfWork}
-            checkedKeys={job.scopeChecks.map((check) => check.lineKey)}
-            canCheck={canClockHere}
-          />
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Points of contact</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <PointsOfContact
-            jobId={job.id}
-            contacts={job.pointsOfContact}
-            canEdit={canFillMissing}
-          />
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Work performed</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <WorkPerformed
-            jobId={job.id}
-            own={mine?.workPerformed ?? null}
-            others={job.assignments
-              .filter(
-                (assignment) =>
-                  assignment.user.id !== user.id && assignment.workPerformed,
-              )
-              .map((assignment) => ({
-                name: assignment.user.name,
-                text: assignment.workPerformed as string,
-              }))}
-            merged={job.workPerformedMerged}
-            canWrite={Boolean(mine) && canClockHere}
-            canMerge={Boolean(mine?.isLead) || canApproveJob}
-          />
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Time &amp; schedule</CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-4 text-sm sm:grid-cols-3">
-          {/* When it was planned for now sits with the address, where somebody
-              on their way there is already looking. */}
-          {editable("techsRequired", String(job.techsRequired))}
-
-          <Static
-            label="Onsite (check in)"
-            value={span.onsiteAt ? usTimeInZone(span.onsiteAt, zone) : null}
-          />
-          <Static
-            label="Offsite (check out)"
-            value={
-              span.offsiteAt
-                ? usTimeInZone(span.offsiteAt, zone)
-                : span.open
-                  ? "Still on site"
-                  : null
-            }
-          />
-          <Static
-            label="Total time"
-            value={
-              span.totalMinutes > 0
-                ? `${(span.totalMinutes / 60).toFixed(2)} hrs`
-                : null
-            }
-          />
-
-          {/* Return tracking is not here any more. It is recorded against the
-              Return Labels deliverable, with the photo of the label beside it,
-              which is where somebody standing at the box already is. The
-              report still reads "Return track #" from either. */}
-          <BreakPay
-            jobId={job.id}
-            paid={job.breakPaid}
-            canChange={canEditPlanned}
-          />
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Crew</CardTitle>
-          {canAssign ? (
-            <CardDescription>
-              A revisit and an ad-hoc job both start empty. Adding someone
-              copies their rate onto the job and puts it in their calendar.
-            </CardDescription>
-          ) : null}
-        </CardHeader>
-        <CardContent>
-          <CrewPanel
-            jobId={job.id}
-            canAssign={canAssign}
-            canReassign={canReassign}
-            candidates={crewCandidates.map((person) => ({
-              id: person.id,
-              name: person.name,
-              role: person.baseRole,
-            }))}
-            canEditPay={canEditRates}
-            crew={job.assignments.map((assignment) => ({
-              id: assignment.id,
-              userId: assignment.user.id,
-              name: assignment.user.name,
-              payType: assignment.payType,
-              payRate: assignment.payRate.toString(),
-              travelReimbursement:
-                assignment.travelReimbursement?.toString() ?? null,
-              payNote: showPay ? assignment.payRateNote : null,
-              overridden: assignment.payOverridden,
-              isLead: assignment.isLead,
-              onSite: jobSpan(assignment.visits, now).open,
-              hasWorked:
-                assignment.visits.length > 0 ||
-                assignment._count.deliverables > 0,
-              supervisorName: assignment.supervisor?.name ?? null,
-              rate: showPay
-                ? `${formatRate(assignment.payType, assignment.payRate.toString())}${
-                    assignment.travelReimbursement
-                      ? ` · travel $${Number(assignment.travelReimbursement).toFixed(2)}`
-                      : ""
-                  }`
-                : null,
-            }))}
-          />
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Deliverables</CardTitle>
-          {canUpload ? (
-            <DeliverableSections
-              jobId={job.id}
-              rules={sections}
-              canRequire={canManageJob}
-            />
-          ) : null}
-        </CardHeader>
-        <CardContent className="flex flex-col gap-4">
-          {/* Their sheet is one of the deliverables and the last thing signed,
-              so it sits with them rather than in a paperwork block of its own.
-              First, because it is what the customer is standing there for. */}
-          <JobDocuments
-            jobId={job.id}
-            only="SIGN_OFF"
-            canUpload={canUpload}
-            documents={job.documents
-              .filter((doc) => doc.jobDocumentKind !== null)
-              .map((doc) => ({
-                id: doc.id,
-                kind: doc.jobDocumentKind as "CLIENT_WORK_ORDER" | "SIGN_OFF",
-                originalName: doc.originalName,
-                sizeBytes: doc.sizeBytes,
-                generated: doc.generated,
-                fillableBoxes: doc.sourceTemplate?._count.placements ?? 0,
-                templateId: doc.sourceTemplateId,
-              }))}
-          />
-
-          {/* Often known before anybody starts checking out — dispatch gives it
-              on the call. Recorded where the tech already is rather than found
-              again three blocks up at the end of the day. */}
-          <div className="border-t border-border pt-4">
-            {editable("releaseCode", job.releaseCode ?? "")}
-          </div>
-
-          <Deliverables
-            jobId={job.id}
-            rules={rules}
-            canUpload={canUpload}
-            photoCount={photoCount}
-            photoLimit={company.maxPhotosPerJob}
-            items={job.deliverables.map((item) => ({
-              id: item.id,
-              category: item.category,
-              customLabel: item.customLabel,
-              textValue: item.textValue,
-              uploadedBy: item.assignment?.user.name ?? null,
-              isOwn: item.assignment?.userId === user.id,
-              attachments: item.attachments,
-            }))}
-          />
-
-          {job.signatures.length > 0 ? (
-            <div className="flex flex-col gap-2 border-t border-border pt-4">
-              <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Signatures
-              </span>
-              <div className="flex flex-wrap gap-1.5">
-                {job.signatures.map((signature) => (
-                  <Badge
-                    key={signature.id}
-                    variant={signature.skipped ? "warning" : "success"}
-                  >
-                    {signature.kind} · {signature.signerName}
-                    {signature.skipped ? " · not signed" : ""}
-                  </Badge>
-                ))}
-              </div>
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Reimbursements</CardTitle>
-          <CardDescription>
-            Materials and parking reach the client report; hotels stay internal.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Reimbursements
-            jobId={job.id}
-            canEdit={canUpload}
-            entries={job.reimbursements.map((entry) => ({
-              id: entry.id,
-              type: entry.type,
-              label: entry.label,
-              amount: entry.amount.toString(),
-              note: entry.note,
-              isOwn: entry.assignment?.userId === user.id,
-              attachments: entry.attachments,
-            }))}
-          />
-        </CardContent>
-      </Card>
-
-      {canExportText || canExportZip || canExportPdf ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Exports</CardTitle>
-            <CardDescription>
-              The report is the client-facing form — nothing internal appears in
-              it. The ZIP carries the photos foldered by section and tech.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ExportsPanel
-              jobId={job.id}
-              report={textReport}
-              canText={canExportText}
-              canZip={canExportZip}
-              canPdf={canExportPdf}
-            />
-          </CardContent>
-        </Card>
-      ) : null}
-
-      {job.parentJob || job.revisits.length > 0 ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Revisit chain</CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-2 text-sm">
-            {job.parentJob ? (
-              <Link
-                href={`/jobs/${job.parentJob.id}`}
-                className="text-primary underline-offset-4 hover:underline"
+            {canExportText || canExportZip || canExportPdf ? (
+              <Section
+                title="Exports"
+                summary={[
+                  canExportText ? "report" : null,
+                  canExportZip ? "photos" : null,
+                  canExportPdf ? "PDF" : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
               >
-                Original: {job.parentJob.intWoId} — {job.parentJob.title}
-              </Link>
+                <p className="mb-3 text-sm text-muted-foreground">
+                  The report is the client-facing form — nothing internal
+                  appears in it. The ZIP carries the photos foldered by section
+                  and tech.
+                </p>
+                <ExportsPanel
+                  jobId={job.id}
+                  report={textReport}
+                  canText={canExportText}
+                  canZip={canExportZip}
+                  canPdf={canExportPdf}
+                />
+              </Section>
             ) : null}
-            {job.revisits.map((revisit) => (
-              <Link
-                key={revisit.id}
-                href={`/jobs/${revisit.id}`}
-                className="text-primary underline-offset-4 hover:underline"
-              >
-                Revisit {revisit.revisitNumber}: {revisit.intWoId} ·{" "}
-                {LIFECYCLE_META[revisit.lifecycle].label}
-              </Link>
-            ))}
-          </CardContent>
-        </Card>
-      ) : null}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Timeline</CardTitle>
-          <CardDescription>
-            Created by {job.createdBy.name} on{" "}
-            {usDateTimeInZone(job.createdAt, zone)}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Timeline rows={timeline} />
-        </CardContent>
-      </Card>
+            {job.parentJob || job.revisits.length > 0 ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Revisit chain</CardTitle>
+                </CardHeader>
+                <CardContent className="flex flex-col gap-2 text-sm">
+                  {job.parentJob ? (
+                    <Link
+                      href={`/jobs/${job.parentJob.id}`}
+                      className="text-primary underline-offset-4 hover:underline"
+                    >
+                      Original: {job.parentJob.intWoId} — {job.parentJob.title}
+                    </Link>
+                  ) : null}
+                  {job.revisits.map((revisit) => (
+                    <Link
+                      key={revisit.id}
+                      href={`/jobs/${revisit.id}`}
+                      className="text-primary underline-offset-4 hover:underline"
+                    >
+                      Revisit {revisit.revisitNumber}: {revisit.intWoId} ·{" "}
+                      {LIFECYCLE_META[revisit.lifecycle].label}
+                    </Link>
+                  ))}
+                </CardContent>
+              </Card>
+            ) : null}
+          </>
+        }
+        notes={
+          <>
+            <Card>
+              <CardHeader>
+                <CardTitle>Work performed</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <WorkPerformed
+                  jobId={job.id}
+                  own={mine?.workPerformed ?? null}
+                  others={job.assignments
+                    .filter(
+                      (assignment) =>
+                        assignment.user.id !== user.id &&
+                        assignment.workPerformed,
+                    )
+                    .map((assignment) => ({
+                      name: assignment.user.name,
+                      text: assignment.workPerformed as string,
+                    }))}
+                  merged={job.workPerformedMerged}
+                  canWrite={Boolean(mine) && canClockHere}
+                  canMerge={Boolean(mine?.isLead) || canApproveJob}
+                />
+              </CardContent>
+            </Card>
+          </>
+        }
+        deliverables={
+          <>
+            <Card>
+              <CardHeader>
+                <CardTitle>Deliverables</CardTitle>
+                {canUpload ? (
+                  <DeliverableSections
+                    jobId={job.id}
+                    rules={sections}
+                    canRequire={canManageJob}
+                  />
+                ) : null}
+              </CardHeader>
+              <CardContent className="flex flex-col gap-4">
+                {/* Their sheet is one of the deliverables and the last thing signed,
+                    so it sits with them rather than in a paperwork block of its own.
+                    First, because it is what the customer is standing there for. */}
+                <JobDocuments
+                  jobId={job.id}
+                  only="SIGN_OFF"
+                  canUpload={canUpload}
+                  documents={job.documents
+                    .filter((doc) => doc.jobDocumentKind !== null)
+                    .map((doc) => ({
+                      id: doc.id,
+                      kind: doc.jobDocumentKind as
+                        | "CLIENT_WORK_ORDER"
+                        | "SIGN_OFF",
+                      originalName: doc.originalName,
+                      sizeBytes: doc.sizeBytes,
+                      generated: doc.generated,
+                      fillableBoxes: doc.sourceTemplate?._count.placements ?? 0,
+                      templateId: doc.sourceTemplateId,
+                    }))}
+                />
 
+                {/* Often known before anybody starts checking out — dispatch gives it
+                    on the call. Recorded where the tech already is rather than found
+                    again three blocks up at the end of the day. */}
+                <div className="border-t border-border pt-4">
+                  {editable("releaseCode", job.releaseCode ?? "")}
+                </div>
+
+                <Deliverables
+                  jobId={job.id}
+                  rules={rules}
+                  canUpload={canUpload}
+                  photoCount={photoCount}
+                  photoLimit={company.maxPhotosPerJob}
+                  items={job.deliverables.map((item) => ({
+                    id: item.id,
+                    category: item.category,
+                    customLabel: item.customLabel,
+                    textValue: item.textValue,
+                    uploadedBy: item.assignment?.user.name ?? null,
+                    isOwn: item.assignment?.userId === user.id,
+                    attachments: item.attachments,
+                  }))}
+                />
+
+                {job.signatures.length > 0 ? (
+                  <div className="flex flex-col gap-2 border-t border-border pt-4">
+                    <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      Signatures
+                    </span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {job.signatures.map((signature) => (
+                        <Badge
+                          key={signature.id}
+                          variant={signature.skipped ? "warning" : "success"}
+                        >
+                          {signature.kind} · {signature.signerName}
+                          {signature.skipped ? " · not signed" : ""}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Reimbursements</CardTitle>
+                <CardDescription>
+                  Materials and parking reach the client report; hotels stay
+                  internal.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Reimbursements
+                  jobId={job.id}
+                  canEdit={canUpload}
+                  entries={job.reimbursements.map((entry) => ({
+                    id: entry.id,
+                    type: entry.type,
+                    label: entry.label,
+                    amount: entry.amount.toString(),
+                    note: entry.note,
+                    isOwn: entry.assignment?.userId === user.id,
+                    attachments: entry.attachments,
+                  }))}
+                />
+              </CardContent>
+            </Card>
+          </>
+        }
+      />
     </div>
   );
 }
@@ -1316,7 +1412,11 @@ export default async function JobPage({
  * being asked for — and neither renders as anything a person can decide from.
  */
 function punchRequestValues(
-  request: { fieldPath: string; oldValue: string | null; newValue: string | null },
+  request: {
+    fieldPath: string;
+    oldValue: string | null;
+    newValue: string | null;
+  },
   zone: string,
 ): { oldValue: string | null; newValue: string | null } {
   if (!request.fieldPath.startsWith("visit.")) {
@@ -1332,7 +1432,9 @@ function punchRequestValues(
           clockOut?: string | null;
         };
         return [
-          parsed.clockIn ? `in ${usTimeInZone(new Date(parsed.clockIn), zone)}` : null,
+          parsed.clockIn
+            ? `in ${usTimeInZone(new Date(parsed.clockIn), zone)}`
+            : null,
           parsed.clockOut
             ? `out ${usTimeInZone(new Date(parsed.clockOut), zone)}`
             : null,
@@ -1364,7 +1466,9 @@ function Static({
       <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
         {label}
       </div>
-      <div className={value ? (mono ? "tabular" : "") : "text-muted-foreground"}>
+      <div
+        className={value ? (mono ? "tabular" : "") : "text-muted-foreground"}
+      >
         {value ?? "—"}
       </div>
     </div>
