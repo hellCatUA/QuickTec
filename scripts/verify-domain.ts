@@ -458,6 +458,63 @@ async function main() {
     );
   }
 
+  // --- the rep company -----------------------------------------------------
+  // New, and optional everywhere. The whole point of the checks is that a job
+  // without one is ordinary rather than broken: every job raised before the
+  // column existed has none, and inventing a value for them was the option
+  // rejected when this was designed.
+  {
+    const rep = await db.repCompany.create({
+      data: { name: `Check Rep ${Date.now()}`, code: "CHK" },
+    });
+    const client = await db.client.findFirstOrThrow({ select: { id: true } });
+    const customer = await db.customer.findFirstOrThrow({ select: { id: true } });
+    const site = await db.site.findFirstOrThrow({ select: { id: true } });
+    const boss = await db.user.findFirstOrThrow({ select: { id: true } });
+
+    const base = {
+      clientId: client.id,
+      customerId: customer.id,
+      siteId: site.id,
+      createdById: boss.id,
+      intWoSequence: 990001,
+    };
+
+    const without = await db.job.create({
+      data: { ...base, intWoId: `CHK-NONE-${Date.now()}`, title: "No rep" },
+      select: { repCompanyId: true },
+    });
+    check("a job can be raised with no rep company", without.repCompanyId, null);
+
+    const with_ = await db.job.create({
+      data: {
+        ...base,
+        intWoId: `CHK-SOME-${Date.now()}`,
+        title: "With rep",
+        repCompanyId: rep.id,
+      },
+      select: { repCompany: { select: { name: true } } },
+    });
+    check(
+      "and with one",
+      with_.repCompany?.name ?? null,
+      rep.name,
+    );
+
+    // Removing a rep company from the directory is a tidy-up. It must not
+    // refuse because a job points at it, and must not take the job with it.
+    await db.repCompany.delete({ where: { id: rep.id } });
+    const orphaned = await db.job.findFirst({
+      where: { title: "With rep" },
+      orderBy: { createdAt: "desc" },
+      select: { id: true, repCompanyId: true },
+    });
+    check("deleting one leaves the job standing", Boolean(orphaned), true);
+    check("with the link cleared rather than dangling", orphaned?.repCompanyId, null);
+
+    await db.job.deleteMany({ where: { title: { in: ["No rep", "With rep"] } } });
+  }
+
   // --- brand scale --------------------------------------------------------
   // A percent knob, because a supplied logo carries padding of its own and no
   // two files carry the same amount. The clamp is the point: the column is a

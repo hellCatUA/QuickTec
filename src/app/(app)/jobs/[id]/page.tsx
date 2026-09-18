@@ -137,6 +137,7 @@ export default async function JobPage({
         select: { id: true, intWoId: true, revisitNumber: true, lifecycle: true },
       },
       client: { select: { name: true } },
+      repCompany: { select: { name: true } },
       pmContact: {
         select: { name: true, title: true, phone: true, email: true },
       },
@@ -831,7 +832,12 @@ export default async function JobPage({
         <CardContent>
           <BlockBody>
             <div className="grid gap-4 text-sm sm:grid-cols-2">
+              {/* Company is the one that pays us. The rep company is a link
+                  above them, and is blank on every job raised before it
+                  existed — Static already renders that as a dash. */}
               <Static label="Company" value={job.client.name} />
+              <Static label="Rep Company" value={job.repCompany?.name ?? null} />
+
               <Static label="Customer" value={job.customer.name} />
 
               {/* Where it is, in the order somebody driving there wants it:

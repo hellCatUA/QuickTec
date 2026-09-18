@@ -22,6 +22,7 @@ export default async function NewJobPage() {
     techs,
     templates,
     clientDispatch,
+    repCompanies,
   ] =
     await Promise.all([
     getCompanySettings(),
@@ -116,6 +117,11 @@ export default async function NewJobPage() {
         note: true,
       },
     }),
+    db.repCompany.findMany({
+      where: { active: true },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true },
+    }),
   ]);
 
   // Without a site there is nothing to dispatch to, and the address that ends
@@ -144,6 +150,7 @@ export default async function NewJobPage() {
         canAssign={can(user, "job.assign")}
         needsApproval={!can(user, "job.approve_report")}
         clients={clients}
+        repCompanies={repCompanies}
         sites={sites}
         projects={projects.map((project) => ({
           id: project.id,

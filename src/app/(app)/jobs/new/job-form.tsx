@@ -71,6 +71,7 @@ export function JobForm({
   canAssign,
   needsApproval,
   clients,
+  repCompanies,
   sites,
   projects,
   techs,
@@ -85,6 +86,7 @@ export function JobForm({
   canAssign: boolean;
   needsApproval: boolean;
   clients: Client[];
+  repCompanies: Client[];
   sites: SiteOption[];
   projects: Project[];
   techs: Tech[];
@@ -104,6 +106,7 @@ export function JobForm({
   // checked, and this form files the work order under it.
   const [projectId, setProjectId] = useState("");
   const [clientId, setClientId] = useState("");
+  const [repCompanyId, setRepCompanyId] = useState("");
   const [customerId, setCustomerId] = useState("");
   const [siteId, setSiteId] = useState("");
   const [scheduledStart, setScheduledStart] = useState("");
@@ -329,10 +332,31 @@ export function JobForm({
                 setProjectId("");
                 setPickedTemplates(null);
               }}
-              placeholder="Search companies…"
+              placeholder="Search paying companies…"
               options={clients.map((client) => ({
                 value: client.id,
                 label: client.name,
+              }))}
+            />
+          </Field>
+
+          {/* Optional, and the only picker here that is. Plenty of jobs
+              arrive without anyone knowing who represented the customer, and
+              a guess on a form is worse than a blank. */}
+          <Field
+            label="Rep company"
+            htmlFor="repCompanyId"
+            hint="Who represents the customer above the paying company. Leave blank if you do not know."
+          >
+            <Combobox
+              id="repCompanyId"
+              name="repCompanyId"
+              value={repCompanyId}
+              onChange={setRepCompanyId}
+              placeholder="Search rep companies…"
+              options={repCompanies.map((repCompany) => ({
+                value: repCompany.id,
+                label: repCompany.name,
               }))}
             />
           </Field>

@@ -116,6 +116,14 @@ async function main() {
     create: { name: "NetCom Sub" },
   });
 
+  // One link above the paying company. Jobs are left without one on purpose
+  // as well, because that is the common case and the screens have to survive
+  // it — every job raised before this existed has none.
+  const repCompany = await db.repCompany.upsert({
+    where: { name: "Federated Service Systems" },
+    update: {},
+    create: { name: "Federated Service Systems", code: "FSS" },
+  });
   // A number held against the company, offered on every job raised for them.
   const netcom = await db.client.findUniqueOrThrow({
     where: { name: "NetCom Sub" },
@@ -194,6 +202,7 @@ async function main() {
         intWoSequence: allocated.sequence,
         title: "Elevator phone line",
         clientId: client.id,
+        repCompanyId: repCompany.id,
         customerId: customer.id,
         siteId: site.id,
         projectId: project.id,

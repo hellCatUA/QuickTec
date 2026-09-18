@@ -1,4 +1,4 @@
-import { Briefcase, Building, MapPin } from "lucide-react";
+import { Briefcase, Building, Handshake, MapPin } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
@@ -16,8 +16,9 @@ export default async function DirectoryPage() {
   const canManageProjects = can(user, "project.manage");
   if (!canManageClients && !canManageProjects) redirect("/dashboard");
 
-  const [clients, customers, sites, projects] = await Promise.all([
+  const [clients, repCompanies, customers, sites, projects] = await Promise.all([
     db.client.count({ where: { active: true } }),
+    db.repCompany.count({ where: { active: true } }),
     db.customer.count({ where: { active: true } }),
     db.site.count({ where: { active: true } }),
     db.project.count({ where: { status: "ACTIVE" } }),
@@ -25,21 +26,30 @@ export default async function DirectoryPage() {
 
   const sections = [
     {
-      href: "/directory/clients",
-      icon: Building,
-      title: "Paying companies",
-      count: clients,
-      description:
-        "Who pays us for the work. One link up from the rep company, and not the same as the customer. The report still calls them “Buyer/Representing company” — that heading is agreed with the subcontractor and is not ours to change.",
-      visible: canManageClients,
-    },
-    {
       href: "/directory/customers",
       icon: MapPin,
       title: "Customers & sites",
       count: `${customers} / ${sites}`,
       description:
         "End brands and their locations. The customer code and site number combine into “SBUX #24541”.",
+      visible: canManageClients,
+    },
+    {
+      href: "/directory/rep-companies",
+      icon: Handshake,
+      title: "Rep companies",
+      count: repCompanies,
+      description:
+        "Who represents the customer and hands the work down. One link above the paying company — and it is the paying company, not this one, that the report has always called “Buyer/Representing company”.",
+      visible: canManageClients,
+    },
+    {
+      href: "/directory/clients",
+      icon: Building,
+      title: "Paying companies",
+      count: clients,
+      description:
+        "Who pays us for the work. One link up from the rep company, and not the same as the customer. The report still calls them “Buyer/Representing company” — that heading is agreed with the subcontractor and is not ours to change.",
       visible: canManageClients,
     },
     {

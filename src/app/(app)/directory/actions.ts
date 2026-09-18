@@ -81,6 +81,53 @@ export async function saveClient(
 }
 
 // ---------------------------------------------------------------------------
+// Rep companies — who represents the customer above the paying company
+// ---------------------------------------------------------------------------
+//
+// Under client.manage rather than a permission of its own. A new permission
+// key is a row every role needs granting, and anyone who can already maintain
+// the paying companies is the same person maintaining these.
+
+const repCompanySchema = z.object({
+  name: z.string().trim().min(1, "Name is required"),
+  code: optionalText,
+  notes: optionalText,
+  active: flag,
+});
+
+export async function saveRepCompany(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  const actor = await requirePermission("client.manage");
+  const id = String(formData.get("id") ?? "");
+
+  try {
+    const data = repCompanySchema.parse({
+      ...Object.fromEntries(formData),
+      active: formData.get("active") === "on",
+    });
+
+    const repCompany = id
+      ? await db.repCompany.update({ where: { id }, data })
+      : await db.repCompany.create({ data });
+
+    await recordAudit({
+      actorId: actor.id,
+      entityType: "RepCompany",
+      entityId: repCompany.id,
+      action: id ? "updated" : "created",
+      detail: { name: repCompany.name },
+    });
+
+    revalidatePath("/directory/rep-companies");
+    return { ok: true, id: repCompany.id };
+  } catch (error) {
+    return fail(error);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Customers — the end brand, e.g. SBUX
 // ---------------------------------------------------------------------------
 

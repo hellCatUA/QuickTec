@@ -297,6 +297,40 @@ model CompanySettings {
 // ---------------------------------------------------------------------------
 // Clients, customers, sites
 // ---------------------------------------------------------------------------
+//
+// Four parties, and a job comes down them in this order:
+//
+//   Customer -> RepCompany -> Client -> (WorkMarket) -> CompanySettings
+//    the brand   represents   pays us    where we       us
+//    whose site  the brand               pick it up
+//
+// `Client` is the paying company. It was called the rep company until that
+// name was needed for the link above it, and the model keeps the old spelling
+// because renaming it moves no data and breaks the compound key payroll looks
+// rates up by. WorkMarket is not modelled: nothing in the app needs it yet.
+//
+// Whenever you are about to write "company", say which one.
+
+/// Who represents the customer and hands the work down to the paying company.
+///
+/// New, and optional everywhere it appears: every job that already exists was
+/// raised without one, and a required column would mean inventing a value for
+/// all of them. Deliberately thin — a name to put on a job. It buys nothing
+/// from templates, dispatch numbers or pay rates, and adding it to PayRate
+/// would turn a three-column unique key into a four-column one for no gain.
+model RepCompany {
+  id     String  @id @default(cuid())
+  name   String  @unique
+  code   String?
+  notes  String?
+  active Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  jobs     Job[]
+  projects Project[]
+}
 
 /// The buyer / paying company that dispatches work to us — normally a
 /// subcontractor. Exported as "Buyer/Representing company:".
@@ -584,6 +618,11 @@ model Project {
   customerId String?
   customer   Customer? @relation(fields: [customerId], references: [id])
 
+  /// Who represents the customer above the paying company. Optional: every
+  /// project that already exists was made without one.
+  repCompanyId String?
+  repCompany   RepCompany? @relation(fields: [repCompanyId], references: [id], onDelete: SetNull)
+
   managerId String?
   manager   User?   @relation("ProjectManager", fields: [managerId], references: [id], onDelete: SetNull)
 
@@ -631,6 +670,7 @@ model Project {
   notifications       Notification[]
 
   @@index([clientId])
+  @@index([repCompanyId])
 }
 
 /// Somebody on the other side of the work — the paying company's project
@@ -767,8 +807,14 @@ model Job {
   client     Client   @relation(fields: [clientId], references: [id])
   customerId String
   customer   Customer @relation(fields: [customerId], references: [id])
-  siteId     String
-  site       Site     @relation(fields: [siteId], references: [id])
+
+  /// Who represents the customer above the paying company. Optional for the
+  /// same reason as on Project, and copied down from the project when a job
+  /// is raised against one.
+  repCompanyId String?
+  repCompany   RepCompany? @relation(fields: [repCompanyId], references: [id], onDelete: SetNull)
+  siteId       String
+  site         Site        @relation(fields: [siteId], references: [id])
 
   projectId String?
   project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
@@ -897,6 +943,7 @@ model Job {
   @@index([siteId])
   @@index([projectId])
   @@index([scheduledStart])
+  @@index([repCompanyId])
 }
 
 /// One tech on one job.

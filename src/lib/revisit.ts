@@ -1,7 +1,7 @@
 /**
  * What a revisit can start from.
  *
- * The site, the customer, the representing company, the project and the
+ * The site, the customer, the paying company, the project and the
  * internal number chain are deliberately not in here: they are what makes a
  * revisit a revisit rather than a new job, and there is nothing to decide
  * about them.

@@ -46,7 +46,10 @@ const deliverableRules = z
  */
 export const jobFormSchema = z.object({
   title: z.string().trim().min(1, "Title is required"),
-  clientId: z.string().min(1, "Pick a client"),
+  clientId: z.string().min(1, "Pick a paying company"),
+  /// Optional: plenty of jobs arrive without anyone knowing who
+  /// represented the customer, and guessing is worse than blank.
+  repCompanyId: optionalText,
   siteId: z.string().min(1, "Pick a site"),
   projectId: optionalText,
   externalAssignmentId: optionalText,

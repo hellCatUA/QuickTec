@@ -75,6 +75,7 @@ export async function createJob(
         select: {
           id: true,
           externalProjectId: true,
+          repCompanyId: true,
           breakPaid: true,
           travelReimbursement: true,
           defaultJobTitle: true,
@@ -225,6 +226,11 @@ export async function createJob(
         intWoSequence: sequence,
         title: input.title,
         clientId: input.clientId,
+        // Blank on the form means "take the project's", not "none": a job
+        // raised under a project belongs to whoever represents that work.
+        // Outside a project there is nothing to fall back to, and blank is
+        // the honest answer.
+        repCompanyId: input.repCompanyId ?? project?.repCompanyId ?? null,
         // Whoever the coordinator is right now. Copied rather than looked up
         // through the project, so a handover later leaves the jobs already
         // planned under the person who actually ran them.
@@ -437,6 +443,7 @@ export async function createRevisit(
       id: true,
       title: true,
       clientId: true,
+      repCompanyId: true,
       customerId: true,
       siteId: true,
       projectId: true,
@@ -642,6 +649,9 @@ export async function createRevisit(
         parentJobId: parent.id,
         title: input.title ?? `${parent.title} (revisit ${revisitNumber})`,
         clientId: parent.clientId,
+        // Same site, same customer, same chain above it. A revisit is the same
+        // work again, so who represented it does not change.
+        repCompanyId: parent.repCompanyId,
         customerId: parent.customerId,
         siteId: parent.siteId,
         projectId: parent.projectId,

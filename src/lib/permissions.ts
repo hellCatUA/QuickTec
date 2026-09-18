@@ -191,10 +191,13 @@ export const PERMISSIONS = {
     description:
       "Create and edit projects, members, general scope and deliverable rules.",
   },
+  // The key is stored on role rows and personal overrides, so it keeps saying
+  // client while the words around it say what it now covers.
   "client.manage": {
     group: "Administration",
-    label: "Manage clients & sites",
-    description: "Maintain buyers, customers and site records.",
+    label: "Manage the directory",
+    description:
+      "Maintain paying companies, rep companies, customers and site records.",
   },
   "users.manage": {
     group: "Administration",
