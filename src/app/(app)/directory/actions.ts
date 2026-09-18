@@ -38,7 +38,7 @@ function fail(error: unknown): ActionResult {
 }
 
 // ---------------------------------------------------------------------------
-// Clients — the buyer / representing company on a job
+// Clients — the buyer / paying company on a job
 // ---------------------------------------------------------------------------
 
 const clientSchema = z.object({
@@ -182,7 +182,7 @@ export async function saveSite(
 }
 
 // ---------------------------------------------------------------------------
-// Default blanks kept against a representing company
+// Default blanks kept against a paying company
 // ---------------------------------------------------------------------------
 
 /**
@@ -372,7 +372,7 @@ export async function updateOpenJobsWithForms(
 }
 
 // ---------------------------------------------------------------------------
-// Numbers held against a representing company
+// Numbers held against a paying company
 // ---------------------------------------------------------------------------
 
 const dispatchSchema = z.object({

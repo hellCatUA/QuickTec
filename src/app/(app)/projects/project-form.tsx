@@ -97,7 +97,7 @@ export function ProjectForm({
         </Field>
 
         <Field
-          label="Representing company"
+          label="Paying company"
           htmlFor={`pclient-${key}`}
           hint="Who dispatches this work and pays for it. Goes onto every job raised under the project."
         >
@@ -170,7 +170,7 @@ export function ProjectForm({
         </Field>
 
         <Field
-          label="Rep Company PM/PC"
+          label="Paying company PM/PC"
           htmlFor="pmContactId"
           hint="Theirs. The coordinator a tech rings when the door is locked. Copied onto each job as it is raised, so replacing them mid-project leaves the jobs already planned under whoever actually ran them."
           className="sm:col-span-2"

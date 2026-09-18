@@ -197,7 +197,7 @@ export default async function ProjectPage({
           <CardTitle>Overview</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2">
-          <Fact label="Representing company" value={project.client.name} />
+          <Fact label="Paying company" value={project.client.name} />
           <Fact
             label="Customer"
             value={
@@ -241,7 +241,7 @@ export default async function ProjectPage({
 
       <Card>
         <CardHeader>
-          <CardTitle>Rep Company PM/PC</CardTitle>
+          <CardTitle>Paying company PM/PC</CardTitle>
           <CardDescription>
             Their coordinator, not ours. Recorded onto each job as it is raised.
             The client-facing report carries the name only.

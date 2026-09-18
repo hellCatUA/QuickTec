@@ -871,7 +871,7 @@ async function main() {
     before,
   );
 
-  // --- the representing company's PM/PC -------------------------------------
+  // --- the paying company's PM/PC -------------------------------------
   // The person a tech rings when the door is locked. Ours is the project
   // manager above; this one works for the other company and has no account.
   await managerPage.goto(`${BASE}/projects/${project.id}/settings`, {
@@ -901,7 +901,7 @@ async function main() {
     where: { id: project.id },
     select: { pmContactId: true, pmContact: { select: { name: true, phone: true } } },
   });
-  check("the rep company PM/PC is recorded", withPm.pmContact?.name, "Dana Whitfield");
+  check("the paying company PM/PC is recorded", withPm.pmContact?.name, "Dana Whitfield");
   check("with their number", withPm.pmContact?.phone, "206-555-0114");
 
   check(
@@ -983,9 +983,9 @@ async function main() {
     true,
   );
   check(
-    "the rep company PM/PC is on the overview",
+    "the paying company PM/PC is on the overview",
     await managerPage
-      .getByRole("heading", { name: "Rep Company PM/PC" })
+      .getByRole("heading", { name: "Paying company PM/PC" })
       .isVisible(),
     true,
   );

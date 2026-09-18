@@ -49,7 +49,7 @@ type Project = {
   deliverableRules: EditableRule[];
 };
 type Tech = { id: string; name: string; baseRole: string };
-/** A number held against a representing company rather than any one job. */
+/** A number held against a paying company rather than any one job. */
 export type ClientDispatch = {
   id: string;
   clientId: string;
@@ -316,7 +316,7 @@ export function JobForm({
           </Field>
 
           <Field
-            label="Representing company"
+            label="Paying company"
             htmlFor="clientId"
             hint="Who dispatched the work and pays for it."
           >
@@ -476,7 +476,7 @@ export function JobForm({
         <CardHeader>
           <CardTitle>Paperwork</CardTitle>
           <CardDescription>
-            The representing company&rsquo;s own work order and sign-off sheet.
+            The paying company&rsquo;s own work order and sign-off sheet.
             Files are attached from the job page once it exists — by whoever has
             them, which is often the tech on the morning.
           </CardDescription>
@@ -523,7 +523,7 @@ export function JobForm({
             </p>
           ) : (
             <p className="text-sm text-muted-foreground">
-              Pick a representing company to see the forms saved against them.
+              Pick a paying company to see the forms saved against them.
             </p>
           )}
 

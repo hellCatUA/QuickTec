@@ -60,7 +60,7 @@ export async function loadJobForExport(jobId: string) {
         orderBy: [{ type: "asc" }, { order: "asc" }],
         select: { id: true, type: true, name: true },
       },
-      /// The representing company's coordinator, as they were when this job
+      /// The paying company's coordinator, as they were when this job
       /// ran. Only the name reaches the report — their number is ours.
       pmContact: { select: { name: true } },
       signatures: {

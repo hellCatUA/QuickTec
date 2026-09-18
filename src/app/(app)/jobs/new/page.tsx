@@ -101,7 +101,7 @@ export default async function NewJobPage() {
         isDefault: true,
       },
     }),
-    // Numbers held against a representing company. Offered on any job for
+    // Numbers held against a paying company. Offered on any job for
     // them, so their NOC line is not retyped on every one.
     db.dispatchContact.findMany({
       where: { clientId: { not: null } },
@@ -126,7 +126,7 @@ export default async function NewJobPage() {
         <PageHeader title="New job" backHref="/jobs" />
         <EmptyState
           title="Set up the directory first"
-          description="Add at least one representing company — whoever dispatches the work and pays for it. Sites can be added from the job form itself."
+          description="Add at least one paying company — whoever dispatches the work and pays for it. Sites can be added from the job form itself."
         />
       </div>
     );

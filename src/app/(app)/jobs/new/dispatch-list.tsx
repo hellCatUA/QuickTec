@@ -40,7 +40,7 @@ export function DispatchList({
 }: {
   /** From the project, shown so nobody re-types what is already there. */
   inherited: { id: string; label: string; name: string | null }[];
-  /** Held against the representing company — added with one press, or all. */
+  /** Held against the paying company — added with one press, or all. */
   companyDefaults: {
     id: string;
     label: string;

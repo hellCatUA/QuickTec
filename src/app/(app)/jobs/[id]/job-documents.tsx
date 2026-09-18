@@ -28,7 +28,7 @@ function readableSize(bytes: number) {
 }
 
 /**
- * The representing company's paperwork for this job.
+ * The paying company's paperwork for this job.
  *
  * Two documents, and neither is ours. The work order is what the job answers
  * to, and it lived in somebody's inbox until now — the tech at the door is the
@@ -92,7 +92,7 @@ export function JobDocuments({
       <Section
         jobId={jobId}
         title="Work order"
-        hint="As the representing company issued it."
+        hint="As the paying company issued it."
         kind="CLIENT_WORK_ORDER"
         documents={documents.filter(
           (doc) => doc.kind === "CLIENT_WORK_ORDER",

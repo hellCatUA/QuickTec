@@ -1,8 +1,8 @@
 # Preparing a company's blank so it fills itself
 
-A representing company's sign-off sheet is set up once: every box on it is
+A paying company's sign-off sheet is set up once: every box on it is
 pointed at a fact about the job, and from then on the sheet comes out filled.
-That setup is normally done on screen — Directory → Representing companies →
+That setup is normally done on screen — Directory → Paying companies →
 the form → **Set up autofill**.
 
 There is a shortcut. If the PDF's own form fields are **named after entries in
@@ -68,7 +68,7 @@ company has a form mapped against them; new ones get added.
 
 | Key | What it is |
 | --- | --- |
-| `job.assignmentId` | The representing company's assignment ID |
+| `job.assignmentId` | The paying company's assignment ID |
 | `job.ticket` | Ticket # |
 | `job.intWoId` | Our own INT WO ID |
 | `job.title` | Job title |
@@ -82,7 +82,7 @@ company has a form mapped against them; new ones get added.
 
 | Key | What it is |
 | --- | --- |
-| `client.name` | Representing company — who dispatched the job |
+| `client.name` | Paying company — who dispatched the job |
 | `customer.name` | Customer — the brand whose site it is |
 | `customer.code` | Their short code, e.g. `SBUX` |
 | `project.name` | Project |
@@ -131,7 +131,7 @@ company has a form mapped against them; new ones get added.
 
 | Key | What it is |
 | --- | --- |
-| `contact.pm` | Rep Company PM/PC |
+| `contact.pm` | Paying company PM/PC |
 | `contact.mod` | MOD name |
 | `contact.noc` | NOC name |
 

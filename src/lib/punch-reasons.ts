@@ -10,6 +10,27 @@
  * The three lists differ because the questions differ. Nobody removes a punch
  * because somebody forgot to make one, and nobody adds one because the job was
  * cancelled.
+ *
+ * ---------------------------------------------------------------------------
+ * READ THIS BEFORE TOUCHING A CODE STRING.
+ *
+ * The codes here are stored on visits and change requests, and `party` is
+ * parsed back out of them by splitting on the slash. They cannot be renamed
+ * without rewriting every row that already holds one — which means the
+ * vocabulary in them is frozen at what it meant when they were written, and
+ * that is NOT what those words mean now:
+ *
+ *   "RepCompany/…"  is the paying company  — the `Client` model
+ *   "Client/…"      is the customer        — the `Customer` model
+ *
+ * So the literal `RepCompany` here is not the Rep Company that now sits
+ * between the customer and the paying company, and the literal `Client` is not
+ * `Client`. Both are off by one link in the chain
+ * (customer → rep company → paying company → us).
+ *
+ * `reasonLabel` below is where that is corrected, and it is the only place it
+ * can be corrected. Fix the words a human reads there; leave the codes alone.
+ * ---------------------------------------------------------------------------
  */
 
 export type PunchAction = "adjust" | "remove" | "add";
@@ -17,7 +38,7 @@ export type PunchAction = "adjust" | "remove" | "add";
 export type PunchReason = {
   /** Stored. Stable — the label may be reworded, this must not be. */
   code: string;
-  /** Whose side it happened on. */
+  /** Whose side it happened on. Frozen spelling — see the note above. */
   party: "QuickTec" | "RepCompany" | "Client";
   /** What happened, as it reads in the picker. */
   what: string;
@@ -119,13 +140,19 @@ export function describeReason(
   return note?.trim() ? `${code} — ${note.trim()}` : code;
 }
 
-/** The company's own name is configurable; the stored codes are not. */
+/**
+ * The company's own name is configurable; the stored codes are not.
+ *
+ * This is where the frozen vocabulary is put right. Each arm reads as the
+ * opposite of the code it comes from, and that is deliberate: see the note at
+ * the top of the file.
+ */
 export function reasonLabel(entry: PunchReason, companyName: string): string {
   const party =
     entry.party === "QuickTec"
       ? companyName
       : entry.party === "RepCompany"
-        ? "Representing company"
-        : "Client";
+        ? "Paying company"
+        : "Customer";
   return `${party} · ${entry.what}`;
 }

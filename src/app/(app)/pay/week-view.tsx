@@ -277,7 +277,7 @@ function JobCard({
         <div className="flex items-start gap-2">
           <Building className="mt-px size-3.5 shrink-0" />
           <span className="min-w-0">
-            {job.repCompany} · {job.site}
+            {job.payingCompany} · {job.site}
           </span>
         </div>
 

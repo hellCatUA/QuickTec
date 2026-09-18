@@ -290,13 +290,13 @@ async function main() {
 
   const ctx = context(null);
   check("site city", formSource("site.city")?.resolve?.(ctx, 0), "Covina");
-  check("rep company", formSource("client.name")?.resolve?.(ctx, 0), "Mettel");
+  check("paying company", formSource("client.name")?.resolve?.(ctx, 0), "Mettel");
   check("onsite time", formSource("time.onsite")?.resolve?.(ctx, 0), "8:30 AM");
   check("offsite time is the last trip's", formSource("time.offsite")?.resolve?.(ctx, 0), "6:00 PM");
   check("work date", formSource("time.date")?.resolve?.(ctx, 0), "06-25-2026");
   check("today, not the work date", formSource("time.today")?.resolve?.(ctx, 0), "06-26-2026");
   check("MOD", formSource("contact.mod")?.resolve?.(ctx, 0), "Grigorij Dolganov");
-  check("Rep Company PM/PC", formSource("contact.pm")?.resolve?.(ctx, 0), "Bryant Ellis");
+  check("Paying company PM/PC", formSource("contact.pm")?.resolve?.(ctx, 0), "Bryant Ellis");
   check("city, state ZIP", formSource("site.cityStateZip")?.resolve?.(ctx, 0), "Covina, CA 91723");
   check("visit row 0 hours", formSource("visit.hours")?.resolve?.(ctx, 0), "3.83 hrs");
   check("visit row 0 break", formSource("visit.break")?.resolve?.(ctx, 0), "0.50 hrs");

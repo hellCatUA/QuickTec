@@ -68,17 +68,17 @@ export const TIMELINE_META: Record<string, TimelineMeta> = {
     tone: "warning",
   },
   project_pm_contact_assigned: {
-    label: "Rep company PM/PC set",
+    label: "Paying company PM/PC set",
     icon: UserPlus,
     tone: "primary",
   },
   project_pm_contact_changed: {
-    label: "Rep company PM/PC changed",
+    label: "Paying company PM/PC changed",
     icon: ArrowRightLeft,
     tone: "warning",
   },
   project_pm_contact_cleared: {
-    label: "Rep company PM/PC removed",
+    label: "Paying company PM/PC removed",
     icon: UserMinus,
     tone: "warning",
   },
@@ -146,7 +146,7 @@ export const TIMELINE_META: Record<string, TimelineMeta> = {
   change_approved: { label: "Change approved", icon: CircleCheck, tone: "success" },
   change_rejected: { label: "Change rejected", icon: Ban, tone: "danger" },
   job_cancelled: { label: "Job cancelled", icon: Ban, tone: "danger" },
-  job_billed: { label: "Paid by the representing company", icon: CircleDollarSign, tone: "success" },
+  job_billed: { label: "Paid by the paying company", icon: CircleDollarSign, tone: "success" },
   job_closed: { label: "Job closed", icon: Lock, tone: "neutral" },
   job_reopened: { label: "Job reopened", icon: Repeat, tone: "warning" },
 };

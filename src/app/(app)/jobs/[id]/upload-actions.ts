@@ -430,7 +430,7 @@ export async function deleteDeliverableItem(
 }
 
 // ---------------------------------------------------------------------------
-// The representing company's paperwork
+// The paying company's paperwork
 // ---------------------------------------------------------------------------
 
 /**

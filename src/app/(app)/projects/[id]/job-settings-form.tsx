@@ -78,7 +78,7 @@ export function JobSettingsForm({
           </Field>
 
           <Field
-            label="Representing company"
+            label="Paying company"
             htmlFor="prefill-client"
             hint="The project's own — change it in Details if it is wrong."
           >

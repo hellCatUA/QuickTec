@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 import { can, getSessionUser } from "@/lib/session";
 import { ClientList } from "./client-list";
 
-export const metadata = { title: "Representing companies" };
+export const metadata = { title: "Paying companies" };
 
 export default async function ClientsPage() {
   const user = await getSessionUser();
@@ -49,9 +49,9 @@ export default async function ClientsPage() {
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4">
       <PageHeader
-        title="Representing companies"
+        title="Paying companies"
         backHref="/directory"
-        description="Who dispatches work to us and pays for it. Fills “Buyer/Representing company” on the report we send back."
+        description="Who pays us for the work. The report we send back still heads this “Buyer/Representing company” — an agreed format, kept verbatim on purpose."
       />
       <ClientList
         clients={clients.map((client) => ({

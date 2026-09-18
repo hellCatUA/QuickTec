@@ -18,7 +18,7 @@ export type ContactOption = {
 };
 
 /**
- * The representing company's project manager or coordinator.
+ * The paying company's project manager or coordinator.
  *
  * Their side of the job, not ours — the person a tech rings when the door is
  * locked. You meet the same coordinators across projects, so they are records

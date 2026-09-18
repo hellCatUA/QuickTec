@@ -106,7 +106,7 @@ async function main() {
     create: { name: "Mettel", code: "MTL" },
   });
 
-  // A second representing company, so the planner has one to search for.
+  // A second paying company, so the planner has one to search for.
   // Named exactly as the domain suite names its own: two rows both matching
   // "netcom" make the picker ambiguous and the search test fails on a
   // collision rather than on anything real.

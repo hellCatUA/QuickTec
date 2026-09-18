@@ -104,7 +104,7 @@ export function ClientList({ clients }: { clients: ClientRecord[] }) {
       {adding ? (
         <Card>
           <CardContent className="flex flex-col gap-4">
-            <div className="text-sm font-semibold">New representing company</div>
+            <div className="text-sm font-semibold">New paying company</div>
             <ClientForm onSaved={() => setAdding(false)} />
             <Button
               type="button"
@@ -123,13 +123,13 @@ export function ClientList({ clients }: { clients: ClientRecord[] }) {
           onClick={() => setAdding(true)}
           className="self-start"
         >
-          <Plus /> Add a representing company
+          <Plus /> Add a paying company
         </Button>
       )}
 
       {clients.length === 0 && !adding ? (
         <EmptyState
-          title="No representing companies yet"
+          title="No paying companies yet"
           description="The company that dispatches work to you and that you invoice — usually a subcontractor. Not the customer whose site you visit."
         />
       ) : null}

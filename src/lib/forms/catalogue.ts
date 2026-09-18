@@ -151,7 +151,11 @@ const SOURCES: FormSource[] = [
     } },
 
   // -------------------------------------------------------------------------
-  { group: "Companies", key: "client.name", label: "Representing company",
+  // The key says client and the label says paying company. They are the same
+  // thing: the key is stored in FormPlacement.source and baked into the field
+  // names of PDF blanks already sitting on customers' machines, so it cannot
+  // follow the label. Only the label is ours to change.
+  { group: "Companies", key: "client.name", label: "Paying company",
     resolve: (context) => context.data.job.client.name },
   { group: "Companies", key: "customer.name", label: "Customer",
     resolve: (context) => context.data.job.customer.name },
@@ -270,7 +274,7 @@ const SOURCES: FormSource[] = [
     } },
 
   // -------------------------------------------------------------------------
-  { group: "Contacts", key: "contact.pm", label: "Rep Company PM/PC",
+  { group: "Contacts", key: "contact.pm", label: "Paying company PM/PC",
     resolve: (context) =>
       [
         context.data.job.pmContact?.name,

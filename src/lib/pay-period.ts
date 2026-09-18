@@ -108,7 +108,7 @@ export type PayJob = {
   intWoId: string;
   title: string;
   /** The company that dispatched the work and pays for it. */
-  repCompany: string;
+  payingCompany: string;
   /** "TSA #4471" — the end brand and its location, as every export writes it. */
   site: string;
   /** One line, the way the report and the maps link spell it. */
@@ -311,7 +311,7 @@ async function jobsInRange(
       jobId: assignment.job.id,
       intWoId: assignment.job.intWoId,
       title: assignment.job.title,
-      repCompany: assignment.job.client.name,
+      payingCompany: assignment.job.client.name,
       site: siteLabel(
         assignment.job.customer.code,
         assignment.job.site.siteNumber ?? "—",

@@ -385,6 +385,79 @@ async function main() {
     );
   }
 
+  // --- the company vocabulary ---------------------------------------------
+  // A job comes down a chain: customer -> rep company -> paying company ->
+  // WorkMarket -> us. What the app called "Rep Company" is the paying company;
+  // the name has been handed to the new link above it. So "Representing
+  // company" left over anywhere now points one link off, and reads as correct
+  // while being wrong — the expensive kind of stale.
+  //
+  // Two spellings survive on purpose and are listed here rather than hunted
+  // down, because both are stored data:
+  //   * the text report heading, agreed with the subcontractor;
+  //   * the punch reason codes, parsed back out of rows already written.
+  {
+    const { readFile, readdir } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+
+    async function sources(dir: string): Promise<string[]> {
+      const out: string[] = [];
+      for (const entry of await readdir(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) out.push(...(await sources(full)));
+        else if (/\.tsx?$/.test(entry.name)) out.push(full);
+      }
+      return out;
+    }
+
+    // The frozen heading is allowed to appear anywhere, because the screens
+    // that explain why it survives have to quote it to explain anything. What
+    // is not allowed is the phrase on its own, which would be a label nobody
+    // updated rather than a fact being reported.
+    const stale: string[] = [];
+    for (const file of await sources("src")) {
+      const text = await readFile(file, "utf8");
+      const withoutHeading = text.replaceAll("Buyer/Representing company", "");
+      if (/representing compan/i.test(withoutHeading)) stale.push(file);
+    }
+
+    check(
+      "no label still says representing company on its own",
+      stale.join(", ") || "none",
+      "none",
+    );
+
+    // And the frozen two really are still there: a guard that only fires on
+    // the wrong change is no guard if the thing it guards has quietly gone.
+    const report = await readFile("src/lib/exports/text-report.ts", "utf8");
+    check(
+      "the report heading is untouched",
+      report.includes('"Buyer/Representing company"'),
+      true,
+    );
+
+    const { ADJUST_REASONS, reasonLabel } = await import("@/lib/punch-reasons");
+    const repCompanyCode = ADJUST_REASONS.find((one) =>
+      one.code.startsWith("RepCompany/"),
+    );
+    check("the punch codes are untouched", Boolean(repCompanyCode), true);
+    // The code says RepCompany and means the paying company. This is the only
+    // place that gap can be closed, so it is the place worth checking.
+    check(
+      "and the label corrects them",
+      reasonLabel(repCompanyCode!, "QuickTec").startsWith("Paying company · "),
+      true,
+    );
+    const customerCode = ADJUST_REASONS.find((one) =>
+      one.code.startsWith("Client/"),
+    );
+    check(
+      "including the one whose code says client and means customer",
+      reasonLabel(customerCode!, "QuickTec").startsWith("Customer · "),
+      true,
+    );
+  }
+
   // --- brand scale --------------------------------------------------------
   // A percent knob, because a supplied logo carries padding of its own and no
   // two files carry the same amount. The clamp is the point: the column is a

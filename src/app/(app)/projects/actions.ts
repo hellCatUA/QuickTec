@@ -489,7 +489,7 @@ export async function deleteDispatchContact(
 }
 
 // ---------------------------------------------------------------------------
-// The representing company's PM/PC — their side, not ours
+// The paying company's PM/PC — their side, not ours
 // ---------------------------------------------------------------------------
 
 const externalContactSchema = z.object({
@@ -501,7 +501,7 @@ const externalContactSchema = z.object({
 });
 
 /**
- * Adds a person on the representing company's side.
+ * Adds a person on the paying company's side.
  *
  * You meet the same coordinators over and over, so they are records rather
  * than three text fields retyped per project — pick them once and their number
@@ -567,7 +567,7 @@ export async function updateExternalContact(
 }
 
 /**
- * Puts a change of the representing company's PM/PC on the project timeline.
+ * Puts a change of the paying company's PM/PC on the project timeline.
  *
  * Kept as its own table rather than only an audit row because the jobs already
  * raised point at whoever ran them, so "who was the coordinator in March" is a

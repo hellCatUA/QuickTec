@@ -298,7 +298,7 @@ model CompanySettings {
 // Clients, customers, sites
 // ---------------------------------------------------------------------------
 
-/// The buyer / representing company that dispatches work to us — normally a
+/// The buyer / paying company that dispatches work to us — normally a
 /// subcontractor. Exported as "Buyer/Representing company:".
 model Client {
   id     String  @id @default(cuid())
@@ -342,13 +342,13 @@ model JobTicket {
 
 /// Which piece of paper an attachment is.
 enum JobDocumentKind {
-  /// The work order the representing company issued, as they issued it.
+  /// The work order the paying company issued, as they issued it.
   CLIENT_WORK_ORDER
   /// Their sign-off sheet: a blank the tech fills in and gets signed on site.
   SIGN_OFF
 }
 
-/// A blank form a representing company always uses.
+/// A blank form a paying company always uses.
 ///
 /// The sign-off sheet is nearly always the same document for a given company,
 /// and re-uploading it per job is how jobs end up going out on last year's
@@ -587,7 +587,7 @@ model Project {
   managerId String?
   manager   User?   @relation("ProjectManager", fields: [managerId], references: [id], onDelete: SetNull)
 
-  /// The representing company's own project manager or coordinator — their
+  /// The paying company's own project manager or coordinator — their
   /// side, not ours. Copied onto each job as it is created, so replacing them
   /// mid-project leaves the jobs already planned under the person who actually
   /// ran them.
@@ -633,7 +633,7 @@ model Project {
   @@index([clientId])
 }
 
-/// Somebody on the other side of the work — the representing company's project
+/// Somebody on the other side of the work — the paying company's project
 /// manager or coordinator.
 ///
 /// Kept as a directory because the same handful of people come back job after
@@ -647,7 +647,7 @@ model ExternalContact {
   email String?
   notes String?
 
-  /// Which representing company they work for, when it is known.
+  /// Which paying company they work for, when it is known.
   clientId String?
   client   Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
 
@@ -725,7 +725,7 @@ enum JobLifecycle {
   /// it. Kept rather than deleted — a job that was worked and then thrown out
   /// is a thing somebody will ask about.
   REJECTED
-  /// The representing company has paid for it and payroll has been run.
+  /// The paying company has paid for it and payroll has been run.
   BILLED
   /// The techs have been paid. Nothing left to do.
   CLOSED
@@ -796,7 +796,7 @@ model Job {
   payRate             Decimal? @db.Decimal(10, 2)
   travelReimbursement Decimal? @db.Decimal(10, 2)
 
-  /// The representing company issued no work order for this job. Recorded so
+  /// The paying company issued no work order for this job. Recorded so
   /// the empty slot reads as a decision somebody made rather than paperwork
   /// nobody got round to chasing.
   noWorkOrder Boolean @default(false)
@@ -805,13 +805,13 @@ model Job {
   outcome        JobOutcome?
   internalStatus JobInternalStatus?
 
-  /// When the representing company's money arrived, and when the techs were
+  /// When the paying company's money arrived, and when the techs were
   /// paid. Stamped rather than derived so the timeline has something to show
   /// even after a payroll period is rebuilt.
   billedAt DateTime?
   closedAt DateTime?
 
-  /// The representing company's coordinator for this job, copied from the
+  /// The paying company's coordinator for this job, copied from the
   /// project when the job was created. A handover on the project does not
   /// rewrite the jobs that ran under the previous one.
   pmContactId String?
@@ -881,7 +881,7 @@ model Job {
   /// Ticket numbers after the first. `ticketNumber` above is the primary one
   /// — the field people mean when they say "the ticket".
   extraTickets     JobTicket[]
-  /// The representing company's paperwork: their work order and sign-off blank.
+  /// The paying company's paperwork: their work order and sign-off blank.
   documents        Attachment[]             @relation("JobDocuments")
   /// What was typed by hand into their sign-off sheet for this job.
   formEntries      JobFormEntry[]
@@ -1082,7 +1082,7 @@ model DispatchContact {
   job       Job?     @relation(fields: [jobId], references: [id], onDelete: Cascade)
   projectId String?
   project   Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  /// Held against the representing company as a default, rather than against
+  /// Held against the paying company as a default, rather than against
   /// any one job. Their NOC line is the same number on every job they send,
   /// and retyping it forty times is how it ends up wrong on the forty-first.
   clientId  String?
@@ -1512,7 +1512,7 @@ model Attachment {
   jobDocument     Job?             @relation("JobDocuments", fields: [jobDocumentId], references: [id], onDelete: Cascade)
   jobDocumentKind JobDocumentKind?
 
-  /// Set when this is a blank kept against a representing company.
+  /// Set when this is a blank kept against a paying company.
   clientTemplate ClientDocumentTemplate? @relation("ClientTemplateFile")
 
   /// The company blank this file came from, whether copied onto the job as-is

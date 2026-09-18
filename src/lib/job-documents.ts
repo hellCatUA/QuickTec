@@ -4,7 +4,7 @@ import { copyFile, storeFile, storageErrorMessage } from "@/lib/storage";
 import type { JobDocumentKind } from "@prisma-client";
 
 /**
- * The representing company's paperwork.
+ * The paying company's paperwork.
  *
  * Two documents travel with a job and neither is the crew's work: the work
  * order they issued, and the sign-off sheet the tech gets signed on site.

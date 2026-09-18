@@ -72,9 +72,9 @@ export const jobFormSchema = z.object({
   dispatchPhone: z.array(z.string()).default([]),
   dispatchEmail: z.array(z.string()).default([]),
   dispatchNote: z.array(z.string()).default([]),
-  /// The representing company issued no work order for this job.
+  /// The paying company issued no work order for this job.
   noWorkOrder: flag,
-  /// Blanks kept against the representing company to copy onto the job.
+  /// Blanks kept against the paying company to copy onto the job.
   templateIds: z.array(z.string()).default([]),
   /// Null when the planner left the checklist alone, which means "whatever the
   /// project asks for" rather than "nothing".

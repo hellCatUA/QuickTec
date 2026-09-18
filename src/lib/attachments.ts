@@ -11,7 +11,7 @@ import { db } from "@/lib/db";
 export type AttachmentOwner =
   | { kind: "job"; jobId: string }
   | { kind: "user"; userId: string }
-  /** A blank form kept against a representing company — no customer data in it. */
+  /** A blank form kept against a paying company — no customer data in it. */
   | { kind: "directory" };
 
 export async function attachmentOwner(

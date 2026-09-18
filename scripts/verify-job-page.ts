@@ -868,12 +868,12 @@ async function main() {
     await planner.locator("#projectId-list").getByRole("option").first().click();
     await planner.waitForTimeout(300);
     check(
-      "picking the project fills in the representing company",
+      "picking the project fills in the paying company",
       (await planner.locator('input[name="clientId"]').inputValue()).length > 0,
       true,
     );
 
-    // Representing company: type, filter, pick. Clearing the project too,
+    // Paying company: type, filter, pick. Clearing the project too,
     // since choosing a company by hand is choosing to leave the project.
     await planner.locator("#clientId").click();
     await planner.locator("#clientId").fill("netcom");
@@ -1204,7 +1204,7 @@ async function main() {
   check("with nobody on it yet", planned?.assignments.length, 0);
   if (planned) await db.job.delete({ where: { id: planned.id } });
 
-  // --- the representing company's paperwork ---------------------------------
+  // --- the paying company's paperwork ---------------------------------
   // It used to live in somebody's inbox, which meant the tech at the door
   // could not read the document the job answers to.
   await bossPage(browser, bossToken, async (planner) => {
@@ -3041,13 +3041,21 @@ async function main() {
   await bossPage(browser, bossToken, async (adminPage) => {
     await adminPage.goto(`${BASE}/directory`, { waitUntil: "domcontentloaded" });
     check(
-      "the directory calls them representing companies",
-      await adminPage.getByText("Representing companies").first().isVisible(),
+      "the directory calls them paying companies",
+      await adminPage.getByText("Paying companies").first().isVisible(),
       true,
     );
     check(
       "and never clients",
       await adminPage.getByText("Clients", { exact: true }).count(),
+      0,
+    );
+    // Nor by the name that has been handed to the link above them. A job comes
+    // down customer -> rep company -> paying company, and calling the paying
+    // company a rep company is now wrong by one link rather than merely dated.
+    check(
+      "and not by the rep company's name either",
+      await adminPage.getByText("Representing companies").count(),
       0,
     );
   });

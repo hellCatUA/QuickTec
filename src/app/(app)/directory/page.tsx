@@ -27,10 +27,10 @@ export default async function DirectoryPage() {
     {
       href: "/directory/clients",
       icon: Building,
-      title: "Representing companies",
+      title: "Paying companies",
       count: clients,
       description:
-        "The companies that dispatch work to us and pay for it. Not the same as customers — exported as “Buyer/Representing company”.",
+        "Who pays us for the work. One link up from the rep company, and not the same as the customer. The report still calls them “Buyer/Representing company” — that heading is agreed with the subcontractor and is not ours to change.",
       visible: canManageClients,
     },
     {

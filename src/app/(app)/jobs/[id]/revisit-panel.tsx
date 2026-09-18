@@ -376,7 +376,7 @@ export function RevisitPanel({
         })}
 
         <p className="pt-1 text-xs text-muted-foreground">
-          The site, customer, representing company and project always come
+          The site, customer, paying company and project always come
           across — that is what makes this a revisit. The original&rsquo;s work
           order does not: a return trip is issued its own.
         </p>

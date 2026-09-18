@@ -31,7 +31,8 @@ type ClockJob = {
   jobId: string;
   title: string;
   intWoId: string;
-  customer: string;
+  /** Who pays for the job and where it was — not the customer. */
+  where: string;
   day: string;
   hours: string;
   payType: PayType;
@@ -333,7 +334,7 @@ export function PeriodPanel({
                 </span>
               </div>
               <div className="text-[0.6875rem] tabular-nums text-muted-foreground">
-                {job.intWoId} · {job.customer} · {job.day} · {job.hours} hrs ·{" "}
+                {job.intWoId} · {job.where} · {job.day} · {job.hours} hrs ·{" "}
                 {job.payType === "NON_BILLABLE"
                   ? "no rate set"
                   : `${formatMoney(job.payRate)}${job.payType === "HOURLY" ? "/hr" : " flat"}`}
