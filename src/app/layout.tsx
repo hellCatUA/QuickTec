@@ -38,6 +38,12 @@ export const viewport: Viewport = {
   // Field techs need to pinch into photos and serial numbers, so zoom stays on.
   maximumScale: 5,
   viewportFit: "cover",
+  // The keyboard takes room off the page rather than off the view. Without it
+  // the layout viewport keeps its full height behind the keyboard, and the
+  // fixed tab bar — anchored to that viewport's bottom — is left floating
+  // across the middle of the screen. iOS ignores this, which is what the
+  // visual-viewport check in the tab bar itself is for.
+  interactiveWidget: "resizes-content",
   themeColor: [
     { media: "(prefers-color-scheme: dark)", color: "#1a1d24" },
     { media: "(prefers-color-scheme: light)", color: "#f7f8fa" },

@@ -3155,6 +3155,102 @@ async function main() {
     );
   });
 
+  // --- the tab bar stays at the bottom of the screen ------------------------
+  // It was reported turning up across the middle of a page. `position: fixed`
+  // anchors to the layout viewport, so anything that makes that viewport stop
+  // being the screen — an ancestor with a transform, or an on-screen keyboard
+  // the browser does not resize for — strands the bar wherever it left it.
+  await bossPage(browser, bossToken, async (planner) => {
+    await planner.setViewportSize({ width: 390, height: 844 });
+
+    for (const path of ["/dashboard", "/jobs", "/pay"]) {
+      await planner.goto(`${BASE}${path}`, { waitUntil: "load" });
+      await planner.waitForTimeout(400);
+
+      // Nothing between the bar and the document may be a containing block for
+      // it: a transform, filter, perspective, contain or will-change on any
+      // ancestor silently re-anchors `fixed` to that element instead.
+      const anchored = await planner.evaluate(() => {
+        const nav = document.querySelector("nav.fixed");
+        if (!nav) return "no bar";
+
+        let node = nav.parentElement;
+        while (node) {
+          const style = getComputedStyle(node);
+          if (
+            style.transform !== "none" ||
+            style.filter !== "none" ||
+            style.perspective !== "none" ||
+            (style.backdropFilter && style.backdropFilter !== "none") ||
+            (style.contain && !["none", "normal"].includes(style.contain)) ||
+            (style.willChange && style.willChange !== "auto")
+          ) {
+            return `${node.tagName.toLowerCase()} re-anchors it`;
+          }
+          node = node.parentElement;
+        }
+        return "viewport";
+      });
+      check(`  ${path} anchors the bar to the viewport`, anchored, "viewport");
+
+      // Scrolled is when a bar anchored to the document rather than the
+      // viewport gives itself away.
+      await planner.evaluate(() => window.scrollTo(0, 500));
+      await planner.waitForTimeout(250);
+      const bottom = await planner.evaluate(() => {
+        const nav = document.querySelector("nav.fixed")!;
+        return Math.round(nav.getBoundingClientRect().bottom);
+      });
+      check(`  ${path} keeps it on the bottom edge after scrolling`, bottom, 844);
+    }
+
+    // A keyboard, faked: the visual viewport shrinks and the layout viewport
+    // does not, which is the iOS case the CSS cannot answer.
+    await planner.goto(`${BASE}/dashboard`, { waitUntil: "load" });
+    await planner.waitForTimeout(400);
+
+    const shrink = (height: number, scale: number) => `
+      (() => {
+        const viewport = window.visualViewport;
+        Object.defineProperty(viewport, "height", {
+          configurable: true,
+          get: () => ${height},
+        });
+        Object.defineProperty(viewport, "scale", {
+          configurable: true,
+          get: () => ${scale},
+        });
+        viewport.dispatchEvent(new Event("resize"));
+      })()
+    `;
+
+    await planner.evaluate(shrink(500, 1));
+    await planner.waitForTimeout(250);
+    check(
+      "a keyboard takes the bar off screen rather than stranding it",
+      await planner.locator("nav.fixed").isVisible(),
+      false,
+    );
+
+    await planner.evaluate(shrink(844, 1));
+    await planner.waitForTimeout(250);
+    check(
+      "and it comes back when the keyboard closes",
+      await planner.locator("nav.fixed").isVisible(),
+      true,
+    );
+
+    // Zoom shrinks the visual viewport the same way, and zoom is deliberately
+    // left on for photos and serial numbers.
+    await planner.evaluate(shrink(400, 2.5));
+    await planner.waitForTimeout(250);
+    check(
+      "pinching into a label is not a keyboard",
+      await planner.locator("nav.fixed").isVisible(),
+      true,
+    );
+  });
+
   // Renamed because "client" reads as the customer being served, which is the
   // opposite of what it means here.
   await bossPage(browser, bossToken, async (adminPage) => {

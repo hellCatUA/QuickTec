@@ -539,15 +539,30 @@ async function main() {
     await shelfPage.getByText("$28.94", { exact: true }).isVisible(),
     true,
   );
+  // Shut on arrival: the total is the answer, the list is the receipt for it.
+  check(
+    "and rests shut, so the statement is four lines not eleven",
+    await shelfPage.getByText("Fiber towels", { exact: true }).isVisible(),
+    false,
+  );
+
+  await shelfPage.getByText("Materials", { exact: true }).click();
+  await shelfPage.waitForTimeout(250);
+
   // Still every item, and still in the order they were claimed — the fold is
   // about how it reads, not about dropping anything.
   const shelfRows = await shelfPage
     .locator("text=/^(Fiber towels|Gloves|Degreaser)$/")
     .allInnerTexts();
   check(
-    "with every item under it, in the order they were claimed",
+    "opening it gives every item, in the order they were claimed",
     shelfRows.join(", "),
     "Fiber towels, Gloves, Degreaser",
+  );
+  check(
+    "and the total is still the one above them",
+    await shelfPage.getByText("$28.94", { exact: true }).isVisible(),
+    true,
   );
   // Travel is one of a kind, so it keeps its own row rather than being folded
   // into a group of one.

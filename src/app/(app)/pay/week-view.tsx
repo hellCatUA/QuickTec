@@ -2,6 +2,7 @@ import {
   BedDouble,
   Building,
   Car,
+  ChevronDown,
   Clock,
   FileText,
   MapPin,
@@ -333,23 +334,37 @@ function JobCard({
           {statementLines(job.reimbursements).map((line, index) => {
             if (line.kind === "materials") {
               return (
-                <div
-                  key={`materials-${index}`}
-                  className="flex flex-col gap-2"
-                >
-                  <div className="flex items-start gap-2">
+                // A plain <details>, so the shopping list costs no JavaScript
+                // and one left open survives a re-render. Shut by default: the
+                // total is the answer, the list is the receipt for it.
+                <details key={`materials-${index}`} className="group/shelf">
+                  <summary
+                    className={cn(
+                      "flex cursor-pointer list-none items-start gap-2",
+                      "[&::-webkit-details-marker]:hidden",
+                    )}
+                  >
                     <Package className="mt-px size-3.5 shrink-0" />
-                    <span className="min-w-0 flex-1">Materials</span>
+                    <span className="min-w-0 flex-1">
+                      Materials
+                      <ChevronDown
+                        className={cn(
+                          "ml-1 inline-block size-3.5 align-text-bottom",
+                          "text-muted-foreground transition-transform",
+                          "group-open/shelf:rotate-180",
+                        )}
+                      />
+                    </span>
                     <span className="shrink-0 tabular-nums text-foreground">
                       {money(line.cents)}
                     </span>
-                  </div>
+                  </summary>
 
                   {/* Indented to where the heading's text starts, and without
                       seven identical boxes down the margin — the line above
                       has already said what these are. The amounts stay muted
                       so the total is the one figure that reads as a figure. */}
-                  <div className="flex flex-col gap-2 pl-[1.375rem]">
+                  <div className="mt-2 flex flex-col gap-2 pl-[1.375rem]">
                     {line.items.map((one, at) => (
                       <div
                         key={`${one.label ?? "material"}-${at}`}
@@ -370,7 +385,7 @@ function JobCard({
                       </div>
                     ))}
                   </div>
-                </div>
+                </details>
               );
             }
 

@@ -3,6 +3,7 @@
 import { MoreHorizontal } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import * as React from "react";
 import { NAV_ICONS, splitNav, type NavItem } from "@/components/nav-icons";
 import { cn } from "@/lib/utils";
 
@@ -10,6 +11,49 @@ function useIsActive() {
   const pathname = usePathname();
   return (href: string) =>
     href === "/dashboard" ? pathname === href : pathname.startsWith(href);
+}
+
+function subscribeToViewport(onChange: () => void) {
+  const viewport = window.visualViewport;
+  if (!viewport) return () => {};
+
+  viewport.addEventListener("resize", onChange);
+  viewport.addEventListener("scroll", onChange);
+  return () => {
+    viewport.removeEventListener("resize", onChange);
+    viewport.removeEventListener("scroll", onChange);
+  };
+}
+
+/**
+ * Whether an on-screen keyboard is covering the bottom of the screen.
+ *
+ * `position: fixed` anchors to the layout viewport, and an on-screen keyboard
+ * does not always shrink it — iOS never does, and Chrome only does when asked
+ * (the `interactiveWidget` setting in the root layout is that ask). The bar
+ * then sits at the bottom of a viewport that is no longer the bottom of the
+ * screen, which is how a tab bar ends up floating across the middle of a page.
+ *
+ * Zoom is deliberately left on, for photos and serial numbers, and pinching in
+ * shrinks the visual viewport in exactly the same way. `scale` is what tells
+ * the two apart; without that guard the bar would vanish every time somebody
+ * zoomed into a label.
+ *
+ * 150px because a keyboard is 250–350 and nothing else down there is that
+ * tall: a collapsing browser toolbar moves both viewports together and leaves
+ * this difference at zero.
+ */
+function useKeyboardOpen(): boolean {
+  return React.useSyncExternalStore(
+    subscribeToViewport,
+    () => {
+      const viewport = window.visualViewport;
+      if (!viewport || viewport.scale > 1.05) return false;
+      return window.innerHeight - viewport.height > 150;
+    },
+    // Rendered on the server, where there is no keyboard and no viewport.
+    () => false,
+  );
 }
 
 /** Left rail on tablet and desktop, where everything fits. */
@@ -50,13 +94,20 @@ export function SideNav({ items }: { items: NavItem[] }) {
  */
 export function BottomNav({ items }: { items: NavItem[] }) {
   const isActive = useIsActive();
+  const keyboardOpen = useKeyboardOpen();
 
   const { primary: visible, overflow: overflowItems } = splitNav(items);
   const overflows = overflowItems.length > 0;
 
   return (
     <nav
-      className="fixed inset-x-0 bottom-0 z-40 flex border-t border-border bg-surface md:hidden"
+      className={cn(
+        "fixed inset-x-0 bottom-0 z-40 flex border-t border-border bg-surface md:hidden",
+        // Out of the way while somebody is typing, rather than stranded
+        // wherever the keyboard left the bottom of the viewport. Nobody
+        // navigates mid-sentence, and the field gets the room.
+        keyboardOpen && "hidden",
+      )}
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >
       {visible.map((item) => {
