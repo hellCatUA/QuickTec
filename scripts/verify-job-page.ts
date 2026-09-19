@@ -1296,10 +1296,9 @@ async function main() {
     await planner.goto(url, { waitUntil: "load" });
     await planner.waitForTimeout(1000);
 
-    // The paper itself rests in a drawer under Details; the numbers that name
-    // it are up in the block above, which is what gets quoted on the phone.
+    // The work order is a field of the assignment block now: the reference
+    // and the paper behind it in the same place, on the resting tab.
     await tab(planner, "Details");
-    await openSection(planner, "Paperwork");
 
     check(
       "the WO has somewhere to go",
@@ -1339,7 +1338,6 @@ async function main() {
     );
     // Their document, not ours — stamping it would misrepresent it.
     check("and unstamped", stored?.watermarked, false);
-    await openSection(planner, "Paperwork");
     check(
       "and it is offered to open",
       await planner.getByRole("link", { name: "NetCom-WO-887766.pdf" }).isVisible(),
@@ -1356,7 +1354,6 @@ async function main() {
     check("the tech on the job can open it", fetched.status(), 200);
     await asTech.close();
 
-    await openSection(planner, "Paperwork");
     await planner
       .getByRole("button", { name: "Remove NetCom-WO-887766.pdf" })
       .click();
@@ -1370,7 +1367,6 @@ async function main() {
     // Nothing attached says so, and there is no button asking anybody to
     // declare it — the great majority of jobs simply never get one, and the
     // ones that do get theirs by somebody attaching it.
-    await openSection(planner, "Paperwork");
     check(
       "an empty slot says there is no work order",
       await planner.getByText("No WO for this job.").isVisible(),
@@ -2264,6 +2260,114 @@ async function main() {
       .find((line) => line.startsWith("Return track #:")),
     "Return track #: 1Z999AA10123456784, 1Z999AA10123456791",
   );
+
+  // --- what the Details tab is made of --------------------------------------
+  // The order is the order somebody reads a job in: what it belongs to, who
+  // it is for, where, when, which numbers, which paper — then what they were
+  // sent to do, and only then who to call about it.
+  await bossPage(browser, bossToken, async (planner) => {
+    await planner.goto(url, { waitUntil: "load" });
+    await planner.waitForTimeout(1000);
+    await tab(planner, "Details");
+
+    const headings = await planner
+      .locator("main h2, main summary")
+      .allInnerTexts();
+    const order = headings.map((one) => one.split("\n")[0].trim());
+    check(
+      "the scope of work follows the assignment, ahead of the contacts",
+      order.indexOf("Scope of work") < order.indexOf("Points of contact") &&
+        order.indexOf("Assignment details") < order.indexOf("Scope of work"),
+      true,
+    );
+    check(
+      "and the paperwork drawer is gone",
+      order.filter((one) => one.startsWith("Paperwork")).length,
+      0,
+    );
+
+    // The work order is the paper, not a filename: the field holds the box.
+    check(
+      "the paying company's work order is a field of the block",
+      await planner
+        .getByText(`${"Mettel"} work order`, { exact: false })
+        .first()
+        .isVisible(),
+      true,
+    );
+    check(
+      "with somewhere to attach it right there",
+      await planner.locator("#doc-CLIENT_WORK_ORDER").count(),
+      1,
+    );
+    check(
+      "and our own work order offers the PDF beside its number",
+      await planner
+        .getByRole("link", { name: /\.pdf$/ })
+        .first()
+        .isVisible(),
+      true,
+    );
+
+    // A project decides the scope, the deliverables and the rate, so it opens
+    // the block — above the company that pays for it. Read from inside the
+    // block itself: the page is full of small uppercase captions.
+    const fields = await planner.evaluate(() => {
+      const title = [...document.querySelectorAll("h2")].find(
+        (one) => one.textContent?.trim() === "Assignment details",
+      );
+      const card = title?.closest("div.rounded-xl");
+      if (!card) return [];
+      return [...card.querySelectorAll(".uppercase")].map(
+        (one) => one.textContent?.trim() ?? "",
+      );
+    });
+    check(
+      "a job on a project says so first",
+      fields[0],
+      "Project",
+    );
+    check(
+      "ahead of the company that pays for it",
+      fields.indexOf("Project") < fields.indexOf("Company"),
+      true,
+    );
+    // Ours then theirs, and both at the foot of the block.
+    check(
+      "and the two work orders close it",
+      fields.slice(-2).join(" · "),
+      "417 Group INT WO ID · Mettel work order",
+    );
+  });
+
+  // A job raised on its own has no project, and a field reading "No project"
+  // is a row spent saying nothing.
+  {
+    const parent = await db.job.findUniqueOrThrow({
+      where: { id: assignment.jobId },
+      select: { projectId: true },
+    });
+    await db.job.update({
+      where: { id: assignment.jobId },
+      data: { projectId: null },
+    });
+
+    await bossPage(browser, bossToken, async (planner) => {
+      await planner.goto(url, { waitUntil: "load" });
+      await planner.waitForTimeout(1000);
+      await tab(planner, "Details");
+      check(
+        "a job with no project does not carry an empty row for one",
+        await planner.getByText("Project", { exact: true }).count(),
+        0,
+      );
+    });
+
+    await db.job.update({
+      where: { id: assignment.jobId },
+      data: { projectId: parent.projectId },
+    });
+  }
 
   // --- the crew picker ------------------------------------------------------
   await bossPage(browser, bossToken, async (planner) => {

@@ -42,6 +42,7 @@ export function JobDocuments({
   documents,
   canUpload,
   only,
+  heading = true,
 }: {
   jobId: string;
   documents: JobDocument[];
@@ -54,6 +55,15 @@ export function JobDocuments({
    * about either of them.
    */
   only?: JobDocumentKind;
+  /**
+   * Whether to write its own heading.
+   *
+   * Off where the caller has already labelled it — the work order is a field
+   * of the assignment block now, under the paying company's name, and a box
+   * captioned "Work order" directly under a caption reading "Mettel work
+   * order" is the same words twice.
+   */
+  heading?: boolean;
   /** On the job: allowed to attach, and to remove their own upload. */
   canUpload: boolean;
 }) {
@@ -89,39 +99,40 @@ export function JobDocuments({
       {error ? <p className="text-sm text-danger">{error}</p> : null}
 
       {only === "SIGN_OFF" ? null : (
-      <Section
-        jobId={jobId}
-        title="Work order"
-        hint="As the paying company issued it."
-        kind="CLIENT_WORK_ORDER"
-        documents={documents.filter(
-          (doc) => doc.kind === "CLIENT_WORK_ORDER",
-        )}
-        // Nothing attached says so plainly, rather than asking somebody to
-        // declare it. Plenty of jobs never get a work order at all, and the
-        // ones that do get theirs by somebody attaching it — which the button
-        // below is already for.
-        empty="No WO for this job."
-        canUpload={canUpload}
-        pending={pending}
-        onUpload={upload}
-        onRemove={remove}
-      />
+        <Section
+          jobId={jobId}
+          title="Work order"
+          hint="As the paying company issued it."
+          kind="CLIENT_WORK_ORDER"
+          documents={documents.filter(
+            (doc) => doc.kind === "CLIENT_WORK_ORDER",
+          )}
+          // Nothing attached says so plainly, rather than asking somebody to
+          // declare it. Plenty of jobs never get a work order at all, and the
+          // ones that do get theirs by somebody attaching it — which the button
+          // below is already for.
+          empty="No WO for this job."
+          heading={heading}
+          canUpload={canUpload}
+          pending={pending}
+          onUpload={upload}
+          onRemove={remove}
+        />
       )}
 
       {only === "CLIENT_WORK_ORDER" ? null : (
-      <Section
-        jobId={jobId}
-        title="Sign-off sheet"
-        hint="Their blank, filled in and signed on site at the end of the job."
-        kind="SIGN_OFF"
-        documents={documents.filter((doc) => doc.kind === "SIGN_OFF")}
-        empty="Not attached. If this company has a standard one, add it to them in the directory and it comes across on every job."
-        canUpload={canUpload}
-        pending={pending}
-        onUpload={upload}
-        onRemove={remove}
-      />
+        <Section
+          jobId={jobId}
+          title="Sign-off sheet"
+          hint="Their blank, filled in and signed on site at the end of the job."
+          kind="SIGN_OFF"
+          documents={documents.filter((doc) => doc.kind === "SIGN_OFF")}
+          empty="Not attached. If this company has a standard one, add it to them in the directory and it comes across on every job."
+          canUpload={canUpload}
+          pending={pending}
+          onUpload={upload}
+          onRemove={remove}
+        />
       )}
     </div>
   );
@@ -154,8 +165,8 @@ function ReviewLink({
       <Wand2 className="size-4 text-[var(--color-primary)]" />
       {filled ? "Check it again" : "Fill it in and check it"}
       <span className="text-xs text-muted-foreground">
-        {document.fillableBoxes} box{document.fillableBoxes === 1 ? "" : "es"} fill
-        themselves
+        {document.fillableBoxes} box{document.fillableBoxes === 1 ? "" : "es"}{" "}
+        fill themselves
       </span>
     </Link>
   );
@@ -168,6 +179,7 @@ function Section({
   kind,
   documents,
   empty,
+  heading = true,
   canUpload,
   pending,
   onUpload,
@@ -179,6 +191,7 @@ function Section({
   kind: JobDocumentKind;
   documents: JobDocument[];
   empty: string;
+  heading?: boolean;
   canUpload: boolean;
   pending: boolean;
   onUpload: (kind: JobDocumentKind, files: File[]) => void;
@@ -188,12 +201,14 @@ function Section({
 
   return (
     <div className="flex flex-col gap-2">
-      <div>
-        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          {title}
+      {heading ? (
+        <div>
+          <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            {title}
+          </div>
+          <p className="text-xs text-muted-foreground">{hint}</p>
         </div>
-        <p className="text-xs text-muted-foreground">{hint}</p>
-      </div>
+      ) : null}
 
       {documents.length === 0 ? (
         <p className="text-sm text-muted-foreground">{empty}</p>
@@ -237,7 +252,10 @@ function Section({
             {/* Fill it in from the job, rather than by hand in a lobby. Offered
                 only on the blank itself: the filled copy is regenerated from
                 this one, never from itself. */}
-            {canUpload && !doc.generated && doc.fillableBoxes > 0 && doc.templateId ? (
+            {canUpload &&
+            !doc.generated &&
+            doc.fillableBoxes > 0 &&
+            doc.templateId ? (
               <ReviewLink
                 jobId={jobId}
                 document={doc}

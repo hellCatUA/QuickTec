@@ -448,13 +448,6 @@ export default async function JobPage({
     0,
   );
 
-  // The customer's own work order, when somebody has attached it. There is no
-  // field to type its number into — the paper is the number — so the block
-  // above names the file and the drawer below holds it.
-  const clientWorkOrder =
-    job.documents.find((doc) => doc.jobDocumentKind === "CLIENT_WORK_ORDER") ??
-    null;
-
   /** Read-only, editable, fill-in or suggest — decided per field. */
   function actionFor(field: JobFieldName, value: string) {
     return fieldAction({
@@ -858,6 +851,29 @@ export default async function JobPage({
                 <CardContent>
                   <BlockBody>
                     <div className="grid gap-4 text-sm sm:grid-cols-2">
+                      {/* The project, when there is one, opens the block: it is
+                        the thing the rest of these fields are an instance of,
+                        and it decides the scope, the deliverables and the rate.
+                        Jobs raised on their own simply do not have one, and a
+                        field reading "No project" is a row spent saying
+                        nothing. Full width so the pairs below stay paired. */}
+                      {job.project ? (
+                        <div className="sm:col-span-2">
+                          <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                            Project
+                          </div>
+                          <Link
+                            href={`/projects/${job.project.id}`}
+                            className="text-primary underline-offset-4 hover:underline"
+                          >
+                            {job.project.name}
+                            {job.project.externalProjectId
+                              ? ` (${job.project.externalProjectId})`
+                              : ""}
+                          </Link>
+                        </div>
+                      ) : null}
+
                       {/* Company is the one that pays us. The rep company is a link
                         above them, and is blank on every job raised before it
                         existed — Static already renders that as a dash. */}
@@ -944,85 +960,93 @@ export default async function JobPage({
                       />
                       {editable("incNumber", job.incNumber ?? "")}
 
-                      {/* The two work-order numbers close the block, in the order
-                        they are quoted: ours first, then theirs. */}
-                      <Static
-                        label={intWoFieldLabel(company)}
-                        value={job.intWoId}
-                        mono
-                      />
-                      <Static
-                        label={`${job.client.name} work order`}
-                        value={clientWorkOrder?.originalName ?? null}
-                      />
+                      {/* The two work orders close the block, in the order they
+                        are quoted: ours first, then theirs. A number on its own
+                        was never what anybody came here for — they came for the
+                        paper — so each field holds the document as well as the
+                        reference, and neither is a drawer away any more. Full
+                        width, because a file box in half a phone is a file box
+                        nobody can read the name of. */}
+                      <div className="sm:col-span-2">
+                        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                          {intWoFieldLabel(company)}
+                        </div>
+                        <div className="font-mono">{job.intWoId}</div>
+                        {canExportPdf ? (
+                          <a
+                            href={`/api/jobs/${job.id}/export/pdf?inline=1`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="mt-2 flex min-h-11 items-center gap-2 rounded-lg border border-border p-2 text-sm text-primary underline-offset-4 hover:bg-muted"
+                          >
+                            <Printer className="size-4 shrink-0" />
+                            {job.intWoId}.pdf
+                          </a>
+                        ) : null}
+                      </div>
+
+                      <div className="sm:col-span-2">
+                        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                          {job.client.name} work order
+                        </div>
+                        <div className="mt-1.5">
+                          <JobDocuments
+                            jobId={job.id}
+                            only="CLIENT_WORK_ORDER"
+                            heading={false}
+                            canUpload={canUpload}
+                            documents={job.documents
+                              .filter((doc) => doc.jobDocumentKind !== null)
+                              .map((doc) => ({
+                                id: doc.id,
+                                kind: doc.jobDocumentKind as
+                                  | "CLIENT_WORK_ORDER"
+                                  | "SIGN_OFF",
+                                originalName: doc.originalName,
+                                sizeBytes: doc.sizeBytes,
+                                generated: doc.generated,
+                                fillableBoxes:
+                                  doc.sourceTemplate?._count.placements ?? 0,
+                                templateId: doc.sourceTemplateId,
+                              }))}
+                          />
+                        </div>
+                      </div>
                     </div>
                   </BlockBody>
                 </CardContent>
               </EditableBlock>
             </Card>
 
-            {/* The paperwork itself, and what the job hangs off. Both are read
-                on some jobs and none of it is read on a phone in a car park,
-                so it rests closed — the numbers are up in the block above, and
-                this is the copy of the paper behind them. */}
-            <Section
-              title="Paperwork &amp; project"
-              summary={
-                [
-                  job.project ? job.project.name : null,
-                  clientWorkOrder ? "work order attached" : null,
-                ]
-                  .filter(Boolean)
-                  .join(" · ") || "Nothing attached"
-              }
-            >
-              <div className="flex flex-col gap-3">
-                <Static
-                  label="Project"
-                  value={
-                    job.project
-                      ? `${job.project.name}${job.project.externalProjectId ? ` (${job.project.externalProjectId})` : ""}`
-                      : "No project"
-                  }
-                />
-
-                {canExportPdf ? (
-                  <div className="flex flex-col gap-1">
-                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                      {company.intWoLabel} work order
-                    </div>
-                    <a
-                      href={`/api/jobs/${job.id}/export/pdf?inline=1`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="flex items-center gap-1.5 text-sm text-primary underline-offset-4 hover:underline"
-                    >
-                      <Printer className="size-3.5 shrink-0" />
-                      {job.intWoId}.pdf
-                    </a>
-                  </div>
+            <Card>
+              <CardHeader className="flex-row items-start justify-between gap-2">
+                <CardTitle>Scope of work</CardTitle>
+                {/* The editor holds Markdown, which is worth writing and not worth
+                    reading: it used to sit above the rendered scope showing the same
+                    text with its punctuation still in. */}
+                {canManageJob &&
+                actionFor("scopeOfWork", job.scopeOfWork ?? "") !== "none" ? (
+                  <EditableField
+                    jobId={job.id}
+                    field="scopeOfWork"
+                    label="scope of work"
+                    value={job.scopeOfWork ?? ""}
+                    action={actionFor("scopeOfWork", job.scopeOfWork ?? "")}
+                    kind="markdown"
+                    hideValue
+                  />
                 ) : null}
-
-                <JobDocuments
+              </CardHeader>
+              <CardContent>
+                <ScopeOfWork
                   jobId={job.id}
-                  only="CLIENT_WORK_ORDER"
-                  canUpload={canUpload}
-                  documents={job.documents
-                    .filter((doc) => doc.jobDocumentKind !== null)
-                    .map((doc) => ({
-                      id: doc.id,
-                      kind: doc.jobDocumentKind as
-                        | "CLIENT_WORK_ORDER"
-                        | "SIGN_OFF",
-                      originalName: doc.originalName,
-                      sizeBytes: doc.sizeBytes,
-                      generated: doc.generated,
-                      fillableBoxes: doc.sourceTemplate?._count.placements ?? 0,
-                      templateId: doc.sourceTemplateId,
-                    }))}
+                  generalScope={job.project?.generalScopeOfWork ?? null}
+                  jobScope={job.scopeOfWork}
+                  checkedKeys={job.scopeChecks.map((check) => check.lineKey)}
+                  canCheck={canClockHere}
                 />
-              </div>
-            </Section>
+              </CardContent>
+            </Card>
 
             <Card>
               <CardHeader>
@@ -1056,36 +1080,6 @@ export default async function JobPage({
                 </CardContent>
               </Card>
             ) : null}
-
-            <Card>
-              <CardHeader className="flex-row items-start justify-between gap-2">
-                <CardTitle>Scope of work</CardTitle>
-                {/* The editor holds Markdown, which is worth writing and not worth
-                    reading: it used to sit above the rendered scope showing the same
-                    text with its punctuation still in. */}
-                {canManageJob &&
-                actionFor("scopeOfWork", job.scopeOfWork ?? "") !== "none" ? (
-                  <EditableField
-                    jobId={job.id}
-                    field="scopeOfWork"
-                    label="scope of work"
-                    value={job.scopeOfWork ?? ""}
-                    action={actionFor("scopeOfWork", job.scopeOfWork ?? "")}
-                    kind="markdown"
-                    hideValue
-                  />
-                ) : null}
-              </CardHeader>
-              <CardContent>
-                <ScopeOfWork
-                  jobId={job.id}
-                  generalScope={job.project?.generalScopeOfWork ?? null}
-                  jobScope={job.scopeOfWork}
-                  checkedKeys={job.scopeChecks.map((check) => check.lineKey)}
-                  canCheck={canClockHere}
-                />
-              </CardContent>
-            </Card>
 
             {/* Everything past here is closed, not hidden. Nothing below
                 answers a question somebody asks while standing on a site, so
