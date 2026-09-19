@@ -509,6 +509,248 @@ async function main() {
     );
   }
 
+  // --- the formatting bar, under the text ----------------------------------
+  // Every bug a toolbar has lives in these functions — a marker stripped a
+  // character short, a bullet stacked on a bullet, a selection that lands in
+  // the punctuation instead of the word — and none of it needs a browser.
+  {
+    const {
+      applyEdit,
+      toggleInline,
+      toggleBlock,
+      continueList,
+      insertLink,
+    } = await import("@/lib/markdown-edit");
+
+    /** "what it wrote | what was selected afterwards" */
+    function run(
+      text: string,
+      start: number,
+      end: number,
+      edit: ReturnType<typeof toggleInline>,
+    ) {
+      const next = applyEdit(text, edit);
+      return `${next} | ${next.slice(edit.selectionStart, edit.selectionEnd)}`;
+    }
+
+    // --- inline ------------------------------------------------------------
+    const line = "Photograph the rack before you start";
+    const wrapped = toggleInline(line, 20, 26, "bold");
+    check(
+      "bold wraps the selection and keeps the word selected",
+      run(line, 20, 26, wrapped),
+      "Photograph the rack **before** you start | before",
+    );
+
+    // The same press again, from where the first one left the selection.
+    const bolded = applyEdit(line, wrapped);
+    check(
+      "and pressing it again takes it back off",
+      applyEdit(
+        bolded,
+        toggleInline(bolded, wrapped.selectionStart, wrapped.selectionEnd, "bold"),
+      ),
+      line,
+    );
+    // Selected with its markers rather than inside them: the other way people
+    // reach for it.
+    check(
+      "unwrapping works from outside the markers too",
+      applyEdit(bolded, toggleInline(bolded, 20, 30, "bold")),
+      line,
+    );
+
+    const caret = toggleInline("", 0, 0, "bold");
+    check(
+      "with nothing selected it leaves the caret between the markers",
+      `${applyEdit("", caret)} @ ${caret.selectionStart}`,
+      "**** @ 2",
+    );
+
+    // Italic is one star and bold is two: without a guard, italic on a bold
+    // word peels one star off each side and silently changes what it means.
+    check(
+      "italic does not eat a bold marker",
+      applyEdit(bolded, toggleInline(bolded, 22, 28, "italic")),
+      "Photograph the rack ***before*** you start",
+    );
+
+    // Shift+Home, a triple click and select-all all take the marker too, and
+    // wrapping that turns a tickable line into a paragraph.
+    const whole = "- [ ] Land the two feeds";
+    check(
+      "bolding a whole checklist line bolds the words, not its box",
+      applyEdit(whole, toggleInline(whole, 0, whole.length, "bold")),
+      "- [ ] **Land the two feeds**",
+    );
+    check(
+      "and a selection that trails a space does not wrap the space",
+      applyEdit("two amber ports ", toggleInline("two amber ports ", 4, 16, "bold")),
+      "two **amber ports** ",
+    );
+
+    check(
+      "highlight is the one for a warning",
+      applyEdit("Do not power down.", toggleInline("Do not power down.", 0, 18, "highlight")),
+      "==Do not power down.==",
+    );
+    check(
+      "and strike for what came out of scope",
+      applyEdit("old panel", toggleInline("old panel", 0, 9, "strike")),
+      "~~old panel~~",
+    );
+
+    // --- link --------------------------------------------------------------
+    const link = insertLink("see the manual", 8, 14);
+    check(
+      "a link keeps the words and opens the address for typing",
+      `${applyEdit("see the manual", link)} @ ${link.selectionStart}`,
+      "see the [manual]() @ 17",
+    );
+
+    // --- blocks ------------------------------------------------------------
+    const two = "Fit the bracket\nLand the two feeds";
+    const ticked = applyEdit(two, toggleBlock(two, 0, two.length, "checklist"));
+    check(
+      "checklist marks every line the selection touches",
+      ticked,
+      "- [ ] Fit the bracket\n- [ ] Land the two feeds",
+    );
+    check(
+      "and the same press clears them",
+      applyEdit(ticked, toggleBlock(ticked, 0, ticked.length, "checklist")),
+      two,
+    );
+
+    // The one that makes it usable: kinds replace each other.
+    const bullets = "- Fit the bracket\n- Land the two feeds";
+    check(
+      "a bullet asked to be a checklist is swapped, not stacked",
+      applyEdit(bullets, toggleBlock(bullets, 0, bullets.length, "checklist")),
+      "- [ ] Fit the bracket\n- [ ] Land the two feeds",
+    );
+    check(
+      "and numbering renumbers down the selection",
+      applyEdit(bullets, toggleBlock(bullets, 0, bullets.length, "numbered")),
+      "1. Fit the bracket\n2. Land the two feeds",
+    );
+    // A line already ticked on site loses the box, not the words.
+    check(
+      "clearing a checklist keeps what a ticked line said",
+      applyEdit(
+        "- [x] Fit the bracket",
+        toggleBlock("- [x] Fit the bracket", 0, 21, "checklist"),
+      ),
+      "Fit the bracket",
+    );
+
+    const empty = toggleBlock("", 0, 0, "checklist");
+    check(
+      "pressing checklist in an empty box starts one",
+      `${applyEdit("", empty)}@${empty.selectionStart}`,
+      "- [ ] @6",
+    );
+    check(
+      "heading marks the line it is on",
+      applyEdit("Before you start", toggleBlock("Before you start", 3, 3, "heading")),
+      "## Before you start",
+    );
+
+    // --- Enter -------------------------------------------------------------
+    const mid = "- [ ] Fit the bracket";
+    const carried = continueList(mid, mid.length);
+    check(
+      "Enter in a checklist writes the next box",
+      carried ? applyEdit(mid, carried) : null,
+      "- [ ] Fit the bracket\n- [ ] ",
+    );
+    check(
+      "and leaves the caret after it",
+      carried?.selectionStart,
+      28,
+    );
+    check(
+      "a numbered line carries on counting",
+      (() => {
+        const source = "1. Isolate the circuit";
+        const next = continueList(source, source.length);
+        return next ? applyEdit(source, next) : null;
+      })(),
+      "1. Isolate the circuit\n2. ",
+    );
+
+    const stranded = "- [ ] Fit the bracket\n- [ ] ";
+    const exit = continueList(stranded, stranded.length);
+    check(
+      "Enter on a line holding only its marker leaves the list",
+      exit ? applyEdit(stranded, exit) : null,
+      "- [ ] Fit the bracket\n",
+    );
+    check(
+      "and outside a list Enter is left alone",
+      continueList("Just a sentence", 15),
+      null,
+    );
+    // A heading is one line by definition; carrying it on would be wrong.
+    check(
+      "a heading does not continue",
+      continueList("## Before you start", 19),
+      null,
+    );
+
+    // --- the round trip ----------------------------------------------------
+    // The rule the whole bar is built on: it only writes what the renderer
+    // reads. Proven against the real parser rather than asserted.
+    {
+      const { parseMarkdown } = await import("@/lib/markdown");
+
+      const written = [
+        applyEdit("Before you start", toggleBlock("Before you start", 0, 0, "heading")),
+        applyEdit(two, toggleBlock(two, 0, two.length, "checklist")),
+        applyEdit(bullets, toggleBlock(bullets, 0, bullets.length, "numbered")),
+        applyEdit(line, toggleInline(line, 20, 26, "bold")),
+        "==Do not power down.==",
+      ].join("\n\n");
+
+      const blocks = parseMarkdown(written);
+      check(
+        "what the bar writes parses as the blocks it promised",
+        blocks.map((block) => block.type).join(","),
+        "heading,list,list,paragraph,paragraph",
+      );
+
+      const lists = blocks.filter((block) => block.type === "list");
+      check(
+        "the checklist really comes out tickable",
+        lists[0].type === "list" &&
+          lists[0].items.every((item) => Boolean(item.check)),
+        true,
+      );
+      check(
+        "and the numbered one comes out ordered",
+        lists[1].type === "list" && lists[1].ordered,
+        true,
+      );
+      check(
+        "bold reaches the rendered html",
+        blocks.some(
+          (block) =>
+            block.type === "paragraph" && block.html.includes("<strong>before</strong>"),
+        ),
+        true,
+      );
+      check(
+        "and so does a highlight",
+        blocks.some(
+          (block) =>
+            block.type === "paragraph" &&
+            block.html.includes("<mark>Do not power down.</mark>"),
+        ),
+        true,
+      );
+    }
+  }
+
   // --- the rep company -----------------------------------------------------
   // New, and optional everywhere. The whole point of the checks is that a job
   // without one is ordinary rather than broken: every job raised before the

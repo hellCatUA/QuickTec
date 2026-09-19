@@ -1019,7 +1019,7 @@ export default async function JobPage({
             </Card>
 
             <Card>
-              <CardHeader className="flex-row items-start justify-between gap-2">
+              <CardHeader className="flex-row flex-wrap items-start justify-between gap-2">
                 <CardTitle>Scope of work</CardTitle>
                 {/* The editor holds Markdown, which is worth writing and not worth
                     reading: it used to sit above the rendered scope showing the same

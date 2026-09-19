@@ -2,7 +2,8 @@
 
 import { useActionState, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Field, Input, Select, Textarea } from "@/components/ui/field";
+import { Field, Input, Select } from "@/components/ui/field";
+import { MarkdownEditor } from "@/components/ui/markdown-editor";
 import { FormStatus, type SaveState } from "@/components/ui/form-status";
 import {
   PmContactPicker,
@@ -188,13 +189,14 @@ export function ProjectForm({
       <Field
         label="General scope of work"
         htmlFor={`pscope-${key}`}
-        hint="Markdown. Prepended to each job's own scope. Checklist lines (- [ ]) become tickable on the job page."
+        hint="Prepended to each job's own scope."
       >
-        <Textarea
+        <MarkdownEditor
           id={`pscope-${key}`}
           name="generalScopeOfWork"
           defaultValue={project?.generalScopeOfWork ?? ""}
-          rows={6}
+          rows={7}
+          hint="Lines you start with the tick become a checklist the crew can tick off on every job under this project."
         />
       </Field>
 

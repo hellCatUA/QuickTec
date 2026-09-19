@@ -2369,6 +2369,118 @@ async function main() {
     });
   }
 
+  // --- writing a scope without knowing Markdown -----------------------------
+  // The bar only earns its place if what it writes comes back out as the thing
+  // it drew. Every transform is proved in the domain suite; this is the wiring.
+  await bossPage(browser, bossToken, async (planner) => {
+    const before = await db.job.findUniqueOrThrow({
+      where: { id: assignment.jobId },
+      select: { scopeOfWork: true },
+    });
+    await db.job.update({
+      where: { id: assignment.jobId },
+      data: { scopeOfWork: "" },
+    });
+
+    await planner.goto(url, { waitUntil: "load" });
+    await planner.waitForTimeout(1000);
+    await tab(planner, "Details");
+
+    // The bar is not standing there on a page nobody is editing.
+    check(
+      "the bar waits until somebody opens the field",
+      await planner.getByRole("button", { name: "Checklist" }).count(),
+      0,
+    );
+
+    await planner.getByRole("button", { name: /scope of work/i }).first().click();
+    await planner.waitForTimeout(400);
+    check(
+      "and appears with the editor",
+      await planner.getByRole("button", { name: "Checklist" }).isVisible(),
+      true,
+    );
+
+    // An empty box, one press, and a line somebody can type into.
+    const box = planner.locator("textarea").first();
+    await box.click();
+    await planner.getByRole("button", { name: "Checklist" }).click();
+    await planner.waitForTimeout(200);
+    await box.pressSequentially("Fit the bracket");
+
+    // Enter carries the list on by itself, which is the part somebody who has
+    // never written Markdown actually notices.
+    await box.press("Enter");
+    await box.pressSequentially("Land the two feeds");
+    check(
+      "a press, then Enter, writes a checklist without anybody typing a bracket",
+      await box.inputValue(),
+      "- [ ] Fit the bracket\n- [ ] Land the two feeds",
+    );
+
+    // Selecting a word and pressing bold wraps that word, not the line.
+    await box.press("Shift+Home");
+    await planner.getByRole("button", { name: "Bold", exact: true }).click();
+    await planner.waitForTimeout(200);
+    check(
+      "and bold wraps what was selected",
+      await box.inputValue(),
+      "- [ ] Fit the bracket\n- [ ] **Land the two feeds**",
+    );
+
+    // Preview is the half that makes the other half make sense.
+    await planner.getByRole("tab", { name: "Preview" }).click();
+    await planner.waitForTimeout(300);
+    check(
+      "preview draws a real checkbox rather than the brackets",
+      await planner
+        .locator('[role="tabpanel"], div')
+        .locator('input[type="checkbox"]')
+        .count(),
+      2,
+    );
+    check(
+      "and the bold comes out bold",
+      await planner.locator("strong", { hasText: "Land the two feeds" }).count(),
+      1,
+    );
+
+    await planner.getByRole("button", { name: "Save", exact: true }).first().click();
+    await planner.waitForTimeout(2500);
+    // Line endings normalised on the way in: a form post turns every newline
+    // into CRLF, which every textarea in this app has always stored and the
+    // parser has always undone. What is being checked is that the markers
+    // themselves reach the database untouched.
+    check(
+      "saving stores the Markdown itself, unchanged",
+      (
+        await db.job.findUniqueOrThrow({
+          where: { id: assignment.jobId },
+          select: { scopeOfWork: true },
+        })
+      ).scopeOfWork?.replace(/\r\n/g, "\n"),
+      "- [ ] Fit the bracket\n- [ ] **Land the two feeds**",
+    );
+
+    // And the crew get the tickable lines out the other end.
+    await planner.reload({ waitUntil: "load" });
+    await planner.waitForTimeout(800);
+    await tab(planner, "Details");
+    check(
+      "which reaches the crew as lines they can tick",
+      await planner
+        .getByText("Fit the bracket", { exact: true })
+        .first()
+        .isVisible(),
+      true,
+    );
+
+    await db.job.update({
+      where: { id: assignment.jobId },
+      data: { scopeOfWork: before.scopeOfWork },
+    });
+  });
+
   // --- the crew picker ------------------------------------------------------
   await bossPage(browser, bossToken, async (planner) => {
     await planner.goto(url, { waitUntil: "load" });

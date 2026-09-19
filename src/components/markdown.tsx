@@ -22,7 +22,19 @@ export function Markdown({
   const blocks = parseMarkdown(source);
 
   return (
-    <div className={cn("flex flex-col gap-2 text-sm leading-relaxed", className)}>
+    <div
+      className={cn(
+        "flex flex-col gap-2 text-sm leading-relaxed",
+        // The inline html comes out of the parser without classes, so the two
+        // tags with an opinion get theirs here. Highlight was the browser's
+        // own hazard yellow, which is loud enough on a white page and wrong on
+        // this one; now that a button writes it in one tap it wants the same
+        // amber as every other warning in the app.
+        "[&_mark]:rounded [&_mark]:bg-warning [&_mark]:px-1 [&_mark]:text-warning-foreground",
+        "[&_a]:text-primary [&_a]:underline-offset-4 hover:[&_a]:underline",
+        className,
+      )}
+    >
       {blocks.map((block, index) => (
         <BlockView key={index} block={block} renderCheck={renderCheck} />
       ))}

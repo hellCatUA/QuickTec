@@ -3,7 +3,8 @@
 import { AlertTriangle, MessageSquarePlus, Pencil, Plus } from "lucide-react";
 import * as React from "react";
 import { Button } from "@/components/ui/button";
-import { Input, Textarea } from "@/components/ui/field";
+import { Input } from "@/components/ui/field";
+import { MarkdownEditor } from "@/components/ui/markdown-editor";
 import type { FieldAction } from "@/lib/job-fields";
 import { cn } from "@/lib/utils";
 import { saveJobField, suggestChange } from "./actions";
@@ -90,7 +91,12 @@ export function EditableField({
   }
 
   return (
-    <div className={cn("flex flex-col gap-1", className)}>
+    // An open editor takes the whole width of whatever row it was put in. The
+    // trigger is a pencil in a card's header corner, which is the right place
+    // for it and the wrong place for a toolbar and a text box — with the
+    // header set to wrap, this drops the editor onto its own line beneath the
+    // title instead of squeezing it into the space beside it.
+    <div className={cn("flex flex-col gap-1", open && "w-full", className)}>
       <div className="flex items-center gap-2">
         {hideValue ? null : (
           <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -138,10 +144,10 @@ export function EditableField({
       {open ? (
         <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface-raised p-2">
           {kind === "markdown" ? (
-            <Textarea
+            <MarkdownEditor
               value={draft}
-              rows={6}
-              onChange={(event) => setDraft(event.target.value)}
+              rows={8}
+              onChange={setDraft}
               autoFocus
             />
           ) : (

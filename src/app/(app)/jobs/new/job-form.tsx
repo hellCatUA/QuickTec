@@ -19,10 +19,11 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Combobox } from "@/components/ui/combobox";
-import { Field, Input, Select, Textarea } from "@/components/ui/field";
+import { Field, Input, Select } from "@/components/ui/field";
 import { FormStatus, type SaveState } from "@/components/ui/form-status";
 import { describeJobDraft, type JobDraftPayload } from "@/lib/job-draft";
 import { draftLabel, useJobDraft } from "./use-job-draft";
+import { MarkdownEditor } from "@/components/ui/markdown-editor";
 import { Section } from "@/components/ui/section";
 import { HoursPicker, Stepper } from "@/components/ui/stepper";
 import { formatIntWo } from "@/lib/int-wo-format";
@@ -825,12 +826,12 @@ export function JobForm({
         summary={scopeOfWork.trim() ? "written" : "empty"}
         tone={scopeOfWork.trim() ? "neutral" : "warning"}
       >
-          <Textarea
+          <MarkdownEditor
             name="scopeOfWork"
-            rows={6}
+            rows={7}
             placeholder={"- [ ] Swap the failed switch\n- [ ] Label all patch leads"}
             value={scopeOfWork}
-            onChange={(event) => setScopeOfWork(event.target.value)}
+            onChange={setScopeOfWork}
           />
       </Section>
 
