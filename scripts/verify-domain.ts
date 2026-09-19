@@ -2886,6 +2886,67 @@ async function main() {
         "214.00",
       );
 
+      // --- the shopping list, read as one line -----------------------------
+      // A preventive-maintenance visit claims seven things off a shelf, and
+      // the statement used to spell out seven rows of small change for what is
+      // one fact about the job: what it cost in supplies.
+      {
+        const { statementLines } = await import("@/lib/pay-format");
+
+        check(
+          "one material is left as its own line",
+          statementLines(expenses)
+            .map((line) => line.kind)
+            .join(","),
+          "expense,expense,expense,expense",
+        );
+
+        const many = [
+          ...expenses,
+          { kind: "MATERIAL", label: "Gloves", cents: 1498, hasReceipt: true },
+          { kind: "MATERIAL", label: "Wipes", cents: 1097, hasReceipt: true },
+        ] as typeof expenses;
+        const lines = statementLines(many);
+
+        check(
+          "from two upwards they fold into one",
+          lines.map((line) => line.kind).join(","),
+          "expense,expense,expense,materials",
+        );
+
+        const block = lines.at(-1);
+        check(
+          "the block adds up to what the shelf cost",
+          block?.kind === "materials" ? (block.cents / 100).toFixed(2) : null,
+          "28.95",
+        );
+        check(
+          "and still carries every item",
+          block?.kind === "materials"
+            ? block.items.map((one) => expenseLabel(one)).join(", ")
+            : null,
+          "Cat 6A 3Ft, Gloves, Wipes",
+        );
+        // Folding must not lose a receipt mark: that is most of what makes a
+        // line a claim rather than a number.
+        check(
+          "with the receipts they arrived with",
+          block?.kind === "materials"
+            ? block.items.filter((one) => one.hasReceipt).length
+            : null,
+          2,
+        );
+        check(
+          "and nothing is counted twice",
+          lines.reduce(
+            (total, line) =>
+              total + (line.kind === "materials" ? line.cents : line.expense.cents),
+            0,
+          ),
+          many.reduce((total, one) => total + one.cents, 0),
+        );
+      }
+
       // The job card leads with what the job paid, so the two readings have to
       // be one addition apart and nothing else.
       const { jobTotal, payTotal } = await import("@/lib/pay-period");

@@ -252,6 +252,11 @@ async function jobsInRange(
           },
           reimbursements: {
             where: { assignment: { userId } },
+            // The order they were claimed in. It used to be whatever the
+            // database handed back, which was invisible while each expense was
+            // a row of its own; now that the materials read as a list under one
+            // total, an arbitrary order reads as a mistake in the list.
+            orderBy: { createdAt: "asc" },
             select: {
               type: true,
               label: true,
@@ -301,7 +306,8 @@ async function jobsInRange(
     // A fixed order rather than whatever the database hands back, so the same
     // job reads the same way twice and a week can be scanned down. It is the
     // order payroll already buckets them in — travel, parking and tolls, hotel,
-    // materials — so a statement and a payroll line agree.
+    // materials — so a statement and a payroll line agree. A stable sort, so
+    // within a bucket they keep the order they were claimed in.
     reimbursements.sort(
       (a, b) => EXPENSE_ORDER[a.kind] - EXPENSE_ORDER[b.kind],
     );

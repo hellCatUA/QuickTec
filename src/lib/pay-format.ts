@@ -28,6 +28,55 @@ export function expenseLabel(expense: PayExpense): string {
   return expense.label?.trim() || EXPENSE_KIND_LABEL[expense.kind];
 }
 
+/** A row of a job's statement: one expense, or the materials as a block. */
+export type StatementLine =
+  | { kind: "expense"; expense: PayExpense }
+  | { kind: "materials"; cents: number; items: PayExpense[] };
+
+/**
+ * A job's expenses, with the materials gathered under one line.
+ *
+ * A preventive-maintenance visit takes a can of air, a pack of wipes, gloves,
+ * a degreaser and three other things off a shelf, and the statement listed
+ * seven rows of small change — $6.98, $14.98, $3.34 — for what is really one
+ * fact about the job: what it cost in supplies. So they fold under a total and
+ * the detail sits indented beneath it. Nothing is dropped: every item, every
+ * receipt mark, every cent is still on the page, but the eye reads one number
+ * where it used to add up seven.
+ *
+ * Only from two upwards. A lone material under a "Materials" heading is the
+ * same amount written twice, which is the trade the plain rows already make.
+ *
+ * The block takes the place of the first material, so payroll's own order —
+ * travel, parking, tolls, hotels, then materials — is the order it reads in.
+ */
+export function statementLines(expenses: PayExpense[]): StatementLine[] {
+  const materials = expenses.filter((one) => one.kind === "MATERIAL");
+  if (materials.length < 2) {
+    return expenses.map((expense) => ({ kind: "expense", expense }));
+  }
+
+  const lines: StatementLine[] = [];
+  let placed = false;
+
+  for (const expense of expenses) {
+    if (expense.kind !== "MATERIAL") {
+      lines.push({ kind: "expense", expense });
+      continue;
+    }
+    if (placed) continue;
+
+    placed = true;
+    lines.push({
+      kind: "materials",
+      cents: materials.reduce((total, one) => total + one.cents, 0),
+      items: materials,
+    });
+  }
+
+  return lines;
+}
+
 /** "$1,592.50". Cents in, because that is what the domain works in. */
 export function money(cents: number): string {
   return new Intl.NumberFormat("en-US", {

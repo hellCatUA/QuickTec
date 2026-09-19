@@ -484,6 +484,80 @@ async function main() {
   );
   check("a tech cannot export someone else's", othersJournal.status(), 404);
 
+  // --- the shopping list on a job card --------------------------------------
+  // A preventive-maintenance visit claims seven small things off a shelf, and
+  // seven rows of change buried the two figures either side of them. In its own
+  // week, so the totals the rest of this suite asserts stay put.
+  const shelfWeek = weekRange(
+    new Date(week.start.getTime() + 14 * 86_400_000),
+    TZ,
+  );
+  const shelfJob = await workedJob({
+    title: "Pay flow materials",
+    userId: tech.user.id,
+    payRate: "40",
+    dayOffset: 17,
+    hours: 8,
+  });
+  const shelfAssignment = await db.jobAssignment.findFirstOrThrow({
+    where: { jobId: shelfJob.id },
+    select: { id: true },
+  });
+  await db.jobAssignment.update({
+    where: { id: shelfAssignment.id },
+    data: { travelReimbursement: "50.00" },
+  });
+  for (const [label, amount] of [
+    ["Fiber towels", "6.98"],
+    ["Gloves", "14.98"],
+    ["Degreaser", "6.98"],
+  ] as const) {
+    await db.reimbursement.create({
+      data: {
+        jobId: shelfJob.id,
+        assignmentId: shelfAssignment.id,
+        type: "MATERIAL",
+        label,
+        amount,
+      },
+    });
+  }
+
+  const shelfPage = await open(
+    techContext,
+    `/pay?week=${isoDateInZone(shelfWeek.start, TZ)}`,
+  );
+  await shelfPage.waitForTimeout(500);
+
+  check(
+    "the materials fold under one line",
+    await shelfPage.getByText("Materials", { exact: true }).count(),
+    1,
+  );
+  check(
+    "which carries what the shelf cost",
+    await shelfPage.getByText("$28.94", { exact: true }).isVisible(),
+    true,
+  );
+  // Still every item, and still in the order they were claimed — the fold is
+  // about how it reads, not about dropping anything.
+  const shelfRows = await shelfPage
+    .locator("text=/^(Fiber towels|Gloves|Degreaser)$/")
+    .allInnerTexts();
+  check(
+    "with every item under it, in the order they were claimed",
+    shelfRows.join(", "),
+    "Fiber towels, Gloves, Degreaser",
+  );
+  // Travel is one of a kind, so it keeps its own row rather than being folded
+  // into a group of one.
+  check(
+    "and travel is still a line of its own",
+    await shelfPage.getByText("Travel", { exact: true }).isVisible(),
+    true,
+  );
+  await db.job.delete({ where: { id: shelfJob.id } });
+
   // --- statistics ----------------------------------------------------------
   const techStats = await open(techContext, "/pay/stats?period=all");
   check(

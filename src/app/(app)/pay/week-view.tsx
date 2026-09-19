@@ -20,6 +20,7 @@ import {
   hours,
   money,
   shortDate,
+  statementLines,
 } from "@/lib/pay-format";
 import {
   jobTotal,
@@ -329,7 +330,51 @@ function JobCard({
             </span>
           </div>
 
-          {job.reimbursements.map((one, index) => {
+          {statementLines(job.reimbursements).map((line, index) => {
+            if (line.kind === "materials") {
+              return (
+                <div
+                  key={`materials-${index}`}
+                  className="flex flex-col gap-2"
+                >
+                  <div className="flex items-start gap-2">
+                    <Package className="mt-px size-3.5 shrink-0" />
+                    <span className="min-w-0 flex-1">Materials</span>
+                    <span className="shrink-0 tabular-nums text-foreground">
+                      {money(line.cents)}
+                    </span>
+                  </div>
+
+                  {/* Indented to where the heading's text starts, and without
+                      seven identical boxes down the margin — the line above
+                      has already said what these are. The amounts stay muted
+                      so the total is the one figure that reads as a figure. */}
+                  <div className="flex flex-col gap-2 pl-[1.375rem]">
+                    {line.items.map((one, at) => (
+                      <div
+                        key={`${one.label ?? "material"}-${at}`}
+                        className="flex items-start gap-2"
+                      >
+                        <span className="min-w-0 flex-1">
+                          {expenseLabel(one)}
+                        </span>
+                        {one.hasReceipt ? (
+                          <Paperclip
+                            className="mt-0.5 size-3 shrink-0"
+                            aria-label="Receipt attached"
+                          />
+                        ) : null}
+                        <span className="shrink-0 tabular-nums">
+                          {money(one.cents)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            }
+
+            const one = line.expense;
             const Icon = EXPENSE_ICON[one.kind];
             return (
               <div
