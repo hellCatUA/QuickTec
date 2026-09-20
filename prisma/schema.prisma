@@ -1178,6 +1178,26 @@ model DispatchContact {
   @@index([clientId])
 }
 
+/// The job titles a site contact might hold, offered as somebody types.
+///
+/// A dictionary rather than an enum: the words differ by customer — a
+/// pharmacy has no Shift Supervisor and a franchise has an Owner on site —
+/// and adding one should not be a deployment. Nothing validates against it;
+/// what it buys is not retyping "Assistant Store Manager" forty times.
+model ContactPosition {
+  id     String  @id @default(cuid())
+  label  String  @unique
+  order  Int     @default(0)
+  /// Retired rather than deleted: jobs keep the text they were given, and a
+  /// position that stops being offered should not rewrite them.
+  active Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([active, order])
+}
+
 enum ContactType {
   /// Manager On Duty — required, may be several.
   MOD
@@ -1188,14 +1208,20 @@ enum ContactType {
 }
 
 model PointOfContact {
-  id    String      @id @default(cuid())
-  jobId String
-  job   Job         @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  type  ContactType
-  name  String
-  phone String?
-  email String?
-  order Int         @default(0)
+  id       String      @id @default(cuid())
+  jobId    String
+  job      Job         @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  type     ContactType
+  name     String
+  /// What they do at the site: "SM/Store Manager", "Owner", or whatever the
+  /// tech typed. Free text on purpose — ContactPosition is a list of
+  /// suggestions to type faster, not a set of values this has to be one of.
+  /// Stored as written so a job keeps saying what it said even after somebody
+  /// renames an entry in the dictionary.
+  position String?
+  phone    String?
+  email    String?
+  order    Int         @default(0)
 
   signatures Signature[]
 

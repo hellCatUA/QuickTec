@@ -2,6 +2,7 @@
 
 import { Mail, Phone, Plus, X } from "lucide-react";
 import { useActionState, useState, useTransition } from "react";
+import { NameInput } from "@/components/ui/name-input";
 import { Button } from "@/components/ui/button";
 import { formatPhone, telHref } from "@/lib/phone";
 import { PhoneInput } from "@/components/ui/phone-input";
@@ -133,7 +134,7 @@ export function DispatchContacts({
               />
             </Field>
             <Field label="Name" htmlFor="dc-name">
-              <Input id="dc-name" name="name" autoComplete="off" />
+              <NameInput id="dc-name" name="name" />
             </Field>
             <Field label="Phone" htmlFor="dc-phone">
               <PhoneInput id="dc-phone" name="phone" />

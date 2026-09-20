@@ -3,7 +3,10 @@
 import { Check, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-export type SaveState = { ok: true; id?: string } | { ok: false; error: string } | null;
+export type SaveState =
+  | { ok: true; id?: string }
+  | { ok: false; error: string }
+  | null;
 
 /**
  * The save row every record form ends with. Kept in one place so a failed save

@@ -8,12 +8,9 @@ const badgeVariants = cva(
     variants: {
       variant: {
         neutral: "bg-muted text-muted-foreground",
-        primary:
-          "bg-primary/15 text-primary ring-1 ring-inset ring-primary/30",
-        success:
-          "bg-success/15 text-success ring-1 ring-inset ring-success/30",
-        warning:
-          "bg-warning/15 text-warning ring-1 ring-inset ring-warning/30",
+        primary: "bg-primary/15 text-primary ring-1 ring-inset ring-primary/30",
+        success: "bg-success/15 text-success ring-1 ring-inset ring-success/30",
+        warning: "bg-warning/15 text-warning ring-1 ring-inset ring-warning/30",
         danger: "bg-danger/15 text-danger ring-1 ring-inset ring-danger/30",
       },
     },

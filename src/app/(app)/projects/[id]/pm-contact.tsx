@@ -3,6 +3,7 @@
 import { Info, Mail, Phone } from "lucide-react";
 import * as React from "react";
 import { Button } from "@/components/ui/button";
+import { capitaliseName } from "@/lib/names";
 import { formatPhone, telHref } from "@/lib/phone";
 import { Combobox } from "@/components/ui/combobox";
 import { Field, Input } from "@/components/ui/field";
@@ -109,7 +110,10 @@ export function PmContactPicker({
             id="pm-name"
             value={draft.name}
             onChange={(event) =>
-              setDraft((current) => ({ ...current, name: event.target.value }))
+              setDraft((current) => ({
+                ...current,
+                name: capitaliseName(event.target.value),
+              }))
             }
             autoFocus
           />

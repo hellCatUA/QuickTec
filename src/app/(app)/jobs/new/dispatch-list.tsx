@@ -3,6 +3,7 @@
 import { Plus, X } from "lucide-react";
 import * as React from "react";
 import { Button } from "@/components/ui/button";
+import { capitaliseName } from "@/lib/names";
 import { formatPhoneAsTyped } from "@/lib/phone";
 import { Field, Input } from "@/components/ui/field";
 
@@ -189,7 +190,9 @@ export function DispatchList({
               <Input
                 id={`dispatch-name-${index}`}
                 value={contact.name}
-                onChange={(event) => update(index, { name: event.target.value })}
+                onChange={(event) =>
+                  update(index, { name: capitaliseName(event.target.value) })
+                }
                 autoComplete="off"
               />
             </Field>

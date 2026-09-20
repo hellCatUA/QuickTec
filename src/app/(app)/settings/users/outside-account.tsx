@@ -2,6 +2,7 @@
 
 import { Copy, Loader2, UserPlus } from "lucide-react";
 import * as React from "react";
+import { NameInput } from "@/components/ui/name-input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Field, Input, Select } from "@/components/ui/field";
@@ -124,7 +125,7 @@ export function OutsideAccount() {
           ) : null}
 
           <Field label="Name" htmlFor="outside-name">
-            <Input id="outside-name" name="name" required autoComplete="off" />
+            <NameInput id="outside-name" name="name" required />
           </Field>
 
           <Field label="Email" htmlFor="outside-email">

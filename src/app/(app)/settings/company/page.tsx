@@ -1,7 +1,9 @@
 import { redirect } from "next/navigation";
 import { getCompanySettings } from "@/lib/company";
+import { db } from "@/lib/db";
 import { can, getSessionUser } from "@/lib/session";
 import { CompanyForm } from "./company-form";
+import { ContactPositions } from "./contact-positions";
 
 export const metadata = { title: "Company settings" };
 
@@ -11,6 +13,11 @@ export default async function CompanySettingsPage() {
   if (!can(user, "settings.company")) redirect("/dashboard");
 
   const company = await getCompanySettings();
+  const positions = await db.contactPosition.findMany({
+    where: { active: true },
+    orderBy: [{ order: "asc" }, { label: "asc" }],
+    select: { id: true, label: true },
+  });
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4">
@@ -28,6 +35,8 @@ export default async function CompanySettingsPage() {
           mileageRate: company.mileageRate.toString(),
         }}
       />
+
+      <ContactPositions positions={positions} />
     </div>
   );
 }

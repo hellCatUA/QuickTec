@@ -31,6 +31,7 @@ import {
   type JobFieldName,
 } from "@/lib/job-fields";
 import { resolvePayRate } from "@/lib/pay-rates";
+import { capitaliseName } from "@/lib/names";
 import { formatPhone } from "@/lib/phone";
 import { notify } from "@/lib/notifications";
 import { canOnJob, resolveJobSupervisor } from "@/lib/scope";
@@ -1593,6 +1594,8 @@ const contactSchema = z.object({
   jobId: z.string().min(1),
   type: z.enum(ContactType),
   name: z.string().trim().min(1, "Name is required"),
+  /** Free text. The dictionary is a list of suggestions, not a set of values. */
+  position: z.string().trim().optional(),
   phone: z.string().trim().optional(),
   email: z.string().trim().optional(),
 });
@@ -1604,7 +1607,7 @@ export async function addPointOfContact(
   const parsed = contactSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return fail(z.prettifyError(parsed.error));
 
-  const { jobId, type, name, phone, email } = parsed.data;
+  const { jobId, type, name, position, phone, email } = parsed.data;
 
   const context = await loadContext(jobId);
   if (!context) return fail("Job not found.");
@@ -1629,7 +1632,9 @@ export async function addPointOfContact(
     data: {
       jobId,
       type,
-      name,
+      name: capitaliseName(name),
+      // Only the MOD/POC is asked what they do; the others are a role already.
+      position: type === "MOD" ? position || null : null,
       phone: formatPhone(phone) || null,
       email: email || null,
       order: count,
@@ -1646,6 +1651,68 @@ export async function addPointOfContact(
   });
 
   touch(jobId);
+  return ok;
+}
+
+const contactEditSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().trim().min(1, "Name is required"),
+  position: z.string().trim().optional(),
+  phone: z.string().trim().optional(),
+  email: z.string().trim().optional(),
+});
+
+/**
+ * Correcting a contact already on the job.
+ *
+ * Taken down at a desk, from somebody speaking, often at the end of a long
+ * day: a wrong digit in a phone number is the ordinary case, not the unusual
+ * one. Removing and re-adding was the only way to fix one, and on a MOD/POC
+ * that throws away the signature attached to them.
+ */
+export async function updatePointOfContact(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  const parsed = contactEditSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return fail(z.prettifyError(parsed.error));
+
+  const { id, name, position, phone, email } = parsed.data;
+
+  const contact = await db.pointOfContact.findUnique({
+    where: { id },
+    select: { jobId: true, type: true, name: true },
+  });
+  if (!contact) return fail("Contact not found.");
+
+  const context = await loadContext(contact.jobId);
+  if (!context) return fail("Job not found.");
+  const { user, job } = context;
+
+  if (!(await canOnJob(user, "job.fill_missing_field", job))) {
+    return fail("You cannot change contacts on this job.");
+  }
+
+  await db.pointOfContact.update({
+    where: { id },
+    data: {
+      name: capitaliseName(name),
+      position: contact.type === "MOD" ? position || null : null,
+      phone: formatPhone(phone) || null,
+      email: email || null,
+    },
+  });
+
+  await recordAudit({
+    actorId: user.id,
+    entityType: "PointOfContact",
+    entityId: id,
+    jobId: contact.jobId,
+    action: "contact_edited",
+    detail: { type: contact.type, from: contact.name, to: name },
+  });
+
+  touch(contact.jobId);
   return ok;
 }
 
@@ -1946,7 +2013,7 @@ export async function addJobDispatchContact(
     data: {
       jobId,
       label,
-      name: String(formData.get("name") ?? "").trim() || null,
+      name: capitaliseName(String(formData.get("name") ?? "").trim()) || null,
       phone: formatPhone(String(formData.get("phone") ?? "")) || null,
       email: String(formData.get("email") ?? "").trim() || null,
       note: String(formData.get("note") ?? "").trim() || null,
@@ -1965,6 +2032,61 @@ export async function addJobDispatchContact(
   });
 
   touch(jobId);
+  return ok;
+}
+
+/**
+ * Correcting a number already on the job.
+ *
+ * The same case as a point of contact: taken down from somebody speaking, and
+ * a wrong digit in the number the rest of the crew is dialling is worth fixing
+ * without deleting and retyping the whole row.
+ */
+export async function updateJobDispatchContact(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  const id = String(formData.get("id") ?? "");
+  const label = String(formData.get("label") ?? "").trim();
+  if (!label) return fail("Say who they are.");
+
+  const contact = await db.dispatchContact.findUnique({
+    where: { id },
+    select: { id: true, jobId: true, label: true },
+  });
+  // The project's own numbers are managed on the project, and the tech's
+  // supervisor is not a row at all.
+  if (!contact?.jobId) return fail("Not found.");
+
+  const context = await loadContext(contact.jobId);
+  if (!context) return fail("Job not found.");
+  const { user, job } = context;
+
+  if (!(await canOnJob(user, "job.edit_planned_fields", job))) {
+    return fail("You cannot change contacts on this job.");
+  }
+
+  await db.dispatchContact.update({
+    where: { id },
+    data: {
+      label,
+      name: capitaliseName(String(formData.get("name") ?? "").trim()) || null,
+      phone: formatPhone(String(formData.get("phone") ?? "")) || null,
+      email: String(formData.get("email") ?? "").trim() || null,
+      note: String(formData.get("note") ?? "").trim() || null,
+    },
+  });
+
+  await recordAudit({
+    actorId: user.id,
+    entityType: "DispatchContact",
+    entityId: id,
+    jobId: contact.jobId,
+    action: "dispatch_edited",
+    detail: { from: contact.label, to: label },
+  });
+
+  touch(contact.jobId);
   return ok;
 }
 

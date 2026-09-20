@@ -560,6 +560,45 @@ async function main() {
     );
   }
 
+  // --- names, as they get typed ---------------------------------------------
+  // A phone keyboard at the end of a job produces "jane o'brien" or
+  // "JANE O'BRIEN", and neither is what goes on a client's report.
+  {
+    const { capitaliseName } = await import("@/lib/names");
+
+    check("a plain name is raised", capitaliseName("jane doe"), "Jane Doe");
+    check(
+      "an apostrophe is a word boundary",
+      capitaliseName("jane o'brien"),
+      "Jane O'Brien",
+    );
+    check(
+      "and so is a hyphen",
+      capitaliseName("mary-jane smith"),
+      "Mary-Jane Smith",
+    );
+    // The reason this is not full title case. Lowering the rest would be the
+    // obvious way to do it and it spells people's names wrong.
+    check(
+      "a name already spelled properly is left alone",
+      capitaliseName("Ian McDonald"),
+      "Ian McDonald",
+    );
+    check("capitals are somebody's choice", capitaliseName("JANE"), "JANE");
+    // Typed one letter at a time, which is how this actually runs.
+    check(
+      "it works mid-word rather than waiting for a space",
+      ["j", "ja", "jan", "jane", "jane ", "jane d"].map(capitaliseName).join("|"),
+      "J|Ja|Jan|Jane|Jane |Jane D",
+    );
+    check(
+      "a full stop does not start a new word",
+      capitaliseName("sam jr. smith"),
+      "Sam Jr. Smith",
+    );
+    check("and nothing is nothing", capitaliseName(""), "");
+  }
+
   // --- the formatting bar, under the text ----------------------------------
   // Every bug a toolbar has lives in these functions — a marker stripped a
   // character short, a bullet stacked on a bullet, a selection that lands in

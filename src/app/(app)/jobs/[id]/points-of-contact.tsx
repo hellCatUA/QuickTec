@@ -1,26 +1,42 @@
 "use client";
 
-import { AlertTriangle, Mail, Phone, Plus, X } from "lucide-react";
+import { AlertTriangle, Mail, Phone, Plus } from "lucide-react";
 import * as React from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatPhone, formatPhoneAsTyped, telHref } from "@/lib/phone";
+import { capitaliseName } from "@/lib/names";
 import { Field, Input, Select } from "@/components/ui/field";
+import { PositionPicker } from "@/components/ui/position-picker";
+import { RowMenu } from "@/components/ui/row-menu";
 import type { ContactType } from "@prisma-client";
-import { addPointOfContact, deletePointOfContact } from "./actions";
+import {
+  addPointOfContact,
+  deletePointOfContact,
+  updatePointOfContact,
+} from "./actions";
 
+/**
+ * MOD reads MOD/POC and NOC reads NOC Rep.
+ *
+ * The words on screen only. The enum, the client text report and the form
+ * catalogue keep saying MOD and NOC: those are what a client's PDF asks for
+ * and what every job already recorded is stored as, and renaming a label is
+ * not a reason to migrate data or to change what goes out to a customer.
+ */
 const TYPE_META: Record<
   ContactType,
   { label: string; description: string; required: boolean; multiple: boolean }
 > = {
   MOD: {
-    label: "MOD",
-    description: "Manager On Duty. Required, and a site can have several.",
+    label: "MOD/POC",
+    description:
+      "Manager On Duty, or whoever is answering for the site. Required, and there can be several.",
     required: true,
     multiple: true,
   },
   NOC: {
-    label: "NOC",
+    label: "NOC Rep",
     description: "The engineer on the call. Optional but worth having.",
     required: false,
     multiple: false,
@@ -38,6 +54,7 @@ type Contact = {
   id: string;
   type: ContactType;
   name: string;
+  position: string | null;
   phone: string | null;
   email: string | null;
 };
@@ -45,18 +62,32 @@ type Contact = {
 export function PointsOfContact({
   jobId,
   contacts,
+  positions,
   canEdit,
 }: {
   jobId: string;
   contacts: Contact[];
+  /** The configured dictionary, for whoever is asked what they do. */
+  positions: string[];
   canEdit: boolean;
 }) {
   const [adding, setAdding] = React.useState<ContactType | null>(null);
+  const [editing, setEditing] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [pending, startTransition] = React.useTransition();
 
   const byType = (type: ContactType) =>
     contacts.filter((contact) => contact.type === type);
+
+  function remove(contact: Contact) {
+    setError(null);
+    startTransition(async () => {
+      const formData = new FormData();
+      formData.set("id", contact.id);
+      const result = await deletePointOfContact(formData);
+      if (!result.ok) setError(result.error);
+    });
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -83,6 +114,9 @@ export function PointsOfContact({
                   type="button"
                   variant="ghost"
                   size="sm"
+                  // Three sections, three Add buttons: without the name a
+                  // screen reader reads the same word three times.
+                  aria-label={`Add ${meta.label}`}
                   onClick={() => setAdding(type)}
                 >
                   <Plus /> Add
@@ -91,64 +125,86 @@ export function PointsOfContact({
             </div>
 
             {entries.length === 0 && adding !== type ? (
-              <p className="text-xs text-muted-foreground">{meta.description}</p>
+              <p className="text-xs text-muted-foreground">
+                {meta.description}
+              </p>
             ) : null}
 
-            {entries.map((contact) => (
-              <div
-                key={contact.id}
-                className="flex flex-wrap items-center gap-2 rounded-lg border border-border p-2"
-              >
-                <span className="text-sm font-medium">{contact.name}</span>
+            {entries.map((contact) =>
+              editing === contact.id ? (
+                <ContactForm
+                  key={contact.id}
+                  jobId={jobId}
+                  type={type}
+                  positions={positions}
+                  existing={contact}
+                  onDone={() => setEditing(null)}
+                  onError={setError}
+                />
+              ) : (
+                <div
+                  key={contact.id}
+                  className="flex flex-wrap items-center gap-2 rounded-lg border border-border p-2"
+                >
+                  <span className="text-sm font-medium">{contact.name}</span>
 
-                {contact.phone ? (
-                  <a
-                    href={telHref(contact.phone)}
-                    className="flex items-center gap-1 text-xs text-primary underline-offset-4 hover:underline"
-                  >
-                    <Phone className="size-3" />
-                    {formatPhone(contact.phone)}
-                  </a>
-                ) : null}
+                  {contact.position ? (
+                    <span className="text-xs text-muted-foreground">
+                      {contact.position}
+                    </span>
+                  ) : null}
 
-                {contact.email ? (
-                  <a
-                    href={`mailto:${contact.email}`}
-                    className="flex items-center gap-1 text-xs text-primary underline-offset-4 hover:underline"
-                  >
-                    <Mail className="size-3" />
-                    {contact.email}
-                  </a>
-                ) : null}
+                  {contact.phone ? (
+                    <a
+                      href={telHref(contact.phone)}
+                      className="flex items-center gap-1 text-xs text-primary underline-offset-4 hover:underline"
+                    >
+                      <Phone className="size-3" />
+                      {formatPhone(contact.phone)}
+                    </a>
+                  ) : null}
 
-                {canEdit ? (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="ml-auto"
-                    aria-label={`Remove ${contact.name}`}
-                    disabled={pending}
-                    onClick={() => {
-                      setError(null);
-                      startTransition(async () => {
-                        const formData = new FormData();
-                        formData.set("id", contact.id);
-                        const result = await deletePointOfContact(formData);
-                        if (!result.ok) setError(result.error);
-                      });
-                    }}
-                  >
-                    <X />
-                  </Button>
-                ) : null}
-              </div>
-            ))}
+                  {contact.email ? (
+                    <a
+                      href={`mailto:${contact.email}`}
+                      className="flex items-center gap-1 text-xs text-primary underline-offset-4 hover:underline"
+                    >
+                      <Mail className="size-3" />
+                      {contact.email}
+                    </a>
+                  ) : null}
+
+                  {canEdit ? (
+                    <RowMenu
+                      className="ml-auto"
+                      label={`Options for ${contact.name}`}
+                      disabled={pending}
+                      items={[
+                        {
+                          label: "Edit",
+                          onSelect: () => {
+                            setError(null);
+                            setEditing(contact.id);
+                          },
+                        },
+                        {
+                          label: "Delete",
+                          tone: "danger",
+                          confirm: `Remove ${contact.name} from this job?`,
+                          onSelect: () => remove(contact),
+                        },
+                      ]}
+                    />
+                  ) : null}
+                </div>
+              ),
+            )}
 
             {adding === type ? (
               <ContactForm
                 jobId={jobId}
                 type={type}
+                positions={positions}
                 onDone={() => setAdding(null)}
                 onError={setError}
               />
@@ -163,44 +219,77 @@ export function PointsOfContact({
 function ContactForm({
   jobId,
   type,
+  positions,
+  existing,
   onDone,
   onError,
 }: {
   jobId: string;
   type: ContactType;
+  positions: string[];
+  /** Present when correcting one already on the job. */
+  existing?: Contact;
   onDone: () => void;
   onError: (message: string | null) => void;
 }) {
   const [pending, startTransition] = React.useTransition();
-  const [name, setName] = React.useState("");
-  const [phone, setPhone] = React.useState("");
-  const [email, setEmail] = React.useState("");
+  const [name, setName] = React.useState(existing?.name ?? "");
+  const [position, setPosition] = React.useState(existing?.position ?? "");
+  const [phone, setPhone] = React.useState(
+    existing?.phone ? formatPhone(existing.phone) : "",
+  );
+  const [email, setEmail] = React.useState(existing?.email ?? "");
+
+  // Ids have to differ between the add form and an edit form open at the same
+  // time, or a label points at the wrong box.
+  const key = existing ? existing.id : `new-${type}`;
 
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface-raised p-3">
-      <Field label="Name" htmlFor={`poc-name-${type}`}>
+      <Field label="Name" htmlFor={`poc-name-${key}`}>
         <Input
-          id={`poc-name-${type}`}
+          id={`poc-name-${key}`}
           value={name}
-          onChange={(event) => setName(event.target.value)}
+          onChange={(event) => setName(capitaliseName(event.target.value))}
           autoFocus
           autoComplete="off"
+          autoCapitalize="words"
         />
       </Field>
 
+      {/* Only the MOD/POC is asked. The other two are a role already — an
+          engineer on a call and a coordinator at a desk — and a second box
+          saying so is a box somebody has to skip past. */}
+      {type === "MOD" ? (
+        <Field
+          label="Position"
+          htmlFor={`poc-position-${key}`}
+          hint="Pick one or type your own."
+        >
+          <PositionPicker
+            id={`poc-position-${key}`}
+            value={position}
+            onChange={setPosition}
+            dictionary={positions}
+          />
+        </Field>
+      ) : null}
+
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Phone" htmlFor={`poc-phone-${type}`}>
+        <Field label="Phone" htmlFor={`poc-phone-${key}`}>
           <Input
-            id={`poc-phone-${type}`}
+            id={`poc-phone-${key}`}
             type="tel"
             value={phone}
-            onChange={(event) => setPhone(formatPhoneAsTyped(event.target.value))}
+            onChange={(event) =>
+              setPhone(formatPhoneAsTyped(event.target.value))
+            }
             autoComplete="off"
           />
         </Field>
-        <Field label="Email" htmlFor={`poc-email-${type}`}>
+        <Field label="Email" htmlFor={`poc-email-${key}`}>
           <Input
-            id={`poc-email-${type}`}
+            id={`poc-email-${key}`}
             type="email"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
@@ -218,12 +307,20 @@ function ContactForm({
             onError(null);
             startTransition(async () => {
               const formData = new FormData();
-              formData.set("jobId", jobId);
-              formData.set("type", type);
               formData.set("name", name);
+              formData.set("position", position);
               formData.set("phone", phone);
               formData.set("email", email);
 
+              if (existing) {
+                formData.set("id", existing.id);
+                const result = await updatePointOfContact(null, formData);
+                if (!result.ok) return onError(result.error);
+                return onDone();
+              }
+
+              formData.set("jobId", jobId);
+              formData.set("type", type);
               const result = await addPointOfContact(null, formData);
               if (!result.ok) onError(result.error);
               else onDone();
@@ -253,4 +350,9 @@ export function ContactTypeSelect(
       ))}
     </Select>
   );
+}
+
+/** What a type is called on screen, for anything outside this file. */
+export function contactTypeLabel(type: ContactType): string {
+  return TYPE_META[type].label;
 }

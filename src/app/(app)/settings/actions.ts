@@ -23,7 +23,6 @@ import { BaseRole, PermissionScope } from "@prisma-client";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
-
 /**
  * Percent, held to the range the slider offers.
  *
@@ -236,11 +235,13 @@ export async function updateUser(
 
 const roleGrantSchema = z.object({
   role: z.enum(BaseRole),
-  permission: z.string().refine(
-    (value): value is Permission =>
-      (PERMISSION_KEYS as string[]).includes(value),
-    { message: "Unknown permission" },
-  ),
+  permission: z
+    .string()
+    .refine(
+      (value): value is Permission =>
+        (PERMISSION_KEYS as string[]).includes(value),
+      { message: "Unknown permission" },
+    ),
   // "" means "revoke this permission from the role".
   scope: z.union([z.enum(PermissionScope), z.literal("")]),
 });
@@ -299,7 +300,11 @@ export type LinkResult =
 
 const outsideUserSchema = z.object({
   name: z.string().trim().min(1, "Name is required"),
-  email: z.string().trim().toLowerCase().pipe(z.email("That is not an email address")),
+  email: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .pipe(z.email("That is not an email address")),
   baseRole: z.enum(BaseRole),
   timeZone: z.string().trim().min(1),
   /** Blank means issue a link instead and let them choose their own. */
@@ -388,7 +393,11 @@ export async function createOutsideUser(
     entityType: "User",
     entityId: user.id,
     action: "outside_account_created",
-    detail: { who: name, field: "Sign-in", to: password ? "password set" : "link issued" },
+    detail: {
+      who: name,
+      field: "Sign-in",
+      to: password ? "password set" : "link issued",
+    },
   });
 
   revalidatePath("/settings/users");
@@ -472,7 +481,8 @@ export async function resetOutsidePassword(
   if (user.signInMethod !== "LOCAL") {
     return {
       ok: false,
-      error: "This account signs in through NextCloud, so its password is there.",
+      error:
+        "This account signs in through NextCloud, so its password is there.",
     };
   }
 
@@ -500,4 +510,135 @@ export async function resetOutsidePassword(
 
   revalidatePath("/settings/users");
   return { ok: true, link: await issueToken(userId, actor.id) };
+}
+
+// ---------------------------------------------------------------------------
+// The positions a site contact might hold
+// ---------------------------------------------------------------------------
+//
+// A dictionary, not a set of allowed values: what a job stores is the text
+// that was written on it. Renaming an entry changes what is offered from now
+// on and rewrites nothing, and retiring one takes it off the list while every
+// job that used it keeps saying what it said.
+
+const positionSchema = z.object({
+  label: z.string().trim().min(1, "Give it a name").max(80),
+});
+
+export async function addContactPosition(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  await requirePermission("settings.company");
+
+  const parsed = positionSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success)
+    return { ok: false, error: z.prettifyError(parsed.error) };
+  const { label } = parsed.data;
+
+  const clash = await db.contactPosition.findUnique({
+    where: { label },
+    select: { id: true, active: true },
+  });
+  if (clash) {
+    // Retired rather than absent is the common case: somebody takes one off
+    // the list and puts it back a month later.
+    if (clash.active)
+      return { ok: false, error: "That one is already on the list." };
+    await db.contactPosition.update({
+      where: { id: clash.id },
+      data: { active: true },
+    });
+    revalidatePath("/settings/company");
+    return { ok: true };
+  }
+
+  const last = await db.contactPosition.findFirst({
+    orderBy: { order: "desc" },
+    select: { order: true },
+  });
+
+  await db.contactPosition.create({
+    data: { label, order: (last?.order ?? -1) + 1 },
+  });
+
+  revalidatePath("/settings/company");
+  return { ok: true };
+}
+
+export async function renameContactPosition(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  await requirePermission("settings.company");
+
+  const id = String(formData.get("id") ?? "");
+  const parsed = positionSchema.safeParse({ label: formData.get("label") });
+  if (!parsed.success)
+    return { ok: false, error: z.prettifyError(parsed.error) };
+
+  const clash = await db.contactPosition.findUnique({
+    where: { label: parsed.data.label },
+    select: { id: true },
+  });
+  if (clash && clash.id !== id) {
+    return { ok: false, error: "There is already one called that." };
+  }
+
+  await db.contactPosition.update({
+    where: { id },
+    data: { label: parsed.data.label },
+  });
+
+  revalidatePath("/settings/company");
+  return { ok: true };
+}
+
+/** Off the list from now on. Jobs that used it are left as they are. */
+export async function retireContactPosition(
+  formData: FormData,
+): Promise<ActionResult> {
+  await requirePermission("settings.company");
+
+  const id = String(formData.get("id") ?? "");
+  await db.contactPosition.update({ where: { id }, data: { active: false } });
+
+  revalidatePath("/settings/company");
+  return { ok: true };
+}
+
+/** Up or down one place, which is the only ordering anybody asks for. */
+export async function moveContactPosition(
+  formData: FormData,
+): Promise<ActionResult> {
+  await requirePermission("settings.company");
+
+  const id = String(formData.get("id") ?? "");
+  const up = formData.get("direction") === "up";
+
+  const all = await db.contactPosition.findMany({
+    where: { active: true },
+    orderBy: [{ order: "asc" }, { label: "asc" }],
+    select: { id: true },
+  });
+
+  const at = all.findIndex((one) => one.id === id);
+  const swapWith = up ? at - 1 : at + 1;
+  if (at === -1 || swapWith < 0 || swapWith >= all.length) return { ok: true };
+
+  [all[at], all[swapWith]] = [all[swapWith], all[at]];
+
+  // Rewritten whole rather than swapping two rows: the list is a dozen rows
+  // and an order that was never contiguous stays wrong if only two move.
+  await db.$transaction(
+    all.map((one, index) =>
+      db.contactPosition.update({
+        where: { id: one.id },
+        data: { order: index },
+      }),
+    ),
+  );
+
+  revalidatePath("/settings/company");
+  return { ok: true };
 }

@@ -66,6 +66,8 @@ export function TimePanel({
     outcome: JobOutcome | null;
     revisitRequired: boolean;
     canOverrideMissing: boolean;
+    /** What a site contact might do, offered while somebody types it. */
+    positions: string[];
     canSetOutcome: boolean;
   };
   /** Null until somebody has run the steps without clocking out. */
@@ -135,6 +137,7 @@ export function TimePanel({
         outcome={checkout.outcome}
         revisitRequired={checkout.revisitRequired}
         canOverrideMissing={checkout.canOverrideMissing}
+        positions={checkout.positions}
         onClose={close}
       />
     );

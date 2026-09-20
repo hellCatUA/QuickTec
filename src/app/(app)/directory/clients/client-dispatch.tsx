@@ -3,6 +3,7 @@
 import { Loader2, Phone, Plus, X } from "lucide-react";
 import * as React from "react";
 import { Button } from "@/components/ui/button";
+import { capitaliseName } from "@/lib/names";
 import { formatPhone, formatPhoneAsTyped, telHref } from "@/lib/phone";
 import { Field, Input } from "@/components/ui/field";
 import { deleteClientDispatch, saveClientDispatch } from "../actions";
@@ -144,7 +145,7 @@ export function ClientDispatch({
               <Input
                 id={`disp-name-${clientId}`}
                 value={name}
-                onChange={(event) => setName(event.target.value)}
+                onChange={(event) => setName(capitaliseName(event.target.value))}
                 autoComplete="off"
               />
             </Field>

@@ -91,6 +91,29 @@ async function main() {
   });
   console.log(`INT WO counter ready for ${currentYear}`);
 
+  // The words a tech would otherwise type forty times. Seeded once and then
+  // left alone: these are editable in settings, so re-running the seed must
+  // not undo a rename or bring back one somebody retired.
+  const positions = [
+    "POC/Point of Contact",
+    "Customer Rep",
+    "SSV/Shift Supervisor",
+    "ASM/Assistant Store Manager",
+    "SM/Store Manager",
+    "GM/General Manager",
+    "DM/District Manager",
+    "Owner",
+  ];
+  const existing = await db.contactPosition.count();
+  if (existing === 0) {
+    await db.contactPosition.createMany({
+      data: positions.map((label, index) => ({ label, order: index })),
+    });
+    console.log(`seeded ${positions.length} contact positions`);
+  } else {
+    console.log("contact positions already set up — left alone");
+  }
+
   await db.$disconnect();
 }
 

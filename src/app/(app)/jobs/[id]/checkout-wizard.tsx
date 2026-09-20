@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import * as React from "react";
 import { SignaturePad } from "@/components/signature-pad";
+import { PositionPicker } from "@/components/ui/position-picker";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,6 +21,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Field, Input, Select } from "@/components/ui/field";
+import { capitaliseName } from "@/lib/names";
 import { OUTCOME_META } from "@/lib/job-status";
 import type { JobOutcome } from "@prisma-client";
 import {
@@ -58,6 +60,7 @@ export function CheckoutWizard({
   outcome: initialOutcome,
   revisitRequired: initialRevisitRequired,
   canOverrideMissing,
+  positions,
   onClose,
 }: {
   jobId: string;
@@ -74,6 +77,8 @@ export function CheckoutWizard({
   /** Already flagged, so preparing then finishing later does not lose it. */
   revisitRequired: boolean;
   canOverrideMissing: boolean;
+  /** The configured list of what a site contact might do. */
+  positions: string[];
   onClose: () => void;
 }) {
   const steps: Step[] = [
@@ -92,13 +97,18 @@ export function CheckoutWizard({
   const [outcome, setOutcome] = React.useState<JobOutcome | "">(
     initialOutcome ?? "",
   );
-  const [releaseCode, setReleaseCode] = React.useState(initialReleaseCode ?? "");
-  const [noReleaseCode, setNoReleaseCode] = React.useState(initialNoReleaseCode);
-  const [revisitRequired, setRevisitRequired] =
-    React.useState(initialRevisitRequired);
+  const [releaseCode, setReleaseCode] = React.useState(
+    initialReleaseCode ?? "",
+  );
+  const [noReleaseCode, setNoReleaseCode] =
+    React.useState(initialNoReleaseCode);
+  const [revisitRequired, setRevisitRequired] = React.useState(
+    initialRevisitRequired,
+  );
 
   const [modList, setModList] = React.useState(mods);
   const [modName, setModName] = React.useState("");
+  const [modPosition, setModPosition] = React.useState("");
   const [modId, setModId] = React.useState(mods[0]?.id ?? "");
   const [noMod, setNoMod] = React.useState(false);
   const [modInk, setModInk] = React.useState<string | null>(null);
@@ -108,7 +118,8 @@ export function CheckoutWizard({
   const [techDone, setTechDone] = React.useState(techSigned);
 
   const step = steps[index];
-  const next = () => setIndex((current) => Math.min(current + 1, steps.length - 1));
+  const next = () =>
+    setIndex((current) => Math.min(current + 1, steps.length - 1));
   const back = () => setIndex((current) => Math.max(current - 1, 0));
 
   async function run<T>(work: () => Promise<T>): Promise<T | null> {
@@ -132,18 +143,23 @@ export function CheckoutWizard({
         formData.set("jobId", jobId);
         formData.set("type", "MOD");
         formData.set("name", modName.trim());
+        // Asked here as well as on the job page: this is where somebody who
+        // was never recorded on site gets written down, and the person in
+        // front of the tech is the only one who knows what they do.
+        formData.set("position", modPosition.trim());
         return addPointOfContact(null, formData);
       });
       if (!created?.ok) {
-        setError(created?.error ?? "Could not save the MOD name.");
+        setError(created?.error ?? "Could not save the name.");
         return false;
       }
       contactId = "";
     }
 
-    const signer = modList.find((mod) => mod.id === contactId)?.name ?? modName.trim();
+    const signer =
+      modList.find((mod) => mod.id === contactId)?.name ?? modName.trim();
     if (!signer) {
-      setError("Enter the MOD's name, or press No MOD.");
+      setError("Enter the MOD/POC's name, or press No MOD/POC.");
       return false;
     }
 
@@ -318,8 +334,8 @@ export function CheckoutWizard({
               <span>
                 Revisit required
                 <span className="block text-xs text-muted-foreground">
-                  Flags the job for whoever plans the return trip. Internal —
-                  it never reaches the client report.
+                  Flags the job for whoever plans the return trip. Internal — it
+                  never reaches the client report.
                 </span>
               </span>
             </label>
@@ -331,7 +347,7 @@ export function CheckoutWizard({
             <Field
               label="Release code"
               htmlFor="release-code"
-              hint="Given by the MOD or the NOC when the site is released."
+              hint="Given by the MOD/POC or the NOC Rep when the site is released."
             >
               <Input
                 id="release-code"
@@ -358,7 +374,7 @@ export function CheckoutWizard({
           <div className="flex flex-col gap-3">
             {modDone ? (
               <p className="flex items-center gap-2 text-sm text-success">
-                <Check className="size-4" /> MOD signature already captured.
+                <Check className="size-4" /> MOD/POC signature already captured.
               </p>
             ) : null}
 
@@ -369,7 +385,7 @@ export function CheckoutWizard({
                 onChange={(event) => setNoMod(event.target.checked)}
                 className="size-5 accent-[var(--color-primary)]"
               />
-              There is no MOD on this site
+              There is no MOD/POC on this site
             </label>
 
             {!noMod ? (
@@ -378,7 +394,7 @@ export function CheckoutWizard({
                   <Field
                     label="Who is signing?"
                     htmlFor="mod-picker"
-                    hint="A site can have several managers on duty; pick the one in front of you."
+                    hint="A site can have several; pick the one in front of you."
                   >
                     <Select
                       id="mod-picker"
@@ -397,14 +413,31 @@ export function CheckoutWizard({
                 ) : null}
 
                 {(!modId || modList.length === 0) && (
-                  <Field label="MOD name" htmlFor="mod-name">
-                    <Input
-                      id="mod-name"
-                      value={modName}
-                      onChange={(event) => setModName(event.target.value)}
-                      autoComplete="off"
-                    />
-                  </Field>
+                  <>
+                    <Field label="MOD/POC name" htmlFor="mod-name">
+                      <Input
+                        id="mod-name"
+                        value={modName}
+                        onChange={(event) =>
+                          setModName(capitaliseName(event.target.value))
+                        }
+                        autoComplete="off"
+                        autoCapitalize="words"
+                      />
+                    </Field>
+                    <Field
+                      label="Position"
+                      htmlFor="mod-position"
+                      hint="Pick one or type your own."
+                    >
+                      <PositionPicker
+                        id="mod-position"
+                        value={modPosition}
+                        onChange={setModPosition}
+                        dictionary={positions}
+                      />
+                    </Field>
+                  </>
                 )}
 
                 <SignaturePad onChange={setModInk} disabled={pending} />
@@ -453,8 +486,8 @@ export function CheckoutWizard({
                   "Not needed"
                 )}
               </Row>
-              <Row label="MOD signature">
-                {noMod ? "No MOD" : modDone ? "Captured" : "Not captured"}
+              <Row label="MOD/POC signature">
+                {noMod ? "No MOD/POC" : modDone ? "Captured" : "Not captured"}
               </Row>
               <Row label="Your signature">
                 {techDone ? "Captured" : "Not captured"}

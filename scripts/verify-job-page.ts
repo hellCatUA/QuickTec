@@ -1614,9 +1614,15 @@ async function main() {
     });
     check("a number can be added to a job already running", added?.label, "Site security");
 
+    // A row that has been filled in carries a menu now rather than a cross:
+    // these are taken down from somebody speaking and a wrong digit is the
+    // ordinary case, so Edit sits beside Delete.
     await planner
-      .getByRole("button", { name: "Remove Site security" })
+      .getByRole("button", { name: "Options for Site security" })
       .click();
+    await planner.waitForTimeout(200);
+    planner.once("dialog", (dialog) => dialog.accept());
+    await planner.getByRole("menuitem", { name: "Delete" }).click();
     await planner.waitForTimeout(2000);
     check(
       "and taken back off",
@@ -1627,7 +1633,7 @@ async function main() {
     // The project's own contacts are not this job's to remove.
     check(
       "the project's numbers are not removable from a job",
-      await planner.getByRole("button", { name: /^Remove NetCom/ }).count(),
+      await planner.getByRole("button", { name: /^Options for NetCom/ }).count(),
       0,
     );
 
@@ -2707,6 +2713,176 @@ async function main() {
     await db.changeRequest.deleteMany({ where: { jobId: assignment.jobId } });
     await db.jobReviewCheck.deleteMany({ where: { jobId: assignment.jobId } });
   }
+
+  // --- who was on site, and what they do ------------------------------------
+  await bossPage(browser, bossToken, async (planner) => {
+    await db.pointOfContact.deleteMany({ where: { jobId: assignment.jobId } });
+
+    await planner.goto(url, { waitUntil: "load" });
+    await planner.waitForTimeout(1000);
+    await tab(planner, "Details");
+
+    // MOD is what the database calls it and what a client's PDF asks for. The
+    // words on screen are the ones people use.
+    check(
+      "the contact is called MOD/POC on screen",
+      await planner.getByText("MOD/POC", { exact: true }).first().isVisible(),
+      true,
+    );
+    check(
+      "and the engineer is the NOC Rep",
+      await planner.getByText("NOC Rep", { exact: true }).first().isVisible(),
+      true,
+    );
+
+    await planner
+      .getByRole("button", { name: "Add MOD/POC", exact: true })
+      .click();
+    await planner.waitForTimeout(300);
+
+    // Typed in lower case, as it arrives off a phone keyboard.
+    const nameBox = planner.locator('[id^="poc-name-"]');
+    await nameBox.pressSequentially("dana o'reilly");
+    check(
+      "a name is capitalised while it is typed",
+      await nameBox.inputValue(),
+      "Dana O'Reilly",
+    );
+
+    // The dictionary saves the typing; it does not decide the answer.
+    await planner.locator('[id^="poc-position-"]').click();
+    await planner.waitForTimeout(200);
+    await planner.getByRole("option", { name: "SM/Store Manager" }).click();
+    await planner.waitForTimeout(200);
+
+    await planner.getByRole("button", { name: "Save", exact: true }).click();
+    await planner.waitForTimeout(2000);
+
+    const recorded = await db.pointOfContact.findFirstOrThrow({
+      where: { jobId: assignment.jobId, type: "MOD" },
+      select: { id: true, name: true, position: true },
+    });
+    check("the name is stored as it read", recorded.name, "Dana O'Reilly");
+    check(
+      "with what they do beside it",
+      recorded.position,
+      "SM/Store Manager",
+    );
+
+    // A wrong digit taken down over a bad line is the ordinary case, and the
+    // only way to fix one used to be deleting the contact — which on a MOD/POC
+    // throws away the signature attached to them.
+    await planner
+      .getByRole("button", { name: "Options for Dana O'Reilly" })
+      .click();
+    await planner.waitForTimeout(200);
+    await planner.getByRole("menuitem", { name: "Edit" }).click();
+    await planner.waitForTimeout(400);
+
+    const editBox = planner.locator(`#poc-name-${recorded.id}`);
+    check(
+      "editing opens on what was recorded",
+      await editBox.inputValue(),
+      "Dana O'Reilly",
+    );
+
+    // Something the dictionary has never heard of, which is the whole point of
+    // it being a dictionary.
+    await planner.locator(`#poc-position-${recorded.id}`).click();
+    await planner.waitForTimeout(200);
+    await planner.getByRole("combobox").last().pressSequentially("Night Auditor");
+    await planner.waitForTimeout(200);
+    await planner.getByRole("button", { name: /^Use / }).click();
+    await planner.waitForTimeout(200);
+    await planner.getByRole("button", { name: "Save", exact: true }).click();
+    await planner.waitForTimeout(2000);
+
+    const corrected = await db.pointOfContact.findUniqueOrThrow({
+      where: { id: recorded.id },
+      select: { id: true, position: true },
+    });
+    check(
+      "a position that is not on the list is taken and kept",
+      corrected.position,
+      "Night Auditor",
+    );
+    // The same row, so a signature against it survives the correction.
+    check("and the contact is the same one", corrected.id, recorded.id);
+
+    // The other two are a role already; a second box saying so is a box to
+    // skip past.
+    await planner
+      .getByRole("button", { name: "Add NOC Rep", exact: true })
+      .click();
+    await planner.waitForTimeout(300);
+    check(
+      "the NOC Rep is not asked what they do",
+      await planner.locator('[id^="poc-position-new-NOC"]').count(),
+      0,
+    );
+  });
+
+  // --- the dictionary, where it is edited -----------------------------------
+  await bossPage(browser, bossToken, async (planner) => {
+    await planner.goto(`${BASE}/settings/company`, { waitUntil: "load" });
+    await planner.waitForTimeout(1000);
+
+    check(
+      "the positions are configurable",
+      await planner.getByText("Contact positions").isVisible(),
+      true,
+    );
+    check(
+      "and start with the set that was seeded",
+      await planner.getByText("ASM/Assistant Store Manager").isVisible(),
+      true,
+    );
+
+    await planner.getByLabel("A position to add").fill("Night Auditor");
+    await planner.getByRole("button", { name: "Add" }).click();
+    await planner.waitForTimeout(1500);
+    check(
+      "one added is on the list",
+      await db.contactPosition.count({
+        where: { label: "Night Auditor", active: true },
+      }),
+      1,
+    );
+
+    // Taken off the list, not deleted: the job above is still saying it.
+    planner.once("dialog", (dialog) => dialog.accept());
+    await planner
+      .getByRole("button", { name: "Options for Night Auditor" })
+      .click();
+    await planner.waitForTimeout(200);
+    await planner.getByRole("menuitem", { name: "Take off the list" }).click();
+    await planner.waitForTimeout(1500);
+
+    check(
+      "retiring one leaves the row alone",
+      await db.contactPosition.count({ where: { label: "Night Auditor" } }),
+      1,
+    );
+    check(
+      "and stops it being offered",
+      await db.contactPosition.count({
+        where: { label: "Night Auditor", active: true },
+      }),
+      0,
+    );
+    check(
+      "while the job that used it still says it",
+      (
+        await db.pointOfContact.findFirstOrThrow({
+          where: { jobId: assignment.jobId, type: "MOD" },
+          select: { position: true },
+        })
+      ).position,
+      "Night Auditor",
+    );
+
+    await db.contactPosition.deleteMany({ where: { label: "Night Auditor" } });
+  });
 
   // --- the crew picker ------------------------------------------------------
   await bossPage(browser, bossToken, async (planner) => {

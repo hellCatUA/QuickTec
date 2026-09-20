@@ -280,7 +280,9 @@ export function MarkdownEditor({
           {text.trim() ? (
             <Markdown source={text} />
           ) : (
-            <p className="text-sm text-muted-foreground">Nothing written yet.</p>
+            <p className="text-sm text-muted-foreground">
+              Nothing written yet.
+            </p>
           )}
         </div>
       ) : null}

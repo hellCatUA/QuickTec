@@ -248,6 +248,7 @@ export default async function JobPage({
           id: true,
           type: true,
           name: true,
+          position: true,
           phone: true,
           email: true,
         },
@@ -363,6 +364,15 @@ export default async function JobPage({
   if (!(await canOnJob(user, "job.view", jobRef))) notFound();
 
   const company = await getCompanySettings();
+  // The words offered while somebody types what a contact does. Retired ones
+  // are left out of the list and left alone on the jobs that used them.
+  const positions = (
+    await db.contactPosition.findMany({
+      where: { active: true },
+      orderBy: [{ order: "asc" }, { label: "asc" }],
+      select: { label: true },
+    })
+  ).map((row) => row.label);
   const zone = job.site.timeZone ?? company.defaultTimeZone;
   const now = new Date();
 
@@ -800,6 +810,7 @@ export default async function JobPage({
             outcome: job.outcome,
             revisitRequired: job.internalStatus === "REVISIT_REQUIRED",
             canOverrideMissing,
+            positions,
             canSetOutcome,
           }}
           prepared={
@@ -1081,6 +1092,7 @@ export default async function JobPage({
                 <PointsOfContact
                   jobId={job.id}
                   contacts={job.pointsOfContact}
+                  positions={positions}
                   canEdit={canFillMissing}
                 />
               </CardContent>

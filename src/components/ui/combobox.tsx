@@ -87,8 +87,7 @@ export function Combobox({
     setOpen(false);
   }
 
-  const canCreate =
-    onCreate !== undefined && query.trim().length > 0;
+  const canCreate = onCreate !== undefined && query.trim().length > 0;
 
   return (
     <div ref={rootRef} className="relative">
