@@ -5,6 +5,8 @@ import { useActionState, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Combobox, type ComboOption } from "@/components/ui/combobox";
 import { Field, Input } from "@/components/ui/field";
+import { MarkdownEditor } from "@/components/ui/markdown-editor";
+import { HoursPicker, Stepper } from "@/components/ui/stepper";
 import { cn } from "@/lib/utils";
 import { saveJobDetails, type DetailsResult } from "../actions";
 
@@ -13,6 +15,11 @@ export type DetailValues = {
   externalAssignmentId: string;
   ticketNumber: string;
   incNumber: string;
+  /** Site-local, as a datetime-local box wants it. */
+  scheduledStart: string;
+  estimateMinutes: string;
+  techsRequired: string;
+  scopeOfWork: string;
 };
 
 type Route = "unchanged" | "direct" | "suggest" | "no";
@@ -88,6 +95,12 @@ export function DetailsForm({
   const [assignmentId, setAssignmentId] = useState(values.externalAssignmentId);
   const [ticket, setTicket] = useState(values.ticketNumber);
   const [inc, setInc] = useState(values.incNumber);
+  const [scheduled, setScheduled] = useState(values.scheduledStart);
+  const [estimate, setEstimate] = useState<number | null>(
+    values.estimateMinutes ? Number(values.estimateMinutes) : null,
+  );
+  const [techs, setTechs] = useState(Number(values.techsRequired) || 1);
+  const [scope, setScope] = useState(values.scopeOfWork);
 
   const [state, action, pending] = useActionState<
     DetailsResult | null,
@@ -108,6 +121,10 @@ export function DetailsForm({
     externalAssignmentId: route("externalAssignmentId", assignmentId),
     ticketNumber: route("ticketNumber", ticket),
     incNumber: route("incNumber", inc),
+    scheduledStart: route("scheduledStart", scheduled),
+    estimateMinutes: route("estimateMinutes", estimate === null ? "" : String(estimate)),
+    techsRequired: route("techsRequired", String(techs)),
+    scopeOfWork: route("scopeOfWork", scope),
   };
   const anySuggested = Object.values(routes).includes("suggest");
   const anyChanged = Object.values(routes).some((one) => one !== "unchanged");
@@ -175,6 +192,68 @@ export function DetailsForm({
       </Field>
       <Marker field="incNumber" going={routes.incNumber} waiting={pendingSuggestions.incNumber} />
 
+      <Field
+        label="Scheduled start"
+        htmlFor="detail-scheduled"
+        hint="Site time. Moving it moves the crew's calendars with it."
+      >
+        <Input
+          id="detail-scheduled"
+          name="scheduledStart"
+          type="datetime-local"
+          value={scheduled}
+          onChange={(event) => setScheduled(event.target.value)}
+        />
+      </Field>
+      <Marker
+        field="scheduledStart"
+        going={routes.scheduledStart}
+        waiting={pendingSuggestions.scheduledStart}
+      />
+
+      <Field label="Estimated time" htmlFor="detail-estimate">
+        <HoursPicker
+          name="estimateMinutes"
+          minutes={estimate}
+          onChange={setEstimate}
+        />
+      </Field>
+      <Marker
+        field="estimateMinutes"
+        going={routes.estimateMinutes}
+        waiting={pendingSuggestions.estimateMinutes}
+      />
+
+      <Field label="Techs required" htmlFor="detail-techs">
+        <Stepper
+          name="techsRequired"
+          value={techs}
+          onChange={setTechs}
+          min={1}
+          max={12}
+        />
+      </Field>
+      <Marker
+        field="techsRequired"
+        going={routes.techsRequired}
+        waiting={pendingSuggestions.techsRequired}
+      />
+
+      <Field label="Scope of work" htmlFor="detail-scope">
+        <MarkdownEditor
+          id="detail-scope"
+          name="scopeOfWork"
+          value={scope}
+          onChange={setScope}
+          rows={8}
+        />
+      </Field>
+      <Marker
+        field="scopeOfWork"
+        going={routes.scopeOfWork}
+        waiting={pendingSuggestions.scopeOfWork}
+      />
+
       {anySuggested ? (
         <Field
           label="Why?"
@@ -223,6 +302,12 @@ export function DetailsForm({
             setAssignmentId(values.externalAssignmentId);
             setTicket(values.ticketNumber);
             setInc(values.incNumber);
+            setScheduled(values.scheduledStart);
+            setEstimate(
+              values.estimateMinutes ? Number(values.estimateMinutes) : null,
+            );
+            setTechs(Number(values.techsRequired) || 1);
+            setScope(values.scopeOfWork);
           }}
           disabled={pending || !anyChanged}
         >

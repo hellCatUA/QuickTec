@@ -134,6 +134,24 @@ export const DETAIL_FIELDS = [
   "externalAssignmentId",
   "ticketNumber",
   "incNumber",
+  "scheduledStart",
+  "estimateMinutes",
+  "techsRequired",
+  "scopeOfWork",
+] as const satisfies readonly JobFieldName[];
+
+/**
+ * The few of those a tech still fills in from the job page itself.
+ *
+ * Numbers read off a door or a dispatch call, where filling a blank one is
+ * part of doing the job and a second tap to get to a form is a second tap too
+ * many. Everything else on the list is a planning decision and is corrected on
+ * the page built for that, so nothing on the job page carries a pencil.
+ */
+export const FILLABLE_IN_PLACE = [
+  "externalAssignmentId",
+  "ticketNumber",
+  "incNumber",
 ] as const satisfies readonly JobFieldName[];
 
 export type DetailField = (typeof DETAIL_FIELDS)[number];

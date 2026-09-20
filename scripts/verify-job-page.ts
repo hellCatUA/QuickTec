@@ -1545,54 +1545,48 @@ async function main() {
       data: { scheduledStart: planted },
     });
 
-    await planner.goto(url, { waitUntil: "load" });
+    await planner.goto(`${BASE}/jobs/${assignment.jobId}/edit`, {
+      waitUntil: "load",
+    });
     await planner.waitForTimeout(1000);
 
-    // A pencil beside each of fifteen fields is most of what made this page
-    // heavy on a phone, so they wait behind the one in the block's corner.
-    // Which is the card's corner, beside the title — it used to sit inside the
-    // content, floating above the first field with nothing to relate it to.
-    const titleBox = await planner
-      .getByRole("heading", { name: "Assignment details" })
-      .boundingBox();
-    const pencilBox = await planner
-      .getByRole("button", { name: "Edit assignment details" })
-      .boundingBox();
-    check(
-      "the block's pencil sits in the corner, on the title's line",
-      Boolean(
-        titleBox &&
-          pencilBox &&
-          pencilBox.x > titleBox.x + titleBox.width &&
-          Math.abs(
-            pencilBox.y + pencilBox.height / 2 - (titleBox.y + titleBox.height / 2),
-          ) < 24,
-      ),
-      true,
-    );
-
-    await planner
-      .getByRole("button", { name: "Edit assignment details" })
-      .click();
-    await planner.getByRole("button", { name: "Edit Scheduled start" }).click();
     check(
       "the scheduled time is shown in the site's zone",
-      await planner.locator('input[type="datetime-local"]').inputValue(),
+      await planner.locator("#detail-scheduled").inputValue(),
       "2026-07-28T09:30",
     );
 
-    await planner.getByRole("button", { name: "Save", exact: true }).click();
-    await planner.waitForTimeout(2000);
+    // Moved by an hour and a quarter, in the site's own reckoning. The bug
+    // this replaces read the box back in the server's zone, so a job crept by
+    // the site's offset every time somebody saved it.
+    await planner.locator("#detail-scheduled").fill("2026-07-28T10:45");
+    await planner.getByRole("button", { name: "Save changes" }).click();
+    await planner.waitForTimeout(2500);
 
     const saved = await db.job.findUniqueOrThrow({
       where: { id: assignment.jobId },
       select: { scheduledStart: true },
     });
     check(
-      "saving it untouched leaves the job where it was",
+      "and it is stored as that moment in the site's zone",
       saved.scheduledStart?.toISOString(),
-      planted.toISOString(),
+      "2026-07-28T17:45:00.000Z",
     );
+
+    // Read back again: what goes out has to equal what came in, or the next
+    // save moves it again.
+    await planner.reload({ waitUntil: "load" });
+    await planner.waitForTimeout(800);
+    check(
+      "and reads back as the same wall-clock time",
+      await planner.locator("#detail-scheduled").inputValue(),
+      "2026-07-28T10:45",
+    );
+
+    await db.job.update({
+      where: { id: assignment.jobId },
+      data: { scheduledStart: planted },
+    });
   });
 
   // --- dispatch numbers and pay, after the fact -----------------------------
@@ -2412,23 +2406,26 @@ async function main() {
     await planner.waitForTimeout(1000);
     await tab(planner, "Details");
 
-    // The bar is not standing there on a page nobody is editing.
+    // The job page reads the scope; it does not offer to rewrite it. The bar
+    // lives where the rest of the job's details are corrected.
     check(
-      "the bar waits until somebody opens the field",
+      "the job page carries no editor for it",
       await planner.getByRole("button", { name: "Checklist" }).count(),
       0,
     );
 
-    await planner.getByRole("button", { name: /scope of work/i }).first().click();
-    await planner.waitForTimeout(400);
+    await planner.goto(`${BASE}/jobs/${assignment.jobId}/edit`, {
+      waitUntil: "load",
+    });
+    await planner.waitForTimeout(800);
     check(
-      "and appears with the editor",
+      "and Edit job details does",
       await planner.getByRole("button", { name: "Checklist" }).isVisible(),
       true,
     );
 
     // An empty box, one press, and a line somebody can type into.
-    const box = planner.locator("textarea").first();
+    const box = planner.locator("#detail-scope");
     await box.click();
     await planner.getByRole("button", { name: "Checklist" }).click();
     await planner.waitForTimeout(200);
@@ -2471,7 +2468,9 @@ async function main() {
       1,
     );
 
-    await planner.getByRole("button", { name: "Save", exact: true }).first().click();
+    await planner.getByRole("tab", { name: "Write" }).click();
+    await planner.waitForTimeout(200);
+    await planner.getByRole("button", { name: "Save changes" }).click();
     await planner.waitForTimeout(2500);
     // Line endings normalised on the way in: a form post turns every newline
     // into CRLF, which every textarea in this app has always stored and the
@@ -2489,7 +2488,7 @@ async function main() {
     );
 
     // And the crew get the tickable lines out the other end.
-    await planner.reload({ waitUntil: "load" });
+    await planner.goto(url, { waitUntil: "load" });
     await planner.waitForTimeout(800);
     await tab(planner, "Details");
     check(

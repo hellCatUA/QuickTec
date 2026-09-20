@@ -23,6 +23,7 @@ import { deliverableLabel, effectiveRules } from "@/lib/deliverables";
 import {
   DETAIL_FIELDS,
   fieldAction,
+  FILLABLE_IN_PLACE,
   isOptionalField,
   JOB_FIELDS,
   type JobFieldName,
@@ -57,7 +58,6 @@ import { JobTabs } from "./job-tabs";
 import { BreakPay } from "./break-pay";
 import { JobDocuments } from "./job-documents";
 import { JobTickets } from "./tickets";
-import { BlockBody, BlockEditToggle, EditableBlock } from "./editable-block";
 import { EditableField } from "./editable-field";
 import { PointsOfContact } from "./points-of-contact";
 import { ScopeOfWork } from "./scope-of-work";
@@ -478,6 +478,9 @@ export default async function JobPage({
     rawValue: string,
     display?: string,
   ) {
+    const moved = (DETAIL_FIELDS as readonly string[]).includes(field);
+    const fillable = (FILLABLE_IN_PLACE as readonly string[]).includes(field);
+
     return (
       <EditableField
         jobId={job!.id}
@@ -485,12 +488,16 @@ export default async function JobPage({
         label={JOB_FIELDS[field].label}
         value={rawValue}
         displayValue={display}
-        action={actionFor(field, rawValue)}
+        // Everything Edit job details covers is read here. What is left inline
+        // is the plus on the three numbers a tech reads off a door or takes
+        // down from dispatch — filling one of those is part of doing the job,
+        // and a second tap to reach a form is a second tap too many.
+        action={
+          moved && !fillable ? "none" : actionFor(field, rawValue)
+        }
         kind={JOB_FIELDS[field].kind}
         optional={isOptionalField(field)}
-        // The numbers the job was raised with are corrected on Edit job
-        // details now, so what is left here is the plus on a blank one.
-        fillOnly={DETAIL_FIELDS.includes(field as never)}
+        fillOnly={fillable}
       />
     );
   }
@@ -878,14 +885,16 @@ export default async function JobPage({
         missing={missingRequired}
         details={
           <>
+            {/* Read-only, apart from the plus on a number nobody has written
+                down yet. Everything here was decided when the job was raised
+                and is corrected on Edit job details, behind the job's menu —
+                so the block carries no pencil, and the page a tech reads on
+                site is a page rather than a form. */}
             <Card>
-              <EditableBlock label="assignment details" canEdit={canManageJob}>
-                <CardHeader className="flex-row items-start justify-between gap-2">
-                  <CardTitle>Assignment details</CardTitle>
-                  <BlockEditToggle />
-                </CardHeader>
-                <CardContent>
-                  <BlockBody>
+              <CardHeader>
+                <CardTitle>Assignment details</CardTitle>
+              </CardHeader>
+              <CardContent>
                     <div className="grid gap-4 text-sm sm:grid-cols-2">
                       {/* The project, when there is one, opens the block: it is
                         the thing the rest of these fields are an instance of,
@@ -1049,29 +1058,12 @@ export default async function JobPage({
                         </div>
                       </div>
                     </div>
-                  </BlockBody>
-                </CardContent>
-              </EditableBlock>
+              </CardContent>
             </Card>
 
             <Card>
-              <CardHeader className="flex-row flex-wrap items-start justify-between gap-2">
+              <CardHeader>
                 <CardTitle>Scope of work</CardTitle>
-                {/* The editor holds Markdown, which is worth writing and not worth
-                    reading: it used to sit above the rendered scope showing the same
-                    text with its punctuation still in. */}
-                {canManageJob &&
-                actionFor("scopeOfWork", job.scopeOfWork ?? "") !== "none" ? (
-                  <EditableField
-                    jobId={job.id}
-                    field="scopeOfWork"
-                    label="scope of work"
-                    value={job.scopeOfWork ?? ""}
-                    action={actionFor("scopeOfWork", job.scopeOfWork ?? "")}
-                    kind="markdown"
-                    hideValue
-                  />
-                ) : null}
               </CardHeader>
               <CardContent>
                 <ScopeOfWork

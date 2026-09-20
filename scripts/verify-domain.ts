@@ -512,7 +512,8 @@ async function main() {
   // --- what a reviewer is told was corrected --------------------------------
   {
     const { reviewDetails } = await import("@/lib/job-review");
-    const { detailsEditable, DETAIL_FIELDS } = await import("@/lib/job-fields");
+    const { detailsEditable, DETAIL_FIELDS, FILLABLE_IN_PLACE } =
+      await import("@/lib/job-fields");
 
     check(
       "a job being worked can have its details corrected",
@@ -530,7 +531,28 @@ async function main() {
     check(
       "the page covers what the job was raised as, and nothing collected since",
       [...DETAIL_FIELDS].join(","),
-      "siteId,externalAssignmentId,ticketNumber,incNumber",
+      "siteId,externalAssignmentId,ticketNumber,incNumber,scheduledStart,estimateMinutes,techsRequired,scopeOfWork",
+    );
+    // The release code is not on it: that is collected on site at checkout,
+    // not a decision somebody made when the job was raised.
+    check(
+      "and not what is collected on site",
+      DETAIL_FIELDS.includes("releaseCode" as never),
+      false,
+    );
+    // Three numbers keep a plus on the job page, because reading one off a
+    // door is part of doing the job. Everything else is planning.
+    check(
+      "the plus stays only on the numbers a tech writes down on site",
+      [...FILLABLE_IN_PLACE].join(","),
+      "externalAssignmentId,ticketNumber,incNumber",
+    );
+    check(
+      "and every one of those is a detail the page also covers",
+      FILLABLE_IN_PLACE.every((field) =>
+        (DETAIL_FIELDS as readonly string[]).includes(field),
+      ),
+      true,
     );
 
     const flags = reviewDetails({

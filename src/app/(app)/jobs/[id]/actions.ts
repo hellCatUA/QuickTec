@@ -12,7 +12,11 @@ import {
   judgeClockEdit,
 } from "@/lib/clock-limits";
 import { getCompanySettings } from "@/lib/company";
-import { parseDatetimeLocalInZone, roundToInterval } from "@/lib/datetime";
+import {
+  parseDatetimeLocalInZone,
+  roundToInterval,
+  toDatetimeLocalInZone,
+} from "@/lib/datetime";
 import { db } from "@/lib/db";
 import { deliverableLabel, resolveDeliverableRules } from "@/lib/deliverables";
 import { flag, optionalText } from "@/lib/form";
@@ -1433,6 +1437,11 @@ const detailsSchema = z.object({
   externalAssignmentId: z.string().trim(),
   ticketNumber: z.string().trim(),
   incNumber: z.string().trim(),
+  /** Site-local, as the box showed it. coerceField reads it in the job's zone. */
+  scheduledStart: z.string().trim(),
+  estimateMinutes: z.string().trim(),
+  techsRequired: z.string().trim(),
+  scopeOfWork: z.string(),
   /** Carried onto every suggestion the save raises. */
   reason: z.string().trim().optional(),
 });
@@ -1492,6 +1501,10 @@ export async function saveJobDetails(
       externalAssignmentId: true,
       ticketNumber: true,
       incNumber: true,
+      scheduledStart: true,
+      estimateMinutes: true,
+      techsRequired: true,
+      scopeOfWork: true,
     },
   });
 
@@ -1501,7 +1514,14 @@ export async function saveJobDetails(
 
   for (const field of DETAIL_FIELDS) {
     const wanted = parsed.data[field];
-    const previous = current[field];
+    // A datetime arrives site-local and is stored as an instant, so the two
+    // are only comparable once the incoming one has been read the same way.
+    const previous =
+      field === "scheduledStart"
+        ? current.scheduledStart
+          ? toDatetimeLocalInZone(current.scheduledStart, job.timeZone)
+          : null
+        : current[field];
     if (String(previous ?? "") === wanted) continue;
 
     const coerced = coerceField(field, wanted, job.timeZone);
@@ -1572,9 +1592,15 @@ export async function saveJobDetails(
       },
     });
     saved.push(JOB_FIELDS[field].label);
-    // A different site is a different address and often a different zone, so
-    // whatever is on a calendar for this job is now wrong.
-    if (field === "siteId") scheduleTouched = true;
+    // A different site, a different time or a different length: whatever is on
+    // a calendar for this job is now wrong.
+    if (
+      field === "siteId" ||
+      field === "scheduledStart" ||
+      field === "estimateMinutes"
+    ) {
+      scheduleTouched = true;
+    }
   }
 
   if (saved.length === 0 && suggested.length === 0) {
