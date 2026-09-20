@@ -20,7 +20,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import type { ReviewFlag } from "@/lib/job-review";
+import type { ReviewFlag, ReviewStepKey } from "@/lib/job-review";
 import {
   approveReport,
   confirmReviewStep,
@@ -30,7 +30,7 @@ import {
 import { Punches, type Punch } from "./manage/punches";
 
 export type ReviewStep = {
-  key: "times" | "deliverables" | "reimbursements" | "work";
+  key: ReviewStepKey;
   title: string;
   /** What the reviewer is actually looking at, in plain rows. */
   rows: { label: string; value: string; missing?: boolean }[];

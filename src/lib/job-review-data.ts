@@ -1,3 +1,4 @@
+import { siteLabel } from "@/lib/address";
 import { getCompanySettings } from "@/lib/company";
 import { usDateTimeInZone, usTimeInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
@@ -5,12 +6,15 @@ import { deliverableLabel, effectiveRules } from "@/lib/deliverables";
 import {
   flagsFingerprint,
   reviewDeliverables,
+  reviewDetails,
   reviewReimbursements,
   reviewTimes,
   reviewWork,
+  type DetailChange,
   type ReviewFlag,
   type ReviewStepKey,
 } from "@/lib/job-review";
+import { isJobField, JOB_FIELDS } from "@/lib/job-fields";
 import { visitTotals } from "@/lib/time-tracking";
 
 /**
@@ -53,6 +57,96 @@ export type LoadedReview = {
   job: ReviewJob;
   steps: ReviewStepData[];
 };
+
+/**
+ * Every field that held a value and was changed after the job was raised.
+ *
+ * Read from the audit log rather than kept in a column of its own: the log is
+ * already written on every route a change can take — straight onto the job by
+ * somebody who may, or through a supervisor's approval by somebody who may not
+ * — and a second record of the same fact is a second record to keep in step.
+ *
+ * `field_filled` is deliberately not gathered. A gap closed on site overwrote
+ * nothing and nobody was working from the old value.
+ *
+ * The site reads back as a name rather than an id. A reviewer asked to check
+ * "cmu6j5np…  →  cmu8vyye…" is a reviewer who ticks the box.
+ */
+async function detailChanges(
+  jobId: string,
+  zone: string,
+): Promise<DetailChange[]> {
+  const events = await db.auditEvent.findMany({
+    where: { jobId, action: { in: ["field_edited", "change_approved"] } },
+    orderBy: { createdAt: "asc" },
+    select: {
+      action: true,
+      detail: true,
+      createdAt: true,
+      actor: { select: { name: true } },
+    },
+  });
+
+  const siteIds = new Set<string>();
+  for (const event of events) {
+    const detail = (event.detail ?? {}) as Record<string, unknown>;
+    if (detail.field !== "siteId") continue;
+    for (const key of ["from", "to"]) {
+      const value = detail[key];
+      if (typeof value === "string" && value) siteIds.add(value);
+    }
+  }
+
+  const sites =
+    siteIds.size === 0
+      ? []
+      : await db.site.findMany({
+          where: { id: { in: [...siteIds] } },
+          select: {
+            id: true,
+            siteNumber: true,
+            numberPending: true,
+            customer: { select: { code: true, name: true } },
+          },
+        });
+  const siteNames = new Map(
+    sites.map((site) => [
+      site.id,
+      `${site.customer.name} · ${
+        site.numberPending
+          ? "number pending"
+          : siteLabel(site.customer.code, site.siteNumber)
+      }`,
+    ]),
+  );
+
+  const changes: DetailChange[] = [];
+
+  for (const event of events) {
+    const detail = (event.detail ?? {}) as Record<string, unknown>;
+    const field = detail.field;
+    if (typeof field !== "string" || !isJobField(field)) continue;
+
+    const from = typeof detail.from === "string" ? detail.from : "";
+    const to = typeof detail.to === "string" ? detail.to : "";
+    // Nothing was overwritten, so there is nothing for a reviewer to weigh.
+    if (from === "") continue;
+
+    const show = (value: string) =>
+      field === "siteId" ? (siteNames.get(value) ?? value) : value;
+
+    changes.push({
+      label: JOB_FIELDS[field].label,
+      from: show(from),
+      to: show(to),
+      who: event.actor?.name ?? "Someone since removed",
+      when: usDateTimeInZone(event.createdAt, zone),
+      approved: event.action === "change_approved",
+    });
+  }
+
+  return changes;
+}
 
 export async function loadReview(jobId: string): Promise<LoadedReview | null> {
   const now = new Date();
@@ -191,7 +285,19 @@ export async function loadReview(jobId: string): Promise<LoadedReview | null> {
     text: assignment.workPerformed,
   }));
 
+  const changes = await detailChanges(jobId, zone);
+
   const steps: ReviewStepData[] = [
+    {
+      key: "details",
+      title: "Details changed",
+      rows: changes.map((change) => ({
+        label: change.label,
+        value: `${change.from || "(blank)"} → ${change.to || "(cleared)"}`,
+      })),
+      flags: reviewDetails({ changes }),
+      images: [],
+    },
     {
       key: "times",
       title: "Times",

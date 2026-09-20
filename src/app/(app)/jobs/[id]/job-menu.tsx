@@ -4,6 +4,7 @@ import {
   CircleCheck,
   ClipboardCheck,
   MoreHorizontal,
+  PencilLine,
   Repeat,
   SlidersHorizontal,
   X,
@@ -16,10 +17,11 @@ export type JobMenuItem = {
   href: string;
   label: string;
   hint: string;
-  icon: "portal" | "revisit" | "approval" | "checkout";
+  icon: "portal" | "revisit" | "approval" | "checkout" | "details";
 };
 
 const ICONS = {
+  details: PencilLine,
   portal: SlidersHorizontal,
   revisit: Repeat,
   approval: CircleCheck,

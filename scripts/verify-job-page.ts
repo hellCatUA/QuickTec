@@ -56,6 +56,13 @@ async function openSection(page: Page, title: string | RegExp) {
   }
 }
 
+/** Whether the menu warns a tech that their corrections are reviewed. */
+async function planner_hint(page: Page): Promise<boolean> {
+  return page
+    .getByText(/A supervisor approves what you did not fill in yourself/)
+    .isVisible();
+}
+
 function check(label: string, actual: unknown, expected: unknown) {
   const ok = String(actual) === String(expected);
   if (!ok) failures++;
@@ -1812,11 +1819,24 @@ async function main() {
 
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.waitForTimeout(800);
+  // The menu is no longer a manager's alone: anybody on the job can correct
+  // what it was raised as, and a tech's corrections go to a supervisor. What
+  // is behind it for them is that and nothing else.
+  await page.getByRole("button", { name: "Job settings", exact: true }).click();
+  await page.waitForTimeout(400);
   check(
-    "a tech who is not leading the job has no settings menu",
-    await page.getByRole("button", { name: "Job settings", exact: true }).count(),
-    0,
+    "a tech who is not leading the job is offered the details and nothing else",
+    (await page.getByRole("link", { name: /Edit job details/ }).count()) === 1 &&
+      (await page.getByRole("link", { name: /Manager Portal/ }).count()) === 0,
+    true,
   );
+  check(
+    "and it says a supervisor will see it",
+    await planner_hint(page),
+    true,
+  );
+  await page.getByRole("button", { name: "Close job settings" }).click();
+  await page.waitForTimeout(300);
 
   // Leading the job is enough to fix a clock and not enough to change what the
   // job pays, so the same menu opens with one section in it rather than three.
@@ -2481,6 +2501,213 @@ async function main() {
     });
   });
 
+  // --- correcting what the job was raised as --------------------------------
+  // The pencils beside the numbers are gone. What was taken down wrong is
+  // corrected on one page, and what happens when Save is pressed depends on
+  // who is pressing it.
+  {
+    const before = await db.job.findUniqueOrThrow({
+      where: { id: assignment.jobId },
+      select: {
+        siteId: true,
+        customerId: true,
+        externalAssignmentId: true,
+        ticketNumber: true,
+        incNumber: true,
+      },
+    });
+
+    // A manager writes straight onto the job.
+    await bossPage(browser, bossToken, async (planner) => {
+      await planner.goto(url, { waitUntil: "load" });
+      await planner.waitForTimeout(1000);
+      await tab(planner, "Details");
+
+      check(
+        "the ticket number has no pencil on it any more",
+        await planner
+          .getByRole("button", { name: "Edit Ticket #" })
+          .count(),
+        0,
+      );
+
+      await planner.goto(`${BASE}/jobs/${assignment.jobId}/edit`, {
+        waitUntil: "load",
+      });
+      await planner.waitForTimeout(800);
+
+      check(
+        "a manager is not warned about approval",
+        await planner.getByText(/goes to a supervisor first/i).count(),
+        0,
+      );
+
+      await planner.locator("#detail-ticket").fill("TCK-CORRECTED");
+      await planner.getByRole("button", { name: "Save changes" }).click();
+      await planner.waitForTimeout(2500);
+
+      check(
+        "a manager's correction lands on the job",
+        (
+          await db.job.findUniqueOrThrow({
+            where: { id: assignment.jobId },
+            select: { ticketNumber: true },
+          })
+        ).ticketNumber,
+        "TCK-CORRECTED",
+      );
+      check(
+        "and nothing was raised for anybody to approve",
+        await db.changeRequest.count({
+          where: { jobId: assignment.jobId, status: "PENDING" },
+        }),
+        0,
+      );
+    });
+
+    // A tech asks. Filling a gap is theirs; overwriting is not.
+    await db.job.update({
+      where: { id: assignment.jobId },
+      data: { incNumber: null },
+    });
+    await db.changeRequest.deleteMany({ where: { jobId: assignment.jobId } });
+
+    await page.goto(`${BASE}/jobs/${assignment.jobId}/edit`, {
+      waitUntil: "load",
+    });
+    await page.waitForTimeout(800);
+
+    check(
+      "a tech is told what happens before they press anything",
+      await page.getByText(/goes to a supervisor first/i).isVisible(),
+      true,
+    );
+
+    await page.locator("#detail-inc").fill("INC0099123");
+    await page.locator("#detail-ticket").fill("TCK-FROM-THE-TECH");
+    await page.waitForTimeout(300);
+
+    // The two fields say different things, because they are different acts:
+    // the blank one is theirs to fill, the filled one is not theirs to
+    // overwrite.
+    check(
+      "overwriting is marked as going to a supervisor",
+      await page.locator('[data-route="ticketNumber:suggest"]').count(),
+      1,
+    );
+    check(
+      "and filling a gap is marked as nothing of the kind",
+      await page.locator('[data-route^="incNumber:"]').count(),
+      0,
+    );
+
+    await page.getByRole("button", { name: "Send for approval" }).click();
+    await page.waitForTimeout(2500);
+
+    check(
+      "filling the gap is written on the job there and then",
+      (
+        await db.job.findUniqueOrThrow({
+          where: { id: assignment.jobId },
+          select: { incNumber: true },
+        })
+      ).incNumber,
+      "INC0099123",
+    );
+    check(
+      "overwriting is not, until somebody says yes",
+      (
+        await db.job.findUniqueOrThrow({
+          where: { id: assignment.jobId },
+          select: { ticketNumber: true },
+        })
+      ).ticketNumber,
+      "TCK-CORRECTED",
+    );
+    const raised = await db.changeRequest.findFirstOrThrow({
+      where: { jobId: assignment.jobId, status: "PENDING" },
+      select: { fieldPath: true, oldValue: true, newValue: true },
+    });
+    check(
+      "and the suggestion carries both values",
+      `${raised.fieldPath}: ${raised.oldValue} -> ${raised.newValue}`,
+      "ticketNumber: TCK-CORRECTED -> TCK-FROM-THE-TECH",
+    );
+
+    // Changing the site moves the customer with it. Approving one and
+    // rejecting the other is the trap this avoids by never offering two.
+    const elsewhere = await db.site.findFirstOrThrow({
+      where: { id: { not: before.siteId } },
+      select: { id: true, customerId: true },
+    });
+    await bossPage(browser, bossToken, async (planner) => {
+      await planner.goto(`${BASE}/jobs/${assignment.jobId}/edit`, {
+        waitUntil: "load",
+      });
+      await planner.waitForTimeout(800);
+
+      await planner.locator("#detail-site").click();
+      await planner.waitForTimeout(200);
+      await planner.getByRole("option").nth(0).click();
+      await planner.waitForTimeout(200);
+      await planner.getByRole("button", { name: "Save changes" }).click();
+      await planner.waitForTimeout(2500);
+
+      const moved = await db.job.findUniqueOrThrow({
+        where: { id: assignment.jobId },
+        select: { siteId: true, customerId: true, site: { select: { customerId: true } } },
+      });
+      check(
+        "a job moved to another site is filed under that site's customer",
+        moved.customerId,
+        moved.site.customerId,
+      );
+    });
+
+    // What a reviewer is shown at the end: what it said, and what it says now.
+    await db.job.update({
+      where: { id: assignment.jobId },
+      data: { lifecycle: "PENDING_REVIEW" },
+    });
+    await bossPage(browser, bossToken, async (planner) => {
+      await planner.goto(`${BASE}/jobs/${assignment.jobId}/review`, {
+        waitUntil: "load",
+      });
+      await planner.waitForTimeout(1000);
+      await planner.getByRole("button", { name: "Details changed" }).first().click();
+      await planner.waitForTimeout(400);
+
+      check(
+        "the read-through opens with what was corrected on the job",
+        await planner
+          .getByText(/Ticket #: .* → TCK-CORRECTED/)
+          .first()
+          .isVisible(),
+        true,
+      );
+      // The gap the tech filled is not in there: nothing was overwritten and
+      // nobody was working from the old value.
+      check(
+        "and not with the gaps somebody closed",
+        await planner.getByText(/INC #: .* → INC0099123/).count(),
+        0,
+      );
+      // An id would be useless to somebody asked to check it.
+      check(
+        "a moved site reads as a name, not an id",
+        await planner.getByText(/Site: .*·.*→.*·/).count() > 0,
+        true,
+      );
+    });
+
+    await db.job.update({
+      where: { id: assignment.jobId },
+      data: { ...before, lifecycle: "IN_PROGRESS" },
+    });
+    await db.changeRequest.deleteMany({ where: { jobId: assignment.jobId } });
+    await db.jobReviewCheck.deleteMany({ where: { jobId: assignment.jobId } });
+  }
+
   // --- the crew picker ------------------------------------------------------
   await bossPage(browser, bossToken, async (planner) => {
     await planner.goto(url, { waitUntil: "load" });
@@ -2505,8 +2732,8 @@ async function main() {
       data: { lifecycle: "PENDING_REVIEW", estimateMinutes: 60 },
     });
     // The fixture job is reused between runs, and a review now leaves ticks
-    // behind it. Without this the second run of this suite starts with all four
-    // passes already signed off, and everything about needing to read them
+    // behind it. Without this the second run of this suite starts with every
+    // pass already signed off, and everything about needing to read them
     // passes for the wrong reason.
     await db.jobReviewCheck.deleteMany({ where: { jobId: assignment.jobId } });
 
@@ -2520,6 +2747,11 @@ async function main() {
       await planner.getByText("Review before approving").isVisible(),
       true,
     );
+
+    // Times is the second pass now — the first is what was corrected on the
+    // job after it was raised.
+    await planner.getByRole("button", { name: "Times" }).first().click();
+    await planner.waitForTimeout(300);
 
     // The day ran well past an hour, which is exactly the thing a reviewer
     // would otherwise have to work out from two timestamps.
@@ -2539,12 +2771,13 @@ async function main() {
     );
 
     check(
-      "approving waits until all four have been through",
+      "approving waits until every pass has been through",
       await planner.getByRole("button", { name: "Approve report" }).isDisabled(),
       true,
     );
 
     for (const [step, title] of [
+      ["details", "Details changed"],
       ["times", "Times"],
       ["deliverables", "Deliverables"],
       ["reimbursements", "Reimbursements"],
@@ -2573,7 +2806,7 @@ async function main() {
     check(
       "every pass is on the record before it can be signed off",
       await db.jobReviewCheck.count({ where: { jobId: assignment.jobId } }),
-      4,
+      5,
     );
 
     await planner.getByRole("button", { name: "Approve report" }).click();

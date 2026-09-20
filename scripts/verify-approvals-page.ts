@@ -731,14 +731,20 @@ async function main() {
   });
   await supPage.waitForTimeout(800);
 
-  for (const title of ["Times", "Deliverables", "Reimbursements", "Work performed"]) {
+  for (const title of [
+    "Details changed",
+    "Times",
+    "Deliverables",
+    "Reimbursements",
+    "Work performed",
+  ]) {
     await goThrough(title);
   }
 
   check(
     "every pass is recorded before it can be approved",
     await db.jobReviewCheck.count({ where: { jobId: visited.id } }),
-    4,
+    5,
   );
 
   await supPage.getByRole("button", { name: "Approve report" }).click();

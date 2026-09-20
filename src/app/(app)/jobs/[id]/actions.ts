@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { siteLabel } from "@/lib/address";
 import { recordAudit } from "@/lib/audit";
 import { syncJobInBackground } from "@/lib/calendar/sync";
 import {
@@ -21,12 +22,23 @@ import {
   removeJobCustomRule,
   saveJobRule,
 } from "@/lib/job-deliverables";
-import { isJobField, JOB_FIELDS, type JobFieldName } from "@/lib/job-fields";
+import {
+  DETAIL_FIELDS,
+  detailsEditable,
+  fieldAction,
+  isJobField,
+  JOB_FIELDS,
+  type JobFieldName,
+} from "@/lib/job-fields";
 import { resolvePayRate } from "@/lib/pay-rates";
 import { formatPhone } from "@/lib/phone";
 import { notify } from "@/lib/notifications";
 import { canOnJob, resolveJobSupervisor } from "@/lib/scope";
-import { getSessionUser, permissionScope, type SessionUser } from "@/lib/session";
+import {
+  getSessionUser,
+  permissionScope,
+  type SessionUser,
+} from "@/lib/session";
 import { adjustmentMinutes } from "@/lib/time-tracking";
 import {
   ContactType,
@@ -136,7 +148,9 @@ function touch(jobId: string) {
 async function resolveClockTime(
   user: SessionUser,
   requestedIso: string | null,
-): Promise<{ at: Date; source: "NOW" | "ADJUSTED"; raw: Date } | { error: string }> {
+): Promise<
+  { at: Date; source: "NOW" | "ADJUSTED"; raw: Date } | { error: string }
+> {
   const company = await getCompanySettings();
   const now = new Date();
 
@@ -381,7 +395,11 @@ export async function completeCheckout(
 
   const missing = await missingRequiredDeliverables(jobId);
   if (missing.length > 0) {
-    const canOverride = await canOnJob(user, "job.override_missing_signoff", job);
+    const canOverride = await canOnJob(
+      user,
+      "job.override_missing_signoff",
+      job,
+    );
     if (!canOverride) {
       return fail(
         `Still missing: ${missing.join(", ")}. A manager has to approve closing without these.`,
@@ -529,7 +547,8 @@ export async function clearPreparedCheckout(
     where: { id: jobId },
     select: { checkoutPreparedAt: true },
   });
-  if (!prepared.checkoutPreparedAt) return fail("Nothing has been prepared yet.");
+  if (!prepared.checkoutPreparedAt)
+    return fail("Nothing has been prepared yet.");
 
   // The MOD signed the job, so that goes with the job's answers. A tech
   // signature belongs to the person who drew it: on a two-tech job, clearing
@@ -716,13 +735,48 @@ export async function toggleBreak(formData: FormData): Promise<ActionResult> {
 // Field editing
 // ---------------------------------------------------------------------------
 
+/**
+ * What writing this field actually sets.
+ *
+ * Usually one column. The site sets two — the job's customer is the site's
+ * customer and always has been, so they move together or the job ends up filed
+ * under a company whose site it is not.
+ */
+async function fieldWrite(
+  field: JobFieldName,
+  value: FieldValue,
+): Promise<Prisma.JobUpdateInput> {
+  if (field !== "siteId") {
+    return { [field]: value } as Prisma.JobUpdateInput;
+  }
+
+  const site = await db.site.findUniqueOrThrow({
+    where: { id: String(value) },
+    select: { customerId: true },
+  });
+  return {
+    site: { connect: { id: String(value) } },
+    customer: { connect: { id: site.customerId } },
+  };
+}
+
+/** What a field's text comes out as once it has been checked. */
+type FieldValue = string | number | Date | null;
+
 function coerceField(
   field: JobFieldName,
   raw: string,
   timeZone: string,
-): { value: Prisma.JobUpdateInput[JobFieldName] } | { error: string } {
+): { value: FieldValue } | { error: string } {
   const trimmed = raw.trim();
   const kind = JOB_FIELDS[field].kind;
+
+  // A site is picked, never typed, and a job always has one — there is no
+  // blank to clear it to.
+  if (kind === "site") {
+    if (trimmed === "") return { error: "Pick a site." };
+    return { value: trimmed };
+  }
 
   if (kind === "number") {
     if (trimmed === "") return { value: null };
@@ -785,7 +839,7 @@ export async function saveJobField(formData: FormData): Promise<ActionResult> {
 
   await db.job.update({
     where: { id: jobId },
-    data: { [field]: coerced.value } as Prisma.JobUpdateInput,
+    data: await fieldWrite(field, coerced.value),
   });
 
   await recordAudit({
@@ -855,7 +909,11 @@ export async function assignTech(formData: FormData): Promise<ActionResult> {
     },
   });
 
-  const resolved = await resolvePayRate(userId, details.projectId, details.clientId);
+  const resolved = await resolvePayRate(
+    userId,
+    details.projectId,
+    details.clientId,
+  );
   const supervisorId = await resolveJobSupervisor(userId, details.projectId);
 
   // A rate set on the job is a decision about the work, so it applies to
@@ -1220,7 +1278,8 @@ async function reviewVisitTimeRequest(
 
   const nextIn = ask?.clockIn ?? visit?.clockInAt ?? null;
   const nextOut =
-    ask?.clockOut ?? (clock.field === "punch" ? null : (visit?.clockOutAt ?? null));
+    ask?.clockOut ??
+    (clock.field === "punch" ? null : (visit?.clockOutAt ?? null));
 
   if (approve && visit && nextIn) {
     const problem = clockOrderProblem(nextIn, nextOut);
@@ -1308,7 +1367,8 @@ export async function reviewChangeRequest(
   // Reject, so the request could not be decided at all and sat in the queue
   // for ever while the clock stayed wrong.
   const clock = parseVisitPath(request.fieldPath);
-  if (clock) return reviewVisitTimeRequest(request, clock, approve, user, formData);
+  if (clock)
+    return reviewVisitTimeRequest(request, clock, approve, user, formData);
 
   if (!isJobField(request.fieldPath)) {
     return fail("That field no longer exists.");
@@ -1320,6 +1380,7 @@ export async function reviewChangeRequest(
     job.timeZone,
   );
   if ("error" in coerced) return fail(coerced.error);
+  const write = await fieldWrite(request.fieldPath, coerced.value);
 
   await db.$transaction(async (tx) => {
     await tx.changeRequest.update({
@@ -1335,7 +1396,7 @@ export async function reviewChangeRequest(
     if (approve) {
       await tx.job.update({
         where: { id: request.jobId },
-        data: { [request.fieldPath]: coerced.value } as Prisma.JobUpdateInput,
+        data: write,
       });
     }
   });
@@ -1346,11 +1407,182 @@ export async function reviewChangeRequest(
     entityId: request.id,
     jobId: request.jobId,
     action: approve ? "change_approved" : "change_rejected",
-    detail: { field: request.fieldPath },
+    // from/to as well as the name: an approved suggestion changes the job, and
+    // the reviewer's read-through gathers every such change from here. Without
+    // them a correction that went through approval would be the one the
+    // read-through could not show.
+    detail: {
+      field: request.fieldPath,
+      from: request.oldValue,
+      to: request.newValue,
+    },
   });
 
   touch(request.jobId);
   return ok;
+}
+
+// ---------------------------------------------------------------------------
+// Editing the job's details
+// ---------------------------------------------------------------------------
+
+const detailsSchema = z.object({
+  jobId: z.string().min(1),
+  siteId: z.string().trim(),
+  externalAssignmentId: z.string().trim(),
+  ticketNumber: z.string().trim(),
+  incNumber: z.string().trim(),
+  /** Carried onto every suggestion the save raises. */
+  reason: z.string().trim().optional(),
+});
+
+export type DetailsResult = ActionResult & {
+  /** Written straight onto the job. */
+  saved?: string[];
+  /** Gone to a supervisor instead. */
+  suggested?: string[];
+};
+
+/**
+ * Corrects what was decided when the job was raised.
+ *
+ * One form, one save, and each field goes the way that person is allowed to
+ * send it: written straight on where they may, raised as a suggestion where
+ * they may not. Mixed is the ordinary case — a tech filling a blank ticket
+ * number and correcting a wrong site in the same sitting does both at once,
+ * and the form says which is which before they press anything.
+ *
+ * Never partial in a way that surprises: a field they may not touch at all is
+ * refused outright rather than quietly dropped, because a form that says it
+ * saved and did not is worse than one that says no.
+ */
+export async function saveJobDetails(
+  _prev: DetailsResult | null,
+  formData: FormData,
+): Promise<DetailsResult> {
+  const parsed = detailsSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return fail(z.prettifyError(parsed.error));
+
+  const { jobId, reason } = parsed.data;
+
+  const context = await loadContext(jobId);
+  if (!context) return fail("Job not found.");
+  const { user, job } = context;
+
+  const [canEditPlanned, canFillMissing, canSuggest] = await Promise.all([
+    canOnJob(user, "job.edit_planned_fields", job),
+    canOnJob(user, "job.fill_missing_field", job),
+    canOnJob(user, "job.suggest_change", job),
+  ]);
+
+  // A signed-off job is a record. Whoever can overrule a planner can still
+  // correct it; nobody else, and not by suggestion either — there would be
+  // nothing left to approve it against.
+  if (!detailsEditable(job.lifecycle) && !canEditPlanned) {
+    return fail(
+      "This job has been signed off. Only a supervisor can change its details now.",
+    );
+  }
+
+  const current = await db.job.findUniqueOrThrow({
+    where: { id: jobId },
+    select: {
+      siteId: true,
+      externalAssignmentId: true,
+      ticketNumber: true,
+      incNumber: true,
+    },
+  });
+
+  const saved: string[] = [];
+  const suggested: string[] = [];
+  let scheduleTouched = false;
+
+  for (const field of DETAIL_FIELDS) {
+    const wanted = parsed.data[field];
+    const previous = current[field];
+    if (String(previous ?? "") === wanted) continue;
+
+    const coerced = coerceField(field, wanted, job.timeZone);
+    if ("error" in coerced) return fail(coerced.error);
+
+    const isEmpty = previous === null || previous === "";
+    const decision = fieldAction({
+      planned: JOB_FIELDS[field].planned,
+      isEmpty,
+      canEditPlanned,
+      canFillMissing,
+      canSuggest,
+    });
+
+    if (decision === "none") {
+      return fail(`You cannot change ${JOB_FIELDS[field].label} on this job.`);
+    }
+
+    if (decision === "suggest") {
+      // One pending suggestion per person per field. A second is not a second
+      // opinion, it is the first one corrected — so it replaces rather than
+      // queueing behind, and a reviewer never has to guess which of two is
+      // meant.
+      await db.changeRequest.deleteMany({
+        where: {
+          jobId,
+          fieldPath: field,
+          status: "PENDING",
+          requestedById: user.id,
+        },
+      });
+      await db.changeRequest.create({
+        data: {
+          jobId,
+          requestedById: user.id,
+          fieldPath: field,
+          oldValue: previous === null ? null : String(previous),
+          newValue: wanted || null,
+          reason: reason || null,
+        },
+      });
+      await recordAudit({
+        actorId: user.id,
+        entityType: "ChangeRequest",
+        entityId: jobId,
+        jobId,
+        action: "change_suggested",
+        detail: { field },
+      });
+      suggested.push(JOB_FIELDS[field].label);
+      continue;
+    }
+
+    await db.job.update({
+      where: { id: jobId },
+      data: await fieldWrite(field, coerced.value),
+    });
+    await recordAudit({
+      actorId: user.id,
+      entityType: "Job",
+      entityId: jobId,
+      jobId,
+      action: isEmpty ? "field_filled" : "field_edited",
+      detail: {
+        field,
+        from: previous === null ? null : String(previous),
+        to: coerced.value === null ? null : String(coerced.value),
+      },
+    });
+    saved.push(JOB_FIELDS[field].label);
+    // A different site is a different address and often a different zone, so
+    // whatever is on a calendar for this job is now wrong.
+    if (field === "siteId") scheduleTouched = true;
+  }
+
+  if (saved.length === 0 && suggested.length === 0) {
+    return fail("Nothing was changed.");
+  }
+
+  if (scheduleTouched) syncJobInBackground(jobId);
+  touch(jobId);
+  return { ok: true, saved, suggested };
 }
 
 // ---------------------------------------------------------------------------
@@ -1624,7 +1856,12 @@ export async function setSiteNumber(formData: FormData): Promise<ActionResult> {
     where: { id: jobId },
     select: {
       site: {
-        select: { id: true, customerId: true, siteNumber: true, numberPending: true },
+        select: {
+          id: true,
+          customerId: true,
+          siteNumber: true,
+          numberPending: true,
+        },
       },
     },
   });
@@ -1643,7 +1880,10 @@ export async function setSiteNumber(formData: FormData): Promise<ActionResult> {
   });
 
   if (existing && existing.id !== target.site.id) {
-    await db.job.update({ where: { id: jobId }, data: { siteId: existing.id } });
+    await db.job.update({
+      where: { id: jobId },
+      data: { siteId: existing.id },
+    });
     // The placeholder is only ever referenced by this job, so it goes.
     await db.site
       .delete({ where: { id: target.site.id } })
@@ -1801,7 +2041,10 @@ export async function setJobPay(formData: FormData): Promise<ActionResult> {
     return fail("Enter a rate of zero or more.");
   }
   const travelAmount = travel === "" ? null : Number(travel);
-  if (travelAmount !== null && (!Number.isFinite(travelAmount) || travelAmount < 0)) {
+  if (
+    travelAmount !== null &&
+    (!Number.isFinite(travelAmount) || travelAmount < 0)
+  ) {
     return fail("Enter a travel amount of zero or more.");
   }
 
@@ -1906,7 +2149,10 @@ export async function setAssignmentPay(
     return fail("Enter a rate of zero or more.");
   }
   const travelAmount = travel === "" ? null : Number(travel);
-  if (travelAmount !== null && (!Number.isFinite(travelAmount) || travelAmount < 0)) {
+  if (
+    travelAmount !== null &&
+    (!Number.isFinite(travelAmount) || travelAmount < 0)
+  ) {
     return fail("Enter a travel amount of zero or more.");
   }
 
@@ -2069,14 +2315,21 @@ export async function addJobTicket(formData: FormData): Promise<ActionResult> {
     where: { id: jobId },
     select: {
       ticketNumber: true,
-      extraTickets: { select: { number: true }, orderBy: { order: "desc" }, take: 1 },
+      extraTickets: {
+        select: { number: true },
+        orderBy: { order: "desc" },
+        take: 1,
+      },
     },
   });
 
   // The primary is the first ticket. Somebody adding one to a job that has
   // none meant to set the primary, not to create a secondary with no primary.
   if (!existing.ticketNumber?.trim()) {
-    await db.job.update({ where: { id: jobId }, data: { ticketNumber: number } });
+    await db.job.update({
+      where: { id: jobId },
+      data: { ticketNumber: number },
+    });
   } else {
     const last = await db.jobTicket.findFirst({
       where: { jobId },
@@ -2108,7 +2361,9 @@ export async function addJobTicket(formData: FormData): Promise<ActionResult> {
   return ok;
 }
 
-export async function deleteJobTicket(formData: FormData): Promise<ActionResult> {
+export async function deleteJobTicket(
+  formData: FormData,
+): Promise<ActionResult> {
   const id = String(formData.get("id") ?? "");
 
   const ticket = await db.jobTicket.findUnique({
@@ -2202,7 +2457,9 @@ export async function saveJobDeliverableRule(
         (category !== "CUSTOM" || item.customLabel === rule.customLabel),
     );
     if (rule.required) {
-      return fail("Only a supervisor or the job's lead can make a section required.");
+      return fail(
+        "Only a supervisor or the job's lead can make a section required.",
+      );
     }
     if (remove || (current?.enabled && !rule.enabled)) {
       return fail("Only a supervisor or the job's lead can remove a section.");
@@ -2370,7 +2627,10 @@ export async function removeVisit(formData: FormData): Promise<ActionResult> {
   });
   if (left === 0) {
     await db.job.updateMany({
-      where: { id: job.id, lifecycle: { in: ["IN_PROGRESS", "PENDING_REVIEW"] } },
+      where: {
+        id: job.id,
+        lifecycle: { in: ["IN_PROGRESS", "PENDING_REVIEW"] },
+      },
       data: { lifecycle: "SCHEDULED" },
     });
   }
@@ -2650,7 +2910,9 @@ export async function editPunch(formData: FormData): Promise<ActionResult> {
   // so, and somebody's unpaid half hour would quietly become paid.
   const running = visit.breaks.filter((entry) => entry.endAt === null);
   if (running.length > 0 && parsed.data.breaks !== null) {
-    return fail("A break is still running. It has to end before this can be edited.");
+    return fail(
+      "A break is still running. It has to end before this can be edited.",
+    );
   }
 
   const context = await loadContext(visit.assignment.jobId);

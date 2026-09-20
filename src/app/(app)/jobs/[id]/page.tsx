@@ -21,6 +21,7 @@ import {
 import { db } from "@/lib/db";
 import { deliverableLabel, effectiveRules } from "@/lib/deliverables";
 import {
+  DETAIL_FIELDS,
   fieldAction,
   isOptionalField,
   JOB_FIELDS,
@@ -46,6 +47,7 @@ import { buildTextReport } from "@/lib/exports/text-report";
 import { jobSpan, visitTotals } from "@/lib/time-tracking";
 import { Timeline } from "@/components/timeline";
 import { approveJob } from "../actions";
+
 import { ChangeRequests } from "./change-requests";
 import { CrewPanel } from "./crew-panel";
 import { DispatchPanel } from "./dispatch-panel";
@@ -459,7 +461,13 @@ export default async function JobPage({
     });
   }
 
-  function editable(field: JobFieldName, rawValue: string, display?: string) {
+  // The site is not one of these. It is picked rather than typed, it carries
+  // the customer with it, and it is corrected on the Edit job details page.
+  function editable(
+    field: Exclude<JobFieldName, "siteId">,
+    rawValue: string,
+    display?: string,
+  ) {
     return (
       <EditableField
         jobId={job!.id}
@@ -470,6 +478,9 @@ export default async function JobPage({
         action={actionFor(field, rawValue)}
         kind={JOB_FIELDS[field].kind}
         optional={isOptionalField(field)}
+        // The numbers the job was raised with are corrected on Edit job
+        // details now, so what is left here is the plus on a blank one.
+        fillOnly={DETAIL_FIELDS.includes(field as never)}
       />
     );
   }
@@ -577,6 +588,20 @@ export default async function JobPage({
               ? "Go through the steps again; what is already answered is filled in."
               : "Outcome, release code and signatures now; clock out when you actually leave.",
             icon: "checkout" as const,
+          },
+        ]
+      : []),
+    // Anybody who can write or ask. What each field does when they press Save
+    // is decided on the page itself, and the page says so per field.
+    ...(canEditPlanned || canFillMissing || canSuggest
+      ? [
+          {
+            href: `/jobs/${job.id}/edit`,
+            label: "Edit job details",
+            hint: canEditPlanned
+              ? "The site, and the numbers the job was raised with."
+              : "Correct what was taken down wrong. A supervisor approves what you did not fill in yourself.",
+            icon: "details" as const,
           },
         ]
       : []),

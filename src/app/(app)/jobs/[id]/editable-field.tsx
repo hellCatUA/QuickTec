@@ -34,6 +34,7 @@ export function EditableField({
   kind = "text",
   hint,
   optional = false,
+  fillOnly = false,
   hideValue = false,
   className,
 }: {
@@ -47,6 +48,16 @@ export function EditableField({
   hint?: string;
   /** A field a job may legitimately never have — empty is a fact, not a gap. */
   optional?: boolean;
+  /**
+   * Offer the plus on a blank one, and nothing on a filled one.
+   *
+   * For fields that have moved to Edit job details. Filling a gap is the
+   * commonest thing anybody does to this page on site and stays one tap;
+   * correcting something already taken down is a different act, wants a reason
+   * from whoever cannot just overwrite it, and belongs on the page built for
+   * that rather than behind a pencil in a card header.
+   */
+  fillOnly?: boolean;
   /**
    * Render the control alone, with no label and no value.
    *
@@ -104,7 +115,7 @@ export function EditableField({
           </span>
         )}
 
-        {action !== "none" && !open ? (
+        {action !== "none" && !open && !(fillOnly && !isEmpty) ? (
           <button
             type="button"
             onClick={() => {

@@ -15,6 +15,24 @@
  */
 export const JOB_FIELDS = {
   title: { label: "Job title", kind: "text", planned: true },
+  /**
+   * Which site, and with it which customer.
+   *
+   * One field rather than two, because the job has never had a say: a site
+   * belongs to a customer and `createJob` copies `site.customerId` straight
+   * onto the job. Offering them separately would let the pair be approved one
+   * at a time — a site change approved and the customer change rejected leaves
+   * a job filed under a company whose site it is not.
+   *
+   * The INT WO ID does not move with it. It was issued when the job was raised
+   * and is on paperwork that has already gone out.
+   */
+  siteId: {
+    label: "Site",
+    kind: "site",
+    planned: true,
+    hint: "The customer comes with the site.",
+  },
   externalAssignmentId: {
     label: "Assignment ID",
     kind: "text",
@@ -59,7 +77,13 @@ export const JOB_FIELDS = {
   },
 } as const satisfies Record<
   string,
-  { label: string; kind: string; planned: boolean; hint?: string; optional?: boolean }
+  {
+    label: string;
+    kind: string;
+    planned: boolean;
+    hint?: string;
+    optional?: boolean;
+  }
 >;
 
 export type JobFieldName = keyof typeof JOB_FIELDS;
@@ -96,4 +120,35 @@ export function fieldAction(input: {
   if (!input.planned) return input.canFillMissing ? "edit" : "none";
   if (input.isEmpty) return input.canFillMissing ? "fill" : "none";
   return input.canSuggest ? "suggest" : "none";
+}
+
+/**
+ * What "Edit job details" covers.
+ *
+ * Only what was decided when the job was raised. Everything collected during
+ * the job — the contacts, the dispatch numbers, the extra tickets, the release
+ * code, the paperwork — stays on the job page, where it is read and added to.
+ */
+export const DETAIL_FIELDS = [
+  "siteId",
+  "externalAssignmentId",
+  "ticketNumber",
+  "incNumber",
+] as const satisfies readonly JobFieldName[];
+
+export type DetailField = (typeof DETAIL_FIELDS)[number];
+
+/**
+ * Whether a job's details are still ordinary to correct.
+ *
+ * A signed-off job is a record. Past this point it takes somebody who can
+ * overrule a planner, and there is nothing left to approve a suggestion
+ * against — the approval already happened.
+ */
+export function detailsEditable(lifecycle: string): boolean {
+  return (
+    lifecycle !== "APPROVED" &&
+    lifecycle !== "REJECTED" &&
+    lifecycle !== "BILLED"
+  );
 }

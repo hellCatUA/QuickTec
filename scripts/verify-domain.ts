@@ -509,6 +509,57 @@ async function main() {
     );
   }
 
+  // --- what a reviewer is told was corrected --------------------------------
+  {
+    const { reviewDetails } = await import("@/lib/job-review");
+    const { detailsEditable, DETAIL_FIELDS } = await import("@/lib/job-fields");
+
+    check(
+      "a job being worked can have its details corrected",
+      ["SCHEDULED", "IN_PROGRESS", "PENDING_REVIEW", "CHANGES_REQUESTED"].every(
+        detailsEditable,
+      ),
+      true,
+    );
+    check(
+      "a signed-off one cannot, except by somebody who can overrule a planner",
+      ["APPROVED", "REJECTED", "BILLED"].some(detailsEditable),
+      false,
+    );
+    // The site carries the customer, so the pair can never be approved apart.
+    check(
+      "the page covers what the job was raised as, and nothing collected since",
+      [...DETAIL_FIELDS].join(","),
+      "siteId,externalAssignmentId,ticketNumber,incNumber",
+    );
+
+    const flags = reviewDetails({
+      changes: [
+        {
+          label: "Ticket #",
+          from: "6682752",
+          to: "6682799",
+          who: "Terry Tech",
+          when: "09-19-2026 2:05 PM",
+          approved: true,
+        },
+      ],
+    });
+    check(
+      "a correction reads as what it was and what it is",
+      flags[0]?.text,
+      "Ticket #: 6682752 → 6682799 · Terry Tech, 09-19-2026 2:05 PM · approved",
+    );
+    // Not a warning: being corrected is the system working, and a pass full of
+    // amber is a pass people tick without reading.
+    check("and is not shouted about", flags[0]?.level, "note");
+    check(
+      "a job nobody corrected has nothing to read",
+      reviewDetails({ changes: [] }).length,
+      0,
+    );
+  }
+
   // --- the formatting bar, under the text ----------------------------------
   // Every bug a toolbar has lives in these functions — a marker stripped a
   // character short, a bullet stacked on a bullet, a selection that lands in
@@ -1211,8 +1262,8 @@ async function main() {
   );
   check("a clean pass fingerprints as nothing", flagsFingerprint([]), "");
 
-  check("there are four passes", REVIEW_STEPS.length, 4);
-  check("and a form cannot invent a fifth", isReviewStep("payroll"), false);
+  check("there are five passes", REVIEW_STEPS.length, 5);
+  check("and a form cannot invent a sixth", isReviewStep("payroll"), false);
   check("while a real one is accepted", isReviewStep("deliverables"), true);
 
   // --- the review, assembled from a real job --------------------------------
@@ -1225,9 +1276,9 @@ async function main() {
     const built = await loadReview(parent.id);
     check("a review is built for a real job", built !== null, true);
     check(
-      "with the four passes in the order they are made",
+      "with the passes in the order they are made",
       built?.steps.map((step) => step.key).join(","),
-      "times,deliverables,reimbursements,work",
+      "details,times,deliverables,reimbursements,work",
     );
     check(
       "and a missing job builds nothing rather than throwing",

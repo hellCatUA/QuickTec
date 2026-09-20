@@ -22,8 +22,9 @@ export type ReviewFlag = {
   text: string;
 };
 
-/** The four passes, in the order they are made. */
+/** The passes, in the order they are made. */
 export const REVIEW_STEPS = [
+  "details",
   "times",
   "deliverables",
   "reimbursements",
@@ -132,6 +133,46 @@ export function reviewTimes(input: TimesInput): ReviewFlag[] {
   }
 
   return flags;
+}
+
+export type DetailChange = {
+  /** What the field is called on the job page. */
+  label: string;
+  /** Empty means it was blank. */
+  from: string;
+  to: string;
+  who: string;
+  when: string;
+  /** Went through a supervisor before it landed. */
+  approved: boolean;
+};
+
+export type DetailsInput = {
+  changes: DetailChange[];
+};
+
+/**
+ * What was corrected on the job after it was raised.
+ *
+ * First pass, and the only one that is about the job rather than the day. A
+ * wrong site or a wrong ticket number is not visible anywhere else by the time
+ * a reviewer sees the job: the page shows what it says now, and what it said
+ * when somebody was dispatched to it is gone. This is where that shows up, old
+ * value beside new.
+ *
+ * Filling in a blank is not reported. Nothing was overwritten, nobody was
+ * working from the old value, and a pass that lists every gap somebody closed
+ * on site is a pass people learn to tick without reading.
+ */
+export function reviewDetails(input: DetailsInput): ReviewFlag[] {
+  return input.changes.map((change) => ({
+    // A note, not a warning: it was corrected, which is the system working.
+    // It is here to be read, not to be answered for.
+    level: "note" as const,
+    text: `${change.label}: ${change.from || "(blank)"} → ${change.to || "(cleared)"} · ${change.who}, ${change.when}${
+      change.approved ? " · approved" : ""
+    }`,
+  }));
 }
 
 export type DeliverablesInput = {
