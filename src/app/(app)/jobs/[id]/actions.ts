@@ -4,6 +4,12 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { siteLabel } from "@/lib/address";
 import { recordAudit } from "@/lib/audit";
+import {
+  describeTerms,
+  normaliseTerms,
+  splitError,
+  termsError,
+} from "@/lib/budget";
 import { resplitJob } from "@/lib/budget-split";
 import { syncJobInBackground } from "@/lib/calendar/sync";
 import {
@@ -2258,6 +2264,170 @@ export async function setJobPay(formData: FormData): Promise<ActionResult> {
         : null,
       to: `${payType} ${payRate}`,
       who: `${before.length} on the job`,
+    },
+  });
+
+  touch(jobId);
+  return ok;
+}
+
+/**
+ * Sets the total tech budget, and with it everybody's line.
+ *
+ * The budget and the crew's lines are the same number from two ends, so this
+ * writes the terms and then hands straight off to the one function that
+ * rewrites every line together. Nothing here touches a pay column itself.
+ *
+ * Clearing the budget puts the job back on the old resolution for anybody
+ * assigned afterwards. It deliberately leaves the lines already written where
+ * they are: those are what people were told they were on, and quietly
+ * re-resolving them is the surprise this whole model exists to avoid.
+ */
+export async function setJobBudget(formData: FormData): Promise<ActionResult> {
+  const jobId = String(formData.get("jobId") ?? "");
+  const budgetType = String(formData.get("budgetType") ?? "").trim();
+  const splitMode = String(formData.get("splitMode") ?? "EVEN").trim();
+  const excluded = new Set(
+    formData.getAll("exclude").map((one) => String(one)),
+  );
+
+  const context = await loadContext(jobId);
+  if (!context) return fail("Job not found.");
+  const { user, job } = context;
+
+  if (!(await canOnJob(user, "pay.edit_rates", job))) {
+    return fail("You cannot change what this job pays.");
+  }
+  if (splitMode !== "EVEN" && splitMode !== "BY_TECH_RATE" && splitMode !== "MANUAL") {
+    return fail("Pick how the budget is shared.");
+  }
+
+  const settled = await db.payrollLine.count({
+    where: {
+      assignment: { jobId },
+      payrollPeriod: { status: { not: "DRAFT" } },
+    },
+  });
+  if (settled > 0) {
+    return fail(
+      "This job is in a payroll week that has already been approved. Changing the budget now would disagree with what was paid.",
+    );
+  }
+
+  const assignments = await db.jobAssignment.findMany({
+    where: { jobId },
+    orderBy: [{ isLead: "desc" }, { createdAt: "asc" }],
+    select: { id: true, isLead: true },
+  });
+
+  // Clearing it. The lines stay; only what happens next changes.
+  if (budgetType === "") {
+    await db.$transaction([
+      db.job.update({
+        where: { id: jobId },
+        data: {
+          budgetType: null,
+          budgetFlat: null,
+          budgetFlatHours: null,
+          budgetHourly: null,
+          budgetSplit: "EVEN",
+        },
+      }),
+      db.jobAssignment.updateMany({
+        where: { jobId },
+        data: { shareBasisPoints: null },
+      }),
+    ]);
+    await recordAudit({
+      actorId: user.id,
+      entityType: "Job",
+      entityId: jobId,
+      jobId,
+      action: "budget_changed",
+      detail: { field: "Total tech budget", to: null },
+    });
+    touch(jobId);
+    return ok;
+  }
+
+  if (!(budgetType in JobPayType)) return fail("Pick a budget type.");
+
+  const money = (name: string) => {
+    const raw = String(formData.get(name) ?? "").trim();
+    if (raw === "") return 0;
+    const value = Number(raw);
+    return Number.isFinite(value) && value > 0 ? value : 0;
+  };
+
+  const terms = normaliseTerms({
+    payType: budgetType as JobPayType,
+    flatCents: Math.round(money("budgetFlat") * 100),
+    flatMinutes: Math.round(money("budgetFlatHours") * 60),
+    hourlyCents: Math.round(money("budgetHourly") * 100),
+  });
+
+  const wrong = termsError(terms);
+  if (wrong) return fail(wrong);
+
+  // Shares are written before the split runs, because they are its input:
+  // zero is how somebody is non-billable here, and a manual split is whatever
+  // was typed rather than anything we work out.
+  const shares = assignments.map(({ id }) => {
+    if (excluded.has(id)) return 0;
+    if (splitMode !== "MANUAL") return null;
+    const raw = Number(String(formData.get(`share:${id}`) ?? ""));
+    return Number.isFinite(raw) && raw > 0 ? Math.round(raw * 100) : 0;
+  });
+
+  if (splitMode === "MANUAL") {
+    const bad = splitError(shares.map((one) => one ?? 0));
+    if (bad) return fail(bad);
+  } else if (shares.every((one) => one === 0) && assignments.length > 0) {
+    return fail(
+      "Everybody is non-billable. Set the budget itself to Non-billable instead.",
+    );
+  }
+
+  await db.$transaction([
+    db.job.update({
+      where: { id: jobId },
+      data: {
+        budgetType: terms.payType,
+        budgetFlat:
+          terms.payType === "FLAT" || terms.payType === "FLAT_HOURLY"
+            ? (terms.flatCents / 100).toFixed(2)
+            : null,
+        budgetFlatHours:
+          terms.payType === "FLAT_HOURLY"
+            ? (terms.flatMinutes / 60).toFixed(2)
+            : null,
+        budgetHourly:
+          terms.payType === "HOURLY" || terms.payType === "FLAT_HOURLY"
+            ? (terms.hourlyCents / 100).toFixed(2)
+            : null,
+        budgetSplit: splitMode,
+      },
+    }),
+    ...assignments.map(({ id }, index) =>
+      db.jobAssignment.update({
+        where: { id },
+        data: { shareBasisPoints: shares[index] },
+      }),
+    ),
+  ]);
+
+  await resplitJob(jobId);
+
+  await recordAudit({
+    actorId: user.id,
+    entityType: "Job",
+    entityId: jobId,
+    jobId,
+    action: "budget_changed",
+    detail: {
+      field: "Total tech budget",
+      to: describeTerms(terms),
+      who: `${assignments.length} on the job · ${splitMode.toLowerCase().replace("_", " ")}`,
     },
   });
 

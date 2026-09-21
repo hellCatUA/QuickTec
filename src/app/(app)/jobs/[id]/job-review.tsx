@@ -27,7 +27,7 @@ import {
   rejectReport,
   sendBackReport,
 } from "../actions";
-import { Punches, type Punch } from "./manage/punches";
+import { Punches, type Punch } from "./manage/schedule/punches";
 
 export type ReviewStep = {
   key: ReviewStepKey;

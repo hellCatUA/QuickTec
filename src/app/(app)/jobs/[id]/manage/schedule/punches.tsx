@@ -27,8 +27,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/field";
 import type { PunchHistoryRow, PunchIcon } from "@/lib/punch-history";
-import { acceptTimeFlag, addVisit, editPunch, removeVisit } from "../actions";
-import { ReasonPicker } from "./reason-picker";
+import { acceptTimeFlag, addVisit, editPunch, removeVisit } from "../../actions";
+import { ReasonPicker } from "../reason-picker";
 
 // The shapes live beside the query that fills them, in @/lib/punch-blocks, now
 // that the review renders these blocks too. Type-only in both directions, so

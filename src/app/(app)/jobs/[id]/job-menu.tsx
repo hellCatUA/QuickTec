@@ -6,11 +6,11 @@ import {
   MoreHorizontal,
   PencilLine,
   Repeat,
-  SlidersHorizontal,
   X,
 } from "lucide-react";
 import Link from "next/link";
 import * as React from "react";
+import { ManagerIcon } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 
 export type JobMenuItem = {
@@ -18,11 +18,17 @@ export type JobMenuItem = {
   label: string;
   hint: string;
   icon: "portal" | "revisit" | "approval" | "checkout" | "details";
+  /**
+   * Said on the line, before it is pressed. A tech finding out that their
+   * correction was only ever a request *after* filling the form in is how
+   * people stop reporting mistakes.
+   */
+  pill?: string;
 };
 
 const ICONS = {
   details: PencilLine,
-  portal: SlidersHorizontal,
+  portal: ManagerIcon,
   revisit: Repeat,
   approval: CircleCheck,
   checkout: ClipboardCheck,
@@ -92,8 +98,13 @@ export function JobMenu({ items }: { items: JobMenuItem[] }) {
                   >
                     <Icon className="mt-0.5 size-4 shrink-0 text-[var(--color-primary)]" />
                     <span className="min-w-0">
-                      <span className="block text-sm font-medium">
+                      <span className="flex flex-wrap items-center gap-1.5 text-sm font-medium">
                         {item.label}
+                        {item.pill ? (
+                          <span className="rounded-md bg-warning/15 px-1.5 py-0.5 text-[11px] font-semibold text-warning ring-1 ring-inset ring-warning/30">
+                            {item.pill}
+                          </span>
+                        ) : null}
                       </span>
                       <span className="block text-xs text-muted-foreground">
                         {item.hint}

@@ -617,22 +617,29 @@ export default async function JobPage({
             label: "Edit job details",
             hint: canEditPlanned
               ? "The site, and the numbers the job was raised with."
-              : "Correct what was taken down wrong. A supervisor approves what you did not fill in yourself.",
+              : "Changing a field that already holds a value is submitted for approval. Empty fields you complete yourself.",
             icon: "details" as const,
+            ...(canEditPlanned ? {} : { pill: "Requires approval" }),
           },
         ]
       : []),
-    ...(canFixClocks || canSetPay
+    // One door for everyone who can change something. What they cannot change
+    // outright the portal marks, so the limit is read before it is met rather
+    // than discovered one refusal at a time.
+    ...(canFixClocks || canSetPay || canRevisit || canApproveJob
       ? [
           {
             href: `/jobs/${job.id}/manage`,
             label: "Manager Portal",
-            hint: "Punches, and what the job pays.",
+            hint: canEditPlanned
+              ? "Punches, crew and pay, details, the revisit and the report."
+              : "Punches, crew and pay, details, the revisit and the report. Some of it requires approval.",
             icon: "portal" as const,
+            ...(canEditPlanned ? {} : { pill: "Limited access" }),
           },
         ]
       : []),
-    ...(canRevisit
+    ...(canRevisit && !(canFixClocks || canSetPay)
       ? [
           {
             href: `/jobs/${job.id}/revisit`,
@@ -642,12 +649,14 @@ export default async function JobPage({
           },
         ]
       : []),
-    ...(canApproveJob && job.lifecycle === "PENDING_REVIEW"
+    ...(canApproveJob &&
+    job.lifecycle === "PENDING_REVIEW" &&
+    !(canFixClocks || canSetPay)
       ? [
           {
             href: `/jobs/${job.id}/review`,
-            label: "Job approval",
-            hint: "Read the times, deliverables, money and report, then sign it off.",
+            label: "Review report",
+            hint: "Read the times, deliverables, money and report, then decide.",
             icon: "approval" as const,
           },
         ]

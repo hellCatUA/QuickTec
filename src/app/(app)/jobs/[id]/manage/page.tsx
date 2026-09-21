@@ -1,17 +1,12 @@
-import { redirect, notFound } from "next/navigation";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { ShieldCheck } from "lucide-react";
+import { notFound, redirect } from "next/navigation";
+import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/ui/page-header";
 import { db } from "@/lib/db";
-import { loadPunchBlocks } from "@/lib/punch-blocks";
+import { loadPortal } from "@/lib/job-portal";
 import { getSessionUser } from "@/lib/session";
-import { JobPay } from "../job-pay";
-import { Punches } from "./punches";
+
+import { PortalGrid } from "./portal-grid";
 
 export async function generateMetadata({
   params,
@@ -27,19 +22,17 @@ export async function generateMetadata({
 }
 
 /**
- * The things done to a job rather than on it.
+ * One door for everything done *to* a job.
  *
- * A page, not a sheet over the job. On a phone the overlay scrolled the page
- * behind it as often as itself, and what it held — somebody's whole day, and
- * what the job pays — is not glanceable anyway. A page also means the browser's
- * Back means what it says.
+ * It used to be two pages and a drawer, and which one held a thing was
+ * learned rather than guessed. Now there is one address, and everything
+ * behind it is a page of its own with a Back that works.
  *
- * The blocks themselves are built in @/lib/punch-blocks, because the review
- * shows the same ones: a reviewer told a clock-out is wrong should be able to
- * fix it where they are told, not somewhere else and then start the read-through
- * again.
+ * The screen is worth opening before anything has gone wrong, which is why
+ * every destination carries its own state rather than only its name: "on the
+ * clock 6h 12m" is worth a tap, "Schedule & Budget" is not.
  */
-export default async function ManagePage({
+export default async function ManagerPortalPage({
   params,
 }: {
   params: Promise<{ id: string }>;
@@ -48,71 +41,44 @@ export default async function ManagePage({
   if (!user) redirect("/signin");
 
   const { id } = await params;
+  const portal = await loadPortal(id, user);
+  if (!portal) notFound();
 
-  const blocks = await loadPunchBlocks(id, user);
-  if (!blocks) notFound();
-  if (!blocks.visible && !blocks.canSetPay) notFound();
+  // A tech reaching this address by hand finds nothing: their one destination
+  // keeps its own line on the job's menu, and a door into a corridor is worse
+  // than no door.
+  if (!portal.open || portal.items.length === 0) notFound();
 
-  const job = await db.job.findUniqueOrThrow({
-    where: { id },
-    select: {
-      id: true,
-      title: true,
-      intWoId: true,
-      payType: true,
-      payRate: true,
-      travelReimbursement: true,
-    },
-  });
+  const waiting = portal.items.filter((item) => item.group === "action");
+  const admin = portal.items.filter((item) => item.group === "admin");
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-4">
+    <div className="mx-auto flex max-w-3xl flex-col gap-3.5">
       <PageHeader
-        title={`${job.title} — Manager Portal`}
-        backHref={`/jobs/${job.id}`}
-        description={job.intWoId}
+        title="Manager Portal"
+        backHref={`/jobs/${portal.jobId}`}
+        description={`${portal.title} · ${portal.intWoId}`}
+        actions={<Badge variant="primary">{portal.stage}</Badge>}
       />
 
-      {blocks.visible ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>TimeClock Punches</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <Punches
-              punches={blocks.punches}
-              companyName={blocks.companyName}
-            />
-          </CardContent>
-        </Card>
+      {portal.reach ? (
+        <div className="flex gap-2.5 rounded-xl border border-warning/40 bg-warning/10 p-3">
+          <ShieldCheck className="mt-0.5 size-4 shrink-0 text-warning" />
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            <span className="font-semibold text-warning">Limited access. </span>
+            {portal.reach}
+          </p>
+        </div>
       ) : null}
 
-      {blocks.canSetPay ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Pay</CardTitle>
-            <CardDescription>
-              What this job pays, for everybody on it. Normally inherited from
-              the tech, the project or the company — set it here when this job is
-              none of those.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <JobPay
-              jobId={job.id}
-              canEdit={blocks.canSetPay}
-              payType={job.payType ?? "HOURLY"}
-              payRate={job.payRate?.toString() ?? ""}
-              travelReimbursement={job.travelReimbursement?.toString() ?? null}
-              note={
-                job.payType
-                  ? "Applies to everybody on this job, including anybody added later. Somebody put on their own rate keeps it."
-                  : "Not set — everybody keeps their own rate, or the project's default where they have none."
-              }
-            />
-          </CardContent>
-        </Card>
-      ) : null}
+      <PortalGrid label="Requires action" items={waiting} />
+      <PortalGrid label="Job administration" items={admin} />
+
+      <p className="text-[11px] leading-relaxed text-muted-foreground">
+        Locked items keep their place, so the grid never reshuffles as the job
+        moves on. Nothing here is hidden from you — what you cannot change
+        outright, you can ask for in the same place.
+      </p>
     </div>
   );
 }

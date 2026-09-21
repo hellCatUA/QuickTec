@@ -57,6 +57,7 @@ async function budgetSplits() {
     labourCentsFor,
     splitError,
     underOwnRate,
+    describeTerms,
   } = await import("@/lib/budget");
 
   const terry = { id: "terry", isLead: true, defaultRateCents: 3800 };
@@ -183,6 +184,17 @@ async function budgetSplits() {
   check("flat + hourly with no flat is just hourly", zero("FLAT_HOURLY", 0, 8000), "HOURLY");
   check("flat + hourly with no rate is just flat", zero("FLAT_HOURLY", 20000, 0), "FLAT");
   check("flat + hourly with neither is non-billable", zero("FLAT_HOURLY", 0, 0), "NON_BILLABLE");
+
+  // Each type says its own numbers. A single formatter handed one rate cannot
+  // tell a flat amount from an hourly one, which is how "$0.00 flat" gets
+  // written to an audit trail.
+  check("a flat budget names its amount", describeTerms(flat400), "$400.00 flat");
+  check("an hourly budget names its rate", describeTerms(hourly80), "$80.00/hr");
+  check(
+    "flat + hourly names both halves and the hours between them",
+    describeTerms(mixed),
+    "$200.00 for 2 hrs, then $80.00/hr",
+  );
 
   // Splitting a job rate is allowed; going quiet about it is not.
   check("a third of $80/hr is under Terry's own $38", underOwnRate(trioHourly.lines[0], 3800), true);

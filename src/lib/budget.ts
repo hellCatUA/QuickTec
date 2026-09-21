@@ -1,4 +1,4 @@
-import { type Moneyish, toCents } from "@/lib/money";
+import { formatCents, formatHours, type Moneyish, toCents } from "@/lib/money";
 import type { PayType, SplitMode } from "@prisma-client";
 
 /**
@@ -401,6 +401,21 @@ export function labourCentsFor(terms: Terms, paidMinutes: number): number {
   }
   const over = Math.max(0, paidMinutes - terms.flatMinutes);
   return terms.flatCents + Math.round((terms.hourlyCents * over) / 60);
+}
+
+/**
+ * One set of terms, said in one phrase.
+ *
+ * Here rather than in money.ts because it reads all three numbers, and the
+ * only thing that holds all three is Terms. formatRate takes a single rate and
+ * cannot tell a flat amount from an hourly one without being told which slot
+ * to look in — which is exactly the kind of guess that prints "$0.00 flat".
+ */
+export function describeTerms(terms: Terms): string {
+  if (terms.payType === "NON_BILLABLE") return "Non-billable";
+  if (terms.payType === "FLAT") return `${formatCents(terms.flatCents)} flat`;
+  if (terms.payType === "HOURLY") return `${formatCents(terms.hourlyCents)}/hr`;
+  return `${formatCents(terms.flatCents)} for ${formatHours(terms.flatMinutes)} hrs, then ${formatCents(terms.hourlyCents)}/hr`;
 }
 
 /**

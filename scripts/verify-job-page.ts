@@ -57,9 +57,13 @@ async function openSection(page: Page, title: string | RegExp) {
 }
 
 /** Whether the menu warns a tech that their corrections are reviewed. */
+/**
+ * The warning a tech gets before pressing Edit job details, on the line
+ * itself: what they fill in sticks, what they change is a request.
+ */
 async function planner_hint(page: Page): Promise<boolean> {
   return page
-    .getByText(/A supervisor approves what you did not fill in yourself/)
+    .getByText(/Changing a field that already holds a value is submitted for approval/)
     .isVisible();
 }
 
@@ -3102,10 +3106,11 @@ async function main() {
     await planner.goto(url, { waitUntil: "load" });
     await planner.waitForTimeout(1000);
 
-    await openJobMenu(planner);
-    await planner
-      .getByRole("link", { name: /Schedule a revisit/ })
-      .click();
+    // The revisit planner lives behind the portal now rather than on the job's
+    // own menu, and its own page is what this section is about.
+    await planner.goto(`${BASE}/jobs/${assignment.jobId}/revisit`, {
+      waitUntil: "load",
+    });
     await planner.waitForTimeout(1500);
     await planner.getByRole("button", { name: "Schedule a revisit" }).click();
     await planner.getByRole("button", { name: "Create revisit" }).click();
@@ -3949,9 +3954,12 @@ async function editPunch(
   await block.getByRole("button", { name: "Save", exact: true }).click();
 }
 
-/** Straight to the portal, which is where punches and pay went. */
+/**
+ * Straight to the punches, which live one page inside the portal now: the
+ * portal's own address is the tile grid.
+ */
 async function openPortal(page: import("playwright").Page, jobId: string) {
-  await page.goto(`${BASE}/jobs/${jobId}/manage`, { waitUntil: "load" });
+  await page.goto(`${BASE}/jobs/${jobId}/manage/schedule`, { waitUntil: "load" });
   await page.waitForTimeout(800);
 }
 
