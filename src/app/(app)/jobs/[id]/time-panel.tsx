@@ -11,6 +11,7 @@ import {
   CheckoutSummary,
   type PreparedCheckout,
 } from "./checkout-summary";
+import type { Terms } from "@/lib/budget";
 import { TimeClock } from "./time-clock";
 
 /**
@@ -32,8 +33,7 @@ export function TimePanel({
   timeZone,
   intervalMinutes,
   visits,
-  payType,
-  payRate,
+  terms,
   showPay,
   breakPaid,
   clientName,
@@ -48,8 +48,8 @@ export function TimePanel({
   timeZone: string;
   intervalMinutes: number;
   visits: VisitInput[];
-  payType: PayType;
-  payRate: number;
+  /** What this tech is on for this job. */
+  terms: Terms;
   showPay: boolean;
   breakPaid: boolean;
   clientName: string;
@@ -150,8 +150,7 @@ export function TimePanel({
         timeZone={timeZone}
         intervalMinutes={intervalMinutes}
         visits={visits}
-        payType={payType}
-        payRate={payRate}
+        terms={terms}
         showPay={showPay}
         breakPaid={breakPaid}
         clientName={clientName}

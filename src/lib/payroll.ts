@@ -115,6 +115,8 @@ export type PayrollLineDraft = {
   offsiteAt: Date | null;
   payType: PayType;
   payRate: string;
+  payFlat: string | null;
+  payFlatHours: string | null;
   paidMinutes: number;
   labourCents: number;
   travelCents: number;
@@ -220,6 +222,8 @@ export async function draftWeek(
       offsiteAt: clockOuts.length > 0 ? new Date(Math.max(...clockOuts)) : null,
       payType: assignment.payType,
       payRate: assignment.payRate.toString(),
+      payFlat: assignment.payFlat?.toString() ?? null,
+      payFlatHours: assignment.payFlatHours?.toString() ?? null,
       paidMinutes: Math.round(totals.paidMinutes),
       labourCents: labour,
       travelCents: travel,
@@ -289,6 +293,8 @@ export async function buildPayrollPeriod(input: {
     const data = {
       payType: draft.payType,
       payRate: draft.payRate,
+      payFlat: draft.payFlat,
+      payFlatHours: draft.payFlatHours,
       paidMinutes: draft.paidMinutes,
       laborAmount: fromCents(draft.labourCents),
       travelReimb: fromCents(draft.travelCents),

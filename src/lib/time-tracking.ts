@@ -1,5 +1,5 @@
 import { roundToInterval } from "@/lib/datetime";
-import type { PayType } from "@prisma-client";
+import { labourCentsFor, type Terms } from "@/lib/budget";
 
 /**
  * Time and money arithmetic.
@@ -141,15 +141,17 @@ export function jobSpan(
   };
 }
 
-/** Money owed for time worked. Flat pays once per job, not per visit. */
-export function earnings(
-  payType: PayType,
-  rate: number,
-  paidMinutes: number,
-): number {
-  if (payType === "NON_BILLABLE") return 0;
-  if (payType === "FLAT") return rate;
-  return (paidMinutes / 60) * rate;
+/**
+ * Money owed for time worked, in cents.
+ *
+ * Delegates rather than branching: this used to have three arms of its own
+ * and fell through to hourly for Flat + Hourly, so a tech two hours into a
+ * "$300 for 8 hrs, then $40/hr" job watched a counter say $80 while payroll
+ * had them on $300. One arithmetic, in one place, or the screen and the
+ * cheque drift by construction.
+ */
+export function earningsCents(terms: Terms, paidMinutes: number): number {
+  return labourCentsFor(terms, paidMinutes);
 }
 
 /** "6:42" — elapsed time, not a clock reading, so hours are not padded. */

@@ -101,9 +101,12 @@ export async function computeStats(
       stats.reimbursedCents += toCents(entry.amount);
     }
 
-    if (assignment.payType === "HOURLY") stats.hourlyJobs += 1;
-    else if (assignment.payType === "FLAT") stats.flatJobs += 1;
-    else stats.nonBillableJobs += 1;
+    // Non-billable is the arm that has to be named. Anything else falling
+    // through to it counted paid work as unpaid — which is what Flat + Hourly
+    // did from the day it existed.
+    if (assignment.payType === "NON_BILLABLE") stats.nonBillableJobs += 1;
+    else if (assignment.payType === "HOURLY") stats.hourlyJobs += 1;
+    else stats.flatJobs += 1;
   }
 
   // Divided by hours actually on site, not paid hours: an unpaid break still

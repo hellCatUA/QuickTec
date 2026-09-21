@@ -1,11 +1,14 @@
 import {
   type CrewMember,
   jobTerms,
+  manualSurvives,
+  rescaleManual,
   splitTerms,
   termsColumns,
 } from "@/lib/budget";
 import { db } from "@/lib/db";
 import { toCents } from "@/lib/money";
+import type { SplitMode } from "@prisma-client";
 import { Prisma } from "@prisma-client";
 
 /**
@@ -64,21 +67,25 @@ export async function resplitJob(
     basisPoints: assignment.shareBasisPoints ?? undefined,
   }));
 
-  // Somebody arriving onto a hand-made split has no share anybody chose, and
-  // guessing one would either pay them nothing or quietly take it off
-  // everyone else. Neither is ours to decide, so the job goes back to an even
-  // split — visibly, on the job's own record — and whoever made the manual
-  // one can make it again knowing who is now on the job.
-  let mode = job.budgetSplit;
-  if (mode === "MANUAL" && crew.some((member) => member.basisPoints === undefined)) {
-    mode = "EVEN";
+  // A hand-made split only survives a crew change while it still describes
+  // the crew. When it does not, the job goes back to an even one; when it
+  // does but somebody left, what is left is scaled back to the whole.
+  const mode: SplitMode =
+    job.budgetSplit === "MANUAL" && !manualSurvives(crew)
+      ? "EVEN"
+      : job.budgetSplit;
+  const members = mode === "MANUAL" ? rescaleManual(crew) : crew;
+
+  const { shares, lines } = splitTerms(total, members, mode);
+
+  // Said on the job's own record, because a split somebody made by hand
+  // turning back into an even one is a decision, not a detail.
+  if (mode !== job.budgetSplit) {
     await client.job.update({
       where: { id: jobId },
-      data: { budgetSplit: "EVEN" },
+      data: { budgetSplit: mode },
     });
   }
-
-  const { shares, lines } = splitTerms(total, crew, mode);
 
   await Promise.all(
     job.assignments.map((assignment, index) =>

@@ -48,6 +48,11 @@ function check(label: string, actual: unknown, expected: unknown) {
  * crew is paid adds back to the budget exactly. Pure arithmetic, so it runs
  * without touching a row.
  */
+/** Somebody who has just arrived and has no share anybody chose. */
+function sam2() {
+  return { id: "new", isLead: false, defaultRateCents: 2400 };
+}
+
 async function budgetSplits() {
   const {
     jobTerms,
@@ -58,6 +63,9 @@ async function budgetSplits() {
     splitError,
     underOwnRate,
     describeTerms,
+    onCrewAverage,
+    manualSurvives,
+    rescaleManual,
   } = await import("@/lib/budget");
 
   const terry = { id: "terry", isLead: true, defaultRateCents: 3800 };
@@ -184,6 +192,75 @@ async function budgetSplits() {
   check("flat + hourly with no flat is just hourly", zero("FLAT_HOURLY", 0, 8000), "HOURLY");
   check("flat + hourly with no rate is just flat", zero("FLAT_HOURLY", 20000, 0), "FLAT");
   check("flat + hourly with neither is non-billable", zero("FLAT_HOURLY", 0, 0), "NON_BILLABLE");
+
+  // --- what the audit found, so it stays found -----------------------------
+
+  // A tech with no rate recorded used to weight zero, which is a share of
+  // zero, which reads as non-billable — and because a stored zero share means
+  // "excluded", it stuck even after the job was switched back to an even
+  // split. Nobody without a rate is worth nothing.
+  const rateless = { id: "ada", isLead: false };
+  const weighted2 = splitTerms(flat400, [terry, rateless], "BY_TECH_RATE");
+  check(
+    "a tech with no default rate is not written out of the split",
+    weighted2.lines[1].payType,
+    "FLAT",
+  );
+  check(
+    "they are weighted at what the rest average",
+    weighted2.lines.map((l) => l.flatCents).join("/"),
+    "20000/20000",
+  );
+  check(
+    "and the interface can say why",
+    onCrewAverage("BY_TECH_RATE", [terry, rateless]).join("/"),
+    "false/true",
+  );
+  check(
+    "a crew with no rates at all splits evenly rather than not at all",
+    splitTerms(flat400, [rateless, { id: "bo", isLead: false }], "BY_TECH_RATE")
+      .lines.map((l) => l.flatCents)
+      .join("/"),
+    "20000/20000",
+  );
+
+  // A hand-made split survives losing somebody and does not survive gaining
+  // one. Losing somebody used to leave the stored shares short of 10 000 —
+  // money that already added up, reported as a shortfall, with the editor
+  // locked until it was retyped.
+  const manual3 = [
+    { ...terry, basisPoints: 6000 },
+    { ...dana, basisPoints: 3000 },
+    { ...sam, basisPoints: 1000 },
+  ];
+  check("a manual split survives while it describes the crew", manualSurvives(manual3), true);
+  check(
+    "it does not survive somebody arriving with no share",
+    manualSurvives([...manual3, sam2()]),
+    false,
+  );
+  check("nor a crew of one", manualSurvives([{ ...terry, basisPoints: 10000 }]), false);
+
+  const left = rescaleManual(manual3.slice(0, 2));
+  check(
+    "what is left of it is scaled back to the whole",
+    left.map((one) => one.basisPoints).join("/"),
+    "6667/3333",
+  );
+  check(
+    "so the shares and the money agree again",
+    splitTerms(
+      jobTerms({
+        budgetType: "FLAT",
+        budgetFlat: "900.00",
+        budgetFlatHours: null,
+        budgetHourly: null,
+      })!,
+      left,
+      "MANUAL",
+    ).lines.reduce((sum, l) => sum + l.flatCents, 0),
+    90000,
+  );
 
   // Each type says its own numbers. A single formatter handed one rate cannot
   // tell a flat amount from an hourly one, which is how "$0.00 flat" gets
@@ -2561,7 +2638,7 @@ async function main() {
   // --- time and earnings --------------------------------------------------
   const {
     assignmentTotals,
-    earnings,
+    earningsCents,
     jobSpan,
     visitTotals,
     clockOptions,
@@ -2611,9 +2688,26 @@ async function main() {
   check("job span ends at the latest departure", crew.offsiteAt?.toISOString(), at("16:00").replace("Z", ".000Z"));
   check("job span is 8.00 hrs", (crew.totalMinutes / 60).toFixed(2), "8.00");
 
-  check("hourly earnings", earnings("HOURLY", 45, 450).toFixed(2), "337.50");
-  check("flat pays once", earnings("FLAT", 250, 450).toFixed(2), "250.00");
-  check("non-billable pays nothing", earnings("NON_BILLABLE", 45, 450), 0);
+  // The live counter and payroll run one arithmetic now, so the screen a tech
+  // watches cannot say one thing while the cheque says another.
+  const live = (payType: "HOURLY" | "FLAT" | "FLAT_HOURLY" | "NON_BILLABLE",
+    flatCents: number, flatMinutes: number, hourlyCents: number) =>
+    ({ payType, flatCents, flatMinutes, hourlyCents }) as const;
+  check("hourly earnings", earningsCents(live("HOURLY", 0, 0, 4500), 450), 33750);
+  check("flat pays once", earningsCents(live("FLAT", 25000, 0, 0), 450), 25000);
+  check("non-billable pays nothing", earningsCents(live("NON_BILLABLE", 0, 0, 0), 450), 0);
+  // The case the old three-armed counter got wrong: two hours into a job whose
+  // flat covers eight, it showed $80 while payroll had $300.
+  check(
+    "flat + hourly inside the covered hours shows the flat, not the rate",
+    earningsCents(live("FLAT_HOURLY", 30000, 480, 4000), 120),
+    30000,
+  );
+  check(
+    "and past them, the flat plus the overrun",
+    earningsCents(live("FLAT_HOURLY", 30000, 480, 4000), 600),
+    38000,
+  );
 
   // Offsets hang off the snapped time, not the raw clock.
   const options = clockOptions(new Date(at("09:57")), 5);

@@ -1580,10 +1580,17 @@ model PayrollLine {
   assignment   JobAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
 
   /// Snapshots so a later rate edit cannot rewrite history.
-  payType     PayType
-  payRate     Decimal @db.Decimal(10, 2)
-  paidMinutes Int     @default(0)
-  laborAmount Decimal @default("0") @db.Decimal(10, 2)
+  ///
+  /// All three of the terms, not two: without the flat half and the hours it
+  /// covers, a FLAT_HOURLY line cannot be read back from its own snapshot —
+  /// payRate alone says "$40/hr" about a deal that was "$300 for 8 hrs, then
+  /// $40/hr", and every screen reading the snapshot repeats it.
+  payType      PayType
+  payRate      Decimal  @db.Decimal(10, 2)
+  payFlat      Decimal? @db.Decimal(10, 2)
+  payFlatHours Decimal? @db.Decimal(6, 2)
+  paidMinutes  Int      @default(0)
+  laborAmount  Decimal  @default("0") @db.Decimal(10, 2)
 
   travelReimb       Decimal @default("0") @db.Decimal(10, 2)
   parkingTollsReimb Decimal @default("0") @db.Decimal(10, 2)

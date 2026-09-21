@@ -8,6 +8,7 @@ import {
   parseZonedDate,
   startOfWeekMonday,
 } from "@/lib/datetime";
+import { assignmentTerms } from "@/lib/budget";
 import { db } from "@/lib/db";
 import {
   dayLabel,
@@ -105,6 +106,8 @@ export default async function PayrollPersonPage({
             id: true,
             payType: true,
             payRate: true,
+            payFlat: true,
+            payFlatHours: true,
             paidMinutes: true,
             laborAmount: true,
             travelReimb: true,
@@ -193,6 +196,7 @@ export default async function PayrollPersonPage({
             hours: hours(job.paidMinutes),
             payType: job.payType,
             payRate: job.payRate,
+            terms: job.terms,
             earned: money(job.earnedCents),
             reimbursements: job.reimbursements.map((one) => ({
               label: expenseLabel(one),
@@ -240,6 +244,7 @@ export default async function PayrollPersonPage({
             : null,
           payType: line.payType,
           payRate: line.payRate.toString(),
+          terms: assignmentTerms(line),
           paidMinutes: line.paidMinutes,
           laborAmount: line.laborAmount.toString(),
           travelReimb: line.travelReimb.toString(),

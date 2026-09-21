@@ -97,15 +97,17 @@ function summarise(period: PayPeriod): {
 } {
   const needsRate = period.jobs.some((job) => job.payType === "NON_BILLABLE");
 
-  const hourly = new Set(
-    period.jobs
-      .filter((job) => job.payType === "HOURLY")
-      .map((job) => job.payRate),
-  );
+  // "The week's rate" is only a true sentence when every job on it is hourly.
+  // A week of one hourly job and two on a flat covering hours has no single
+  // rate, and printing the hourly one made it look as though it did.
+  const allHourly =
+    period.jobs.length > 0 &&
+    period.jobs.every((job) => job.payType === "HOURLY");
+  const hourly = new Set(period.jobs.map((job) => job.payRate));
 
   return {
     needsRate,
-    soleHourlyRate: hourly.size === 1 ? [...hourly][0] : null,
+    soleHourlyRate: allHourly && hourly.size === 1 ? [...hourly][0] : null,
   };
 }
 

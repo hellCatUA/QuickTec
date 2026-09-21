@@ -249,17 +249,81 @@ function weightsFor(mode: SplitMode, crew: CrewMember[]): number[] {
     );
   }
 
-  const weights = crew.map((member, index) => {
-    if (!included[index]) return 0;
-    if (mode === "BY_TECH_RATE") return Math.max(0, member.defaultRateCents ?? 0);
-    return 1;
-  });
+  if (mode !== "BY_TECH_RATE") return included.map((one) => (one ? 1 : 0));
 
-  // Everybody on zero — nobody has a default rate recorded — is not a reason
-  // to pay nobody. Fall back to equal weights and let the interface say why.
-  return weights.some((one) => one > 0)
-    ? weights
-    : included.map((one) => (one ? 1 : 0));
+  const known = crew
+    .map((member, index) =>
+      included[index] ? Math.max(0, member.defaultRateCents ?? 0) : 0,
+    )
+    .filter((rate) => rate > 0);
+
+  // Nobody has a rate recorded, so there are no proportions to be had. Equal
+  // shares, and the interface says why rather than paying nobody.
+  if (known.length === 0) return included.map((one) => (one ? 1 : 0));
+
+  // One person without a rate recorded is not a person worth nothing. Weight
+  // them at what the rest of the crew average, which keeps the mode's promise
+  // — seniority survives the split — without quietly writing somebody out of
+  // it. A zero here used to mean a share of zero, which reads as non-billable
+  // and, once stored, sticks.
+  const average = Math.round(
+    known.reduce((sum, rate) => sum + rate, 0) / known.length,
+  );
+
+  return crew.map((member, index) => {
+    if (!included[index]) return 0;
+    const own = Math.max(0, member.defaultRateCents ?? 0);
+    return own > 0 ? own : average;
+  });
+}
+
+/**
+ * Whether a hand-made split still means anything after the crew changed.
+ *
+ * It does not when somebody has arrived who has no share anybody chose —
+ * guessing one would either pay them nothing or quietly take it off everyone
+ * else, and neither is ours to decide. Nor when the crew is down to one: the
+ * editor draws no share box for a single tech, so a job left on MANUAL there
+ * could never have its budget edited again.
+ */
+export function manualSurvives(crew: CrewMember[]): boolean {
+  if (crew.length <= 1) return false;
+  return !crew.some(
+    (member) => !member.excluded && member.basisPoints === undefined,
+  );
+}
+
+/**
+ * A hand-made split after somebody left, scaled back to the whole.
+ *
+ * The money re-proportions itself, because `allocate` divides by the weight
+ * sum rather than by 10 000. The stored shares do not: they would keep the
+ * departed tech's slice as a hole, and the editor would open reporting a
+ * shortfall against money that already adds up — with Submit shut until
+ * somebody retyped numbers that were never wrong.
+ */
+export function rescaleManual(crew: CrewMember[]): CrewMember[] {
+  const stored = crew.reduce((sum, one) => sum + (one.basisPoints ?? 0), 0);
+  if (stored === 0 || stored === BASIS_POINTS) return crew;
+
+  const scaled = allocate(
+    BASIS_POINTS,
+    crew.map((one) => one.basisPoints ?? 0),
+    priorityOrder(crew),
+  );
+  return crew.map((member, index) => ({ ...member, basisPoints: scaled[index] }));
+}
+
+/** Who is being weighted at the crew average because they have no rate. */
+export function onCrewAverage(mode: SplitMode, crew: CrewMember[]): boolean[] {
+  if (mode !== "BY_TECH_RATE") return crew.map(() => false);
+  const anyKnown = crew.some(
+    (member) => !member.excluded && (member.defaultRateCents ?? 0) > 0,
+  );
+  return crew.map(
+    (member) =>
+      anyKnown && !member.excluded && (member.defaultRateCents ?? 0) <= 0,
+  );
 }
 
 /** What is wrong with this split, said the way the form should say it. */

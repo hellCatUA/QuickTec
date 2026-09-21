@@ -6,14 +6,14 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { usTimeInZone } from "@/lib/datetime";
-import { formatMoney, PAY_TYPE_LABEL } from "@/lib/money";
+import { describeTerms, type Terms } from "@/lib/budget";
+import { formatMoney } from "@/lib/money";
 import {
   assignmentTotals,
-  earnings,
+  earningsCents,
   formatElapsedPrecise,
   type VisitInput,
 } from "@/lib/time-tracking";
-import type { PayType } from "@prisma-client";
 import { clockIn, clockOut, toggleBreak } from "./actions";
 import { ClockPicker } from "./clock-picker";
 
@@ -24,8 +24,7 @@ export function TimeClock({
   timeZone,
   intervalMinutes,
   visits,
-  payType,
-  payRate,
+  terms,
   showPay,
   breakPaid,
   clientName,
@@ -38,8 +37,8 @@ export function TimeClock({
   timeZone: string;
   intervalMinutes: number;
   visits: VisitInput[];
-  payType: PayType;
-  payRate: number;
+  /** What this tech is on for this job: one shape, all four types. */
+  terms: Terms;
   showPay: boolean;
   breakPaid: boolean;
   clientName: string;
@@ -70,7 +69,7 @@ export function TimeClock({
   }, [openVisit]);
 
   const totals = assignmentTotals(visits, now);
-  const money = earnings(payType, payRate, totals.paidMinutes);
+  const money = earningsCents(terms, totals.paidMinutes) / 100;
 
   // Snapping rounds up by as much as three minutes, so a fresh clock-in is
   // often a minute or two in the future and the counter would otherwise sit
@@ -164,9 +163,7 @@ export function TimeClock({
 
         {showPay ? (
           <p className="text-xs text-muted-foreground">
-            {clientName} · {customerName} · {PAY_TYPE_LABEL[payType]}
-            {payType === "HOURLY" ? ` · ${formatMoney(payRate)}/hr` : ""}
-            {payType === "FLAT" ? ` · ${formatMoney(payRate)}` : ""}
+            {clientName} · {customerName} · {describeTerms(terms)}
           </p>
         ) : null}
 

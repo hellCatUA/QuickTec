@@ -47,6 +47,7 @@ export function CrewPanel({
   canAssign,
   canReassign,
   canEditPay,
+  budgeted,
 }: {
   jobId: string;
   crew: CrewMember[];
@@ -55,6 +56,13 @@ export function CrewPanel({
   canReassign: boolean;
   /** Putting one person on a different rate from the rest of the job. */
   canEditPay: boolean;
+  /**
+   * The job's money is a total shared between the crew rather than a rate
+   * stamped on each of them. Then there is no such thing as one person's own
+   * rate: what differs between people is their share, and that is one
+   * decision about everybody, made in the budget editor.
+   */
+  budgeted: boolean;
 }) {
   const [error, setError] = React.useState<string | null>(null);
   const [adding, setAdding] = React.useState(false);
@@ -113,7 +121,7 @@ export function CrewPanel({
             ) : null}
 
             <div className="ml-auto flex items-center gap-1">
-              {canEditPay ? (
+              {canEditPay && !budgeted ? (
                 <Button
                   type="button"
                   variant="ghost"
@@ -166,6 +174,7 @@ export function CrewPanel({
       {pricing ? (
         <PayOverride
           member={pricing}
+          budgeted={budgeted}
           onClose={() => setPricing(null)}
           onError={setError}
         />
@@ -287,10 +296,12 @@ export function CrewPanel({
  */
 function PayOverride({
   member,
+  budgeted,
   onClose,
   onError,
 }: {
   member: CrewMember;
+  budgeted: boolean;
   onClose: () => void;
   onError: (message: string | null) => void;
 }) {
@@ -406,7 +417,7 @@ function PayOverride({
             disabled={pending}
             onClick={revert}
           >
-            Back to the job&rsquo;s rate
+            {budgeted ? "Back to their share" : "Back to the job\u2019s rate"}
           </Button>
         ) : null}
         <Button type="button" size="sm" variant="ghost" onClick={onClose}>

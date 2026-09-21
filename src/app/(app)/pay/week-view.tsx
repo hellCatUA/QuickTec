@@ -14,6 +14,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { describeTerms } from "@/lib/budget";
 import {
   clockTime,
   dayLabel,
@@ -249,12 +250,10 @@ function JobCard({
     ? `${clockTime(job.clockInAt, timeZone)} – ${clockTime(job.clockOutAt, timeZone)}`
     : `${clockTime(job.clockInAt, timeZone)} – still on the clock`;
 
+  // One description for all four types, so a flat covering hours does not
+  // arrive on a tech's own pay page showing only its hourly half.
   const rate =
-    job.payType === "NON_BILLABLE"
-      ? "no rate set"
-      : job.payType === "FLAT"
-        ? `${money(Math.round(Number(job.payRate) * 100))} flat`
-        : `${money(Math.round(Number(job.payRate) * 100))}/hr`;
+    job.payType === "NON_BILLABLE" ? "no rate set" : describeTerms(job.terms);
 
   const claimed = job.reimbursements.length > 0;
 

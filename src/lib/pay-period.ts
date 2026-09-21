@@ -6,6 +6,7 @@ import {
   zonedMidnight,
   zonedParts,
 } from "@/lib/datetime";
+import { assignmentTerms, type Terms } from "@/lib/budget";
 import { db } from "@/lib/db";
 import {
   expectedPayDate,
@@ -120,6 +121,12 @@ export type PayJob = {
   paidMinutes: number;
   payType: PayType;
   payRate: string;
+  /**
+   * The same thing in the shape that can describe all four types. payType and
+   * payRate alone cannot say "$300 for 8 hrs, then $40/hr", and every screen
+   * that tried printed one half of it.
+   */
+  terms: Terms;
   earnedCents: number;
   reimbursements: PayExpense[];
 };
@@ -331,6 +338,7 @@ async function jobsInRange(
       paidMinutes: Math.round(totals.paidMinutes),
       payType: assignment.payType,
       payRate: assignment.payRate?.toString() ?? "0",
+      terms: assignmentTerms(assignment),
       earnedCents: labourCents(assignment, Math.round(totals.paidMinutes)),
       reimbursements,
     };

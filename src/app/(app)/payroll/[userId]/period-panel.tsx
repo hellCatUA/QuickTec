@@ -6,6 +6,7 @@ import * as React from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/field";
+import { describeTerms, type Terms } from "@/lib/budget";
 import { formatMoney, PAY_TYPE_LABEL } from "@/lib/money";
 import type { PayType, PayrollStatus } from "@prisma-client";
 import {
@@ -37,6 +38,7 @@ type ClockJob = {
   hours: string;
   payType: PayType;
   payRate: string;
+  terms: Terms;
   earned: string;
   reimbursements: { label: string; amount: string }[];
 };
@@ -72,6 +74,7 @@ type Line = {
   day: string | null;
   payType: PayType;
   payRate: string;
+  terms: Terms;
   paidMinutes: number;
   laborAmount: string;
   travelReimb: string;
@@ -337,7 +340,7 @@ export function PeriodPanel({
                 {job.intWoId} · {job.where} · {job.day} · {job.hours} hrs ·{" "}
                 {job.payType === "NON_BILLABLE"
                   ? "no rate set"
-                  : `${formatMoney(job.payRate)}${job.payType === "HOURLY" ? "/hr" : " flat"}`}
+                  : describeTerms(job.terms)}
               </div>
               {job.payType === "NON_BILLABLE" ? (
                 <Badge variant="danger">
@@ -440,9 +443,7 @@ function LineCard({
         {line.intWoId}
         {line.day ? ` · ${line.day}` : ""} ·{" "}
         {(line.paidMinutes / 60).toFixed(2)} hrs ·{" "}
-        {PAY_TYPE_LABEL[line.payType]}
-        {line.payType === "HOURLY" ? ` ${formatMoney(line.payRate)}/hr` : ""} ·
-        labour {formatMoney(line.laborAmount)}
+        {describeTerms(line.terms)} · labour {formatMoney(line.laborAmount)}
       </div>
 
       {reimbursements.length > 0 ? (

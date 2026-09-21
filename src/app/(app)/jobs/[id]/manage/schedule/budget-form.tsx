@@ -7,6 +7,7 @@ import { Field, Input } from "@/components/ui/field";
 import {
   describeTerms,
   normaliseTerms,
+  onCrewAverage,
   splitError,
   splitTerms,
   termsError,
@@ -74,7 +75,11 @@ export function BudgetForm({
   const [flat, setFlat] = React.useState(budgetFlat);
   const [hours, setHours] = React.useState(budgetFlatHours);
   const [hourly, setHourly] = React.useState(budgetHourly);
-  const [mode, setMode] = React.useState<SplitMode>(splitMode);
+  // One person has nothing to split with, and the selector is not drawn for
+  // them — so a stored MANUAL would post a mode nobody could satisfy.
+  const [mode, setMode] = React.useState<SplitMode>(
+    crew.length > 1 ? splitMode : "EVEN",
+  );
   const [excluded, setExcluded] = React.useState<Set<string>>(
     () => new Set(crew.filter((one) => one.shareBasisPoints === 0).map((one) => one.assignmentId)),
   );
@@ -107,6 +112,7 @@ export function BudgetForm({
   }));
 
   const preview = splitTerms(terms, members, mode);
+  const averaged = onCrewAverage(mode, members);
   const wrongTerms = type === "" ? null : termsError(terms);
   const wrongSplit =
     mode === "MANUAL" && type !== "" && type !== "NON_BILLABLE"
@@ -308,9 +314,11 @@ export function BudgetForm({
                       {out
                         ? "Non-billable"
                         : `${(preview.shares[index] / 100).toFixed(2)}%${
-                            low
-                              ? ` · below their own ${formatCents(one.defaultRateCents)}/hr`
-                              : ""
+                            averaged[index]
+                              ? " · no rate recorded, weighted at the crew average"
+                              : low
+                                ? ` · below their own ${formatCents(one.defaultRateCents)}/hr`
+                                : ""
                           }`}
                     </span>
                   </span>

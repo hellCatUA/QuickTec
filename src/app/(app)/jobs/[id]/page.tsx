@@ -39,6 +39,7 @@ import {
   reviewTimes,
   reviewWork,
 } from "@/lib/job-review";
+import { assignmentTerms, describeTerms } from "@/lib/budget";
 import { formatRate } from "@/lib/money";
 import { canOnJob } from "@/lib/scope";
 import { loadTimeline } from "@/lib/timeline-data";
@@ -123,6 +124,7 @@ export default async function JobPage({
       breakPaid: true,
       payType: true,
       payRate: true,
+      budgetType: true,
       travelReimbursement: true,
       noWorkOrder: true,
       lifecycle: true,
@@ -316,6 +318,8 @@ export default async function JobPage({
           isLead: true,
           payType: true,
           payRate: true,
+          payFlat: true,
+          payFlatHours: true,
           payRateNote: true,
           travelReimbursement: true,
           payOverridden: true,
@@ -794,8 +798,7 @@ export default async function JobPage({
               paid: entry.paid,
             })),
           }))}
-          payType={mine.payType}
-          payRate={Number(mine.payRate)}
+          terms={assignmentTerms(mine)}
           showPay={showPay}
           breakPaid={job.breakPaid}
           clientName={job.client.name}
@@ -1203,6 +1206,7 @@ export default async function JobPage({
                   role: person.baseRole,
                 }))}
                 canEditPay={canEditRates}
+                budgeted={Boolean(job.budgetType)}
                 crew={job.assignments.map((assignment) => ({
                   id: assignment.id,
                   userId: assignment.user.id,
@@ -1220,7 +1224,7 @@ export default async function JobPage({
                     assignment._count.deliverables > 0,
                   supervisorName: assignment.supervisor?.name ?? null,
                   rate: showPay
-                    ? `${formatRate(assignment.payType, assignment.payRate.toString())}${
+                    ? `${describeTerms(assignmentTerms(assignment))}${
                         assignment.travelReimbursement
                           ? ` · travel $${Number(assignment.travelReimbursement).toFixed(2)}`
                           : ""

@@ -916,10 +916,20 @@ export async function assignTech(formData: FormData): Promise<ActionResult> {
       projectId: true,
       payType: true,
       payRate: true,
+      budgetType: true,
       travelReimbursement: true,
       project: { select: { travelReimbursement: true } },
     },
   });
+
+  // On a budgeted job one more person changes what everybody else is on, so
+  // this is a pay change wearing a crew change's clothes and needs the same
+  // guard. On a job with no budget nobody else's line moves, so it does not.
+  if (details.budgetType && (await alreadyPaid({ jobId }))) {
+    return fail(
+      `This job's budget is shared between the crew, and a week on it has already been approved. Adding ${person.name} now would re-split money that has been paid.`,
+    );
+  }
 
   const resolved = await resolvePayRate(
     userId,
@@ -1049,6 +1059,14 @@ export async function unassignTech(formData: FormData): Promise<ActionResult> {
   if (assignment._count.deliverables > 0) {
     return fail(
       `${assignment.user.name} has already uploaded work here. Their deliverables stay on the record — add the replacement instead.`,
+    );
+  }
+
+  // Taking somebody off a budgeted job hands their share back to the rest, so
+  // it moves everybody's money and stops where any other pay change stops.
+  if ((await budgetOf(jobId)) && (await alreadyPaid({ jobId }))) {
+    return fail(
+      `This job's budget is shared between the crew, and a week on it has already been approved. Removing ${assignment.user.name} now would re-split money that has been paid.`,
     );
   }
 
@@ -2198,6 +2216,15 @@ export async function setJobPay(formData: FormData): Promise<ActionResult> {
     return fail("You cannot change what this job pays.");
   }
 
+  // The older model — one rate stamped onto everybody — cannot coexist with a
+  // budget, which is one total shared between them. Whichever ran last would
+  // win silently, and the loser would still be on screen somewhere.
+  if (await budgetOf(jobId)) {
+    return fail(
+      "This job is on a total tech budget. Change the budget instead — one rate applied to everybody would stop the crew's lines adding up to it.",
+    );
+  }
+
   if (!payType || !(payType in JobPayType)) return fail("Pick a pay type.");
   const rate = Number(payRate);
   if (!Number.isFinite(rate) || rate < 0) {
@@ -2272,6 +2299,35 @@ export async function setJobPay(formData: FormData): Promise<ActionResult> {
 }
 
 /**
+ * Whether anybody has already been paid against this job.
+ *
+ * Every writer of a pay column asks it, because the one thing worse than a
+ * wrong rate is a rate that disagrees with a cheque already written.
+ */
+async function alreadyPaid(
+  scope: { jobId: string } | { assignmentId: string },
+): Promise<boolean> {
+  const count = await db.payrollLine.count({
+    where: {
+      ...("jobId" in scope
+        ? { assignment: { jobId: scope.jobId } }
+        : { assignmentId: scope.assignmentId }),
+      payrollPeriod: { status: { not: "DRAFT" } },
+    },
+  });
+  return count > 0;
+}
+
+/** The job's budget type, or null when it is on the older per-rate model. */
+async function budgetOf(jobId: string): Promise<JobPayType | null> {
+  const job = await db.job.findUnique({
+    where: { id: jobId },
+    select: { budgetType: true },
+  });
+  return job?.budgetType ?? null;
+}
+
+/**
  * Sets the total tech budget, and with it everybody's line.
  *
  * The budget and the crew's lines are the same number from two ends, so this
@@ -2319,6 +2375,11 @@ export async function setJobBudget(formData: FormData): Promise<ActionResult> {
     orderBy: [{ isLead: "desc" }, { createdAt: "asc" }],
     select: { id: true, isLead: true },
   });
+
+  // One person has nothing to split with. Storing MANUAL here would lock the
+  // budget shut: the editor draws no share box for a crew of one, so nothing
+  // would ever add to 10 000 again.
+  const mode = assignments.length > 1 ? splitMode : "EVEN";
 
   // Clearing it. The lines stay; only what happens next changes.
   if (budgetType === "") {
@@ -2374,12 +2435,12 @@ export async function setJobBudget(formData: FormData): Promise<ActionResult> {
   // was typed rather than anything we work out.
   const shares = assignments.map(({ id }) => {
     if (excluded.has(id)) return 0;
-    if (splitMode !== "MANUAL") return null;
+    if (mode !== "MANUAL") return null;
     const raw = Number(String(formData.get(`share:${id}`) ?? ""));
     return Number.isFinite(raw) && raw > 0 ? Math.round(raw * 100) : 0;
   });
 
-  if (splitMode === "MANUAL") {
+  if (mode === "MANUAL") {
     const bad = splitError(shares.map((one) => one ?? 0));
     if (bad) return fail(bad);
   } else if (shares.every((one) => one === 0) && assignments.length > 0) {
@@ -2405,7 +2466,7 @@ export async function setJobBudget(formData: FormData): Promise<ActionResult> {
           terms.payType === "HOURLY" || terms.payType === "FLAT_HOURLY"
             ? (terms.hourlyCents / 100).toFixed(2)
             : null,
-        budgetSplit: splitMode,
+        budgetSplit: mode,
       },
     }),
     ...assignments.map(({ id }, index) =>
@@ -2427,7 +2488,7 @@ export async function setJobBudget(formData: FormData): Promise<ActionResult> {
     detail: {
       field: "Total tech budget",
       to: describeTerms(terms),
-      who: `${assignments.length} on the job · ${splitMode.toLowerCase().replace("_", " ")}`,
+      who: `${assignments.length} on the job · ${mode.toLowerCase().replace("_", " ")}`,
     },
   });
 
@@ -2492,6 +2553,15 @@ export async function setAssignmentPay(
     );
   }
 
+  // A line standing outside the split is precisely the drift a budget exists
+  // to prevent. On a budgeted job the way to pay somebody differently is their
+  // share, which is a decision about the whole crew and is made as one.
+  if (await budgetOf(assignment.jobId)) {
+    return fail(
+      "This job is on a total tech budget, so everybody is on the same terms. Change their share of it instead.",
+    );
+  }
+
   await db.jobAssignment.update({
     where: { id: assignmentId },
     data: {
@@ -2539,6 +2609,7 @@ export async function clearAssignmentPay(
           projectId: true,
           payType: true,
           payRate: true,
+          budgetType: true,
           travelReimbursement: true,
         },
       },
@@ -2561,6 +2632,28 @@ export async function clearAssignmentPay(
     return fail(
       "This person's week has already been approved. Changing the rate now would disagree with what was paid.",
     );
+  }
+
+  // On a budgeted job "the job's rate" means their share of the budget, not
+  // the number somebody typed into New Job months ago. Re-splitting is the
+  // only thing that can put them back on it, and it puts the whole crew back
+  // together, which is the point.
+  if (assignment.job.budgetType) {
+    await resplitJob(assignment.jobId);
+    await recordAudit({
+      actorId: user.id,
+      entityType: "JobAssignment",
+      entityId: assignmentId,
+      jobId: assignment.jobId,
+      action: "pay_changed",
+      detail: {
+        field: "Pay",
+        to: "Back to their share of the budget",
+        who: assignment.user.name,
+      },
+    });
+    touch(assignment.jobId);
+    return ok;
   }
 
   // Back to whatever they would have got had nobody intervened: the job's own
