@@ -231,6 +231,8 @@ async function jobsInRange(
       id: true,
       payType: true,
       payRate: true,
+      payFlat: true,
+      payFlatHours: true,
       travelReimbursement: true,
       job: {
         select: {
@@ -329,11 +331,7 @@ async function jobsInRange(
       paidMinutes: Math.round(totals.paidMinutes),
       payType: assignment.payType,
       payRate: assignment.payRate?.toString() ?? "0",
-      earnedCents: labourCents(
-        assignment.payType,
-        assignment.payRate ?? "0",
-        Math.round(totals.paidMinutes),
-      ),
+      earnedCents: labourCents(assignment, Math.round(totals.paidMinutes)),
       reimbursements,
     };
   });

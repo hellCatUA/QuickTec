@@ -873,6 +873,27 @@ model Job {
   payRate             Decimal? @db.Decimal(10, 2)
   travelReimbursement Decimal? @db.Decimal(10, 2)
 
+  /// The total tech budget: everything the crew is paid from this job, and
+  /// nothing else.
+  ///
+  /// It is not a ceiling held beside their lines — it IS their lines added
+  /// up. Setting it rewrites them; changing one of them rewrites it. That is
+  /// the whole point: payroll reconciles against one number, not against a
+  /// budget and a payment that can disagree.
+  ///
+  /// Null means this job predates budgets, or nobody set one. Then the old
+  /// resolution stands untouched — the pay fields above, then each tech's own
+  /// rate — so no payroll line already run changes meaning underneath us.
+  budgetType      PayType?
+  /// The flat part, for FLAT and FLAT_HOURLY.
+  budgetFlat      Decimal?  @db.Decimal(10, 2)
+  /// How many hours the flat part covers. Required by FLAT_HOURLY, and
+  /// meaningless without it.
+  budgetFlatHours Decimal?  @db.Decimal(6, 2)
+  /// The hourly part, for HOURLY and FLAT_HOURLY.
+  budgetHourly    Decimal?  @db.Decimal(10, 2)
+  budgetSplit     SplitMode @default(EVEN)
+
   /// The paying company issued no work order for this job. Recorded so
   /// the empty slot reads as a decision somebody made rather than paperwork
   /// nobody got round to chasing.
@@ -996,13 +1017,31 @@ model JobAssignment {
   supervisor   User?   @relation("AssignmentSupervisor", fields: [supervisorId], references: [id], onDelete: SetNull)
 
   payType             PayType
+  /// The flat amount for FLAT; the hourly rate for HOURLY and FLAT_HOURLY.
   payRate             Decimal  @default("0") @db.Decimal(10, 2)
+  /// The flat part and the hours it covers, for FLAT_HOURLY only. The hours
+  /// are this tech's own.
+  payFlat             Decimal? @db.Decimal(10, 2)
+  payFlatHours        Decimal? @db.Decimal(6, 2)
+  /// This tech's share of the job's total tech budget, in basis points.
+  ///
+  /// Every assignment on a budgeted job sums to exactly 10 000, which is what
+  /// makes "the total is the sum" arithmetic rather than a rule somebody has
+  /// to remember to check. Zero is how one person is non-billable on a job
+  /// that pays: a share of nothing, not a second set of terms.
+  ///
+  /// Null on jobs with no budget, where each line stands on its own.
+  shareBasisPoints    Int?
   /// Why this rate, when it is not simply the one that resolved.
   payRateNote         String?
   travelReimbursement Decimal? @db.Decimal(10, 2)
   /// This person is deliberately on a different rate from the rest of the job
   /// — a trainee, somebody brought in on a favour. Setting the job's pay
   /// leaves them alone, which is the whole point of having said so.
+  ///
+  /// A total tech budget overrules it, and has to: a line standing outside
+  /// the split is exactly the drift the budget exists to prevent. On a
+  /// budgeted job the way to pay somebody differently is their share.
   payOverridden       Boolean  @default(false)
 
   workPerformed String?
@@ -1440,7 +1479,23 @@ model MileageEntry {
 enum PayType {
   HOURLY
   FLAT
+  /// A flat amount covering a set number of hours, then an hourly rate — the
+  /// shape a pre-authorised budget increase takes. The hours it covers are
+  /// each tech's own, not the job's elapsed time, so somebody leaving early
+  /// does not hand their unused hours to whoever stayed.
+  FLAT_HOURLY
   NON_BILLABLE
+}
+
+/// How a job's total tech budget is shared out.
+///
+/// The second mode is what a tech's own default rate is for once a job has a
+/// budget: it stops deciding the money and starts deciding the proportions,
+/// so seniority survives a split.
+enum SplitMode {
+  EVEN
+  BY_TECH_RATE
+  MANUAL
 }
 
 /// Rate lookup, most specific wins:

@@ -41,6 +41,155 @@ function check(label: string, actual: unknown, expected: unknown) {
   console.log(`${ok ? "PASS" : "FAIL"}  ${label}\n      got ${actual}${ok ? "" : `  want ${expected}`}`);
 }
 
+/**
+ * The total tech budget, against the cases it was designed from.
+ *
+ * Every one of these asserts the same thing from a different angle: what the
+ * crew is paid adds back to the budget exactly. Pure arithmetic, so it runs
+ * without touching a row.
+ */
+async function budgetSplits() {
+  const {
+    jobTerms,
+    normaliseTerms,
+    splitTerms,
+    sumTerms,
+    labourCentsFor,
+    splitError,
+    underOwnRate,
+  } = await import("@/lib/budget");
+
+  const terry = { id: "terry", isLead: true, defaultRateCents: 3800 };
+  const dana = { id: "dana", isLead: false, defaultRateCents: 3450 };
+  const sam = { id: "sam", isLead: false, defaultRateCents: 2400 };
+  const pair = [terry, dana];
+  // Terry 6h 12m, Dana 3h — the crew the worked examples use throughout.
+  const TERRY_MINS = 372;
+  const DANA_MINS = 180;
+
+  const flat400 = jobTerms({
+    budgetType: "FLAT",
+    budgetFlat: "400.00",
+    budgetFlatHours: null,
+    budgetHourly: null,
+  })!;
+  const hourly80 = jobTerms({
+    budgetType: "HOURLY",
+    budgetFlat: null,
+    budgetFlatHours: null,
+    budgetHourly: "80.00",
+  })!;
+  const mixed = jobTerms({
+    budgetType: "FLAT_HOURLY",
+    budgetFlat: "200.00",
+    budgetFlatHours: "2",
+    budgetHourly: "80.00",
+  })!;
+
+  // 1 — flat, split evenly, and hours do not enter into it.
+  const one = splitTerms(flat400, pair, "EVEN");
+  check("flat $400 splits in half", one.lines.map((l) => l.flatCents).join("/"), "20000/20000");
+  check(
+    "flat pays the same however long each worked",
+    labourCentsFor(one.lines[0], TERRY_MINS) + labourCentsFor(one.lines[1], DANA_MINS),
+    40000,
+  );
+  check("flat lines add back to the budget", sumTerms(one.lines).flatCents, flat400.flatCents);
+
+  // 2 — hourly is a rate, and the money follows each tech's own clock.
+  const two = splitTerms(hourly80, pair, "EVEN");
+  check("hourly $80 splits to $40 each", two.lines.map((l) => l.hourlyCents).join("/"), "4000/4000");
+  check("Terry's 6h 12m at $40", labourCentsFor(two.lines[0], TERRY_MINS), 24800);
+  check("Dana's 3h at $40", labourCentsFor(two.lines[1], DANA_MINS), 12000);
+  check("hourly lines add back to the rate", sumTerms(two.lines).hourlyCents, hourly80.hourlyCents);
+
+  // 3 — the flat covers each tech's OWN first hours.
+  const three = splitTerms(mixed, pair, "EVEN");
+  check(
+    "flat + hourly splits both halves",
+    three.lines.map((l) => `${l.flatCents}+${l.hourlyCents}`).join("/"),
+    "10000+4000/10000+4000",
+  );
+  check("Terry: $100 then 4h 12m at $40", labourCentsFor(three.lines[0], TERRY_MINS), 26800);
+  check("Dana: $100 then 1h at $40", labourCentsFor(three.lines[1], DANA_MINS), 14000);
+  check(
+    "Dana leaving early does not hand her hours to Terry",
+    labourCentsFor(three.lines[0], TERRY_MINS) + labourCentsFor(three.lines[1], DANA_MINS),
+    40800,
+  );
+
+  // 4 — one tech takes the budget whole.
+  const solo = splitTerms(flat400, [terry], "EVEN");
+  check("a single tech gets the whole budget", solo.lines[0].flatCents, 40000);
+  check("a single tech holds every basis point", solo.shares[0], 10000);
+
+  // 5 — non-billable for one person is a share of nothing, not other terms.
+  const excluded = splitTerms(flat400, [terry, { ...dana, excluded: true }], "EVEN");
+  check("the excluded line reads non-billable", excluded.lines[1].payType, "NON_BILLABLE");
+  check("the rest takes the whole budget", excluded.lines[0].flatCents, 40000);
+  check("the job stays on its own terms", excluded.lines[0].payType, "FLAT");
+  check("excluding somebody leaves the total alone", sumTerms(excluded.lines).flatCents, 40000);
+
+  // 6 — the case three independent roundings would get wrong.
+  const trio = splitTerms(flat400, [terry, dana, sam], "EVEN");
+  check("three-way flat", trio.lines.map((l) => l.flatCents).join("/"), "13334/13333/13333");
+  check(
+    "three-way flat still adds to $400.00 exactly",
+    trio.lines.reduce((sum, l) => sum + l.flatCents, 0),
+    40000,
+  );
+  const trioHourly = splitTerms(hourly80, [terry, dana, sam], "EVEN");
+  check(
+    "three-way hourly adds to $80.00/hr exactly",
+    trioHourly.lines.reduce((sum, l) => sum + l.hourlyCents, 0),
+    8000,
+  );
+
+  // The second distribution mode: the tech's own rate decides proportions.
+  const weighted = splitTerms(flat400, pair, "BY_TECH_RATE");
+  check(
+    "by tech rate weights the split",
+    weighted.lines.map((l) => l.flatCents).join("/"),
+    "20966/19034",
+  );
+  check(
+    "a weighted split still adds up",
+    weighted.lines.reduce((sum, l) => sum + l.flatCents, 0),
+    40000,
+  );
+
+  // Manual moves money between people; it cannot change how much there is.
+  const short = splitTerms(
+    flat400,
+    [
+      { ...terry, basisPoints: 6500 },
+      { ...dana, basisPoints: 2500 },
+    ],
+    "MANUAL",
+  );
+  check("a short manual split is caught", splitError(short.shares)?.includes("unallocated"), true);
+  check("a balanced split has nothing to say", splitError([6500, 3500]), null);
+  check(
+    "a split that allocates nothing is refused",
+    splitError([0, 0])?.includes("Nothing is allocated"),
+    true,
+  );
+
+  // Zero is not a rate.
+  const zero = (payType: "FLAT" | "HOURLY" | "FLAT_HOURLY", flatCents: number, hourlyCents: number) =>
+    normaliseTerms({ payType, flatCents, flatMinutes: 120, hourlyCents }).payType;
+  check("a flat of nothing is non-billable", zero("FLAT", 0, 0), "NON_BILLABLE");
+  check("an hourly of nothing is non-billable", zero("HOURLY", 0, 0), "NON_BILLABLE");
+  check("flat + hourly with no flat is just hourly", zero("FLAT_HOURLY", 0, 8000), "HOURLY");
+  check("flat + hourly with no rate is just flat", zero("FLAT_HOURLY", 20000, 0), "FLAT");
+  check("flat + hourly with neither is non-billable", zero("FLAT_HOURLY", 0, 0), "NON_BILLABLE");
+
+  // Splitting a job rate is allowed; going quiet about it is not.
+  check("a third of $80/hr is under Terry's own $38", underOwnRate(trioHourly.lines[0], 3800), true);
+  check("half of $80/hr is not", underOwnRate(two.lines[0], 3800), false);
+  check("a flat share has no rate to be under", underOwnRate(one.lines[0], 3800), false);
+}
+
 async function main() {
   // --- fixtures -----------------------------------------------------------
   const boss = await db.user.findUniqueOrThrow({
@@ -2896,13 +3045,39 @@ async function main() {
     buildPayrollPeriod,
   } = await import("@/lib/payroll");
 
-  check("hourly pay to the cent", labourCents("HOURLY", "45.00", 450), 33750);
-  check("flat pays once, whatever the hours", labourCents("FLAT", "250", 450), 25000);
-  check("non-billable pays nothing", labourCents("NON_BILLABLE", "45", 450), 0);
+  const hourly = (rate: string) => ({ payType: "HOURLY" as const, payRate: rate });
+  const flat = (rate: string) => ({ payType: "FLAT" as const, payRate: rate });
+
+  check("hourly pay to the cent", labourCents(hourly("45.00"), 450), 33750);
+  check("flat pays once, whatever the hours", labourCents(flat("250"), 450), 25000);
+  check(
+    "non-billable pays nothing",
+    labourCents({ payType: "NON_BILLABLE", payRate: "45" }, 450),
+    0,
+  );
   // Cents throughout: a third of an hour at $45 must not drift.
-  check("odd minutes round to the cent", labourCents("HOURLY", "45", 20), 1500);
+  check("odd minutes round to the cent", labourCents(hourly("45"), 20), 1500);
+  // The flat covers this tech's own first two hours; the rate starts after.
+  check(
+    "flat + hourly charges only past the hours the flat covered",
+    labourCents(
+      { payType: "FLAT_HOURLY", payRate: "40.00", payFlat: "100.00", payFlatHours: "2" },
+      372,
+    ),
+    26800,
+  );
+  check(
+    "flat + hourly inside the covered hours is just the flat",
+    labourCents(
+      { payType: "FLAT_HOURLY", payRate: "40.00", payFlat: "100.00", payFlatHours: "2" },
+      90,
+    ),
+    10000,
+  );
   check("cents render back cleanly", fromCents(33750), "337.50");
   check("decimal strings convert to cents", toCents("12.34"), 1234);
+
+  await budgetSplits();
 
   // A week is filed under the month its Monday falls in, so a straddling week
   // is counted once and by its start.

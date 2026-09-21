@@ -1,3 +1,4 @@
+import { assignmentTerms, labourCentsFor } from "@/lib/budget";
 import {
   endOfWeekMonday,
   isoDateInZone,
@@ -5,6 +6,8 @@ import {
   zonedParts,
 } from "@/lib/datetime";
 import { db } from "@/lib/db";
+import type { Moneyish } from "@/lib/money";
+import { fromCents, toCents } from "@/lib/money";
 import { assignmentTotals } from "@/lib/time-tracking";
 import type { PayType } from "@prisma-client";
 
@@ -74,23 +77,28 @@ export function expectedPayDate(weekEnd: Date, lagWeeks: number): Date {
 
 // --- money -----------------------------------------------------------------
 
-export function toCents(value: string | number | { toString(): string }): number {
-  return Math.round(Number(value.toString()) * 100);
-}
+// The conversions themselves live in money.ts, which no database handle
+// reaches, so the budget editor can do the same arithmetic in the browser.
+// Re-exported here because this is where the rest of the app looks for them.
+export { fromCents, toCents } from "@/lib/money";
 
-export function fromCents(cents: number): string {
-  return (cents / 100).toFixed(2);
-}
-
+/**
+ * One tech's labour for the minutes they were paid for.
+ *
+ * Takes the line rather than three loose arguments: since Flat + Hourly, the
+ * terms are two numbers and an hour count, and passing them positionally is
+ * how the wrong one ends up in the wrong slot.
+ */
 export function labourCents(
-  payType: PayType,
-  rate: string | { toString(): string },
+  line: {
+    payType: PayType;
+    payRate: Moneyish;
+    payFlat?: Moneyish | null;
+    payFlatHours?: Moneyish | null;
+  },
   paidMinutes: number,
 ): number {
-  if (payType === "NON_BILLABLE") return 0;
-  const rateCents = toCents(rate);
-  if (payType === "FLAT") return rateCents;
-  return Math.round((rateCents * paidMinutes) / 60);
+  return labourCentsFor(assignmentTerms(line), paidMinutes);
 }
 
 // --- building a week -------------------------------------------------------
@@ -136,6 +144,8 @@ export async function draftWeek(
       id: true,
       payType: true,
       payRate: true,
+      payFlat: true,
+      payFlatHours: true,
       travelReimbursement: true,
       job: {
         select: {
@@ -179,11 +189,7 @@ export async function draftWeek(
         .filter((entry) => types.includes(entry.type))
         .reduce((total, entry) => total + toCents(entry.amount), 0);
 
-    const labour = labourCents(
-      assignment.payType,
-      assignment.payRate,
-      Math.round(totals.paidMinutes),
-    );
+    const labour = labourCents(assignment, Math.round(totals.paidMinutes));
     const travel = assignment.travelReimbursement
       ? toCents(assignment.travelReimbursement)
       : 0;

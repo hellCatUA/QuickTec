@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { siteLabel } from "@/lib/address";
 import { recordAudit } from "@/lib/audit";
+import { resplitJob } from "@/lib/budget-split";
 import { syncJobInBackground } from "@/lib/calendar/sync";
 import {
   clockAuthority,
@@ -956,6 +957,11 @@ export async function assignTech(formData: FormData): Promise<ActionResult> {
     },
   });
 
+  // A budget is shared between whoever is on the job, so one more person
+  // changes what everybody is on. The line written just above is a starting
+  // point that this immediately overwrites on a budgeted job.
+  await resplitJob(jobId);
+
   await recordAudit({
     actorId: user.id,
     entityType: "Job",
@@ -1041,6 +1047,9 @@ export async function unassignTech(formData: FormData): Promise<ActionResult> {
   }
 
   await db.jobAssignment.delete({ where: { id: assignment.id } });
+
+  // Their share goes back into the pot rather than out of the door with them.
+  await resplitJob(jobId);
 
   await recordAudit({
     actorId: user.id,

@@ -41,6 +41,8 @@ export async function computeStats(
     select: {
       payType: true,
       payRate: true,
+      payFlat: true,
+      payFlatHours: true,
       travelReimbursement: true,
       job: {
         select: {
@@ -88,8 +90,7 @@ export async function computeStats(
     stats.onsiteMinutes += totals.onsiteMinutes;
     stats.paidMinutes += totals.paidMinutes;
     stats.earnedCents += labourCents(
-      assignment.payType,
-      assignment.payRate,
+      assignment,
       Math.round(totals.paidMinutes),
     );
 
