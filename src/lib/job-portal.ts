@@ -1,6 +1,6 @@
-import { jobTerms } from "@/lib/budget";
+import { describeTerms, jobTerms } from "@/lib/budget";
 import { db } from "@/lib/db";
-import { formatRate } from "@/lib/money";
+import { LIFECYCLE_META } from "@/lib/job-status";
 import { canOnJob } from "@/lib/scope";
 import { assignmentTotals } from "@/lib/time-tracking";
 import type { SessionUser } from "@/lib/session";
@@ -70,18 +70,6 @@ export type Portal = {
   items: PortalItem[];
 };
 
-const STAGE: Record<string, string> = {
-  DRAFT: "Draft",
-  PENDING_APPROVAL: "Pending approval",
-  SCHEDULED: "Scheduled",
-  IN_PROGRESS: "In progress",
-  PENDING_REVIEW: "Pending review",
-  CHANGES_REQUESTED: "Sent back",
-  APPROVED: "Approved",
-  REJECTED: "Rejected",
-  BILLED: "Billed",
-};
-
 /** Work is done and the report is in somebody's hands. */
 const AFTER_CHECKOUT = new Set([
   "PENDING_REVIEW",
@@ -117,6 +105,7 @@ export async function loadPortal(
         select: {
           userId: true,
           supervisorId: true,
+          isLead: true,
           user: { select: { name: true, directSupervisorId: true } },
           visits: {
             select: {
@@ -170,8 +159,16 @@ export async function loadPortal(
         one.user.directSupervisorId === user.id,
     ) || Boolean(job.project && job.project.managerId === user.id);
 
+  // The job's lead is on site and answerable for what it records, so the
+  // crew's punches are theirs to correct as much as a supervisor's. The job
+  // page says the same thing in the same words; if the two ever disagree, the
+  // menu offers a door that opens on a 404.
+  const isLead = job.assignments.some(
+    (one) => one.userId === user.id && one.isLead,
+  );
+
   const canSetPay = canEditRates && (paysForThis || job.createdById === user.id);
-  const canFixClocks = canAdjustTime && (canEditPlanned || paysForThis);
+  const canFixClocks = canAdjustTime && (canEditPlanned || isLead || paysForThis);
   const canRevisit =
     can(user, "job.create") &&
     (paysForThis ||
@@ -279,19 +276,16 @@ export async function loadPortal(
       state: onTheClock.length > 0
         ? `${crew} · on the clock ${hoursAndMinutes(minutes)}`
         : terms
-          ? `${crew} · ${formatRate(
-              terms.payType,
-              (terms.hourlyCents / 100).toFixed(2),
-              {
-                amount: (terms.flatCents / 100).toFixed(2),
-                minutes: terms.flatMinutes,
-              },
-            )}`
+          ? `${crew} · ${describeTerms(terms)}`
           : `${crew} · no budget set`,
       group: "admin",
       icon: "schedule",
       locked: null,
+      // The punches and the money are this person's to change; the schedule is
+      // a planner's decision. A bare badge over the three of them would be
+      // wrong twice, so it says which half it means.
       needsApproval: !canEditPlanned,
+      more: canEditPlanned ? undefined : ["Schedule changes require approval"],
     });
   }
 
@@ -319,7 +313,7 @@ export async function loadPortal(
     jobId: job.id,
     title: job.title,
     intWoId: job.intWoId,
-    stage: STAGE[job.lifecycle] ?? job.lifecycle,
+    stage: LIFECYCLE_META[job.lifecycle].label,
     open: canFixClocks || canSetPay || canRevisit || canApproveJob,
     reach: reachSentence({
       canEditPlanned,
@@ -371,10 +365,19 @@ function timeOnly(at: Date): string {
   return at.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 }
 
-function titleCase(value: string): string {
-  return value
-    .toLowerCase()
-    .split("_")
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ");
+/**
+ * Where Back goes from a page the portal opens.
+ *
+ * Whoever has the portal reached this page through it, because that is the
+ * only place its tile is offered — the job's own menu shows the destination
+ * directly only to somebody who has no portal. So the same question that
+ * decides where the link is decides where Back returns to, and neither a
+ * query parameter nor the browser's history has to be trusted for it.
+ */
+export async function portalBackHref(
+  jobId: string,
+  user: SessionUser,
+): Promise<string> {
+  const portal = await loadPortal(jobId, user);
+  return portal?.open ? `/jobs/${jobId}/manage` : `/jobs/${jobId}`;
 }

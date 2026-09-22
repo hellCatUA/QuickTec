@@ -16,6 +16,7 @@ import {
 } from "@/lib/job-review";
 import { isJobField, JOB_FIELDS } from "@/lib/job-fields";
 import { visitTotals } from "@/lib/time-tracking";
+import type { JobLifecycle } from "@prisma-client";
 
 /**
  * The four passes of a report review, assembled from the job.
@@ -46,7 +47,7 @@ export type ReviewJob = {
   id: string;
   title: string;
   intWoId: string;
-  lifecycle: string;
+  lifecycle: JobLifecycle;
   projectId: string | null;
   createdById: string;
   assigneeIds: string[];

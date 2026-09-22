@@ -1,16 +1,16 @@
 import { notFound, redirect } from "next/navigation";
 import { PageHeader } from "@/components/ui/page-header";
 import { formatAddress, siteLabel } from "@/lib/address";
-import { getCompanySettings } from "@/lib/company";
-import { toDatetimeLocalInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
 import { detailsEditable } from "@/lib/job-fields";
+import { portalBackHref } from "@/lib/job-portal";
 import { canOnJob } from "@/lib/scope";
 import { getSessionUser } from "@/lib/session";
 
 import { DetailsForm } from "./details-form";
 
-export const metadata = { title: "Edit job details" };
+// Named after the tile that opens it.
+export const metadata = { title: "Job details" };
 
 /**
  * Correcting what the job was raised as, while it is being worked.
@@ -48,11 +48,7 @@ export default async function EditDetailsPage({
       externalAssignmentId: true,
       ticketNumber: true,
       incNumber: true,
-      scheduledStart: true,
-      estimateMinutes: true,
-      techsRequired: true,
       scopeOfWork: true,
-      site: { select: { timeZone: true } },
       assignments: { select: { userId: true } },
       changeRequests: {
         where: { status: "PENDING", requestedById: user.id },
@@ -81,9 +77,6 @@ export default async function EditDetailsPage({
   // Signed off is a record, so it stops at whoever can overrule a planner —
   // and it stops there outright, because a suggestion after sign-off has
   // nothing left to be approved against.
-  const company = await getCompanySettings();
-  const zone = job.site.timeZone ?? company.defaultTimeZone;
-
   const open = detailsEditable(job.lifecycle) || canEditPlanned;
   const settled = !detailsEditable(job.lifecycle);
 
@@ -101,23 +94,26 @@ export default async function EditDetailsPage({
       state: true,
       postalCode: true,
       country: true,
+      customerId: true,
       customer: { select: { code: true, name: true } },
     },
   });
 
-  // Searchable by the customer's name as well as the number, because "the
-  // Truman Health one" is how somebody standing at the wrong door describes it.
+  // The customer is picked separately, so the site's own line is its number and
+  // address rather than the customer's name repeated down the list. Still
+  // searchable by the customer, because somebody who has not narrowed it yet
+  // types "Truman" first.
   const options = sites.map((site) => ({
     value: site.id,
-    label: `${site.customer.name} · ${
-      site.numberPending
-        ? "number pending"
-        : siteLabel(site.customer.code, site.siteNumber)
-    }`,
+    label: site.numberPending
+      ? "Number pending"
+      : siteLabel(site.customer.code, site.siteNumber),
     hint: formatAddress(site),
-    keywords: [site.name, site.customer.code, site.siteNumber]
+    keywords: [site.name, site.customer.name, site.customer.code, site.siteNumber]
       .filter(Boolean)
       .join(" "),
+    customerId: site.customerId,
+    customerName: site.customer.name,
   }));
 
   const pending: Record<string, string> = {};
@@ -128,8 +124,8 @@ export default async function EditDetailsPage({
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-4">
       <PageHeader
-        title="Edit job details"
-        backHref={`/jobs/${job.id}`}
+        title="Job details"
+        backHref={await portalBackHref(job.id, user)}
         description={`${job.title} · ${job.intWoId}`}
       />
 
@@ -158,15 +154,6 @@ export default async function EditDetailsPage({
               externalAssignmentId: job.externalAssignmentId ?? "",
               ticketNumber: job.ticketNumber ?? "",
               incNumber: job.incNumber ?? "",
-              // Site-local, which is what the planner typed and what the job
-              // page renders. Read as anything else it would move the job.
-              scheduledStart: job.scheduledStart
-                ? toDatetimeLocalInZone(job.scheduledStart, zone)
-                : "",
-              estimateMinutes: job.estimateMinutes
-                ? String(job.estimateMinutes)
-                : "",
-              techsRequired: String(job.techsRequired),
               scopeOfWork: job.scopeOfWork ?? "",
             }}
             sites={options}

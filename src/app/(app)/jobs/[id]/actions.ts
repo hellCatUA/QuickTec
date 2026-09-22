@@ -1464,17 +1464,25 @@ export async function reviewChangeRequest(
 // Editing the job's details
 // ---------------------------------------------------------------------------
 
+/**
+ * Every field is optional because two forms post here.
+ *
+ * The job's details and its schedule are one set of fields under one set of
+ * rules, split across two pages because that is where somebody looks for them.
+ * A form sends what it holds and nothing else; a field that was not sent is a
+ * field nobody touched, not a field cleared.
+ */
 const detailsSchema = z.object({
   jobId: z.string().min(1),
-  siteId: z.string().trim(),
-  externalAssignmentId: z.string().trim(),
-  ticketNumber: z.string().trim(),
-  incNumber: z.string().trim(),
+  siteId: z.string().trim().optional(),
+  externalAssignmentId: z.string().trim().optional(),
+  ticketNumber: z.string().trim().optional(),
+  incNumber: z.string().trim().optional(),
   /** Site-local, as the box showed it. coerceField reads it in the job's zone. */
-  scheduledStart: z.string().trim(),
-  estimateMinutes: z.string().trim(),
-  techsRequired: z.string().trim(),
-  scopeOfWork: z.string(),
+  scheduledStart: z.string().trim().optional(),
+  estimateMinutes: z.string().trim().optional(),
+  techsRequired: z.string().trim().optional(),
+  scopeOfWork: z.string().optional(),
   /** Carried onto every suggestion the save raises. */
   reason: z.string().trim().optional(),
 });
@@ -1547,6 +1555,8 @@ export async function saveJobDetails(
 
   for (const field of DETAIL_FIELDS) {
     const wanted = parsed.data[field];
+    // Not on the form that posted: not this form's business.
+    if (wanted === undefined) continue;
     // A datetime arrives site-local and is stored as an instant, so the two
     // are only comparable once the incoming one has been read the same way.
     const previous =
@@ -2186,26 +2196,19 @@ export async function deleteJobDispatchContact(
 }
 
 // ---------------------------------------------------------------------------
-// What this job pays
+// Travel
 // ---------------------------------------------------------------------------
 
 /**
- * Sets the rate and travel money for everybody on this job.
+ * What the customer allocates for travel on this job.
  *
- * A rate arrives from the tech, the project or the company, and every so often
- * a single job is none of those — overtime rates for a weekend cutover, a flat
- * fee somebody negotiated. Per job rather than per tech on the job: the
- * negotiation was about the work, and two people doing the same work on the
- * same night at different rates is a mistake far more often than an intent.
- *
- * Payroll lines snapshot what they were built from, so anything already paid
- * keeps the number it was paid at. A week that has been approved is refused
- * anyway — the screen would then disagree with the payment.
+ * All this section used to hold was one rate stamped onto everybody, which a
+ * total tech budget replaced: two ways to set the same money is one way too
+ * many, and whichever ran last would win silently. Travel outlived it, because
+ * it is a reimbursement rather than wages and the budget does not cover it.
  */
-export async function setJobPay(formData: FormData): Promise<ActionResult> {
+export async function setJobTravel(formData: FormData): Promise<ActionResult> {
   const jobId = String(formData.get("jobId") ?? "");
-  const payType = String(formData.get("payType") ?? "").trim();
-  const payRate = String(formData.get("payRate") ?? "").trim();
   const travel = String(formData.get("travelReimbursement") ?? "").trim();
 
   const context = await loadContext(jobId);
@@ -2216,65 +2219,32 @@ export async function setJobPay(formData: FormData): Promise<ActionResult> {
     return fail("You cannot change what this job pays.");
   }
 
-  // The older model — one rate stamped onto everybody — cannot coexist with a
-  // budget, which is one total shared between them. Whichever ran last would
-  // win silently, and the loser would still be on screen somewhere.
-  if (await budgetOf(jobId)) {
-    return fail(
-      "This job is on a total tech budget. Change the budget instead — one rate applied to everybody would stop the crew's lines adding up to it.",
-    );
-  }
-
-  if (!payType || !(payType in JobPayType)) return fail("Pick a pay type.");
-  const rate = Number(payRate);
-  if (!Number.isFinite(rate) || rate < 0) {
-    return fail("Enter a rate of zero or more.");
-  }
-  const travelAmount = travel === "" ? null : Number(travel);
-  if (
-    travelAmount !== null &&
-    (!Number.isFinite(travelAmount) || travelAmount < 0)
-  ) {
+  const amount = travel === "" ? null : Number(travel);
+  if (amount !== null && (!Number.isFinite(amount) || amount < 0)) {
     return fail("Enter a travel amount of zero or more.");
   }
 
-  const settled = await db.payrollLine.count({
-    where: {
-      assignment: { jobId },
-      payrollPeriod: { status: { not: "DRAFT" } },
-    },
-  });
-  if (settled > 0) {
+  if (await alreadyPaid({ jobId })) {
     return fail(
-      "This job is in a payroll week that has already been approved. Changing the rate now would disagree with what was paid.",
+      "This job is in a payroll week that has already been approved. Changing travel now would disagree with what was paid.",
     );
   }
 
-  const before = await db.jobAssignment.findMany({
-    where: { jobId },
-    select: { payType: true, payRate: true },
+  const before = await db.job.findUniqueOrThrow({
+    where: { id: jobId },
+    select: { travelReimbursement: true },
   });
 
   await db.$transaction([
-    // On the job, so somebody assigned tomorrow gets it too.
     db.job.update({
       where: { id: jobId },
-      data: {
-        payType: payType as JobPayType,
-        payRate: payRate,
-        travelReimbursement: travelAmount === null ? null : travel,
-      },
+      data: { travelReimbursement: amount === null ? null : travel },
     }),
-    // Anybody deliberately put on a different rate keeps it — saying so is
-    // the whole point of having said so.
+    // Anybody deliberately put on their own figure keeps it, the same rule the
+    // rate follows.
     db.jobAssignment.updateMany({
       where: { jobId, payOverridden: false },
-      data: {
-        payType: payType as JobPayType,
-        payRate: payRate,
-        payRateNote: "Set on this job",
-        travelReimbursement: travelAmount === null ? null : travel,
-      },
+      data: { travelReimbursement: amount === null ? null : travel },
     }),
   ]);
 
@@ -2285,12 +2255,9 @@ export async function setJobPay(formData: FormData): Promise<ActionResult> {
     jobId,
     action: "pay_changed",
     detail: {
-      field: "Pay",
-      from: before[0]
-        ? `${before[0].payType} ${before[0].payRate.toString()}`
-        : null,
-      to: `${payType} ${payRate}`,
-      who: `${before.length} on the job`,
+      field: "Travel reimbursement",
+      from: before.travelReimbursement?.toString() ?? null,
+      to: amount === null ? null : travel,
     },
   });
 

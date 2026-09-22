@@ -86,6 +86,39 @@ export function Punches({
   );
 }
 
+/**
+ * One person's block, to sit under their row in the crew list.
+ *
+ * Same block, minus the name and the role badge: the row above it is already
+ * that person, and saying so twice is how a list of two techs reads as a list
+ * of four.
+ */
+export function SinglePunch({
+  punch,
+  companyName,
+}: {
+  punch: Punch;
+  companyName: string;
+}) {
+  const [note, setNote] = React.useState<string | null>(null);
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      {note ? (
+        <p data-punch-note className="text-sm text-warning">
+          {note}
+        </p>
+      ) : null}
+      <PunchBlock
+        punch={punch}
+        companyName={companyName}
+        onNote={setNote}
+        compact
+      />
+    </div>
+  );
+}
+
 type Pane = "edit" | "add" | "remove" | "history" | null;
 
 /** A break as the form holds it, before it goes back as JSON. */
@@ -95,10 +128,13 @@ function PunchBlock({
   punch,
   companyName,
   onNote,
+  compact,
 }: {
   punch: Punch;
   companyName: string;
   onNote: (note: string | null) => void;
+  /** Sitting under the person's own row, which already names them. */
+  compact?: boolean;
 }) {
   const [menu, setMenu] = React.useState(false);
   const [pane, setPane] = React.useState<Pane>(null);
@@ -245,16 +281,27 @@ function PunchBlock({
         // A block with something wrong in it is picked out by its edge rather
         // than by reading four lines of every block on the page. Grey once
         // somebody has accepted the flags, because then it is a note.
-        flagged
-          ? "flex flex-col gap-2 rounded-lg border border-warning bg-warning/5 p-3"
-          : "flex flex-col gap-2 rounded-lg border border-border p-3"
+        //
+        // Compact sits inside the person's own card, so it carries no card of
+        // its own — only the warning edge, which is the part worth keeping.
+        compact
+          ? flagged
+            ? "flex flex-col gap-2 border-l-2 border-warning bg-warning/5 pl-2"
+            : "flex flex-col gap-2 border-l-2 border-border pl-2"
+          : flagged
+            ? "flex flex-col gap-2 rounded-lg border border-warning bg-warning/5 p-3"
+            : "flex flex-col gap-2 rounded-lg border border-border p-3"
       }
     >
       {/* items-start, not items-center: the menu belongs level with the name,
           and centring it dragged it down past the line below. */}
       <div className="flex items-start gap-2">
-        <h3 className="min-w-0 truncate text-sm font-semibold">{punch.who}</h3>
-        {punch.role ? (
+        {compact ? null : (
+          <h3 className="min-w-0 truncate text-sm font-semibold">
+            {punch.who}
+          </h3>
+        )}
+        {punch.role && !compact ? (
           <Badge variant="primary" className="shrink-0">
             {punch.role}
           </Badge>

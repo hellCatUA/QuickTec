@@ -179,6 +179,11 @@ export function MarkdownEditor({
   const buttonClass = cn(
     "flex min-h-11 items-center justify-center rounded-lg border border-border",
     "bg-surface-raised transition-colors hover:bg-muted active:bg-muted",
+    // A thumb-wide target on a phone, where the row is a grid of four and
+    // stretching is what makes them hittable. On a mouse they stop stretching
+    // and become buttons: nine controls a foot wide is a keyboard, not a
+    // toolbar.
+    "sm:w-11",
   );
 
   return (
@@ -210,7 +215,7 @@ export function MarkdownEditor({
       {/* Hidden rather than unmounted: the box keeps its caret, its scroll and
           its undo history while somebody checks the preview. */}
       <div className={cn("flex flex-col gap-1.5", tab === "write" || "hidden")}>
-        <div className="grid grid-cols-4 gap-1.5">
+        <div className="grid grid-cols-4 gap-1.5 sm:flex sm:flex-wrap">
           {BLOCK_TOOLS.map(({ block, label, Icon, lead }) => (
             <button
               key={block}
@@ -225,7 +230,7 @@ export function MarkdownEditor({
           ))}
         </div>
 
-        <div className="grid grid-cols-5 gap-1.5">
+        <div className="grid grid-cols-5 gap-1.5 sm:flex sm:flex-wrap">
           {INLINE_TOOLS.map(({ mark, label, Icon }) => (
             <button
               key={mark}

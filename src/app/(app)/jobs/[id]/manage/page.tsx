@@ -75,9 +75,10 @@ export default async function ManagerPortalPage({
       <PortalGrid label="Job administration" items={admin} />
 
       <p className="text-[11px] leading-relaxed text-muted-foreground">
-        Locked items keep their place, so the grid never reshuffles as the job
-        moves on. Nothing here is hidden from you — what you cannot change
-        outright, you can ask for in the same place.
+        Nothing here is hidden from you: what is not available yet stays in
+        place, greyed, saying why, and what you cannot change outright you can
+        ask for in the same place. Only something actually waiting on you moves
+        up to the top.
       </p>
     </div>
   );

@@ -48,6 +48,7 @@ export function CrewPanel({
   canReassign,
   canEditPay,
   budgeted,
+  punchOf,
 }: {
   jobId: string;
   crew: CrewMember[];
@@ -63,6 +64,11 @@ export function CrewPanel({
    * decision about everybody, made in the budget editor.
    */
   budgeted: boolean;
+  /**
+   * What each person clocked, by assignment id, rendered under their row.
+   * Absent where the reader has no business seeing the crew's clocks.
+   */
+  punchOf?: Record<string, React.ReactNode>;
 }) {
   const [error, setError] = React.useState<string | null>(null);
   const [adding, setAdding] = React.useState(false);
@@ -104,8 +110,9 @@ export function CrewPanel({
         crew.map((member) => (
           <div
             key={member.id}
-            className="flex flex-wrap items-center gap-2 rounded-lg border border-border p-2 text-sm"
+            className="flex flex-col gap-2 rounded-lg border border-border p-2 text-sm"
           >
+            <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium">{member.name}</span>
             {member.isLead ? <Badge variant="primary">Lead</Badge> : null}
             {member.onSite ? <Badge variant="success">On site</Badge> : null}
@@ -167,6 +174,12 @@ export function CrewPanel({
                 {member.payNote}
               </span>
             ) : null}
+            </div>
+
+            {/* Their day, under their name. Two lists of the same people, one
+                headed Crew and one headed Punches, meant reading a name twice
+                to answer one question about one person. */}
+            {punchOf?.[member.id] ?? null}
           </div>
         ))
       )}

@@ -27,22 +27,6 @@ function check(label: string, actual: unknown, expected: unknown) {
   );
 }
 
-/** The job page's blocks are collapsible, so a hidden control is not a gone one. */
-async function openSection(
-  page: import("playwright").Page,
-  title: string | RegExp,
-) {
-  const summary = page.locator("summary", {
-    hasText: typeof title === "string" ? new RegExp(`^${title}`) : title,
-  });
-  await summary.first().waitFor({ state: "visible", timeout: 15_000 });
-  const details = summary.first().locator("xpath=..");
-  if ((await details.getAttribute("open")) === null) {
-    await summary.first().click();
-    await page.waitForTimeout(200);
-  }
-}
-
 async function tokenFor(email: string) {
   const user = await db.user.findUniqueOrThrow({ where: { email } });
   return encode({
@@ -96,11 +80,12 @@ async function main() {
   const page = await context.newPage();
 
   // --- the budget owns the crew's lines, so a per-tech rate has no door ----
-  await page.goto(`${BASE}/jobs/${job.id}`, { waitUntil: "load" });
+  // The crew lives with the schedule and the budget now; the job page shows it
+  // and changes nothing.
+  await page.goto(`${BASE}/jobs/${job.id}/manage/schedule`, { waitUntil: "load" });
   await page.waitForTimeout(900);
-  await openSection(page, /Crew/);
   check(
-    "the crew block is open, so a missing control is missing rather than folded",
+    "the crew is on the page, so a missing control is missing rather than elsewhere",
     await page.getByRole("button", { name: "Add a tech", exact: true }).count(),
     1,
   );
@@ -111,8 +96,6 @@ async function main() {
   );
 
   // --- and the old whole-job rate form is not offered either ---------------
-  await page.goto(`${BASE}/jobs/${job.id}/manage/schedule`, { waitUntil: "load" });
-  await page.waitForTimeout(900);
   check(
     "the older one-rate-for-everybody card is put away",
     await page.getByRole("heading", { name: "Pay, the old way" }).count(),
@@ -168,9 +151,8 @@ async function main() {
     select: { id: true, name: true },
   });
 
-  await page.goto(`${BASE}/jobs/${job.id}`, { waitUntil: "load" });
+  await page.goto(`${BASE}/jobs/${job.id}/manage/schedule`, { waitUntil: "load" });
   await page.waitForTimeout(900);
-  await openSection(page, /Crew/);
   await page.getByRole("button", { name: "Add a tech", exact: true }).click();
   await page.waitForTimeout(400);
   // The picker is a combobox: a button that opens a search field.

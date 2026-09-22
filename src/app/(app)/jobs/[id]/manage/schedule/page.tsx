@@ -7,13 +7,20 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
+import { assignmentTerms, describeTerms } from "@/lib/budget";
+import { getCompanySettings } from "@/lib/company";
+import { toDatetimeLocalInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
+import { detailsEditable } from "@/lib/job-fields";
 import { toCents } from "@/lib/money";
 import { loadPunchBlocks } from "@/lib/punch-blocks";
+import { canOnJob } from "@/lib/scope";
 import { getSessionUser } from "@/lib/session";
-import { JobPay } from "../../job-pay";
+import { CrewPanel } from "../../crew-panel";
 import { BudgetForm } from "./budget-form";
-import { Punches } from "./punches";
+import { SinglePunch } from "./punches";
+import { ScheduleForm } from "./schedule-form";
+import { TravelForm } from "./travel-form";
 
 export async function generateMetadata({
   params,
@@ -61,25 +68,109 @@ export default async function ManagePage({
       id: true,
       title: true,
       intWoId: true,
-      payType: true,
-      payRate: true,
+      lifecycle: true,
+      projectId: true,
+      createdById: true,
       travelReimbursement: true,
+      scheduledStart: true,
+      estimateMinutes: true,
+      techsRequired: true,
       budgetType: true,
       budgetFlat: true,
       budgetFlatHours: true,
       budgetHourly: true,
       budgetSplit: true,
+      site: { select: { timeZone: true } },
+      project: { select: { travelReimbursement: true } },
       assignments: {
         orderBy: [{ isLead: "desc" }, { createdAt: "asc" }],
         select: {
           id: true,
+          userId: true,
           isLead: true,
           shareBasisPoints: true,
+          payType: true,
+          payRate: true,
+          payFlat: true,
+          payFlatHours: true,
+          payRateNote: true,
+          payOverridden: true,
+          travelReimbursement: true,
+          supervisor: { select: { name: true } },
           user: { select: { name: true, defaultPayRate: true } },
+          visits: { select: { clockInAt: true, clockOutAt: true } },
+          _count: { select: { deliverables: true } },
         },
+      },
+      changeRequests: {
+        where: { status: "PENDING", requestedById: user.id },
+        select: { fieldPath: true, newValue: true },
       },
     },
   });
+
+  const jobRef = {
+    projectId: job.projectId,
+    assigneeIds: job.assignments.map((assignment) => assignment.userId),
+    createdById: job.createdById,
+  };
+  const [
+    canEditPlanned,
+    canFillMissing,
+    canSuggest,
+    canAssign,
+    canReassign,
+    canEditRates,
+    showPay,
+  ] = await Promise.all([
+    canOnJob(user, "job.edit_planned_fields", jobRef),
+    canOnJob(user, "job.fill_missing_field", jobRef),
+    canOnJob(user, "job.suggest_change", jobRef),
+    canOnJob(user, "job.assign", jobRef),
+    canOnJob(user, "job.reassign", jobRef),
+    canOnJob(user, "pay.edit_rates", jobRef),
+    canOnJob(user, "pay.view_rates", jobRef),
+  ]);
+
+  // Only fetched for somebody who can act on it, so the page never carries the
+  // staff list for the sake of it.
+  const crewCandidates = canAssign
+    ? await db.user.findMany({
+        where: { active: true },
+        orderBy: { name: "asc" },
+        select: { id: true, name: true, baseRole: true },
+      })
+    : [];
+
+  // Signed off is a record: it stops at whoever can overrule a planner, and it
+  // stops there outright, because a suggestion after sign-off has nothing left
+  // to be approved against.
+  const scheduleOpen =
+    (detailsEditable(job.lifecycle) || canEditPlanned) &&
+    (canEditPlanned || canFillMissing || canSuggest);
+
+  const company = await getCompanySettings();
+  const zone = job.site.timeZone ?? company.defaultTimeZone;
+
+  const pendingByField: Record<string, string> = {};
+  for (const request of job.changeRequests) {
+    pendingByField[request.fieldPath] = request.newValue ?? "(cleared)";
+  }
+
+  // Each person's clocks, to sit under their own row rather than in a second
+  // list of the same people further down the page.
+  const punchOf = blocks.visible
+    ? Object.fromEntries(
+        blocks.punches.map((punch) => [
+          punch.assignmentId,
+          <SinglePunch
+            key={punch.assignmentId}
+            punch={punch}
+            companyName={blocks.companyName}
+          />,
+        ]),
+      )
+    : undefined;
 
   const crew = job.assignments.map((assignment) => ({
     assignmentId: assignment.id,
@@ -99,15 +190,87 @@ export default async function ManagePage({
         description={`Manager Portal · ${job.intWoId}`}
       />
 
-      {blocks.visible ? (
+      {scheduleOpen ? (
         <Card>
           <CardHeader>
-            <CardTitle>TimeClock Punches</CardTitle>
+            <CardTitle>Schedule</CardTitle>
+            <CardDescription>
+              When the crew is due, how long it is expected to take and how
+              many go.
+            </CardDescription>
           </CardHeader>
           <CardContent>
-            <Punches
-              punches={blocks.punches}
-              companyName={blocks.companyName}
+            <ScheduleForm
+              jobId={job.id}
+              values={{
+                // Site-local, which is what the planner typed and what the job
+                // page renders. Read as anything else it would move the job.
+                scheduledStart: job.scheduledStart
+                  ? toDatetimeLocalInZone(job.scheduledStart, zone)
+                  : "",
+                estimateMinutes: job.estimateMinutes
+                  ? String(job.estimateMinutes)
+                  : "",
+                techsRequired: String(job.techsRequired),
+              }}
+              canEditPlanned={canEditPlanned}
+              canFillMissing={canFillMissing}
+              canSuggest={canSuggest}
+              pending={pendingByField}
+            />
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {canAssign || canReassign || blocks.visible ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Crew &amp; punches</CardTitle>
+            <CardDescription>
+              Who is on the job and what each of them clocked. One block rather
+              than two, because they are the same list of people and the budget
+              below is split between them.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4">
+            <CrewPanel
+              jobId={job.id}
+              canAssign={canAssign}
+              canReassign={canReassign}
+              candidates={crewCandidates.map((person) => ({
+                id: person.id,
+                name: person.name,
+                role: person.baseRole,
+              }))}
+              canEditPay={canEditRates}
+              budgeted={Boolean(job.budgetType)}
+              crew={job.assignments.map((assignment) => ({
+                id: assignment.id,
+                userId: assignment.userId,
+                name: assignment.user.name,
+                payType: assignment.payType,
+                payRate: assignment.payRate.toString(),
+                travelReimbursement:
+                  assignment.travelReimbursement?.toString() ?? null,
+                payNote: showPay ? assignment.payRateNote : null,
+                overridden: assignment.payOverridden,
+                isLead: assignment.isLead,
+                onSite: assignment.visits.some(
+                  (visit) => visit.clockOutAt === null,
+                ),
+                hasWorked:
+                  assignment.visits.length > 0 ||
+                  assignment._count.deliverables > 0,
+                supervisorName: assignment.supervisor?.name ?? null,
+                rate: showPay
+                  ? `${describeTerms(assignmentTerms(assignment))}${
+                      assignment.travelReimbursement
+                        ? ` · travel $${Number(assignment.travelReimbursement).toFixed(2)}`
+                        : ""
+                    }`
+                  : null,
+              }))}
+              punchOf={punchOf}
             />
           </CardContent>
         </Card>
@@ -138,27 +301,28 @@ export default async function ManagePage({
         </Card>
       ) : null}
 
-      {blocks.canSetPay && !job.budgetType ? (
+      {blocks.canSetPay ? (
         <Card>
           <CardHeader>
-            <CardTitle>Pay, the old way</CardTitle>
+            <CardTitle>Travel</CardTitle>
             <CardDescription>
-              One rate applied to everybody, rather than a total shared between
-              them. Still here because every job raised before budgets is on
-              it; setting a budget above replaces it.
+              Paid on top of the budget. It is a reimbursement rather than
+              wages, so it is not split between the crew — everybody on the job
+              is allocated it.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <JobPay
+            <TravelForm
               jobId={job.id}
-              canEdit={blocks.canSetPay}
-              payType={job.payType ?? "HOURLY"}
-              payRate={job.payRate?.toString() ?? ""}
               travelReimbursement={job.travelReimbursement?.toString() ?? null}
               note={
-                job.payType
-                  ? "Applies to everybody on this job, including anybody added later. Somebody put on their own rate keeps it."
-                  : "Not set — everybody keeps their own rate, or the project's default where they have none."
+                job.travelReimbursement
+                  ? null
+                  : job.project?.travelReimbursement
+                    ? `Not set on this job — the project allocates $${Number(
+                        job.project.travelReimbursement,
+                      ).toFixed(2)}.`
+                    : "Not set — nobody is reimbursed for travel on this job."
               }
             />
           </CardContent>

@@ -406,16 +406,6 @@ export default async function JobPage({
       canOnJob(user, "job.adjust_time", jobRef),
     ]);
 
-  // Only fetched for someone who can actually act on it, so a tech's job page
-  // never carries the staff list.
-  const crewCandidates = canAssign
-    ? await db.user.findMany({
-        where: { active: true },
-        orderBy: { name: "asc" },
-        select: { id: true, name: true, baseRole: true },
-      })
-    : [];
-
   const [
     canUpload,
     canOverrideMissing,
@@ -1190,22 +1180,28 @@ export default async function JobPage({
                   : `${job.assignments.length} on the job`
               }
             >
-              {canAssign ? (
+              {/* Read-only here. Who is on a job is worth seeing while reading
+                  it; changing it is done to the job rather than on it, and
+                  lives with the schedule and the budget it decides. */}
+              {canAssign || canReassign ? (
                 <p className="mb-3 text-sm text-muted-foreground">
-                  A revisit and an ad-hoc job both start empty. Adding someone
-                  copies their rate onto the job and puts it in their calendar.
+                  Adding and removing people, and what each of them is on, is
+                  under{" "}
+                  <Link
+                    href={`/jobs/${job.id}/manage/schedule`}
+                    className="text-primary underline underline-offset-2"
+                  >
+                    Schedule &amp; Budget
+                  </Link>
+                  .
                 </p>
               ) : null}
               <CrewPanel
                 jobId={job.id}
-                canAssign={canAssign}
-                canReassign={canReassign}
-                candidates={crewCandidates.map((person) => ({
-                  id: person.id,
-                  name: person.name,
-                  role: person.baseRole,
-                }))}
-                canEditPay={canEditRates}
+                canAssign={false}
+                canReassign={false}
+                candidates={[]}
+                canEditPay={false}
                 budgeted={Boolean(job.budgetType)}
                 crew={job.assignments.map((assignment) => ({
                   id: assignment.id,

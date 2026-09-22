@@ -401,10 +401,11 @@ async function main() {
     0,
   );
 
-  await supPage.goto(`${BASE}/jobs/${revisit.id}`, {
+  // The crew is changed where the money that is split between them is set.
+  await supPage.goto(`${BASE}/jobs/${revisit.id}/manage/schedule`, {
     waitUntil: "domcontentloaded",
   });
-  await openSection(supPage, "Crew");
+  await supPage.waitForTimeout(800);
   check(
     "a revisit starts with nobody on it",
     await supPage.locator("text=Nobody assigned yet.").isVisible(),
@@ -474,10 +475,10 @@ async function main() {
   check("acknowledging records that they saw it", acknowledged, true);
 
   // Taking somebody off carries the reason into both the record and the message.
-  await supPage.goto(`${BASE}/jobs/${revisit.id}`, {
+  await supPage.goto(`${BASE}/jobs/${revisit.id}/manage/schedule`, {
     waitUntil: "domcontentloaded",
   });
-  await openSection(supPage, "Crew");
+  await supPage.waitForTimeout(800);
   await supPage
     .getByRole("button", { name: `Take ${tech.user.name} off this job` })
     .click();

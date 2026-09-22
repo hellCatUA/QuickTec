@@ -1549,22 +1549,24 @@ async function main() {
       data: { scheduledStart: planted },
     });
 
-    await planner.goto(`${BASE}/jobs/${assignment.jobId}/edit`, {
+    // Scheduled start moved to Schedule & Budget with the rest of the crew's
+    // planning; the job's own details are what it *is*, not when it is due.
+    await planner.goto(`${BASE}/jobs/${assignment.jobId}/manage/schedule`, {
       waitUntil: "load",
     });
     await planner.waitForTimeout(1000);
 
     check(
       "the scheduled time is shown in the site's zone",
-      await planner.locator("#detail-scheduled").inputValue(),
+      await planner.locator("#schedule-start").inputValue(),
       "2026-07-28T09:30",
     );
 
     // Moved by an hour and a quarter, in the site's own reckoning. The bug
     // this replaces read the box back in the server's zone, so a job crept by
     // the site's offset every time somebody saved it.
-    await planner.locator("#detail-scheduled").fill("2026-07-28T10:45");
-    await planner.getByRole("button", { name: "Save changes" }).click();
+    await planner.locator("#schedule-start").fill("2026-07-28T10:45");
+    await planner.getByRole("button", { name: "Save schedule" }).click();
     await planner.waitForTimeout(2500);
 
     const saved = await db.job.findUniqueOrThrow({
@@ -1583,7 +1585,7 @@ async function main() {
     await planner.waitForTimeout(800);
     check(
       "and reads back as the same wall-clock time",
-      await planner.locator("#detail-scheduled").inputValue(),
+      await planner.locator("#schedule-start").inputValue(),
       "2026-07-28T10:45",
     );
 
@@ -1639,33 +1641,39 @@ async function main() {
     // job rather than on it, and they all live behind the corner menu now.
     check(
       "the rate is not in the scroll a tech reads on site",
-      await planner.locator("#job-pay-type").count(),
+      await planner.locator("#budget-flat").count(),
       0,
     );
 
-    await openPortal(planner, assignment.jobId);
-    await planner.locator("#job-pay-type").selectOption("FLAT");
-    await planner.locator("#job-pay-rate").fill("450");
-    await planner.locator("#job-pay-travel").fill("30");
-    await planner
-      .getByRole("button", { name: "Apply to everybody on this job" })
-      .click();
+    await planner.goto(`${BASE}/jobs/${assignment.jobId}/manage/schedule`, {
+      waitUntil: "load",
+    });
+    await planner.waitForTimeout(1000);
+    await planner.getByRole("button", { name: /^Flat rate/ }).click();
+    await planner.locator("#budget-flat").fill("450");
+    await planner.getByRole("button", { name: "Submit" }).click();
     await planner.waitForTimeout(2500);
-    await planner.goto(url, { waitUntil: "load" });
-    await planner.waitForTimeout(800);
+
+    await planner.locator("#job-travel").fill("30");
+    await planner.getByRole("button", { name: "Save travel" }).click();
+    await planner.waitForTimeout(2500);
 
     const paid = await db.jobAssignment.findMany({
       where: { jobId: assignment.jobId },
       select: { payType: true, payRate: true, travelReimbursement: true, userId: true },
     });
-    const paidUserIds = paid.map((row) => row.userId);
     check(
-      "the rate can be changed on a job afterwards",
-      paid.every((row) => row.payType === "FLAT" && row.payRate.toString() === "450"),
+      "a total budget lands on the crew as their own lines",
+      paid.every((row) => row.payType === "FLAT"),
       true,
     );
     check(
-      "travel money with it",
+      "and they add up to the total, to the penny",
+      paid.reduce((sum, row) => sum + Number(row.payRate), 0).toFixed(2),
+      "450.00",
+    );
+    check(
+      "travel money is recorded separately",
       paid[0]?.travelReimbursement?.toString(),
       "30",
     );
@@ -1673,8 +1681,8 @@ async function main() {
     // The bug this replaces: the rate was written onto whoever happened to be
     // on the job at the time and then forgotten, so the next person added
     // arrived on their own rate — non-billable, in the usual case — and
-    // somebody had to notice and re-apply it.
-    await openSection(planner, "Crew");
+    // somebody had to notice and re-apply it. A budget goes further: the
+    // total does not move, so adding somebody re-cuts it.
     await planner.getByRole("button", { name: "Add a tech" }).click();
     await planner.locator("#crew-add").click();
     const newcomer = await planner
@@ -1690,14 +1698,36 @@ async function main() {
       where: { jobId: assignment.jobId, user: { name: newcomer.split("\n")[0] } },
       select: { id: true, payType: true, payRate: true, payRateNote: true },
     });
+    const shared = await db.jobAssignment.findMany({
+      where: { jobId: assignment.jobId },
+      select: { payType: true, payRate: true },
+    });
     check(
-      "somebody added afterwards arrives on the job's rate",
-      `${joined.payType} ${joined.payRate.toString()}`,
-      "FLAT 450",
+      "somebody added afterwards is paid out of the same total",
+      joined.payType,
+      "FLAT",
     );
-    check("and it says where it came from", joined.payRateNote, "Set on this job");
+    check(
+      "and the total is still the total, to the penny",
+      shared.reduce((sum, row) => sum + Number(row.payRate), 0).toFixed(2),
+      "450.00",
+    );
 
-    // One person can still be put somewhere else deliberately.
+    // Off a budget, one person can still be put somewhere else deliberately.
+    // On one there is no such thing as their own rate — what differs between
+    // people is their share — so the button is not offered until it is off.
+    check(
+      "no per-tech rate while the job's money is one total",
+      await planner
+        .getByRole("button", { name: `Set pay for ${newcomer.split("\n")[0]}` })
+        .count(),
+      0,
+    );
+
+    await planner.getByRole("button", { name: "Remove the budget" }).click();
+    await planner.getByRole("button", { name: "Submit" }).click();
+    await planner.waitForTimeout(2500);
+
     await planner
       .getByRole("button", { name: `Set pay for ${newcomer.split("\n")[0]}` })
       .click();
@@ -1725,58 +1755,33 @@ async function main() {
     );
     check("carrying why", overridden.payRateNote, "Shadowing at half rate");
 
-    // Setting the job's pay again leaves them alone, which is the whole point
-    // of having said they are different.
-    await openPortal(planner, assignment.jobId);
-    await planner.locator("#job-pay-rate").fill("500");
-    await planner
-      .getByRole("button", { name: "Apply to everybody on this job" })
-      .click();
+    // A budget put back on overrules the exception: the total has to equal
+    // what the crew receives, and a line kept out of it would break that.
+    await planner.getByRole("button", { name: /^Flat rate/ }).click();
+    await planner.locator("#budget-flat").fill("500");
+    await planner.getByRole("button", { name: "Submit" }).click();
     await planner.waitForTimeout(2500);
-    await planner.goto(url, { waitUntil: "load" });
-    await planner.waitForTimeout(800);
 
+    const budgeted = await db.jobAssignment.findMany({
+      where: { jobId: assignment.jobId },
+      select: { payType: true, payRate: true, payOverridden: true },
+    });
     check(
-      "changing the job's pay leaves a deliberate exception alone",
-      (
-        await db.jobAssignment.findUniqueOrThrow({
-          where: { id: joined.id },
-          select: { payRate: true },
-        })
-      ).payRate.toString(),
-      "22.5",
+      "a budget overrules a deliberate exception rather than paying round it",
+      budgeted.every((row) => row.payType === "FLAT" && !row.payOverridden),
+      true,
     );
     check(
-      "while everybody else moves",
-      (
-        await db.jobAssignment.findFirstOrThrow({
-          where: { jobId: assignment.jobId, payOverridden: false },
-          select: { payRate: true },
-        })
-      ).payRate.toString(),
-      "500",
+      "and the crew's lines add up to it",
+      budgeted.reduce((sum, row) => sum + Number(row.payRate), 0).toFixed(2),
+      "500.00",
     );
 
-    // Putting them back picks up whatever the job pays now, not what it paid
-    // when they were taken off it.
-    await openSection(planner, "Crew");
-    await planner
-      .getByRole("button", { name: `Set pay for ${newcomer.split("\n")[0]}` })
-      .click();
-    await planner
-      .getByRole("button", { name: /^Back to the job/ })
-      .click();
+    // Back off it, so the job leaves this block the way the rest of the suite
+    // expects to find it.
+    await planner.getByRole("button", { name: "Remove the budget" }).click();
+    await planner.getByRole("button", { name: "Submit" }).click();
     await planner.waitForTimeout(2500);
-    check(
-      "and they can be put back on it",
-      (
-        await db.jobAssignment.findUniqueOrThrow({
-          where: { id: joined.id },
-          select: { payRate: true, payOverridden: true },
-        })
-      ).payRate.toString(),
-      "500",
-    );
 
     await db.jobAssignment.delete({ where: { id: joined.id } });
   });
@@ -1855,7 +1860,7 @@ async function main() {
   const sheet = page.locator(`[data-punch]`).first();
   check(
     "leading it opens the portal",
-    await page.getByRole("heading", { name: "TimeClock Punches" }).isVisible(),
+    await page.getByRole("heading", { name: "Crew & punches" }).isVisible(),
     true,
   );
   check(
@@ -1865,7 +1870,7 @@ async function main() {
   );
   check(
     "but the rate is not the lead's to set",
-    await page.locator("#job-pay-type").count(),
+    await page.locator("#budget-flat").count(),
     0,
   );
 
@@ -2515,6 +2520,15 @@ async function main() {
   // corrected on one page, and what happens when Save is pressed depends on
   // who is pressing it.
   {
+    // Put the two numbers back where this block expects to find them. The
+    // fixtures only create a job that is missing, so a run that died half way
+    // through would otherwise leave the next one typing a value that is
+    // already there — and a form with nothing changed has nothing to save.
+    await db.job.update({
+      where: { id: assignment.jobId },
+      data: { ticketNumber: "6682752", incNumber: null },
+    });
+
     const before = await db.job.findUniqueOrThrow({
       where: { id: assignment.jobId },
       select: {
@@ -2610,6 +2624,17 @@ async function main() {
       0,
     );
 
+    // The reason is asked after Submit rather than sitting open above it: on a
+    // form where most saves need no reason at all, a box that is usually
+    // irrelevant is a box people learn to scroll past.
+    await page.getByRole("button", { name: "Submit", exact: true }).click();
+    await page.waitForTimeout(400);
+    check(
+      "the reason is asked once, after Submit",
+      await page.locator("#detail-reason").isVisible(),
+      true,
+    );
+    await page.locator("#detail-reason").fill("Dispatch read out the wrong one");
     await page.getByRole("button", { name: "Send for approval" }).click();
     await page.waitForTimeout(2500);
 
@@ -2655,6 +2680,13 @@ async function main() {
       });
       await planner.waitForTimeout(800);
 
+      // The customer and the site are picked separately now, and the site list
+      // narrows to whoever is chosen above it. Moving a job to another
+      // customer's site therefore starts with the customer.
+      await planner.locator("#detail-customer").click();
+      await planner.waitForTimeout(200);
+      await planner.getByRole("option").nth(0).click();
+      await planner.waitForTimeout(300);
       await planner.locator("#detail-site").click();
       await planner.waitForTimeout(200);
       await planner.getByRole("option").nth(0).click();
@@ -2888,11 +2920,19 @@ async function main() {
   });
 
   // --- the crew picker ------------------------------------------------------
+  // The crew is read on the job page and changed under Schedule & Budget,
+  // beside the money that is split between them.
   await bossPage(browser, bossToken, async (planner) => {
     await planner.goto(url, { waitUntil: "load" });
     await planner.waitForTimeout(1000);
     await openSection(planner, "Crew");
+    check(
+      "the job page shows the crew without offering to change it",
+      await planner.getByRole("button", { name: "Add a tech" }).count(),
+      0,
+    );
 
+    await openPortal(planner, assignment.jobId);
     await planner.getByRole("button", { name: "Add a tech" }).click();
     await planner.locator("#crew-add").click();
     check(

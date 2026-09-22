@@ -3,11 +3,13 @@ import { Card, CardContent } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
 import { decimalHours } from "@/lib/datetime";
 import { db } from "@/lib/db";
+import { portalBackHref } from "@/lib/job-portal";
 import { canOnJob } from "@/lib/scope";
 import { can, getSessionUser } from "@/lib/session";
 import { RevisitPanel } from "../revisit-panel";
 
-export const metadata = { title: "Schedule a revisit" };
+// Named after the tile that opens it.
+export const metadata = { title: "Revisit planner" };
 
 /**
  * Booking the return trip.
@@ -84,8 +86,8 @@ export default async function RevisitPage({
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4">
       <PageHeader
-        title={`${job.title} — Schedule a revisit`}
-        backHref={`/jobs/${job.id}`}
+        title={`${job.title} — Revisit planner`}
+        backHref={await portalBackHref(job.id, user)}
         description={job.intWoId}
       />
 
