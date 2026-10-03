@@ -21,6 +21,23 @@ ARG NODE_IMAGE=node:22-bookworm-slim
 # ---------------------------------------------------------------------------
 FROM ${NODE_IMAGE} AS deps
 WORKDIR /app
+
+# openssl before `npm ci`, not after, and not only in the image that runs the
+# engine.
+#
+# Prisma downloads its engines during install and picks which build by sniffing
+# the platform's OpenSSL. The slim image ships no `openssl`, so the sniff falls
+# through to a default of 1.1.x — while the migrator image, where openssl *is*
+# installed, asks for 3.0.x at runtime, finds no such file, and downloads the
+# right one from binaries.prisma.sh on every single deploy.
+#
+# That was invisible for as long as the host could reach the internet. The
+# first deploy without a route out died on `getaddrinfo EAI_AGAIN
+# binaries.prisma.sh`, before it had read a line of SQL.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends openssl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
 COPY package.json package-lock.json ./
 RUN npm ci
 
@@ -49,9 +66,10 @@ FROM ${NODE_IMAGE} AS migrator
 WORKDIR /app
 ENV NODE_ENV=production
 
-# The migration engine is a native binary that links OpenSSL, and the slim
-# image ships without it. Prisma then guesses a version, says so loudly on
-# every deploy, and picks the wrong engine on some hosts.
+# The schema engine is a native binary that links OpenSSL, and the slim image
+# ships without it, so it is installed here to run the engine — and in `deps`
+# as well, to download the matching one. Installing it in only one of the two
+# is what made every deploy reach for the network; see the note there.
 # psql is here for one job: reading back whether a failed migration applied
 # anything, so a deploy that lost a race for a lock can be retried rather than
 # needing somebody to unstick it by hand.
@@ -61,6 +79,16 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/node_modules ./node_modules
+
+# Name the engine rather than let Prisma work it out again.
+#
+# Given this path, Prisma uses the file and asks the network nothing; given a
+# path that is not there, it stops with "provided path can't be resolved"
+# instead of quietly fetching a replacement. A deploy that needs the public
+# internet should be a loud failure on the build that introduced it, not a
+# dependency nobody knows about until the day the line goes down.
+ENV PRISMA_SCHEMA_ENGINE_BINARY=/app/node_modules/@prisma/engines/schema-engine-debian-openssl-3.0.x
+
 COPY --from=builder /app/generated ./generated
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/src/lib/permissions.ts ./src/lib/permissions.ts
