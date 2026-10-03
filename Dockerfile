@@ -1,4 +1,16 @@
-# syntax=docker/dockerfile:1
+# No `# syntax=` directive on purpose.
+#
+# It tells BuildKit to fetch an external Dockerfile frontend from Docker Hub,
+# and because the usual tag is a floating `1`, it re-checks the registry on
+# every build rather than trusting the copy it already has. A host with no
+# route to the internet then fails before reading line two of this file —
+# which is exactly the host this app is deployed on, behind Tailscale, where
+# an outage or a move is an ordinary afternoon.
+#
+# Nothing here needs that frontend: no heredocs, no `RUN --mount`, no
+# `COPY --link`. The frontend built into Docker handles all of it. Add the
+# directive back only alongside a feature that actually requires it, and know
+# that doing so makes every build need the network.
 
 # Debian slim rather than Alpine: sharp's prebuilt libvips binaries are glibc,
 # and photo processing is on the critical path for this app.
