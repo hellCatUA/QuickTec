@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { signIn } from "@/auth";
+import { safeRedirect } from "@/lib/safe-redirect";
 
 /**
  * Starts the NextCloud sign-in.
@@ -17,7 +18,11 @@ import { signIn } from "@/auth";
  */
 export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
-  const callbackUrl = searchParams.get("callbackUrl") ?? "/dashboard";
+  // Auth.js would keep this on our origin by itself, prefixing a relative path
+  // with the base URL. It is filtered here anyway so that both ways in answer
+  // "where may I be sent" with the same rule, rather than one rule and one
+  // library default that happens to agree today.
+  const callbackUrl = safeRedirect(searchParams.get("callbackUrl"));
   const reauth = searchParams.get("reauth") === "1";
 
   await signIn(

@@ -9,6 +9,7 @@ import {
   hashSetupToken,
   passwordProblem,
 } from "@/lib/password";
+import { safeRedirect } from "@/lib/safe-redirect";
 
 export type SignInResult =
   | { ok: true; redirectTo: string }
@@ -29,16 +30,13 @@ export async function signInWithPassword(
 ): Promise<SignInResult> {
   const email = String(formData.get("email") ?? "").trim();
   const password = String(formData.get("password") ?? "");
-  const callbackUrl = String(formData.get("callbackUrl") ?? "/dashboard");
-
   if (!email || !password) return { ok: false, error: REFUSED };
 
   // Only ever somewhere inside this app. An open redirect on a sign-in form is
-  // how a convincing phishing link gets built out of a real domain.
-  const redirectTo =
-    callbackUrl.startsWith("/") && !callbackUrl.startsWith("//")
-      ? callbackUrl
-      : "/dashboard";
+  // how a convincing phishing link gets built out of a real domain — and the
+  // obvious string test for it is one the browser's own URL parser walks
+  // straight past. safeRedirect explains.
+  const redirectTo = safeRedirect(formData.get("callbackUrl"));
 
   try {
     await signIn("password", { email, password, redirect: false });

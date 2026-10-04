@@ -6,11 +6,14 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import { promisify } from "node:util";
+import { tooLongToCheck } from "@/lib/password-rules";
 
 export {
   canSignInWithPassword,
+  MAX_PASSWORD_LENGTH,
   MIN_PASSWORD_LENGTH,
   passwordProblem,
+  tooLongToCheck,
 } from "@/lib/password-rules";
 
 /**
@@ -82,6 +85,11 @@ export async function verifyPassword(
   stored: string | null,
 ): Promise<boolean> {
   if (!stored) return false;
+
+  // Before normalising, which is synchronous and runs on the main thread. No
+  // password longer than this was ever accepted, so none can match, and the
+  // answer does not depend on which account was asked about.
+  if (tooLongToCheck(password)) return false;
 
   const [scheme, cost, blockSize, parallelism, salt, key] = stored.split("$");
   if (scheme !== "scrypt" || !salt || !key) {

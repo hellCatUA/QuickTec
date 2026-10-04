@@ -22,9 +22,14 @@ export const metadata = { title: "Set a password" };
 export default async function SetPasswordPage({
   searchParams,
 }: {
-  searchParams: Promise<{ token?: string }>;
+  searchParams: Promise<{ token?: string | string[] }>;
 }) {
-  const { token } = await searchParams;
+  // A query string can repeat a key, and Next hands a repeated one over as an
+  // array. This was typed as a string, which it usually is; hashing the array
+  // it sometimes is throws, so `?token=a&token=b` took the page down with a
+  // 500 for anybody who asked.
+  const { token: rawToken } = await searchParams;
+  const token = typeof rawToken === "string" ? rawToken : undefined;
 
   const company = await db.companySettings
     .findUnique({

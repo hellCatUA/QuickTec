@@ -31,12 +31,32 @@ export function canSignInWithPassword(user: {
 /** Long enough to matter, short enough that people will not write it down. */
 export const MIN_PASSWORD_LENGTH = 12;
 
+/**
+ * No password here can be longer than this, so nothing longer is worth
+ * checking.
+ *
+ * It was enforced only when a password was *set*. Checking one ran Unicode
+ * normalisation over whatever arrived, on the main thread, before scrypt — and
+ * a server action takes a body up to 25 MB. Twenty of those megabytes held
+ * the event loop for over half a second, during which the server answered
+ * nobody, and the form doing it needs no account. Every place that compares a
+ * password now refuses anything longer than could ever have been stored.
+ */
+export const MAX_PASSWORD_LENGTH = 200;
+
+/** Too long to be anybody's password, and too long to spend time on. */
+export function tooLongToCheck(password: string): boolean {
+  return password.length > MAX_PASSWORD_LENGTH;
+}
+
 export function passwordProblem(password: string): string | null {
   if (!password.trim()) return "Enter a password.";
   if (password.length < MIN_PASSWORD_LENGTH) {
     return `Use at least ${MIN_PASSWORD_LENGTH} characters.`;
   }
-  if (password.length > 200) return "That is longer than 200 characters.";
+  if (password.length > MAX_PASSWORD_LENGTH) {
+    return `That is longer than ${MAX_PASSWORD_LENGTH} characters.`;
+  }
   // No character-class rules on purpose: they push people towards Passw0rd!
   // and away from four words they will actually remember.
   return null;

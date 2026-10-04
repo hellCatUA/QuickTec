@@ -2,7 +2,12 @@ import "dotenv/config";
 import { encode } from "@auth/core/jwt";
 import { chromium } from "playwright";
 import { db } from "@/lib/db";
-import { hashPassword, hashSetupToken, newSetupToken } from "@/lib/password";
+import {
+  hashPassword,
+  hashSetupToken,
+  newSetupToken,
+  verifyPassword,
+} from "@/lib/password";
 
 /**
  * The way in for people who are not in NextCloud.
@@ -540,6 +545,99 @@ async function main() {
     true,
   );
   await forced.close();
+
+  // --- where a sign-in may send you -----------------------------------------
+  // The old test was `startsWith("/") && !startsWith("//")`. The browser's URL
+  // parser turns `\` into `/` and drops tabs, so every one of these passed it
+  // and every one of them left the site — after a real password had been
+  // typed into the real form, which is the whole of a phishing link.
+  for (const sneaky of ["/\\evil.example", "/\t/evil.example", "/.//evil.example"]) {
+    await db.user.update({
+      where: { id: outsider.id },
+      data: { failedSignIns: 0, lockedUntil: null },
+    });
+    const away = await browser.newContext();
+    const awayPage = await away.newPage();
+
+    // Watched as a request rather than read off the address bar afterwards.
+    // The foreign host does not resolve in a test, the navigation fails, and
+    // Playwright gives up waiting the moment it does — at which point the
+    // address bar still shows the sign-in page. An earlier version of this
+    // check read it there and passed against the very bug it was written for.
+    const leftFor: string[] = [];
+    awayPage.on("request", (request) => {
+      if (
+        request.isNavigationRequest() &&
+        request.frame() === awayPage.mainFrame() &&
+        !request.url().startsWith(BASE)
+      ) {
+        leftFor.push(request.url());
+      }
+    });
+
+    await awayPage.goto(
+      `${BASE}/signin?method=password&callbackUrl=${encodeURIComponent(sneaky)}`,
+      { waitUntil: "load" },
+    );
+    await awayPage.waitForTimeout(800);
+    await awayPage.locator("#signin-email").fill("dana@outside.test");
+    await awayPage.locator("#signin-password").fill(PASSWORD);
+    await awayPage.getByRole("button", { name: "Sign in", exact: true }).click();
+    // Long enough for the redirect to be attempted whichever way it goes.
+    await awayPage.waitForTimeout(4000);
+
+    check(
+      `a sign-in asked to go to ${JSON.stringify(sneaky)} stays on this site`,
+      leftFor.join(" ") || "nowhere else",
+      "nowhere else",
+    );
+    // And it did sign in. Without this, a sign-in that simply failed would
+    // also have stayed on the site, and passed.
+    check(
+      `and lands somewhere real on it`,
+      awayPage.url(),
+      `${BASE}/dashboard`,
+    );
+    await away.close();
+  }
+
+  // --- what the form will spend time on --------------------------------------
+  // Checking a password normalised it on the main thread before hashing, and a
+  // server action accepts 25 MB. No password here is longer than 200, so
+  // nothing longer is worth a millisecond.
+  //
+  // Asked of verifyPassword directly rather than through the form: twenty
+  // megabytes through a browser is a test of the browser. Before the cap this
+  // took about a second, half of it with the event loop held.
+  {
+    const stored = await hashPassword(PASSWORD);
+    const started = Date.now();
+    const matched = await verifyPassword("x".repeat(20 * 1024 * 1024), stored);
+    const took = Date.now() - started;
+    check("a twenty-megabyte password does not match", matched, false);
+    check(
+      "and is refused without being normalised or hashed",
+      took < 50,
+      true,
+    );
+  }
+
+  // --- a link asked for twice ------------------------------------------------
+  // `?token=a&token=b` arrives as an array, and hashing an array throws.
+  {
+    const twice = await browser.newContext();
+    const twicePage = await twice.newPage();
+    const response = await twicePage.goto(
+      `${BASE}/set-password?token=a&token=b`,
+      { waitUntil: "load" },
+    );
+    check(
+      "a repeated token is an answer, not a crash",
+      (response?.status() ?? 0) < 500,
+      true,
+    );
+    await twice.close();
+  }
 
   // --- too many wrong answers -----------------------------------------------
   // Eight is the budget. What is checked here is not only that it runs out,
