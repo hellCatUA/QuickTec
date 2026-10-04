@@ -33,7 +33,7 @@ export default async function SetPasswordPage({
     })
     .catch(() => null);
 
-  const viewer = token ? null : await getSessionUser();
+  const viewer = token ? null : await getSessionUser({ changingPassword: true });
 
   // Neither a link nor a signed-in account being forced to change: there is
   // nothing for this page to act on.

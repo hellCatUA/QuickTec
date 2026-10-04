@@ -21,7 +21,8 @@ export type ChangeResult = { ok: true } | { ok: false; error: string };
 export async function changeOwnPassword(
   formData: FormData,
 ): Promise<ChangeResult> {
-  const viewer = await getSessionUser();
+  // The one action a session with a password to replace may take.
+  const viewer = await getSessionUser({ changingPassword: true });
   if (!viewer) return { ok: false, error: "Not signed in." };
 
   const current = String(formData.get("current") ?? "");

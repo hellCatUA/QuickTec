@@ -298,6 +298,15 @@ async function main() {
     select: { id: true, nextcloudSub: true },
   });
 
+  // Audit rows are kept for good, so a second run would otherwise count the
+  // first one's as well and read as granting twice.
+  await db.auditEvent.deleteMany({
+    where: {
+      entityId: target.id,
+      action: { in: ["password_fallback_granted", "password_fallback_revoked"] },
+    },
+  });
+
   const admin = await browser.newContext();
   await admin.addCookies([
     {
@@ -498,6 +507,21 @@ async function main() {
     true,
   );
 
+  // Pages were the whole of it once, which is not the whole of the app: a
+  // route handler renders no layout and a server action runs before anything
+  // renders, so a password good for "one sign-in" was good for every export
+  // in the building and refused only the screens.
+  await db.user.update({
+    where: { id: invitee.id },
+    data: { baseRole: "ACCOUNTANT" },
+  });
+  check(
+    "a password that has to be replaced reaches no route handler either",
+    (await forcedPage.request.get(`${BASE}/api/pay/export?month=2026-07`))
+      .status(),
+    401,
+  );
+
   await forcedPage.waitForTimeout(1000);
   await forcedPage.locator("#current-password").fill(PASSWORD);
   await forcedPage.locator("#new-password").fill("a different long password");
@@ -509,7 +533,76 @@ async function main() {
     forcedPage.url().includes("/dashboard"),
     true,
   );
+  check(
+    "and the rest of it with them",
+    (await forcedPage.request.get(`${BASE}/api/pay/export?month=2026-07`))
+      .status() !== 401,
+    true,
+  );
   await forced.close();
+
+  // --- too many wrong answers -----------------------------------------------
+  // Eight is the budget. What is checked here is not only that it runs out,
+  // but who is told that it has: saying "locked, 15 minutes" to somebody who
+  // has not produced the right password is the one answer this form gives
+  // that a wrong password cannot, and it would name every account that has a
+  // password at all.
+  await db.user.update({
+    where: { id: outsider.id },
+    data: { failedSignIns: 0, lockedUntil: null },
+  });
+
+  const guesser = await browser.newContext();
+  const guesserPage = await guesser.newPage();
+  await guesserPage.goto(`${BASE}/signin?method=password`, {
+    waitUntil: "load",
+  });
+  await guesserPage.waitForTimeout(800);
+
+  for (let attempt = 0; attempt < 8; attempt++) {
+    await guesserPage.locator("#signin-email").fill("dana@outside.test");
+    await guesserPage.locator("#signin-password").fill(`guess ${attempt}`);
+    await guesserPage
+      .getByRole("button", { name: "Sign in", exact: true })
+      .click();
+    await guesserPage.waitForTimeout(1200);
+  }
+
+  check(
+    "eight wrong answers shut the account",
+    (
+      await db.user.findUniqueOrThrow({
+        where: { id: outsider.id },
+        select: { lockedUntil: true },
+      })
+    ).lockedUntil !== null,
+    true,
+  );
+  check(
+    "and the ninth wrong one is still told only that it is wrong",
+    await guesserPage.getByText("Email or password is wrong.").isVisible(),
+    true,
+  );
+
+  // The right password, against a shut account: now it is worth saying so,
+  // because whoever is reading it has proved they are not guessing.
+  await guesserPage.locator("#signin-email").fill("dana@outside.test");
+  await guesserPage.locator("#signin-password").fill(PASSWORD);
+  await guesserPage
+    .getByRole("button", { name: "Sign in", exact: true })
+    .click();
+  await guesserPage.waitForTimeout(2000);
+  check(
+    "while the right one is told how long is left",
+    await guesserPage.getByText(/Too many wrong passwords/).isVisible(),
+    true,
+  );
+  check(
+    "and still does not get in",
+    guesserPage.url().includes("/dashboard"),
+    false,
+  );
+  await guesser.close();
 
   await browser.close();
   await db.user.deleteMany({ where: { email: { endsWith: "@outside.test" } } });

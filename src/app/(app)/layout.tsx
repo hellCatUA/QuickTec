@@ -29,7 +29,9 @@ export default async function AppLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const user = await getSessionUser();
+  // Asked for as the one thing a must-change session may see, so that this
+  // redirect can happen at all: everywhere else such a session is nobody.
+  const user = await getSessionUser({ changingPassword: true });
   if (!user) redirect("/signin");
 
   // A password an administrator typed is a password they still know. Nothing

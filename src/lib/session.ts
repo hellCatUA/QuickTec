@@ -34,7 +34,7 @@ export type SessionUser = {
  * effect on the tech's next tap, not whenever the token happens to expire.
  * React's cache() keeps it to one query per request.
  */
-export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
+const loadSessionUser = cache(async (): Promise<SessionUser | null> => {
   const session = await auth();
   const userId = session?.user?.id;
   if (!userId) return null;
@@ -140,6 +140,30 @@ export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
     scopedProjectIds,
   };
 });
+
+/**
+ * The signed-in user, or nobody.
+ *
+ * A session whose password has to be replaced is nobody by default. That used
+ * to be enforced in the app shell, which meant it stopped *pages* and nothing
+ * else: a server action is a POST that runs before anything renders, and an
+ * API route renders no layout at all. So a password an administrator typed —
+ * good for one sign-in, we said — was in fact good for every export, every
+ * attachment and every action in the app, and only the screens were shut.
+ *
+ * Refusing here instead puts it in front of all three, and makes forgetting
+ * about it safe: anything written later gets the check without asking for it.
+ * The three places that exist to *replace* the password opt out, because they
+ * are the one thing such a session must be able to reach.
+ */
+export async function getSessionUser(options?: {
+  changingPassword?: boolean;
+}): Promise<SessionUser | null> {
+  const user = await loadSessionUser();
+  if (!user) return null;
+  if (user.mustChangePassword && !options?.changingPassword) return null;
+  return user;
+}
 
 /**
  * Effective scope for a permission, or null when the user does not have it.

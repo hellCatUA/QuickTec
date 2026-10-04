@@ -230,6 +230,11 @@ async function main() {
         signInMethod: true,
         passwordFallback: true,
         passwordHash: true,
+        passwordSetupTokens: {
+          where: { usedAt: null, expiresAt: { gt: new Date() } },
+          select: { id: true },
+          take: 1,
+        },
       },
     });
 
@@ -240,6 +245,12 @@ async function main() {
       // the terminal.
       if (canSignInWithPassword(user) && user.passwordHash) {
         console.log(`  skipped  ${user.email} — already has a password`);
+        continue;
+      }
+      // A link already on its way to them. Granting here would spend it, and
+      // the first they would know is that it had stopped working.
+      if (user.passwordSetupTokens.length > 0) {
+        console.log(`  skipped  ${user.email} — has a live invite link`);
         continue;
       }
       done.push(await grant(user));

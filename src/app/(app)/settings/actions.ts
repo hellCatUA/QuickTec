@@ -139,7 +139,7 @@ export async function updateUser(
   _prev: ActionResult | null,
   formData: FormData,
 ): Promise<ActionResult> {
-  const actor = await requirePermission("users.manage");
+  const actor = await requirePermission("users.manage", { minScope: "ALL" });
 
   const parsed = userSchema.safeParse({
     ...Object.fromEntries(formData),
@@ -352,7 +352,7 @@ export async function createOutsideUser(
   _prev: LinkResult | null,
   formData: FormData,
 ): Promise<LinkResult> {
-  const actor = await requirePermission("users.manage");
+  const actor = await requirePermission("users.manage", { minScope: "ALL" });
 
   const parsed = outsideUserSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) {
@@ -419,7 +419,7 @@ export async function createOutsideUser(
  * more, and leaving it would be a second door into the same account.
  */
 export async function switchToSso(formData: FormData): Promise<LinkResult> {
-  const actor = await requirePermission("users.manage");
+  const actor = await requirePermission("users.manage", { minScope: "ALL" });
   const userId = String(formData.get("userId") ?? "");
 
   const user = await db.user.findUnique({
@@ -482,7 +482,7 @@ export async function switchToSso(formData: FormData): Promise<LinkResult> {
 export async function grantPasswordFallback(
   formData: FormData,
 ): Promise<LinkResult> {
-  const actor = await requirePermission("users.manage");
+  const actor = await requirePermission("users.manage", { minScope: "ALL" });
   const userId = String(formData.get("userId") ?? "");
 
   const user = await db.user.findUnique({
@@ -509,6 +509,17 @@ export async function grantPasswordFallback(
       error: "This account is deactivated. Reactivate it first.",
     };
   }
+  // The screen hides the button once it is granted, which is not a guard: a
+  // server action is a POST and its id is in a public chunk. Granting twice
+  // would throw away a password its owner had chosen and issue a fresh link
+  // for it, which is a reset wearing the word "grant".
+  if (user.passwordFallback) {
+    return {
+      ok: false,
+      error:
+        "This account already has one. Issue a new link if they have lost it.",
+    };
+  }
 
   await db.user.update({
     where: { id: userId },
@@ -521,6 +532,9 @@ export async function grantPasswordFallback(
       mustChangePassword: false,
       failedSignIns: 0,
       lockedUntil: null,
+      // Every sibling that nulls a hash stamps this, and for the same reason:
+      // whatever was opened with the password that is going should go with it.
+      passwordChangedAt: new Date(),
     },
   });
 
@@ -552,7 +566,7 @@ export async function grantPasswordFallback(
 export async function revokePasswordFallback(
   formData: FormData,
 ): Promise<LinkResult> {
-  const actor = await requirePermission("users.manage");
+  const actor = await requirePermission("users.manage", { minScope: "ALL" });
   const userId = String(formData.get("userId") ?? "");
 
   const user = await db.user.findUnique({
@@ -616,7 +630,7 @@ export async function revokePasswordFallback(
 export async function resetOutsidePassword(
   formData: FormData,
 ): Promise<LinkResult> {
-  const actor = await requirePermission("users.manage");
+  const actor = await requirePermission("users.manage", { minScope: "ALL" });
   const userId = String(formData.get("userId") ?? "");
 
   const user = await db.user.findUnique({

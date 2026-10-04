@@ -230,24 +230,49 @@ export const authConfig: NextAuthConfig = {
           return null;
         }
 
+        // Granted the fallback but has not chosen a password yet: still a
+        // scrypt, against the decoy. Returning in a millisecond because the
+        // column is null is a list of exactly which accounts are mid-invite,
+        // which is to say which ones have a live setup link out in the world.
+        if (!(await verifyPassword(password, user.passwordHash ?? DECOY_HASH))) {
+          // A lock that has run out clears what put it there. Otherwise the
+          // eighth wrong answer is followed by a permanent one-strike policy:
+          // the counter stays at eight, so the next single typo locks them
+          // out again, and again, with nothing to reset it but somebody with
+          // a shell on the server.
+          await db.user.updateMany({
+            where: { id: user.id, lockedUntil: { lte: new Date() } },
+            data: { failedSignIns: 0, lockedUntil: null },
+          });
+
+          // Counted by the database rather than by reading the row and adding
+          // one here. Eight attempts fired at once all read zero, all wrote
+          // one, and the lock never engaged — which is not a slower way to
+          // guess a password, it is an unlimited one.
+          const after = await db.user.update({
+            where: { id: user.id },
+            data: { failedSignIns: { increment: 1 } },
+            select: { failedSignIns: true },
+          });
+
+          const until = lockoutUntil(after.failedSignIns);
+          if (until) {
+            await db.user.update({
+              where: { id: user.id },
+              data: { lockedUntil: until },
+            });
+          }
+          return null;
+        }
+
+        // The password is right. Only now is it worth saying the account is
+        // shut and for how long: said before, it is the one answer this form
+        // gives that an ordinary wrong password cannot, so eight wrong
+        // guesses against every address in the company would print the list
+        // of which ones have a password at all.
         const locked = lockRemaining(user.lockedUntil);
         if (locked > 0) {
           throw new CredentialsSignin(`Locked:${locked}`);
-        }
-
-        // A lock that has run out clears what put it there. Otherwise the
-        // eighth wrong answer is followed by a permanent one-strike policy:
-        // the counter stays at eight, so the next single typo locks them out
-        // again, and again, with nothing to reset it but an administrator.
-        const priorFailures = user.lockedUntil ? 0 : user.failedSignIns;
-
-        if (!(await verifyPassword(password, user.passwordHash))) {
-          const failures = priorFailures + 1;
-          await db.user.update({
-            where: { id: user.id },
-            data: { failedSignIns: failures, lockedUntil: lockoutUntil(failures) },
-          });
-          return null;
         }
 
         // Their password is good, so it is in hand for the one moment it can
@@ -355,16 +380,47 @@ export const authConfig: NextAuthConfig = {
         return `/signin?error=NoEmail`;
       }
 
+      const email = rawEmail.toLowerCase();
+
       const groups = extractGroups(claims);
       const role = resolveBaseRole(groups);
       if (!role) {
         explain(
           `no quicktec-* group among: ${groups.length > 0 ? groups.join(", ") : "none"}`,
         );
+
+        // Taking somebody out of their quicktec-* group is how they are taken
+        // off this system, and until now it shut only the door they were
+        // standing at: their QuickTec password went on working, carrying the
+        // role their row still remembered. So the group going takes the spare
+        // key with it.
+        //
+        // Defence in depth rather than the answer: this fires when they try
+        // SSO, and somebody who knows they have been let go will not. Leaving
+        // is still a reason to deactivate the account here.
+        const stranded = await db.user.updateMany({
+          where: {
+            OR: [{ nextcloudSub: sub }, { email }],
+            passwordFallback: true,
+          },
+          data: {
+            passwordFallback: false,
+            passwordHash: null,
+            mustChangePassword: false,
+            // Cuts whatever they are signed in on at the same time.
+            passwordChangedAt: new Date(),
+          },
+        });
+
+        if (stranded.count > 0) {
+          console.error(
+            `[auth] ${email} has no quicktec-* group, so its QuickTec password has been removed`,
+          );
+        }
+
         return `/signin?error=NoGroup`;
       }
 
-      const email = rawEmail.toLowerCase();
       const name =
         (claims.name as string) ||
         (claims.preferred_username as string) ||
