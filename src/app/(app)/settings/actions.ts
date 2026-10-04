@@ -11,6 +11,7 @@ import {
 import { db } from "@/lib/db";
 import { flag, optionalText, phoneText } from "@/lib/form";
 import {
+  canSignInWithPassword,
   hashPassword,
   newSetupToken,
   passwordProblem,
@@ -432,6 +433,10 @@ export async function switchToSso(formData: FormData): Promise<LinkResult> {
     where: { id: userId },
     data: {
       signInMethod: "SSO",
+      // Not carried over as a fallback either: this account is being handed to
+      // NextCloud, and keeping the password it had would be the second door
+      // this change exists to close.
+      passwordFallback: false,
       passwordHash: null,
       mustChangePassword: false,
       failedSignIns: 0,
@@ -460,6 +465,148 @@ export async function switchToSso(formData: FormData): Promise<LinkResult> {
 }
 
 /**
+ * Gives a NextCloud account a QuickTec password as well.
+ *
+ * OIDC is a conversation with another server over domain names. A site that
+ * cannot reach NextCloud cannot sign anybody in at all, and the people it
+ * strands are exactly the ones standing at a customer's door. This is the way
+ * back in, granted one person at a time by somebody who decided they should
+ * have it.
+ *
+ * SSO keeps working and keeps deciding what they can see: the role is still
+ * read from their groups on every SSO sign-in, and nothing here touches it.
+ * What this adds is a second way to prove who they are, and like every other
+ * password in this app it is chosen by its owner through a one-time link
+ * rather than typed by the administrator granting it.
+ */
+export async function grantPasswordFallback(
+  formData: FormData,
+): Promise<LinkResult> {
+  const actor = await requirePermission("users.manage");
+  const userId = String(formData.get("userId") ?? "");
+
+  const user = await db.user.findUnique({
+    where: { id: userId },
+    select: {
+      id: true,
+      name: true,
+      active: true,
+      signInMethod: true,
+      passwordFallback: true,
+    },
+  });
+  if (!user) return { ok: false, error: "No such account." };
+
+  if (user.signInMethod === "LOCAL") {
+    return {
+      ok: false,
+      error: "This account already signs in with a QuickTec password.",
+    };
+  }
+  if (!user.active) {
+    return {
+      ok: false,
+      error: "This account is deactivated. Reactivate it first.",
+    };
+  }
+
+  await db.user.update({
+    where: { id: userId },
+    data: {
+      passwordFallback: true,
+      // Granting is not setting: they choose it through the link below. Until
+      // they do there is no password on the account, so the door is open in
+      // the sense that it has a lock on it and no key cut yet.
+      passwordHash: null,
+      mustChangePassword: false,
+      failedSignIns: 0,
+      lockedUntil: null,
+    },
+  });
+
+  await recordAudit({
+    actorId: actor.id,
+    entityType: "User",
+    entityId: userId,
+    action: "password_fallback_granted",
+    detail: {
+      who: user.name,
+      field: "Sign-in",
+      from: "SSO only",
+      to: "SSO and a QuickTec password",
+    },
+  });
+
+  revalidatePath("/settings/users");
+  return { ok: true, link: await issueToken(userId, actor.id) };
+}
+
+/**
+ * Takes it away again.
+ *
+ * The password goes with the permission, and so does anybody holding a session
+ * that was opened with it: a fallback being revoked is a fallback somebody may
+ * have learned, and leaving them signed in for the rest of the week is the
+ * case revoking it exists for.
+ */
+export async function revokePasswordFallback(
+  formData: FormData,
+): Promise<LinkResult> {
+  const actor = await requirePermission("users.manage");
+  const userId = String(formData.get("userId") ?? "");
+
+  const user = await db.user.findUnique({
+    where: { id: userId },
+    select: { id: true, name: true, signInMethod: true, passwordFallback: true },
+  });
+  if (!user) return { ok: false, error: "No such account." };
+
+  if (user.signInMethod === "LOCAL") {
+    return {
+      ok: false,
+      error:
+        "A password is the only way into this account. Hand it to NextCloud instead, or deactivate it.",
+    };
+  }
+  if (!user.passwordFallback) return { ok: true };
+
+  await db.user.update({
+    where: { id: userId },
+    data: {
+      passwordFallback: false,
+      passwordHash: null,
+      mustChangePassword: false,
+      failedSignIns: 0,
+      lockedUntil: null,
+      passwordChangedAt: new Date(),
+    },
+  });
+
+  // A link still outstanding would set a password on an account that is no
+  // longer allowed one.
+  await db.passwordSetupToken.updateMany({
+    where: { userId, usedAt: null },
+    data: { usedAt: new Date() },
+  });
+
+  await recordAudit({
+    actorId: actor.id,
+    entityType: "User",
+    entityId: userId,
+    action: "password_fallback_revoked",
+    detail: {
+      who: user.name,
+      field: "Sign-in",
+      from: "SSO and a QuickTec password",
+      to: "SSO only",
+    },
+  });
+
+  revalidatePath("/settings/users");
+  return { ok: true };
+}
+
+/**
  * A new link for an account that already exists.
  *
  * The same button answers a forgotten password and a first sign-in that never
@@ -474,11 +621,16 @@ export async function resetOutsidePassword(
 
   const user = await db.user.findUnique({
     where: { id: userId },
-    select: { id: true, name: true, signInMethod: true },
+    select: {
+      id: true,
+      name: true,
+      signInMethod: true,
+      passwordFallback: true,
+    },
   });
   if (!user) return { ok: false, error: "No such account." };
 
-  if (user.signInMethod !== "LOCAL") {
+  if (!canSignInWithPassword(user)) {
     return {
       ok: false,
       error:

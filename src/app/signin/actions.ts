@@ -3,7 +3,12 @@
 import { AuthError } from "next-auth";
 import { signIn } from "@/auth";
 import { db } from "@/lib/db";
-import { hashPassword, hashSetupToken, passwordProblem } from "@/lib/password";
+import {
+  canSignInWithPassword,
+  hashPassword,
+  hashSetupToken,
+  passwordProblem,
+} from "@/lib/password";
 
 export type SignInResult =
   | { ok: true; redirectTo: string }
@@ -96,7 +101,13 @@ export async function setPasswordWithToken(
       userId: true,
       expiresAt: true,
       usedAt: true,
-      user: { select: { active: true, signInMethod: true } },
+      user: {
+        select: {
+          active: true,
+          signInMethod: true,
+          passwordFallback: true,
+        },
+      },
     },
   });
 
@@ -105,7 +116,7 @@ export async function setPasswordWithToken(
     record.usedAt ||
     record.expiresAt < new Date() ||
     !record.user.active ||
-    record.user.signInMethod !== "LOCAL"
+    !canSignInWithPassword(record.user)
   ) {
     return {
       ok: false,

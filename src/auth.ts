@@ -8,6 +8,7 @@ import Credentials from "next-auth/providers/credentials";
 import { db } from "@/lib/db";
 import { extractGroups, resolveBaseRole } from "@/lib/nextcloud-groups";
 import {
+  canSignInWithPassword,
   hashPassword,
   lockRemaining,
   lockoutUntil,
@@ -212,6 +213,7 @@ export const authConfig: NextAuthConfig = {
             email: true,
             active: true,
             signInMethod: true,
+            passwordFallback: true,
             passwordHash: true,
             failedSignIns: true,
             lockedUntil: true,
@@ -220,8 +222,10 @@ export const authConfig: NextAuthConfig = {
 
         // Still spend the time hashing when there is no account. Answering an
         // unknown address in a millisecond and a known one in a hundred is a
-        // list of who works here.
-        if (!user || user.signInMethod !== "LOCAL" || !user.active) {
+        // list of who works here. The same goes for an SSO account nobody
+        // granted the fallback to: refusing it faster than a wrong password
+        // says which accounts have a second door.
+        if (!user || !canSignInWithPassword(user) || !user.active) {
           await verifyPassword(password, DECOY_HASH);
           return null;
         }

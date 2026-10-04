@@ -8,6 +8,7 @@ import {
 import { promisify } from "node:util";
 
 export {
+  canSignInWithPassword,
   MIN_PASSWORD_LENGTH,
   passwordProblem,
 } from "@/lib/password-rules";

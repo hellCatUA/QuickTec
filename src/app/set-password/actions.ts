@@ -2,6 +2,7 @@
 
 import { db } from "@/lib/db";
 import {
+  canSignInWithPassword,
   hashPassword,
   passwordProblem,
   verifyPassword,
@@ -34,10 +35,14 @@ export async function changeOwnPassword(
 
   const user = await db.user.findUnique({
     where: { id: viewer.id },
-    select: { passwordHash: true, signInMethod: true },
+    select: {
+      passwordHash: true,
+      signInMethod: true,
+      passwordFallback: true,
+    },
   });
 
-  if (!user || user.signInMethod !== "LOCAL") {
+  if (!user || !canSignInWithPassword(user)) {
     return {
       ok: false,
       error: "This account signs in through NextCloud, so its password is there.",

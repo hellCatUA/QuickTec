@@ -35,6 +35,7 @@ export default async function UsersSettingsPage() {
       directSupervisorId: true,
       lastLoginAt: true,
       signInMethod: true,
+      passwordFallback: true,
       passwordHash: true,
     },
   });

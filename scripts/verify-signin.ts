@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { encode } from "@auth/core/jwt";
 import { chromium } from "playwright";
 import { db } from "@/lib/db";
 import { hashPassword, hashSetupToken, newSetupToken } from "@/lib/password";
@@ -133,7 +134,7 @@ async function main() {
   // --- an SSO account cannot be entered here --------------------------------
   const staff = await db.user.findFirstOrThrow({
     where: { signInMethod: "SSO" },
-    select: { email: true },
+    select: { id: true, email: true },
   });
 
   const stranger = await browser.newContext();
@@ -157,6 +158,249 @@ async function main() {
     false,
   );
   await stranger.close();
+
+  // --- unless somebody granted it a password --------------------------------
+  //
+  // The case this exists for: the site has no route to NextCloud, so OIDC
+  // cannot run at all, and the crew still has to clock in. What is checked
+  // here is which of the two things opens the door — the flag, or the hash.
+  // They are tested apart on purpose, because a door that opens on the hash
+  // alone would reopen itself on every account that ever had a password.
+  const FALLBACK_PASSWORD = "the long way round the building";
+
+  await db.user.update({
+    where: { id: staff.id },
+    data: {
+      passwordHash: await hashPassword(FALLBACK_PASSWORD),
+      passwordFallback: false,
+      failedSignIns: 0,
+      lockedUntil: null,
+    },
+  });
+
+  const ungranted = await browser.newContext();
+  const ungrantedPage = await ungranted.newPage();
+  await ungrantedPage.goto(`${BASE}/signin?method=password`, {
+    waitUntil: "load",
+  });
+  await ungrantedPage.waitForTimeout(800);
+  await ungrantedPage.locator("#signin-email").fill(staff.email);
+  await ungrantedPage.locator("#signin-password").fill(FALLBACK_PASSWORD);
+  await ungrantedPage
+    .getByRole("button", { name: "Sign in", exact: true })
+    .click();
+  await ungrantedPage.waitForTimeout(2500);
+  check(
+    "a password on a company account is not a way in by itself",
+    ungrantedPage.url().includes("/dashboard"),
+    false,
+  );
+  check(
+    "and the refusal is worded like any other",
+    await ungrantedPage.getByText("Email or password is wrong.").isVisible(),
+    true,
+  );
+  await ungranted.close();
+
+  // Now granted, with the same password and the same account: the only thing
+  // that changed is somebody's decision.
+  await db.user.update({
+    where: { id: staff.id },
+    data: {
+      passwordFallback: true,
+      mustChangePassword: true,
+      failedSignIns: 0,
+      lockedUntil: null,
+    },
+  });
+
+  const granted = await browser.newContext();
+  const grantedPage = await granted.newPage();
+  await grantedPage.goto(`${BASE}/signin?method=password`, {
+    waitUntil: "load",
+  });
+  await grantedPage.waitForTimeout(800);
+  await grantedPage.locator("#signin-email").fill(staff.email);
+  await grantedPage.locator("#signin-password").fill(FALLBACK_PASSWORD);
+  await grantedPage
+    .getByRole("button", { name: "Sign in", exact: true })
+    .click();
+  await grantedPage.waitForURL(/set-password/, { timeout: 30_000 });
+  check(
+    "granting it lets a company account in without NextCloud",
+    grantedPage.url().includes("/set-password"),
+    true,
+  );
+
+  // A password somebody else chose, on an account that is somebody's whole
+  // working day. The same forced change applies as anywhere else.
+  await grantedPage.waitForTimeout(1000);
+  await grantedPage.locator("#current-password").fill(FALLBACK_PASSWORD);
+  await grantedPage.locator("#new-password").fill("a password of their own");
+  await grantedPage.locator("#confirm-password").fill("a password of their own");
+  await grantedPage.getByRole("button", { name: "Set password" }).click();
+  await grantedPage.waitForURL(/dashboard/, { timeout: 30_000 });
+  check(
+    "and they choose their own before anything else opens",
+    grantedPage.url().includes("/dashboard"),
+    true,
+  );
+  await granted.close();
+
+  // Revoked. The password is still in the row for this one check, so what is
+  // being proved is that taking the permission away is enough on its own.
+  await db.user.update({
+    where: { id: staff.id },
+    data: { passwordFallback: false, failedSignIns: 0, lockedUntil: null },
+  });
+
+  const revoked = await browser.newContext();
+  const revokedPage = await revoked.newPage();
+  await revokedPage.goto(`${BASE}/signin?method=password`, {
+    waitUntil: "load",
+  });
+  await revokedPage.waitForTimeout(800);
+  await revokedPage.locator("#signin-email").fill(staff.email);
+  await revokedPage.locator("#signin-password").fill("a password of their own");
+  await revokedPage
+    .getByRole("button", { name: "Sign in", exact: true })
+    .click();
+  await revokedPage.waitForTimeout(2500);
+  check(
+    "revoking it closes the door again",
+    revokedPage.url().includes("/dashboard"),
+    false,
+  );
+  await revoked.close();
+
+  // Put the company account back as it was found, whatever happened above.
+  await db.user.update({
+    where: { id: staff.id },
+    data: {
+      passwordFallback: false,
+      passwordHash: null,
+      mustChangePassword: false,
+      failedSignIns: 0,
+      lockedUntil: null,
+    },
+  });
+
+  // --- granting it the way an administrator actually does -------------------
+  // The checks above drove the database directly, which proves the door and
+  // not the handle. This is the handle: the page somebody opens on the day
+  // NextCloud is unreachable, pressed by somebody who may grant it.
+  const target = await db.user.findUniqueOrThrow({
+    where: { email: "tech@417group.org" },
+    select: { id: true, name: true },
+  });
+  const manager = await db.user.findUniqueOrThrow({
+    where: { email: "boss@417group.org" },
+    select: { id: true, nextcloudSub: true },
+  });
+
+  const admin = await browser.newContext();
+  await admin.addCookies([
+    {
+      name: "authjs.session-token",
+      value: await encode({
+        token: { sub: manager.nextcloudSub!, userId: manager.id },
+        secret: process.env.AUTH_SECRET!,
+        salt: "authjs.session-token",
+        maxAge: 3600,
+      }),
+      url: BASE,
+    },
+  ]);
+  const adminPage = await admin.newPage();
+  await adminPage.goto(`${BASE}/settings/users`, { waitUntil: "load" });
+  await adminPage.waitForTimeout(1200);
+
+  /**
+   * This one person's card, not whichever is drawn first.
+   *
+   * Every row carries the same buttons, so an unscoped click grants a second
+   * way into whoever happens to sort to the top — which is both a wrong test
+   * and, on a real screen, a wrong account.
+   */
+  const card = () =>
+    adminPage.locator("form").filter({
+      has: adminPage.locator(`input[name="userId"][value="${target.id}"]`),
+    });
+
+  check(
+    "the page is open to somebody who may grant it",
+    await card().count(),
+    1,
+  );
+
+  await card()
+    .getByRole("button", { name: "Allow a QuickTec password too" })
+    .click();
+  await adminPage.waitForTimeout(2500);
+
+  check(
+    "granting hands back a link rather than a password",
+    await card()
+      .getByText(/works once, expires in three days/i)
+      .isVisible(),
+    true,
+  );
+
+  const afterGrant = await db.user.findUniqueOrThrow({
+    where: { id: target.id },
+    select: { passwordFallback: true, passwordHash: true },
+  });
+  check("the account is granted it", afterGrant.passwordFallback, true);
+  check(
+    "and has no password until its owner chooses one",
+    afterGrant.passwordHash,
+    null,
+  );
+  check(
+    "which is recorded against whoever granted it",
+    await db.auditEvent.count({
+      where: {
+        entityId: target.id,
+        action: "password_fallback_granted",
+        actorId: manager.id,
+      },
+    }),
+    1,
+  );
+
+  // And back off again, from the same page.
+  await adminPage.reload({ waitUntil: "load" });
+  await adminPage.waitForTimeout(1200);
+  await card().getByRole("button", { name: "Remove the password" }).click();
+  await adminPage.waitForTimeout(400);
+  await card().getByRole("button", { name: "Remove", exact: true }).click();
+  await adminPage.waitForTimeout(2500);
+
+  const afterRevoke = await db.user.findUniqueOrThrow({
+    where: { id: target.id },
+    select: { passwordFallback: true, passwordChangedAt: true },
+  });
+  check("revoking takes it away", afterRevoke.passwordFallback, false);
+  check(
+    "and cuts whatever sessions were opened with it",
+    afterRevoke.passwordChangedAt !== null,
+    true,
+  );
+  await admin.close();
+
+  // Every company account back as it was found. A run that granted one and
+  // stopped would otherwise leave a way into it for good.
+  await db.user.updateMany({
+    where: { signInMethod: "SSO" },
+    data: {
+      passwordFallback: false,
+      passwordHash: null,
+      mustChangePassword: false,
+      passwordChangedAt: null,
+      failedSignIns: 0,
+      lockedUntil: null,
+    },
+  });
 
   // --- a one-time link ------------------------------------------------------
   const invitee = await db.user.create({

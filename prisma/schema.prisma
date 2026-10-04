@@ -97,8 +97,24 @@ model User {
   /// outside it. Those sign in here, against a password this app holds.
   signInMethod SignInMethod @default(SSO)
 
-  /// scrypt, with its parameters and salt in the string. Only ever set for
-  /// LOCAL accounts; an SSO account has no password here to steal.
+  /// An SSO account that may *also* sign in with a password held here.
+  ///
+  /// OIDC is a conversation with another server, and everything in it — the
+  /// issuer, the discovery document, the redirect URI — is a domain name. A
+  /// site with no route to NextCloud therefore has no way in at all, which is
+  /// the day somebody is standing at a customer's door unable to clock in.
+  ///
+  /// Granted per person by an administrator, never on by default: a second
+  /// door into an account is worth having only where somebody decided it was.
+  /// It does not change where the account's role comes from — that is still
+  /// read from their NextCloud groups on every SSO sign-in — and it does not
+  /// stop SSO working. Meaningless on a LOCAL account, whose password is its
+  /// only method; `canSignInWithPassword` is the one place both are read.
+  passwordFallback Boolean @default(false)
+
+  /// scrypt, with its parameters and salt in the string. Set for LOCAL
+  /// accounts, and for SSO accounts their administrator has granted the
+  /// fallback above. An ordinary SSO account has no password here to steal.
   passwordHash       String?
   /// A password somebody else chose is a password somebody else knows.
   mustChangePassword Boolean @default(false)

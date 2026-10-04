@@ -27,7 +27,8 @@
     "verify:images": "tsx --tsconfig tsconfig.json scripts/verify-images.ts",
     "verify:signin": "tsx --tsconfig tsconfig.json scripts/verify-signin.ts",
     "audit:files": "tsx --tsconfig tsconfig.json scripts/audit-job-files.ts",
-    "verify:budget": "tsx --tsconfig tsconfig.json scripts/verify-budget-guards.ts"
+    "verify:budget": "tsx --tsconfig tsconfig.json scripts/verify-budget-guards.ts",
+    "signin:local": "tsx --tsconfig tsconfig.json scripts/local-signin.ts"
   },
   "repository": {
     "type": "git",

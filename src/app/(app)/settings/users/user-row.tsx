@@ -11,6 +11,7 @@ import { PhoneInput } from "@/components/ui/phone-input";
 import { StatePicker } from "@/components/ui/state-picker";
 import { US_TIME_ZONES, timeZoneForZip } from "@/lib/us-regions";
 import { updateUser, type ActionResult } from "../actions";
+import { PasswordFallback } from "./password-fallback";
 import { ResetPassword } from "./reset-password";
 
 const ROLE_VARIANT: Record<
@@ -47,6 +48,7 @@ export function UserRow({
     directSupervisorId: string | null;
     lastLoginAt: string | null;
     signInMethod: string;
+    passwordFallback: boolean;
     hasPassword: boolean;
   };
   supervisorOptions: { id: string; name: string }[];
@@ -86,6 +88,12 @@ export function UserRow({
               <Badge variant="warning">
                 {user.hasPassword ? "Outside" : "Invited"}
               </Badge>
+            ) : user.passwordFallback ? (
+              // Worth seeing from the list rather than by opening each row:
+              // which company accounts have a second way in is the question
+              // somebody asks when they are checking, not when they are
+              // granting.
+              <Badge variant="warning">Password too</Badge>
             ) : null}
             <Badge
               variant={ROLE_VARIANT[user.baseRole] ?? "neutral"}
@@ -95,11 +103,19 @@ export function UserRow({
             </Badge>
           </div>
 
-          {/* Only for accounts whose password this app actually holds. A
-              NextCloud one is answered in NextCloud. */}
+          {/* Two different questions. An outside account's password is the
+              only way into it, so the question is "they have lost it". A
+              company account's is a spare key for the day NextCloud cannot be
+              reached, so the question is "should this person have one". */}
           {user.signInMethod === "LOCAL" ? (
             <ResetPassword userId={user.id} email={user.email} />
-          ) : null}
+          ) : (
+            <PasswordFallback
+              userId={user.id}
+              granted={user.passwordFallback}
+              hasPassword={user.hasPassword}
+            />
+          )}
 
           <div className="grid gap-4 sm:grid-cols-2">
             <Field
