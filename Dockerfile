@@ -94,6 +94,20 @@ COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/src/lib/permissions.ts ./src/lib/permissions.ts
 COPY --from=builder /app/prisma.config.ts /app/package.json /app/tsconfig.json ./
 COPY --from=builder /app/scripts/migrate.sh ./scripts/migrate.sh
+
+# The way back in when nobody can sign in — `npm run signin:local`, run as
+# `docker compose run --rm migrate npm run signin:local -- --email …`.
+#
+# It lives in this image because this is the one that has the database URL,
+# tsx and the Prisma client, and needs no session: the case it exists for is
+# NextCloud being unreachable, which is also the case where nobody can get
+# into the app to do anything from a screen. It needs exactly these files and
+# nothing else; the command was documented for a whole release before anybody
+# noticed none of them were here, and it would have failed with "Cannot find
+# module" on the one day it was wanted.
+COPY --from=builder /app/scripts/local-signin.ts ./scripts/local-signin.ts
+COPY --from=builder /app/src/lib/db.ts /app/src/lib/audit.ts \
+     /app/src/lib/password.ts /app/src/lib/password-rules.ts ./src/lib/
 CMD ["sh", "./scripts/migrate.sh"]
 
 # ---------------------------------------------------------------------------
