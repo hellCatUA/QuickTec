@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import * as React from "react";
 import { createPortal } from "react-dom";
+import { LocationIcon } from "@/components/icon-picker";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/field";
 import { cn } from "@/lib/utils";
@@ -49,6 +50,7 @@ export type ViewerPhoto = {
   /** Where it is filed, for a section photographed per location. */
   locationId: string | null;
   locationName: string | null;
+  locationIcon: string | null;
 };
 
 export type MoveTarget = {
@@ -286,18 +288,21 @@ export function PhotoViewer({
 
   // The whole section, grouped by location when it is photographed per
   // location: the arrows walk it in this same order.
-  const groups: { label: string | null; items: ViewerPhoto[] }[] = grouped
-    ? photos.reduce<{ label: string | null; items: ViewerPhoto[] }[]>(
-        (list, one) => {
-          const label = one.locationName ?? "Not at a location";
-          const last = list[list.length - 1];
-          if (last && last.label === label) last.items.push(one);
-          else list.push({ label, items: [one] });
-          return list;
-        },
-        [],
-      )
-    : [{ label: null, items: photos }];
+  type Group = { label: string | null; icon: string | null; items: ViewerPhoto[] };
+  const groups: Group[] = grouped
+    ? photos.reduce<Group[]>((list, one) => {
+        const label = one.locationName ?? "Not at a location";
+        const last = list[list.length - 1];
+        if (last && last.label === label) last.items.push(one);
+        else
+          list.push({
+            label,
+            icon: one.locationName ? one.locationIcon : null,
+            items: [one],
+          });
+        return list;
+      }, [])
+    : [{ label: null, icon: null, items: photos }];
 
   const strip = (
     <div
@@ -315,12 +320,15 @@ export function PhotoViewer({
           {group.label ? (
             <span
               className={cn(
-                "text-[10px] font-semibold uppercase tracking-wider",
+                "flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider",
                 group.items.some((one) => one.id === photo.id)
                   ? "text-warning"
                   : "text-muted-foreground",
               )}
             >
+              {group.icon !== null ? (
+                <LocationIcon icon={group.icon} className="size-3" />
+              ) : null}
               {group.label}
             </span>
           ) : null}

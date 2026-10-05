@@ -2874,7 +2874,12 @@ async function main() {
     );
 
     await planner.getByLabel("A position to add").fill("Night Auditor");
-    await planner.getByRole("button", { name: "Add" }).click();
+    // The row the field is in: the locations below have an Add of their own.
+    await planner
+      .getByLabel("A position to add")
+      .locator("xpath=..")
+      .getByRole("button", { name: "Add" })
+      .click();
     await planner.waitForTimeout(1500);
     check(
       "one added is on the list",

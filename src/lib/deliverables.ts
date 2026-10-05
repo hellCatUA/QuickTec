@@ -277,11 +277,17 @@ export type ProgressItem = {
   fileCount: number;
 };
 
-export type ProgressLocation = { id: string; name: string };
+export type ProgressLocation = {
+  id: string;
+  name: string;
+  /** Carried through for whoever draws the location. */
+  icon?: string | null;
+};
 
 export type LocationProgress = {
   id: string;
   name: string;
+  icon: string | null;
   files: number;
   /** What this location still owes a required section; 0 once it has enough. */
   short: number;
@@ -350,6 +356,7 @@ export function fieldProgress(
           return {
             id: location.id,
             name: location.name,
+            icon: location.icon ?? null,
             files: here,
             needed,
             short: Math.max(0, needed - here),

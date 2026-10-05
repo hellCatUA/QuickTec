@@ -91,7 +91,7 @@ ENV PRISMA_SCHEMA_ENGINE_BINARY=/app/node_modules/@prisma/engines/schema-engine-
 
 COPY --from=builder /app/generated ./generated
 COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/src/lib/permissions.ts ./src/lib/permissions.ts
+COPY --from=builder /app/src/lib/permissions.ts /app/src/lib/location-defaults.ts ./src/lib/
 COPY --from=builder /app/prisma.config.ts /app/package.json /app/tsconfig.json ./
 COPY --from=builder /app/scripts/migrate.sh ./scripts/migrate.sh
 

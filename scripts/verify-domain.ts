@@ -2642,6 +2642,58 @@ async function main() {
     ruleNoteField.parse("   "),
     null,
   );
+  // --- the icons a location is drawn with ------------------------------------
+  const { LOCATION_ICONS, locationIcon, searchIcons } = await import(
+    "@/lib/location-icons"
+  );
+  const { DEFAULT_LOCATIONS } = await import("@/lib/location-defaults");
+  const { MAX_LOCATION_NAME } = await import("@/lib/deliverables");
+
+  check(
+    "every icon in the collection has its own key",
+    new Set(LOCATION_ICONS.map((entry) => entry.key)).size,
+    LOCATION_ICONS.length,
+  );
+  check(
+    "and a picture to draw",
+    LOCATION_ICONS.filter((entry) => !entry.icon).length,
+    0,
+  );
+  check(
+    "every default location is drawn with an icon the collection has",
+    DEFAULT_LOCATIONS.filter(
+      (location) => locationIcon(location.icon).key !== location.icon,
+    )
+      .map((location) => location.label)
+      .join(", "),
+    "",
+  );
+  check(
+    "no two default locations share a name",
+    new Set(DEFAULT_LOCATIONS.map((location) => location.label.toLowerCase()))
+      .size,
+    DEFAULT_LOCATIONS.length,
+  );
+  check(
+    "and every name fits on a pill",
+    DEFAULT_LOCATIONS.every((location) => location.label.length <= MAX_LOCATION_NAME),
+    true,
+  );
+  check(
+    "an icon nobody knows any more draws the plain pin",
+    locationIcon("retired-icon").key,
+    "map-pin",
+  );
+  const firstFor = (query: string) => searchIcons(query)[0]?.label ?? "(none)";
+  check("searching by the trade's word: elev", firstFor("elev"), "Elevator");
+  check("facp", firstFor("facp"), "Fire alarm panel");
+  check("two words narrow it: fire pan", firstFor("fire pan"), "Fire alarm panel");
+  check("a whole word beats one that merely starts the same: pos", firstFor("pos"), "Registers");
+  check("telco", searchIcons("telco").map((entry) => entry.label).includes("Demarc"), true);
+  check("a number says which one, not what: idf 2", firstFor("idf 2"), "Server rack");
+  check("nothing typed is everything", searchIcons("  ").length, LOCATION_ICONS.length);
+  check("nonsense finds nothing", searchIcons("zzzz").length, 0);
+
   check(
     "a pasted line break becomes a space, not a second line",
     ruleNoteField.parse("Shoot the rack\r\nfront"),

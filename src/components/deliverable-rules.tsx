@@ -2,6 +2,7 @@
 
 import { Loader2, Minus, Plus, X } from "lucide-react";
 import * as React from "react";
+import { LocationIcon } from "@/components/icon-picker";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/field";
@@ -46,7 +47,7 @@ const plural = (count: number, one: string, many = `${one}s`) =>
  * A folded section, in one line: what it asks for and what the crew is told.
  * "2 photos at each of 3 locations · no note".
  */
-function summary(rule: EditableRule, locations: string[]): string {
+function summary(rule: EditableRule, locations: unknown[]): string {
   const takes = [
     rule.requiresPhoto ? "photos" : null,
     rule.requiresText ? "text" : null,
@@ -96,7 +97,7 @@ export function DeliverableRules({
    * The job's locations, named on the pills under "Separately at each
    * location". A project has none of its own yet, and shows none.
    */
-  locations?: string[];
+  locations?: { name: string; icon: string | null }[];
 }) {
   const [saving, setSaving] = React.useState<string | null>(null);
   const [editing, setEditing] = React.useState<string | null>(null);
@@ -373,7 +374,7 @@ function RuleSettings({
   onChange,
 }: {
   rule: EditableRule;
-  locations: string[];
+  locations: { name: string; icon: string | null }[];
   canEdit: boolean;
   canRequire: boolean;
   onChange: (patch: Partial<EditableRule>) => void;
@@ -505,10 +506,14 @@ function RuleSettings({
               <div className="flex flex-wrap gap-1.5 pl-6">
                 {locations.map((location) => (
                   <span
-                    key={location}
-                    className="rounded-lg px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ring-border"
+                    key={location.name}
+                    className="flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ring-border"
                   >
-                    {location}
+                    <LocationIcon
+                      icon={location.icon}
+                      className="size-3.5 text-muted-foreground"
+                    />
+                    {location.name}
                   </span>
                 ))}
               </div>

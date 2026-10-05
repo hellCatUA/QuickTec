@@ -278,7 +278,12 @@ export default async function JobPage({
       },
       locations: {
         orderBy: [{ order: "asc" }, { createdAt: "asc" }],
-        select: { id: true, name: true, _count: { select: { items: true } } },
+        select: {
+          id: true,
+          name: true,
+          icon: true,
+          _count: { select: { items: true } },
+        },
       },
       reimbursements: {
         orderBy: { createdAt: "asc" },
@@ -449,6 +454,24 @@ export default async function JobPage({
     job.project?.deliverableRules ?? [],
   );
   const rules = sections.filter((rule) => rule.enabled);
+
+  // The rooms offered when a location is added, and the icon each is drawn
+  // with. A location added before it had an icon of its own borrows the one
+  // its name has here.
+  const knownLocations = await db.knownLocation.findMany({
+    where: { active: true },
+    orderBy: [{ order: "asc" }, { label: "asc" }],
+    select: { label: true, icon: true },
+  });
+  const knownIcon = new Map(
+    knownLocations.map((entry) => [entry.label.toLowerCase(), entry.icon]),
+  );
+  const jobLocations = job.locations.map((location) => ({
+    id: location.id,
+    name: location.name,
+    icon: location.icon ?? knownIcon.get(location.name.toLowerCase()) ?? null,
+    inUse: location._count.items > 0,
+  }));
 
   // The same count checkout makes, so the strip under the clock and the
   // refusal at the end of the day cannot disagree.
@@ -1351,7 +1374,7 @@ export default async function JobPage({
                     jobId={job.id}
                     rules={sections}
                     canRequire={canManageJob}
-                    locations={job.locations.map((location) => location.name)}
+                    locations={jobLocations}
                   />
                 ) : null}
               </CardHeader>
@@ -1392,11 +1415,8 @@ export default async function JobPage({
                   canRemoveLocations={canManageJob}
                   photoCount={photoCount}
                   photoLimit={company.maxPhotosPerJob}
-                  locations={job.locations.map((location) => ({
-                    id: location.id,
-                    name: location.name,
-                    inUse: location._count.items > 0,
-                  }))}
+                  locations={jobLocations}
+                  known={knownLocations}
                   items={job.deliverables.map((item) => {
                     const own = item.assignment?.userId === user.id;
                     return {

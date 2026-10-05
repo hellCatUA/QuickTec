@@ -112,6 +112,20 @@ async function main() {
       },
     ],
   });
+  // The dictionary as the seed leaves it, for the entries this relies on.
+  for (const [label, icon, order] of [
+    ["MDF", "server", 0],
+    ["IDF", "network", 1],
+    ["Install point", "locate-fixed", 3],
+  ] as const) {
+    await db.knownLocation.upsert({
+      where: { label },
+      update: { icon, active: true },
+      create: { label, icon, order },
+    });
+  }
+  await db.knownLocation.deleteMany({ where: { label: { startsWith: "Kitchen" } } });
+
   const mdf = await db.jobLocation.create({
     data: { jobId, name: "MDF", order: 0 },
   });
@@ -175,6 +189,14 @@ async function main() {
     "each location is a pill with what it still owes",
     await page.getByRole("button", { name: "MDF 0/2" }).isVisible(),
     true,
+  );
+  check(
+    "drawn with its icon from the list",
+    await page
+      .getByRole("button", { name: "MDF 0/2" })
+      .locator("svg.lucide-server")
+      .count(),
+    1,
   );
   check(
     "and the folded row counts what the section needs in all",
@@ -332,14 +354,26 @@ async function main() {
 
   // --- a room nobody mentioned ------------------------------------------------
   await page.getByRole("button", { name: "Add a location" }).first().click();
-  await page.getByRole("textbox", { name: "Name of the location" }).fill("Install point");
-  await page.getByRole("button", { name: "Add", exact: true }).click();
-  await page.waitForTimeout(1500);
+  const where = page.getByRole("textbox", { name: "Name of the location" });
+  await where.fill("instal");
   check(
-    "anyone on the job can add a location",
-    await db.jobLocation.count({ where: { jobId, name: "Install point" } }),
-    1,
+    "the list in settings is offered as you type",
+    await page.getByRole("button", { name: "Install point", exact: true }).isVisible(),
+    true,
   );
+  check(
+    "and what is already on the job is not",
+    await page.getByRole("button", { name: "MDF", exact: true }).count(),
+    0,
+  );
+  await where.press("Enter");
+  await page.waitForTimeout(1500);
+  const added = await db.jobLocation.findFirst({
+    where: { jobId, name: "Install point" },
+    select: { icon: true },
+  });
+  check("anyone on the job can add a location", Boolean(added), true);
+  check("and it comes with the list's icon", added?.icon, "locate-fixed");
   check(
     "and it is asked for at once",
     (await banner.textContent())?.includes("Install point"),
@@ -347,14 +381,33 @@ async function main() {
   );
 
   await page.getByRole("button", { name: "Add a location" }).first().click();
-  await page.getByRole("textbox", { name: "Name of the location" }).fill("mdf");
-  await page.getByRole("button", { name: "Add", exact: true }).click();
-  await page.waitForTimeout(1200);
+  await where.fill("mdf");
   check(
-    "the same room twice is refused, whatever the case",
-    await page.getByText("There is already a location called mdf.").isVisible(),
+    "the same room twice is not offered, whatever the case",
+    await page.getByText("“mdf” is already on this job.").isVisible(),
     true,
   );
+  check(
+    "nor can it be added by typing it",
+    await page.getByRole("button", { name: /^Add “mdf”/ }).count(),
+    0,
+  );
+
+  // A second IDF is not on the list, but it is still an IDF.
+  await where.fill("IDF 2");
+  await page.getByRole("button", { name: /^Add “IDF 2”/ }).click();
+  await page.waitForTimeout(1500);
+  check(
+    "a room typed by hand is kept as typed, with its namesake's icon",
+    (
+      await db.jobLocation.findFirst({
+        where: { jobId, name: "IDF 2" },
+        select: { icon: true },
+      })
+    )?.icon,
+    "network",
+  );
+  await db.jobLocation.deleteMany({ where: { jobId, name: "IDF 2" } });
   check(
     "a tech who is not the lead is not offered taking one away",
     await page.getByRole("button", { name: /Remove the location/ }).count(),
@@ -514,6 +567,82 @@ async function main() {
     await planner.getByRole("button", { name: "One more photo" }).count(),
     0,
   );
+
+  // --- the dictionary in settings ----------------------------------------------
+  await planner.goto(`${BASE}/settings/company`, { waitUntil: "load" });
+  check(
+    "the locations are listed in company settings",
+    await planner.getByRole("heading", { name: "Locations" }).isVisible(),
+    true,
+  );
+  check(
+    "each with the icon it is drawn with",
+    await planner
+      .getByRole("button", { name: "Icon for MDF: Server rack. Change it" })
+      .isVisible(),
+    true,
+  );
+
+  const newName = planner.getByRole("textbox", { name: "A location to add" });
+  await newName.fill("Kitchen");
+  check(
+    "a new name suggests its icon from its words",
+    await planner
+      .getByRole("button", { name: "Icon for the new location: Kitchen. Change it" })
+      .isVisible(),
+    true,
+  );
+  await newName.press("Enter");
+  await planner.waitForTimeout(1500);
+  check(
+    "and is added with it",
+    (await db.knownLocation.findUnique({ where: { label: "Kitchen" } }))?.icon,
+    "chef-hat",
+  );
+
+  await newName.fill("mdf");
+  await newName.press("Enter");
+  await planner.waitForTimeout(1200);
+  check(
+    "the same room twice is refused, whatever the case",
+    await planner.getByText("That one is already on the list.").isVisible(),
+    true,
+  );
+  await newName.fill("");
+
+  await planner
+    .getByRole("button", { name: "Icon for MDF: Server rack. Change it" })
+    .click();
+  await planner.getByRole("textbox", { name: "Search icons" }).fill("router");
+  await planner
+    .getByRole("dialog", { name: "Pick an icon for MDF" })
+    .getByRole("button", { name: "Router", exact: true })
+    .click();
+  await planner.waitForTimeout(1500);
+  check(
+    "an icon is changed by searching for it",
+    (await db.knownLocation.findUnique({ where: { label: "MDF" } }))?.icon,
+    "router",
+  );
+  check(
+    "and nothing already on a job is rewritten",
+    await db.jobLocation.count({ where: { icon: "router" } }),
+    0,
+  );
+  await db.knownLocation.update({
+    where: { label: "MDF" },
+    data: { icon: "server" },
+  });
+
+  await planner.getByRole("button", { name: "Options for Kitchen" }).click();
+  await planner.getByRole("menuitem", { name: "Take off the list" }).click();
+  await planner.waitForTimeout(1500);
+  check(
+    "one is taken off the list rather than deleted",
+    (await db.knownLocation.findUnique({ where: { label: "Kitchen" } }))?.active,
+    false,
+  );
+  await db.knownLocation.deleteMany({ where: { label: "Kitchen" } });
 
   // The archive keeps each room's photos together.
   const zip = await planner.request.get(`${BASE}/api/jobs/${jobId}/export/zip`);

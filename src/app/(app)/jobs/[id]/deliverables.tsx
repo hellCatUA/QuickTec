@@ -9,12 +9,14 @@ import {
   MapPin,
   MessageSquare,
   Plus,
+  Search,
   Upload,
   X,
 } from "lucide-react";
 import * as React from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { LocationIcon } from "@/components/icon-picker";
 import { Field, Input, Textarea } from "@/components/ui/field";
 import {
   type DeliverableRule,
@@ -24,6 +26,7 @@ import {
   MAX_LOCATION_NAME,
   progressCount,
 } from "@/lib/deliverables";
+import { searchIcons } from "@/lib/location-icons";
 import { prepareForUpload } from "@/lib/photo-upload";
 import { cn } from "@/lib/utils";
 import type { DeliverableCategory } from "@prisma-client";
@@ -54,7 +57,10 @@ import {
  * room for several.
  */
 
-export type PhotoView = Omit<ViewerPhoto, "locationId" | "locationName">;
+export type PhotoView = Omit<
+  ViewerPhoto,
+  "locationId" | "locationName" | "locationIcon"
+>;
 
 export type DeliverableItemView = {
   id: string;
@@ -71,9 +77,14 @@ export type DeliverableItemView = {
 export type LocationView = {
   id: string;
   name: string;
+  /** A key from the icon collection; null draws the plain pin. */
+  icon: string | null;
   /** Anything filed under it, in any section. A location in use stays. */
   inUse: boolean;
 };
+
+/** An entry from the dictionary in Settings → Company. */
+export type KnownLocationView = { label: string; icon: string | null };
 
 type Adding = { key: string; locationId: string | null };
 
@@ -140,6 +151,7 @@ export function Deliverables({
   rules,
   items,
   locations,
+  known,
   canUpload,
   canRemoveLocations,
   photoCount,
@@ -150,6 +162,8 @@ export function Deliverables({
   rules: DeliverableRule[];
   items: DeliverableItemView[];
   locations: LocationView[];
+  /** The locations offered by name when one is added. */
+  known: KnownLocationView[];
   canUpload: boolean;
   /** A supervisor or the lead: the only ones who take a location away. */
   canRemoveLocations: boolean;
@@ -250,6 +264,7 @@ export function Deliverables({
           field={field}
           items={items.filter((item) => itemMatchesRule(item, field.rule))}
           locations={locations}
+          known={known}
           isOpen={open.includes(field.key)}
           adding={adding?.key === field.key ? adding : null}
           canUpload={canUpload}
@@ -293,13 +308,17 @@ function photosOf(
   locations: LocationView[],
 ): ViewerPhoto[] {
   const mine = items.filter((item) => itemMatchesRule(item, field.rule));
-  const names = new Map(locations.map((location) => [location.id, location.name]));
+  const byId = new Map(locations.map((location) => [location.id, location]));
   const flat = mine.flatMap((item) =>
-    item.attachments.map((attachment) => ({
-      ...attachment,
-      locationId: item.locationId,
-      locationName: item.locationId ? (names.get(item.locationId) ?? null) : null,
-    })),
+    item.attachments.map((attachment) => {
+      const location = item.locationId ? byId.get(item.locationId) : undefined;
+      return {
+        ...attachment,
+        locationId: item.locationId,
+        locationName: location?.name ?? null,
+        locationIcon: location?.icon ?? null,
+      };
+    }),
   );
   // A section not photographed per location says nothing about where.
   if (!field.locations) {
@@ -401,6 +420,7 @@ function Section({
   field,
   items,
   locations,
+  known,
   isOpen,
   adding,
   canUpload,
@@ -417,6 +437,7 @@ function Section({
   field: FieldProgress;
   items: DeliverableItemView[];
   locations: LocationView[];
+  known: KnownLocationView[];
   isOpen: boolean;
   adding: Adding | null;
   canUpload: boolean;
@@ -515,6 +536,7 @@ function Section({
           photos={photos}
           typed={typed}
           locations={locations}
+          known={known}
           adding={adding}
           canUpload={canUpload}
           canRemoveLocations={canRemoveLocations}
@@ -580,8 +602,9 @@ function Folded({
                     : "text-foreground ring-border",
               )}
             >
-              {done ? <Check className="size-3" strokeWidth={3} /> : null}
+              <LocationIcon icon={location.icon} className="size-3.5" />
               {location.name}
+              {done ? <Check className="size-3" strokeWidth={3} /> : null}
               {counted && !done ? (
                 <span className="tabular">
                   {location.files}/{location.needed}
@@ -675,6 +698,7 @@ function Opened({
   photos,
   typed,
   locations,
+  known,
   adding,
   canUpload,
   canRemoveLocations,
@@ -689,6 +713,7 @@ function Opened({
   photos: ViewerPhoto[];
   typed: DeliverableItemView[];
   locations: LocationView[];
+  known: KnownLocationView[];
   adding: Adding | null;
   canUpload: boolean;
   canRemoveLocations: boolean;
@@ -764,7 +789,13 @@ function Opened({
                 className="flex scroll-mt-24 flex-col gap-2"
               >
                 <div className="flex min-h-8 items-center gap-2">
-                  <span className="text-[13px] font-semibold">{location.name}</span>
+                  <span className="flex items-center gap-1.5 text-[13px] font-semibold">
+                    <LocationIcon
+                      icon={location.icon}
+                      className="size-4 text-muted-foreground"
+                    />
+                    {location.name}
+                  </span>
                   {counted ? (
                     short === 0 ? (
                       <span className="flex items-center gap-0.5 text-xs text-success">
@@ -840,7 +871,12 @@ function Opened({
             </div>
           ) : null}
 
-          {canUpload ? <AddLocation jobId={jobId} onError={onError} /> : null}
+          {canUpload ? <AddLocation
+              jobId={jobId}
+              known={known}
+              onJob={locations}
+              onError={onError}
+            /> : null}
         </>
       ) : (
         <>
@@ -868,7 +904,12 @@ function Opened({
           {/* Per location, but nobody has named a location yet: the first
               one is named from here. */}
           {canUpload && rule.perLocation ? (
-            <AddLocation jobId={jobId} onError={onError} />
+            <AddLocation
+              jobId={jobId}
+              known={known}
+              onJob={locations}
+              onError={onError}
+            />
           ) : null}
         </>
       )}
@@ -949,29 +990,59 @@ function TypedEntry({
   );
 }
 
-/** A room found on the day — the second IDF nobody mentioned. */
+/**
+ * A room found on the day — the second IDF nobody mentioned.
+ *
+ * Picked from the list in Settings → Company, which carries the icon with it,
+ * or typed when the room is not there. What is already on the job is left off
+ * the list, so the same room cannot be added twice by picking it twice.
+ */
 function AddLocation({
   jobId,
+  known,
+  onJob,
   onError,
 }: {
   jobId: string;
+  known: KnownLocationView[];
+  onJob: LocationView[];
   onError: (message: string | null) => void;
 }) {
   const [naming, setNaming] = React.useState(false);
-  const [name, setName] = React.useState("");
+  const [query, setQuery] = React.useState("");
   const [pending, startTransition] = React.useTransition();
 
-  function submit() {
-    const trimmed = name.trim();
-    if (!trimmed) return;
+  const typed = query.replace(/\s+/g, " ").trim();
+  const lower = typed.toLowerCase();
+  const taken = new Set(onJob.map((location) => location.name.toLowerCase()));
+  const offered = known.filter(
+    (entry) =>
+      !taken.has(entry.label.toLowerCase()) &&
+      (!lower || entry.label.toLowerCase().includes(lower)),
+  );
+  const already = typed && taken.has(lower) ? typed : null;
+  const exact = known.some((entry) => entry.label.toLowerCase() === lower);
+  const custom = typed && !already && !exact ? typed : null;
+  // A room the list does not know still gets a picture: the one its list
+  // namesake has — "IDF 2" the IDF's — or failing that the one its words
+  // suggest, and the plain pin if they suggest nothing.
+  const namesake = custom
+    ? known.find((entry) => lower.startsWith(`${entry.label.toLowerCase()} `))
+    : undefined;
+  const customIcon = custom
+    ? (namesake?.icon ?? searchIcons(custom)[0]?.key ?? null)
+    : null;
+
+  function add(name: string, icon: string | null) {
     onError(null);
     startTransition(async () => {
       const formData = new FormData();
       formData.set("jobId", jobId);
-      formData.set("name", trimmed);
+      formData.set("name", name);
+      if (icon) formData.set("icon", icon);
       const result = await addJobLocation(formData);
       if (!result.ok) return onError(result.error);
-      setName("");
+      setQuery("");
       setNaming(false);
     });
   }
@@ -989,46 +1060,84 @@ function AddLocation({
     );
   }
 
+  const row =
+    "flex min-h-11 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-sm hover:bg-muted disabled:opacity-50";
+
   return (
-    <div className="flex items-center gap-2">
-      <Input
-        value={name}
-        autoFocus
-        maxLength={MAX_LOCATION_NAME}
-        aria-label="Name of the location"
-        placeholder="IDF 2"
-        disabled={pending}
-        onChange={(event) => setName(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") {
-            event.preventDefault();
-            submit();
-          } else if (event.key === "Escape") {
+    <div className="flex flex-col gap-1 rounded-xl border border-border bg-surface-raised p-2">
+      <div className="flex items-center gap-1">
+        <div className="relative flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <input
+            value={query}
+            autoFocus
+            maxLength={MAX_LOCATION_NAME}
+            aria-label="Name of the location"
+            placeholder="Search or type a location…"
+            disabled={pending}
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                if (offered[0]) add(offered[0].label, offered[0].icon);
+                else if (custom) add(custom, customIcon);
+              } else if (event.key === "Escape") {
+                setNaming(false);
+              }
+            }}
+            className="min-h-10 w-full rounded-lg border border-border bg-input pl-9 pr-3 text-sm placeholder:text-muted-foreground"
+          />
+        </div>
+        <button
+          type="button"
+          aria-label="Cancel adding a location"
+          disabled={pending}
+          onClick={() => {
             setNaming(false);
-          }
-        }}
-      />
-      <Button
-        type="button"
-        size="sm"
-        disabled={pending || name.trim() === ""}
-        onClick={submit}
-      >
-        {pending ? <Loader2 className="animate-spin" /> : null}
-        Add
-      </Button>
-      <Button
-        type="button"
-        size="sm"
-        variant="ghost"
-        disabled={pending}
-        onClick={() => {
-          setNaming(false);
-          setName("");
-        }}
-      >
-        Cancel
-      </Button>
+            setQuery("");
+          }}
+          className="flex size-10 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted"
+        >
+          {pending ? <Loader2 className="size-4 animate-spin" /> : <X className="size-4" />}
+        </button>
+      </div>
+
+      <div className="flex max-h-64 flex-col overflow-y-auto">
+        {custom ? (
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => add(custom, customIcon)}
+            className={cn(row, "text-primary")}
+          >
+            <Plus className="size-4 shrink-0" />
+            <span className="min-w-0 flex-1 truncate">Add “{custom}”</span>
+            <LocationIcon icon={customIcon} className="size-4 text-muted-foreground" />
+          </button>
+        ) : null}
+        {already ? (
+          <p className="px-2.5 py-2 text-sm text-muted-foreground">
+            “{already}” is already on this job.
+          </p>
+        ) : null}
+        {offered.map((entry) => (
+          <button
+            key={entry.label}
+            type="button"
+            disabled={pending}
+            onClick={() => add(entry.label, entry.icon)}
+            className={row}
+          >
+            <LocationIcon icon={entry.icon} className="size-4 text-muted-foreground" />
+            <span className="min-w-0 flex-1 truncate">{entry.label}</span>
+          </button>
+        ))}
+        {offered.length === 0 && !custom && !already ? (
+          <p className="px-2.5 py-2 text-sm text-muted-foreground">
+            Everything on the list is on this job. Type a name to add another.
+          </p>
+        ) : null}
+      </div>
     </div>
   );
 }

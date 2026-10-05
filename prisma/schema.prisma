@@ -1414,6 +1414,9 @@ model JobLocation {
   job   Job    @relation(fields: [jobId], references: [id], onDelete: Cascade)
 
   name  String
+  /// The icon it is drawn with, copied from the dictionary when it was picked
+  /// from there. Null draws the dictionary's icon for the same name, or a pin.
+  icon  String?
   order Int    @default(0)
 
   createdById String?
@@ -1423,6 +1426,27 @@ model JobLocation {
 
   @@unique([jobId, name])
   @@index([jobId])
+}
+
+/// The locations offered by name while somebody adds one to a job — MDF, IDF,
+/// the elevator machine room — each with the icon it is drawn with.
+///
+/// Suggestions, as ContactPosition is: anything not on the list can still be
+/// typed, and a job keeps the name and icon it was given, so renaming or
+/// retiring an entry here rewrites nothing already on a job.
+model KnownLocation {
+  id     String  @id @default(cuid())
+  label  String  @unique
+  /// A key from the icon collection (src/lib/location-icons.ts).
+  icon   String?
+  order  Int     @default(0)
+  /// Retired rather than deleted, as contact positions are.
+  active Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([active, order])
 }
 
 // ---------------------------------------------------------------------------

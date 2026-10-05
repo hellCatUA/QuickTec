@@ -7,6 +7,7 @@ import { getCompanySettings } from "@/lib/company";
 import { isoDateInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
 import { deliverableLabel, MAX_LOCATION_NAME } from "@/lib/deliverables";
+import { isLocationIcon } from "@/lib/location-icons";
 import {
   isPdf,
   looksLikeImage,
@@ -1092,6 +1093,12 @@ const locationSchema = z.object({
  *
  * Anyone who can add photos to the job can add one: they are the person
  * standing in it. Taking one away is a supervisor's, below.
+ *
+ * A name that is in the dictionary takes the dictionary's spelling and icon,
+ * so "mdf" typed in a hurry still reads MDF with its rack. Anything else is
+ * kept as typed, with the icon its words suggested or the plain pin. Either
+ * way the job keeps what it was given: renaming the dictionary later changes
+ * nothing here.
  */
 export async function addJobLocation(
   formData: FormData,
@@ -1105,7 +1112,22 @@ export async function addJobLocation(
   const context = await requireUpload(parsed.data.jobId);
   if ("error" in context) return fail(context.error);
   const { user, job } = context;
-  const { name } = parsed.data;
+
+  const known = await db.knownLocation.findFirst({
+    where: { label: { equals: parsed.data.name, mode: "insensitive" } },
+    select: { label: true, icon: true },
+  });
+  const name = known?.label ?? parsed.data.name;
+  // The dictionary's icon for a name it knows; for one it does not, the one
+  // the picker suggested from the words, if it is one of ours.
+  const offered = formData.get("icon");
+  const icon = known
+    ? isLocationIcon(known.icon)
+      ? known.icon
+      : null
+    : typeof offered === "string" && isLocationIcon(offered)
+      ? offered
+      : null;
 
   const existing = await db.jobLocation.findMany({
     where: { jobId: job.id },
@@ -1120,6 +1142,7 @@ export async function addJobLocation(
     data: {
       jobId: job.id,
       name,
+      icon,
       order: Math.max(-1, ...existing.map((one) => one.order)) + 1,
       createdById: user.id,
     },

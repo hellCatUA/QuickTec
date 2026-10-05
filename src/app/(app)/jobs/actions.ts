@@ -503,7 +503,7 @@ export async function createRevisit(
       },
       locations: {
         orderBy: { order: "asc" },
-        select: { name: true, order: true },
+        select: { name: true, icon: true, order: true },
       },
     },
   });
@@ -721,6 +721,7 @@ export async function createRevisit(
             ? {
                 create: parent.locations.map((location) => ({
                   name: location.name,
+                  icon: location.icon,
                   order: location.order,
                   createdById: actor.id,
                 })),

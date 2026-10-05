@@ -22,8 +22,8 @@ export function DeliverableSections({
 }: {
   jobId: string;
   rules: EditableRule[];
-  /** The job's location names, shown under a section photographed at each. */
-  locations?: string[];
+  /** The job's locations, shown under a section photographed at each. */
+  locations?: { name: string; icon: string | null }[];
   /**
    * Whether this person may also demand a section, or take one away.
    *

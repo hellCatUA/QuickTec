@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { can, getSessionUser } from "@/lib/session";
 import { CompanyForm } from "./company-form";
 import { ContactPositions } from "./contact-positions";
+import { KnownLocations } from "./known-locations";
 
 export const metadata = { title: "Company settings" };
 
@@ -17,6 +18,11 @@ export default async function CompanySettingsPage() {
     where: { active: true },
     orderBy: [{ order: "asc" }, { label: "asc" }],
     select: { id: true, label: true },
+  });
+  const locations = await db.knownLocation.findMany({
+    where: { active: true },
+    orderBy: [{ order: "asc" }, { label: "asc" }],
+    select: { id: true, label: true, icon: true },
   });
 
   return (
@@ -37,6 +43,8 @@ export default async function CompanySettingsPage() {
       />
 
       <ContactPositions positions={positions} />
+
+      <KnownLocations locations={locations} />
     </div>
   );
 }

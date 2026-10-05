@@ -17,6 +17,8 @@ import {
   passwordProblem,
   SETUP_TOKEN_HOURS,
 } from "@/lib/password";
+import { isLocationIcon } from "@/lib/location-icons";
+import { MAX_LOCATION_NAME } from "@/lib/deliverables";
 import { PERMISSION_KEYS, type Permission } from "@/lib/permissions";
 import { requirePermission } from "@/lib/session";
 import { canSupervise } from "@/lib/supervisors";
@@ -799,6 +801,161 @@ export async function moveContactPosition(
   await db.$transaction(
     all.map((one, index) =>
       db.contactPosition.update({
+        where: { id: one.id },
+        data: { order: index },
+      }),
+    ),
+  );
+
+  revalidatePath("/settings/company");
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// The locations on site photos are filed under
+// ---------------------------------------------------------------------------
+//
+// The same kind of dictionary as the positions above: what is offered while
+// somebody adds a location to a job, with the icon it is drawn with. A job
+// keeps the name and icon it was given, so nothing here rewrites a job.
+
+const locationLabel = z
+  .string()
+  .transform((value) => value.replace(/\s+/g, " ").trim())
+  .pipe(
+    z
+      .string()
+      .min(1, "Give it a name")
+      .max(MAX_LOCATION_NAME, `Keep it to ${MAX_LOCATION_NAME} characters.`),
+  );
+
+const locationIconField = z
+  .string()
+  .refine(isLocationIcon, "That icon is not in the collection.");
+
+export async function addKnownLocation(
+  formData: FormData,
+): Promise<ActionResult> {
+  await requirePermission("settings.company");
+
+  const parsed = z
+    .object({ label: locationLabel, icon: locationIconField })
+    .safeParse({ label: formData.get("label") ?? "", icon: formData.get("icon") });
+  if (!parsed.success)
+    return { ok: false, error: z.prettifyError(parsed.error) };
+  const { label, icon } = parsed.data;
+
+  // "MDF" and "mdf" are one room; a second entry for it splits the photos.
+  const clash = await db.knownLocation.findFirst({
+    where: { label: { equals: label, mode: "insensitive" } },
+    select: { id: true, active: true },
+  });
+  if (clash) {
+    if (clash.active)
+      return { ok: false, error: "That one is already on the list." };
+    // Put back rather than made again, with the icon chosen now.
+    await db.knownLocation.update({
+      where: { id: clash.id },
+      data: { active: true, label, icon },
+    });
+    revalidatePath("/settings/company");
+    return { ok: true };
+  }
+
+  const last = await db.knownLocation.findFirst({
+    orderBy: { order: "desc" },
+    select: { order: true },
+  });
+
+  await db.knownLocation.create({
+    data: { label, icon, order: (last?.order ?? -1) + 1 },
+  });
+
+  revalidatePath("/settings/company");
+  return { ok: true };
+}
+
+export async function renameKnownLocation(
+  formData: FormData,
+): Promise<ActionResult> {
+  await requirePermission("settings.company");
+
+  const id = String(formData.get("id") ?? "");
+  const parsed = locationLabel.safeParse(formData.get("label") ?? "");
+  if (!parsed.success)
+    return { ok: false, error: z.prettifyError(parsed.error) };
+
+  const clash = await db.knownLocation.findFirst({
+    where: { label: { equals: parsed.data, mode: "insensitive" } },
+    select: { id: true },
+  });
+  if (clash && clash.id !== id) {
+    return { ok: false, error: "There is already one called that." };
+  }
+
+  await db.knownLocation.update({
+    where: { id },
+    data: { label: parsed.data },
+  });
+
+  revalidatePath("/settings/company");
+  return { ok: true };
+}
+
+/** A different picture from now on. Jobs keep the one they were given. */
+export async function setKnownLocationIcon(
+  formData: FormData,
+): Promise<ActionResult> {
+  await requirePermission("settings.company");
+
+  const id = String(formData.get("id") ?? "");
+  const parsed = locationIconField.safeParse(formData.get("icon"));
+  if (!parsed.success)
+    return { ok: false, error: z.prettifyError(parsed.error) };
+
+  await db.knownLocation.update({ where: { id }, data: { icon: parsed.data } });
+
+  revalidatePath("/settings/company");
+  return { ok: true };
+}
+
+/** Off the list from now on. Jobs that used it are left as they are. */
+export async function retireKnownLocation(
+  formData: FormData,
+): Promise<ActionResult> {
+  await requirePermission("settings.company");
+
+  const id = String(formData.get("id") ?? "");
+  await db.knownLocation.update({ where: { id }, data: { active: false } });
+
+  revalidatePath("/settings/company");
+  return { ok: true };
+}
+
+/** Up or down one place: the ones on most jobs belong at the top. */
+export async function moveKnownLocation(
+  formData: FormData,
+): Promise<ActionResult> {
+  await requirePermission("settings.company");
+
+  const id = String(formData.get("id") ?? "");
+  const up = formData.get("direction") === "up";
+
+  const all = await db.knownLocation.findMany({
+    where: { active: true },
+    orderBy: [{ order: "asc" }, { label: "asc" }],
+    select: { id: true },
+  });
+
+  const at = all.findIndex((one) => one.id === id);
+  const swapWith = up ? at - 1 : at + 1;
+  if (at === -1 || swapWith < 0 || swapWith >= all.length) return { ok: true };
+
+  [all[at], all[swapWith]] = [all[swapWith], all[at]];
+
+  await db.$transaction(
+    all.map((one, index) =>
+      db.knownLocation.update({
         where: { id: one.id },
         data: { order: index },
       }),

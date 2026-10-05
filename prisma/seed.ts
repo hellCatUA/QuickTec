@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../generated/prisma/client";
+import { DEFAULT_LOCATIONS } from "../src/lib/location-defaults";
 import { DEFAULT_ROLE_GRANTS, PERMISSION_KEYS } from "../src/lib/permissions";
 
 /**
@@ -112,6 +113,22 @@ async function main() {
     console.log(`seeded ${positions.length} contact positions`);
   } else {
     console.log("contact positions already set up — left alone");
+  }
+
+  // The same for the places on site photos are filed under. Written into an
+  // empty table only, so a list somebody has shaped is never reset.
+  const knownLocations = await db.knownLocation.count();
+  if (knownLocations === 0) {
+    await db.knownLocation.createMany({
+      data: DEFAULT_LOCATIONS.map((location, index) => ({
+        label: location.label,
+        icon: location.icon,
+        order: index,
+      })),
+    });
+    console.log(`seeded ${DEFAULT_LOCATIONS.length} locations`);
+  } else {
+    console.log("locations already set up — left alone");
   }
 
   await db.$disconnect();
