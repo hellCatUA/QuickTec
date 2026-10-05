@@ -18,9 +18,12 @@ export function DeliverableSections({
   jobId,
   rules,
   canRequire = true,
+  locations = [],
 }: {
   jobId: string;
   rules: EditableRule[];
+  /** The job's location names, shown under a section photographed at each. */
+  locations?: string[];
   /**
    * Whether this person may also demand a section, or take one away.
    *
@@ -60,6 +63,7 @@ export function DeliverableSections({
           rules={rules}
           save={saveJobDeliverableRule}
           canRequire={canRequire}
+          locations={locations}
         />
       ) : null}
     </div>

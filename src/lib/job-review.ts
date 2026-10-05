@@ -176,8 +176,17 @@ export function reviewDetails(input: DetailsInput): ReviewFlag[] {
 }
 
 export type DeliverablesInput = {
-  /** Sections the job asks for, and whether anything is in them. */
-  sections: { label: string; required: boolean; filled: boolean }[];
+  /**
+   * Sections the job asks for, whether anything is in them, and — for a
+   * required one — what it still lacks. A section with something in it can
+   * still be short: two photos at the MDF when it asks for three.
+   */
+  sections: {
+    label: string;
+    required: boolean;
+    filled: boolean;
+    gap?: string | null;
+  }[];
   photoCount: number;
   /** Their sheet, signed on site. */
   hasSignOff: boolean;
@@ -187,12 +196,15 @@ export function reviewDeliverables(input: DeliverablesInput): ReviewFlag[] {
   const flags: ReviewFlag[] = [];
 
   const missing = input.sections
-    .filter((section) => section.required && !section.filled)
-    .map((section) => section.label);
+    .filter((section) =>
+      section.required &&
+      (section.gap === undefined ? !section.filled : section.gap !== null),
+    )
+    .map((section) => section.gap ?? section.label);
   if (missing.length > 0) {
     flags.push({
       level: "warn",
-      text: `Required and empty: ${missing.join(", ")}.`,
+      text: `Still needed: ${missing.join(", ")}.`,
     });
   }
 

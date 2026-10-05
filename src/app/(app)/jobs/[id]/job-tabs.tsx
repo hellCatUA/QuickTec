@@ -36,7 +36,7 @@ export function JobTabs({
   notes,
   deliverables,
 }: {
-  /** Required deliverables not yet supplied. */
+  /** What required deliverables still lack, one gap each. */
   missing: string[];
   details: React.ReactNode;
   notes: React.ReactNode;
@@ -58,11 +58,11 @@ export function JobTabs({
             "hover:bg-warning/15",
           )}
         >
+          {/* Each gap said exactly — "Pre-Install at IDF (1 of 2)" — so the
+              tech knows which room to walk back to, not just which section. */}
           <span>
-            <strong className="font-semibold">
-              {missing.length} required
-            </strong>{" "}
-            still missing before you can close — {missing.join(", ")}
+            <strong className="font-semibold">Still needed to close</strong> —{" "}
+            {missing.join(", ")}
           </span>
           <span className="ml-auto shrink-0 text-muted-foreground">›</span>
         </button>

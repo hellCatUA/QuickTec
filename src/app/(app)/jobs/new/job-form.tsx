@@ -408,7 +408,21 @@ export function JobForm({
     setScopeOfWork(values.scopeOfWork ?? "");
     setNoWorkOrder(values.noWorkOrder ?? false);
     setPickedTemplates(values.pickedTemplates ?? null);
-    setDeliverables((values.deliverables as EditableRule[] | null) ?? null);
+    // A draft saved before sections had a photo count and a note carries
+    // neither; it gets what such a section always meant.
+    setDeliverables(
+      Array.isArray(values.deliverables)
+        ? (values.deliverables as Partial<EditableRule>[]).map(
+            (rule) =>
+              ({
+                ...rule,
+                minPhotos: rule.minPhotos ?? 1,
+                perLocation: rule.perLocation ?? false,
+                note: rule.note ?? null,
+              }) as EditableRule,
+          )
+        : null,
+    );
     setBreakPaidChoice(values.breakPaidChoice ?? null);
     setPayType(values.payType ?? "");
     setPayRate(values.payRate ?? "");

@@ -19,7 +19,12 @@ import {
   usTimeInZone,
 } from "@/lib/datetime";
 import { db } from "@/lib/db";
-import { deliverableLabel, effectiveRules } from "@/lib/deliverables";
+import {
+  effectiveRules,
+  fieldProgress,
+  missingDeliverables,
+  RULE_SELECT,
+} from "@/lib/deliverables";
 import {
   DETAIL_FIELDS,
   fieldAction,
@@ -209,15 +214,7 @@ export default async function JobPage({
           },
           deliverableRules: {
             where: { jobId: null },
-            select: {
-              category: true,
-              customLabel: true,
-              enabled: true,
-              required: true,
-              requiresPhoto: true,
-              requiresText: true,
-              order: true,
-            },
+            select: RULE_SELECT,
           },
         },
       },
@@ -234,15 +231,7 @@ export default async function JobPage({
       },
       deliverableRules: {
         where: { projectId: null },
-        select: {
-          category: true,
-          customLabel: true,
-          enabled: true,
-          required: true,
-          requiresPhoto: true,
-          requiresText: true,
-          order: true,
-        },
+        select: RULE_SELECT,
       },
       pointsOfContact: {
         orderBy: [{ type: "asc" }, { order: "asc" }],
@@ -266,13 +255,30 @@ export default async function JobPage({
           category: true,
           customLabel: true,
           textValue: true,
+          locationId: true,
           assignment: {
             select: { userId: true, user: { select: { name: true } } },
           },
           attachments: {
-            select: { id: true, mimeType: true, originalName: true },
+            orderBy: { createdAt: "asc" },
+            select: {
+              id: true,
+              mimeType: true,
+              originalName: true,
+              sizeBytes: true,
+              width: true,
+              height: true,
+              capturedAt: true,
+              createdAt: true,
+              uploadedById: true,
+              uploadedBy: { select: { name: true } },
+            },
           },
         },
+      },
+      locations: {
+        orderBy: [{ order: "asc" }, { createdAt: "asc" }],
+        select: { id: true, name: true, _count: { select: { items: true } } },
       },
       reimbursements: {
         orderBy: { createdAt: "asc" },
@@ -408,6 +414,7 @@ export default async function JobPage({
 
   const [
     canUpload,
+    canDeleteUploads,
     canOverrideMissing,
     canSetOutcome,
     canExportText,
@@ -415,6 +422,7 @@ export default async function JobPage({
     canExportPdf,
   ] = await Promise.all([
     canOnJob(user, "deliverable.upload", jobRef),
+    canOnJob(user, "deliverable.delete", jobRef),
     canOnJob(user, "job.override_missing_signoff", jobRef),
     canOnJob(user, "job.set_outcome_status", jobRef),
     canOnJob(user, "export.text", jobRef),
@@ -442,12 +450,21 @@ export default async function JobPage({
   );
   const rules = sections.filter((rule) => rule.enabled);
 
-  const presentCategories = new Set(
-    job.deliverables.map((item) => item.category),
+  // The same count checkout makes, so the strip under the clock and the
+  // refusal at the end of the day cannot disagree.
+  const missingRequired = missingDeliverables(
+    fieldProgress(
+      rules,
+      job.deliverables.map((item) => ({
+        category: item.category,
+        customLabel: item.customLabel,
+        locationId: item.locationId,
+        textValue: item.textValue,
+        fileCount: item.attachments.length,
+      })),
+      job.locations,
+    ),
   );
-  const missingRequired = rules
-    .filter((rule) => rule.required && !presentCategories.has(rule.category))
-    .map((rule) => deliverableLabel(rule.category, rule.customLabel));
 
   const photoCount = job.deliverables.reduce(
     (total, item) => total + item.attachments.length,
@@ -1334,6 +1351,7 @@ export default async function JobPage({
                     jobId={job.id}
                     rules={sections}
                     canRequire={canManageJob}
+                    locations={job.locations.map((location) => location.name)}
                   />
                 ) : null}
               </CardHeader>
@@ -1371,17 +1389,48 @@ export default async function JobPage({
                   jobId={job.id}
                   rules={rules}
                   canUpload={canUpload}
+                  canRemoveLocations={canManageJob}
                   photoCount={photoCount}
                   photoLimit={company.maxPhotosPerJob}
-                  items={job.deliverables.map((item) => ({
-                    id: item.id,
-                    category: item.category,
-                    customLabel: item.customLabel,
-                    textValue: item.textValue,
-                    uploadedBy: item.assignment?.user.name ?? null,
-                    isOwn: item.assignment?.userId === user.id,
-                    attachments: item.attachments,
+                  locations={job.locations.map((location) => ({
+                    id: location.id,
+                    name: location.name,
+                    inUse: location._count.items > 0,
                   }))}
+                  items={job.deliverables.map((item) => {
+                    const own = item.assignment?.userId === user.id;
+                    return {
+                      id: item.id,
+                      category: item.category,
+                      customLabel: item.customLabel,
+                      textValue: item.textValue,
+                      locationId: item.locationId,
+                      uploadedBy: item.assignment?.user.name ?? null,
+                      // Your own is yours to sort out; somebody else's needs
+                      // the person who signs the report off as well.
+                      canRemoveText:
+                        canDeleteUploads && (own || canApproveJob),
+                      attachments: item.attachments.map((attachment) => {
+                        const mine = attachment.uploadedById === user.id;
+                        return {
+                          id: attachment.id,
+                          mimeType: attachment.mimeType,
+                          originalName: attachment.originalName,
+                          sizeBytes: attachment.sizeBytes,
+                          width: attachment.width,
+                          height: attachment.height,
+                          uploadedBy: attachment.uploadedBy.name,
+                          taken: usDateTimeInZone(
+                            attachment.capturedAt ?? attachment.createdAt,
+                            zone,
+                          ),
+                          canMove: canUpload && (mine || canApproveJob),
+                          canDelete:
+                            canDeleteUploads && (mine || canApproveJob),
+                        };
+                      }),
+                    };
+                  })}
                 />
 
                 {job.signatures.length > 0 ? (

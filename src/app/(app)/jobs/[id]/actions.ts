@@ -25,12 +25,14 @@ import {
   toDatetimeLocalInZone,
 } from "@/lib/datetime";
 import { db } from "@/lib/db";
-import { deliverableLabel, resolveDeliverableRules } from "@/lib/deliverables";
+import { minPhotosField, ruleNoteField } from "@/lib/deliverable-settings";
+import { deliverableLabel, normaliseRuleSettings } from "@/lib/deliverables";
 import { flag, optionalText } from "@/lib/form";
 import { describeReason, punchReasonProblem } from "@/lib/punch-reasons";
 import {
   jobRuleSheet,
   removeJobCustomRule,
+  missingRequiredDeliverables,
   saveJobRule,
 } from "@/lib/job-deliverables";
 import {
@@ -613,60 +615,6 @@ export async function clearPreparedCheckout(
 
   touch(jobId);
   return ok;
-}
-
-/**
- * Required deliverable sections with nothing in them. Job-level rules win over
- * the project's, matching what the job page shows.
- */
-export async function missingRequiredDeliverables(
-  jobId: string,
-): Promise<string[]> {
-  const job = await db.job.findUnique({
-    where: { id: jobId },
-    select: {
-      deliverableRules: {
-        where: { projectId: null },
-        select: {
-          category: true,
-          customLabel: true,
-          enabled: true,
-          required: true,
-          requiresPhoto: true,
-          requiresText: true,
-          order: true,
-        },
-      },
-      project: {
-        select: {
-          deliverableRules: {
-            where: { jobId: null },
-            select: {
-              category: true,
-              customLabel: true,
-              enabled: true,
-              required: true,
-              requiresPhoto: true,
-              requiresText: true,
-              order: true,
-            },
-          },
-        },
-      },
-      deliverables: { select: { category: true } },
-    },
-  });
-  if (!job) return [];
-
-  const rules = resolveDeliverableRules(
-    job.deliverableRules,
-    job.project?.deliverableRules ?? [],
-  );
-  const present = new Set(job.deliverables.map((item) => item.category));
-
-  return rules
-    .filter((rule) => rule.required && !present.has(rule.category))
-    .map((rule) => deliverableLabel(rule.category, rule.customLabel));
 }
 
 export async function toggleBreak(formData: FormData): Promise<ActionResult> {
@@ -2794,6 +2742,9 @@ const jobRuleSchema = z.object({
   required: flag,
   requiresPhoto: flag,
   requiresText: flag,
+  minPhotos: minPhotosField,
+  perLocation: flag,
+  note: ruleNoteField,
   /** Custom sections are taken away rather than switched off. */
   remove: flag,
 });
@@ -2815,6 +2766,7 @@ export async function saveJobDeliverableRule(
     required: formData.get("required") === "true",
     requiresPhoto: formData.get("requiresPhoto") === "true",
     requiresText: formData.get("requiresText") === "true",
+    perLocation: formData.get("perLocation") === "true",
     remove: formData.get("remove") === "true",
   });
   if (!parsed.success) return fail(z.prettifyError(parsed.error));
@@ -2851,6 +2803,23 @@ export async function saveJobDeliverableRule(
     if (remove || (current?.enabled && !rule.enabled)) {
       return fail("Only a supervisor or the job's lead can remove a section.");
     }
+    // How many photos, where, and what the crew is told are planning too:
+    // the first two decide what checkout refuses. So is what a required
+    // section takes — unticking Photo would let a line of text stand in for
+    // the photos it asks for.
+    if (
+      current &&
+      (current.minPhotos !== rule.minPhotos ||
+        current.perLocation !== rule.perLocation ||
+        (current.note ?? null) !== rule.note ||
+        (current.required &&
+          (current.requiresPhoto !== rule.requiresPhoto ||
+            current.requiresText !== rule.requiresText)))
+    ) {
+      return fail(
+        "Only a supervisor or the job's lead can change what a section asks for.",
+      );
+    }
   }
 
   if (remove) {
@@ -2879,13 +2848,10 @@ export async function saveJobDeliverableRule(
     return fail("Give the section a name.");
   }
 
-  // A section that is off cannot also be mandatory; letting both be true would
-  // block checkout on something the tech is never shown.
-  const normalised = {
+  const normalised = normaliseRuleSettings({
     ...rule,
     customLabel: category === "CUSTOM" ? rule.customLabel : null,
-    required: rule.enabled && rule.required,
-  };
+  });
 
   await saveJobRule(jobId, { category, ...normalised });
 

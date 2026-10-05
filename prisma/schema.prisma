@@ -991,6 +991,7 @@ model Job {
   signatures       Signature[]
   deliverableRules DeliverableRequirement[]
   deliverables     DeliverableItem[]
+  locations        JobLocation[]
   reimbursements   Reimbursement[]
   /// Ticket numbers after the first. `ticketNumber` above is the primary one
   /// — the field people mean when they say "the ticket".
@@ -1353,6 +1354,16 @@ model DeliverableRequirement {
   requiresPhoto Boolean @default(true)
   requiresText  Boolean @default(false)
 
+  /// How many photos a required section has to hold before it counts as done.
+  /// More are welcome; fewer leaves it incomplete and checkout waits.
+  minPhotos   Int     @default(1)
+  /// Counted separately at each of the job's locations — before and after at
+  /// the MDF, again at the IDF, again where the thing went in.
+  perLocation Boolean @default(false)
+  /// What the person who set the job up wants the crew to know about this
+  /// section, shown under its name. Up to 100 characters.
+  note        String?
+
   order Int @default(0)
 
   /// One row per section per owner — except Custom Field, which a job may have
@@ -1379,12 +1390,39 @@ model DeliverableItem {
   /// Serial numbers, return label numbers, free notes.
   textValue   String?
 
+  /// Where on site these were taken, for a section counted per location.
+  /// Null for every other section, and for photos taken before the job had
+  /// any locations to file them under.
+  locationId String?
+  location   JobLocation? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   attachments Attachment[]
 
   @@index([jobId, category])
+  @@index([locationId])
+}
+
+/// A place on site the crew photographs separately — MDF, IDF, the install
+/// point. A job has its own list: anyone on it can add one found on the day,
+/// and only a supervisor takes one away, and then only while it is empty.
+model JobLocation {
+  id    String @id @default(cuid())
+  jobId String
+  job   Job    @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  name  String
+  order Int    @default(0)
+
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  items DeliverableItem[]
+
+  @@unique([jobId, name])
+  @@index([jobId])
 }
 
 // ---------------------------------------------------------------------------

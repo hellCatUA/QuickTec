@@ -6,7 +6,7 @@ import { recordAudit } from "@/lib/audit";
 import { getCompanySettings } from "@/lib/company";
 import { isoDateInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
-import { deliverableLabel } from "@/lib/deliverables";
+import { deliverableLabel, MAX_LOCATION_NAME } from "@/lib/deliverables";
 import {
   isPdf,
   looksLikeImage,
@@ -251,7 +251,25 @@ const deliverableSchema = z.object({
    * time means the tech sees them land, and a failure costs one photo.
    */
   itemId: z.string().optional(),
+  /** Where on site, for a section photographed at each location. */
+  locationId: z.string().optional(),
 });
+
+/**
+ * The location, if it is one of this job's. The id comes from the browser, and
+ * a location on somebody else's job is not somewhere this job's photos go.
+ */
+async function jobLocation(
+  jobId: string,
+  locationId: string | undefined,
+): Promise<{ id: string; name: string } | null | "unknown"> {
+  if (!locationId) return null;
+  const location = await db.jobLocation.findFirst({
+    where: { id: locationId, jobId },
+    select: { id: true, name: true },
+  });
+  return location ?? "unknown";
+}
 
 export async function saveDeliverable(
   _prev: ActionResult | null,
@@ -263,12 +281,18 @@ export async function saveDeliverable(
     customLabel: formData.get("customLabel") ?? undefined,
     textValue: formData.get("textValue") ?? undefined,
     itemId: formData.get("itemId") ?? undefined,
+    locationId: formData.get("locationId") || undefined,
   });
   if (!parsed.success) return fail(z.prettifyError(parsed.error));
 
   const context = await requireUpload(parsed.data.jobId);
   if ("error" in context) return fail(context.error);
   const { user, job } = context;
+
+  const location = await jobLocation(job.id, parsed.data.locationId);
+  if (location === "unknown") {
+    return fail("That location is no longer on this job.");
+  }
 
   const { category, customLabel, textValue } = parsed.data;
   if (category === "CUSTOM" && !customLabel) {
@@ -318,6 +342,7 @@ export async function saveDeliverable(
           category,
           customLabel: customLabel || null,
           textValue: textValue || null,
+          locationId: location?.id ?? null,
         },
         select: { id: true },
       });
@@ -370,63 +395,13 @@ export async function saveDeliverable(
       detail: {
         category,
         label: deliverableLabel(category, customLabel),
+        ...(location ? { location: location.name } : {}),
       },
     });
   }
 
   touch(job.id);
   return failures.length > 0 ? fail(failures.join("; ")) : ok(item.id);
-}
-
-export async function deleteDeliverableItem(
-  formData: FormData,
-): Promise<ActionResult> {
-  const id = String(formData.get("id") ?? "");
-
-  const item = await db.deliverableItem.findUnique({
-    where: { id },
-    select: {
-      jobId: true,
-      category: true,
-      customLabel: true,
-      assignment: { select: { userId: true } },
-      attachments: { select: { id: true, storagePath: true } },
-    },
-  });
-  if (!item) return fail("Not found.");
-
-  const user = await getSessionUser();
-  if (!user) return fail("Not signed in.");
-
-  const job = await loadJob(item.jobId);
-  if (!job) return fail("Job not found.");
-
-  // A tech may clear up their own upload; removing someone else's needs the
-  // wider permission.
-  const isOwn = item.assignment?.userId === user.id;
-  const allowed = isOwn
-    ? await canOnJob(user, "deliverable.delete", job)
-    : await canOnJob(user, "deliverable.delete", job) &&
-      (await canOnJob(user, "job.approve_report", job));
-
-  if (!allowed) return fail("You cannot remove this.");
-
-  for (const attachment of item.attachments) {
-    await deleteFile(attachment.storagePath);
-  }
-  await db.deliverableItem.delete({ where: { id } });
-
-  await recordAudit({
-    actorId: user.id,
-    entityType: "DeliverableItem",
-    entityId: id,
-    jobId: item.jobId,
-    action: "deliverable_removed",
-    detail: { category: item.category },
-  });
-
-  touch(item.jobId);
-  return ok();
 }
 
 // ---------------------------------------------------------------------------
@@ -830,47 +805,229 @@ export async function saveSignature(
   return ok(signature.id);
 }
 
-const moveDeliverableSchema = z.object({
-  itemId: z.string().min(1),
+// ---------------------------------------------------------------------------
+// One photo at a time
+// ---------------------------------------------------------------------------
+
+/**
+ * The photo, the upload it belongs to, and whether this person may change it.
+ *
+ * Your own photo is yours to sort out. Somebody else's needs the person who
+ * signs the report off as well — the same test the whole-upload actions use,
+ * asked of the photo rather than of the batch it arrived in, since two people
+ * now add to one location.
+ */
+type PhotoInHand = {
+  user: SessionUser;
+  attachment: { id: string; storagePath: string };
+  item: {
+    id: string;
+    jobId: string;
+    assignmentId: string | null;
+    category: DeliverableCategory;
+    customLabel: string | null;
+    location: { id: string; name: string } | null;
+  };
+};
+
+async function photoForChange(
+  attachmentId: string,
+  permission: "deliverable.upload" | "deliverable.delete",
+): Promise<PhotoInHand | { error: string }> {
+  const user = await getSessionUser();
+  if (!user) return { error: "Not signed in." };
+
+  const attachment = await db.attachment.findUnique({
+    where: { id: attachmentId },
+    select: {
+      id: true,
+      storagePath: true,
+      uploadedById: true,
+      deliverableItem: {
+        select: {
+          id: true,
+          jobId: true,
+          assignmentId: true,
+          category: true,
+          customLabel: true,
+          location: { select: { id: true, name: true } },
+        },
+      },
+    },
+  });
+  const item = attachment?.deliverableItem;
+  if (!attachment || !item) return { error: "That photo is not on a job." };
+
+  const job = await loadJob(item.jobId);
+  if (!job) return { error: "Job not found." };
+
+  const isOwn = attachment.uploadedById === user.id;
+  const allowed = isOwn
+    ? await canOnJob(user, permission, job)
+    : (await canOnJob(user, permission, job)) &&
+      (await canOnJob(user, "job.approve_report", job));
+  if (!allowed) {
+    return {
+      error:
+        permission === "deliverable.delete"
+          ? "You cannot delete this photo."
+          : "You cannot move this photo.",
+    };
+  }
+
+  return { user, attachment, item };
+}
+
+/** An upload left with neither photos nor text is an empty row in the report. */
+async function dropIfEmpty(itemId: string) {
+  await db.deliverableItem.deleteMany({
+    where: {
+      id: itemId,
+      attachments: { none: {} },
+      OR: [{ textValue: null }, { textValue: "" }],
+    },
+  });
+}
+
+function placeLabel(
+  category: DeliverableCategory,
+  customLabel: string | null,
+  location: { name: string } | null,
+) {
+  const label = deliverableLabel(category, customLabel);
+  return location ? `${label} at ${location.name}` : label;
+}
+
+const photoMoveSchema = z.object({
+  attachmentId: z.string().min(1),
   category: z.enum(DeliverableCategory),
   customLabel: z.string().trim().max(80).optional(),
+  locationId: z.string().optional(),
 });
 
 /**
- * Puts a photo in the section it belonged in.
+ * Moves one photo to another section, another location, or both.
  *
- * Ten photos taken standing in a comms room go into whichever section was open
- * on the phone, and two of them are of the old switch rather than the new one.
- * Until now the only fix was to delete and re-upload — over the site's LTE,
- * from a phone that may have cleared the originals — which is why the wrong
- * ones simply stayed where they were and the client's report carried them.
- *
- * The photo moves, not a copy of it: the file on disk is untouched and the same
- * attachment row follows the item, so nothing is re-encoded or re-stamped.
+ * A tech who shot the IDF with the MDF open finds out on the photo, so that
+ * is where the fix is. The file itself is untouched — nothing is re-encoded or
+ * re-stamped — and it keeps the name of whoever took it.
  */
-export async function moveDeliverable(
+export async function moveDeliverablePhoto(
   formData: FormData,
 ): Promise<ActionResult> {
-  const parsed = moveDeliverableSchema.safeParse({
-    itemId: formData.get("itemId"),
+  const parsed = photoMoveSchema.safeParse({
+    attachmentId: formData.get("attachmentId"),
     category: formData.get("category"),
-    customLabel: formData.get("customLabel") ?? undefined,
+    customLabel: formData.get("customLabel") || undefined,
+    locationId: formData.get("locationId") || undefined,
   });
   if (!parsed.success) return fail(z.prettifyError(parsed.error));
 
-  const { itemId, category, customLabel } = parsed.data;
+  const { attachmentId, category } = parsed.data;
+  const customLabel = category === "CUSTOM" ? parsed.data.customLabel : null;
   if (category === "CUSTOM" && !customLabel) {
     return fail("Say which custom section.");
   }
 
+  const context = await photoForChange(attachmentId, "deliverable.upload");
+  if ("error" in context) return fail(context.error);
+  const { user, item } = context;
+
+  const location = await jobLocation(item.jobId, parsed.data.locationId);
+  if (location === "unknown") {
+    return fail("That location is no longer on this job.");
+  }
+
+  const from = placeLabel(item.category, item.customLabel, item.location);
+  const to = placeLabel(category, customLabel ?? null, location);
+  if (
+    item.category === category &&
+    (item.customLabel ?? null) === (customLabel ?? null) &&
+    (item.location?.id ?? null) === (location?.id ?? null)
+  ) {
+    return ok();
+  }
+
+  // Joins the upload already there from the same person, so a section does
+  // not fill up with one-photo rows; otherwise starts one for them.
+  const where = {
+    jobId: item.jobId,
+    category,
+    customLabel: customLabel ?? null,
+    locationId: location?.id ?? null,
+    assignmentId: item.assignmentId,
+  };
+  const destination =
+    (await db.deliverableItem.findFirst({ where, select: { id: true } })) ??
+    (await db.deliverableItem.create({ data: where, select: { id: true } }));
+
+  await db.attachment.update({
+    where: { id: attachmentId },
+    data: { deliverableItemId: destination.id },
+  });
+  await dropIfEmpty(item.id);
+
+  await recordAudit({
+    actorId: user.id,
+    entityType: "DeliverableItem",
+    entityId: destination.id,
+    jobId: item.jobId,
+    action: "deliverable_moved",
+    detail: { field: "Photo", from, to },
+  });
+
+  touch(item.jobId);
+  return ok();
+}
+
+/** Deletes one photo, file and all. */
+export async function deleteDeliverablePhoto(
+  formData: FormData,
+): Promise<ActionResult> {
+  const attachmentId = String(formData.get("attachmentId") ?? "");
+  if (!attachmentId) return fail("Which photo?");
+
+  const context = await photoForChange(attachmentId, "deliverable.delete");
+  if ("error" in context) return fail(context.error);
+  const { user, attachment, item } = context;
+
+  await db.attachment.delete({ where: { id: attachment.id } });
+  await deleteFile(attachment.storagePath);
+  await dropIfEmpty(item.id);
+
+  await recordAudit({
+    actorId: user.id,
+    entityType: "DeliverableItem",
+    entityId: item.id,
+    jobId: item.jobId,
+    action: "deliverable_removed",
+    detail: {
+      category: item.category,
+      label: placeLabel(item.category, item.customLabel, item.location),
+      what: "photo",
+    },
+  });
+
+  touch(item.jobId);
+  return ok();
+}
+
+/**
+ * Takes the typed part of an upload away — a serial keyed in wrong — and
+ * leaves any photo that came with it where it is.
+ */
+export async function removeDeliverableText(
+  formData: FormData,
+): Promise<ActionResult> {
+  const id = String(formData.get("itemId") ?? "");
+
   const item = await db.deliverableItem.findUnique({
-    where: { id: itemId },
+    where: { id },
     select: {
-      id: true,
       jobId: true,
       category: true,
       customLabel: true,
-      assignmentId: true,
+      textValue: true,
       assignment: { select: { userId: true } },
     },
   });
@@ -882,78 +1039,170 @@ export async function moveDeliverable(
   const job = await loadJob(item.jobId);
   if (!job) return fail("Job not found.");
 
-  // Same test as removing one: your own is yours to sort out, somebody else's
-  // needs the person who signs the report off.
   const isOwn = item.assignment?.userId === user.id;
   const allowed = isOwn
-    ? await canOnJob(user, "deliverable.upload", job)
-    : (await canOnJob(user, "deliverable.upload", job)) &&
+    ? await canOnJob(user, "deliverable.delete", job)
+    : (await canOnJob(user, "deliverable.delete", job)) &&
       (await canOnJob(user, "job.approve_report", job));
-  if (!allowed) return fail("You cannot move this one.");
+  if (!allowed) return fail("You cannot remove this.");
 
-  const from = deliverableLabel(item.category, item.customLabel);
-  const to = deliverableLabel(category, customLabel ?? null);
-  if (from === to) return ok();
-
-  // The section it is going to may already exist and hold photos of its own —
-  // then this joins it rather than making a second one with the same name.
-  const destination = await db.deliverableItem.findFirst({
-    where: {
-      jobId: item.jobId,
-      category,
-      ...(category === "CUSTOM" ? { customLabel } : {}),
-      id: { not: item.id },
-      assignmentId: item.assignmentId,
-    },
-    select: { id: true },
+  await db.deliverableItem.update({
+    where: { id },
+    data: { textValue: null },
   });
-
-  if (destination) {
-    // The whole entry moves, text and all. Repointing only the attachments
-    // left the tracking numbers behind under the old section — still on the
-    // client report — while the photo of the label appeared under the new one,
-    // and the same action behaved differently depending on whether the
-    // destination happened to exist yet.
-    const moved = await db.deliverableItem.findUniqueOrThrow({
-      where: { id: item.id },
-      select: { textValue: true },
-    });
-    const existing = await db.deliverableItem.findUniqueOrThrow({
-      where: { id: destination.id },
-      select: { textValue: true },
-    });
-
-    await db.$transaction([
-      db.attachment.updateMany({
-        where: { deliverableItemId: item.id },
-        data: { deliverableItemId: destination.id },
-      }),
-      db.deliverableItem.update({
-        where: { id: destination.id },
-        data: {
-          textValue:
-            [existing.textValue, moved.textValue].filter(Boolean).join("\n") ||
-            null,
-        },
-      }),
-      db.deliverableItem.delete({ where: { id: item.id } }),
-    ]);
-  } else {
-    await db.deliverableItem.update({
-      where: { id: item.id },
-      data: { category, customLabel: category === "CUSTOM" ? customLabel : null },
-    });
-  }
+  await dropIfEmpty(id);
 
   await recordAudit({
     actorId: user.id,
     entityType: "DeliverableItem",
-    entityId: item.id,
+    entityId: id,
     jobId: item.jobId,
-    action: "deliverable_moved",
-    detail: { field: "Section", from, to },
+    action: "deliverable_removed",
+    detail: {
+      category: item.category,
+      label: deliverableLabel(item.category, item.customLabel),
+      what: "text",
+      from: item.textValue,
+    },
   });
 
   touch(item.jobId);
+  return ok();
+}
+
+// ---------------------------------------------------------------------------
+// Locations
+// ---------------------------------------------------------------------------
+
+const locationSchema = z.object({
+  jobId: z.string().min(1),
+  name: z
+    .string()
+    .transform((value) => value.replace(/\s+/g, " ").trim())
+    .pipe(
+      z
+        .string()
+        .min(1, "Name the location.")
+        .max(MAX_LOCATION_NAME, `Keep it to ${MAX_LOCATION_NAME} characters.`),
+    ),
+});
+
+/**
+ * A place on site found on the day — the second IDF nobody mentioned.
+ *
+ * Anyone who can add photos to the job can add one: they are the person
+ * standing in it. Taking one away is a supervisor's, below.
+ */
+export async function addJobLocation(
+  formData: FormData,
+): Promise<ActionResult> {
+  const parsed = locationSchema.safeParse({
+    jobId: formData.get("jobId"),
+    name: formData.get("name") ?? "",
+  });
+  if (!parsed.success) return fail(z.prettifyError(parsed.error));
+
+  const context = await requireUpload(parsed.data.jobId);
+  if ("error" in context) return fail(context.error);
+  const { user, job } = context;
+  const { name } = parsed.data;
+
+  const existing = await db.jobLocation.findMany({
+    where: { jobId: job.id },
+    select: { name: true, order: true },
+  });
+  // "MDF" and "mdf" are one room, and two pills for it split its photos.
+  if (existing.some((one) => one.name.toLowerCase() === name.toLowerCase())) {
+    return fail(`There is already a location called ${name}.`);
+  }
+
+  const location = await db.jobLocation.create({
+    data: {
+      jobId: job.id,
+      name,
+      order: Math.max(-1, ...existing.map((one) => one.order)) + 1,
+      createdById: user.id,
+    },
+    select: { id: true },
+  });
+
+  await recordAudit({
+    actorId: user.id,
+    entityType: "JobLocation",
+    entityId: location.id,
+    jobId: job.id,
+    action: "location_added",
+    detail: { name },
+  });
+
+  touch(job.id);
+  return ok(location.id);
+}
+
+/**
+ * Takes a location off the job — a supervisor's or the lead's call, and only
+ * while nothing is filed under it. A location with photos in it is where
+ * those photos are; deleting it would quietly un-file them and change what
+ * checkout counts.
+ */
+export async function removeJobLocation(
+  formData: FormData,
+): Promise<ActionResult> {
+  const locationId = String(formData.get("locationId") ?? "");
+
+  const location = await db.jobLocation.findUnique({
+    where: { id: locationId },
+    select: {
+      id: true,
+      jobId: true,
+      name: true,
+      _count: { select: { items: true } },
+    },
+  });
+  if (!location) return fail("That location is already gone.");
+
+  const user = await getSessionUser();
+  if (!user) return fail("Not signed in.");
+
+  const job = await loadJob(location.jobId);
+  if (!job) return fail("Job not found.");
+
+  const lead = await db.jobAssignment.findFirst({
+    where: { jobId: job.id, userId: user.id, isLead: true },
+    select: { id: true },
+  });
+  const allowed =
+    Boolean(lead) || (await canOnJob(user, "job.edit_planned_fields", job));
+  if (!allowed) {
+    return fail("Only a supervisor or the job's lead can remove a location.");
+  }
+
+  if (location._count.items > 0) {
+    return fail(
+      `${location.name} still has photos in it. Move or delete them first.`,
+    );
+  }
+
+  // Asked again in the delete itself, so a photo landing in between is not
+  // un-filed by a removal that checked a moment too early.
+  const removed = await db.jobLocation.deleteMany({
+    where: { id: location.id, items: { none: {} } },
+  });
+  if (removed.count === 0) {
+    return fail(
+      `${location.name} still has photos in it. Move or delete them first.`,
+    );
+  }
+
+  await recordAudit({
+    actorId: user.id,
+    entityType: "JobLocation",
+    entityId: location.id,
+    jobId: job.id,
+    action: "location_removed",
+    detail: { name: location.name },
+  });
+
+  touch(job.id);
   return ok();
 }

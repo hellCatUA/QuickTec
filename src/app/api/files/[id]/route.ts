@@ -82,9 +82,13 @@ export async function GET(
     return new NextResponse("File missing from storage", { status: 410 });
   }
 
-  const width = Number(new URL(request.url).searchParams.get("w"));
+  const query = new URL(request.url).searchParams;
+  const width = Number(query.get("w"));
   const wantsThumb =
     THUMB_WIDTHS.has(width) && attachment.mimeType.startsWith("image/");
+  // The viewer's Download button. Inline would open the photo in a tab on a
+  // laptop, which is the other button.
+  const disposition = query.get("download") === "1" ? "attachment" : "inline";
 
   const data = wantsThumb
     ? await thumbnail(attachment.storagePath, width)
@@ -96,7 +100,7 @@ export async function GET(
       // header has to follow what is actually in the body.
       "Content-Type": wantsThumb ? "image/jpeg" : attachment.mimeType,
       "Content-Length": String(data.byteLength),
-      "Content-Disposition": `inline; filename="${attachment.originalName.replace(/[^\w.\-]/g, "_")}"`,
+      "Content-Disposition": `${disposition}; filename="${attachment.originalName.replace(/[^\w.\-]/g, "_")}"`,
       // Private: the response is scoped to this user's permissions, so a shared
       // cache must never hand it to anyone else. Immutable because the id maps
       // to one file for its lifetime.

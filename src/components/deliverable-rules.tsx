@@ -1,11 +1,17 @@
 "use client";
 
-import { Loader2, Plus, X } from "lucide-react";
+import { Loader2, Minus, Plus, X } from "lucide-react";
 import * as React from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/field";
-import { DELIVERABLE_META, ruleKey } from "@/lib/deliverables";
+import {
+  DELIVERABLE_META,
+  MAX_MIN_PHOTOS,
+  MAX_RULE_NOTE,
+  ruleKey,
+} from "@/lib/deliverables";
+import { cn } from "@/lib/utils";
 import type { DeliverableCategory } from "@prisma-client";
 
 /**
@@ -26,7 +32,39 @@ export type EditableRule = {
   required: boolean;
   requiresPhoto: boolean;
   requiresText: boolean;
+  /** Photos a required section needs — at each location when perLocation. */
+  minPhotos: number;
+  perLocation: boolean;
+  /** Shown to the crew under the section's name. Up to 100 characters. */
+  note: string | null;
 };
+
+const plural = (count: number, one: string, many = `${one}s`) =>
+  `${count} ${count === 1 ? one : many}`;
+
+/**
+ * A folded section, in one line: what it asks for and what the crew is told.
+ * "2 photos at each of 3 locations · no note".
+ */
+function summary(rule: EditableRule, locations: string[]): string {
+  const takes = [
+    rule.requiresPhoto ? "photos" : null,
+    rule.requiresText ? "text" : null,
+  ].filter(Boolean);
+
+  const asks = !rule.required
+    ? ["Optional", takes.join(" and ") || "nothing to fill in"].join(" · ")
+    : rule.requiresPhoto
+      ? rule.perLocation
+        ? locations.length > 0
+          ? `${plural(rule.minPhotos, "photo")} at each of ${plural(locations.length, "location")}`
+          : `${plural(rule.minPhotos, "photo")} at each location`
+        : plural(rule.minPhotos, "photo")
+      : "Text";
+
+  const note = rule.note ? `“${rule.note}”` : "no note";
+  return `${asks} · ${note}`;
+}
 
 type SaveResult = { ok: true } | { ok: false; error: string };
 
@@ -37,6 +75,7 @@ export function DeliverableRules({
   onChange,
   canEdit = true,
   canRequire = true,
+  locations = [],
 }: {
   /** Which column the row hangs off, and the id to put in it. Saved rows only. */
   owner?: { field: "projectId" | "jobId"; id: string };
@@ -53,8 +92,14 @@ export function DeliverableRules({
    * was planned, decides what checkout will refuse — a different act.
    */
   canRequire?: boolean;
+  /**
+   * The job's locations, named on the pills under "Separately at each
+   * location". A project has none of its own yet, and shows none.
+   */
+  locations?: string[];
 }) {
   const [saving, setSaving] = React.useState<string | null>(null);
+  const [editing, setEditing] = React.useState<string | null>(null);
   const [naming, setNaming] = React.useState(false);
   const [newName, setNewName] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
@@ -91,6 +136,9 @@ export function DeliverableRules({
       formData.set("required", String(rule.required));
       formData.set("requiresPhoto", String(rule.requiresPhoto));
       formData.set("requiresText", String(rule.requiresText));
+      formData.set("minPhotos", String(rule.minPhotos));
+      formData.set("perLocation", String(rule.perLocation));
+      formData.set("note", rule.note ?? "");
       if (remove) formData.set("remove", "true");
 
       const result = await save(formData);
@@ -111,6 +159,11 @@ export function DeliverableRules({
     // Turning a section off also drops its mandatory flag, so it can never sit
     // as "required but hidden" and block checkout on something invisible.
     if (!next.enabled) next.required = false;
+    // Nothing to photograph means nowhere to photograph it.
+    if (!next.requiresPhoto) next.perLocation = false;
+    // Switched on is about to be set up; switched off has nothing to set.
+    if (patch.enabled === true) setEditing(key);
+    if (patch.enabled === false && editing === key) setEditing(null);
 
     write(
       next,
@@ -142,8 +195,12 @@ export function DeliverableRules({
       required: false,
       requiresPhoto: true,
       requiresText: false,
+      minPhotos: 1,
+      perLocation: false,
+      note: null,
     };
     setNewName("");
+    setEditing(ruleKey(rule));
     setNaming(false);
     write(rule, [...shown, rule]);
   }
@@ -164,14 +221,19 @@ export function DeliverableRules({
         const meta = DELIVERABLE_META[rule.category];
         const key = ruleKey(rule);
         const custom = rule.category === "CUSTOM";
+        const name = custom ? rule.customLabel : meta.label;
+        const open = rule.enabled && editing === key;
         return (
           <div
             key={key}
             data-section={key}
-            className="flex flex-col gap-2 rounded-lg border border-border p-3"
+            className={cn(
+              "flex flex-col rounded-xl border border-border p-3.5",
+              open ? "gap-3.5" : "gap-1.5",
+            )}
           >
             <div className="flex flex-wrap items-center gap-2">
-              <label className="flex items-center gap-2 text-sm font-medium">
+              <label className="flex items-center gap-2.5 text-[15px] font-semibold">
                 <input
                   type="checkbox"
                   checked={rule.enabled}
@@ -181,7 +243,7 @@ export function DeliverableRules({
                   }
                   className="size-5 accent-[var(--color-primary)]"
                 />
-                {custom ? rule.customLabel : meta.label}
+                {name}
               </label>
 
               {rule.enabled && rule.required ? (
@@ -192,72 +254,48 @@ export function DeliverableRules({
                 <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
               ) : null}
 
-              {custom && canEdit && canRequire ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="ml-auto"
-                  aria-label={`Remove ${rule.customLabel}`}
-                  onClick={() => removeCustom(rule)}
-                >
-                  <X />
-                </Button>
-              ) : null}
+              <div className="ml-auto flex items-center gap-1">
+                {rule.enabled && canEdit ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    aria-expanded={open}
+                    aria-label={open ? `Done with ${name}` : `Set up ${name}`}
+                    onClick={() => setEditing(open ? null : key)}
+                  >
+                    {open ? "Done" : "Edit"}
+                  </Button>
+                ) : null}
+
+                {custom && canEdit && canRequire ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-label={`Remove ${rule.customLabel}`}
+                    onClick={() => removeCustom(rule)}
+                  >
+                    <X />
+                  </Button>
+                ) : null}
+              </div>
             </div>
 
-            {custom ? null : (
-              <p className="text-xs text-muted-foreground">{meta.description}</p>
-            )}
+            {rule.enabled && !open ? (
+              <span className="pl-[30px] text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                {summary(rule, locations)}
+              </span>
+            ) : null}
 
-            {rule.enabled ? (
-              <div className="flex flex-col gap-2">
-                <div className="flex flex-wrap gap-x-4 gap-y-2 text-xs">
-                  <label
-                    className="flex items-center gap-1.5"
-                    hidden={!canRequire}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={rule.required}
-                      disabled={!canEdit}
-                      onChange={(event) =>
-                        update(key, { required: event.target.checked })
-                      }
-                      className="size-4 accent-[var(--color-primary)]"
-                    />
-                    Required
-                  </label>
-                  <label className="flex items-center gap-1.5">
-                    <input
-                      type="checkbox"
-                      checked={rule.requiresPhoto}
-                      disabled={!canEdit}
-                      onChange={(event) =>
-                        update(key, {
-                          requiresPhoto: event.target.checked,
-                        })
-                      }
-                      className="size-4 accent-[var(--color-primary)]"
-                    />
-                    Photo
-                  </label>
-                  <label className="flex items-center gap-1.5">
-                    <input
-                      type="checkbox"
-                      checked={rule.requiresText}
-                      disabled={!canEdit}
-                      onChange={(event) =>
-                        update(key, {
-                          requiresText: event.target.checked,
-                        })
-                      }
-                      className="size-4 accent-[var(--color-primary)]"
-                    />
-                    Text entry
-                  </label>
-                </div>
-              </div>
+            {open ? (
+              <RuleSettings
+                rule={rule}
+                locations={locations}
+                canEdit={canEdit}
+                canRequire={canRequire}
+                onChange={(patch) => update(key, patch)}
+              />
             ) : null}
           </div>
         );
@@ -315,6 +353,206 @@ export function DeliverableRules({
           </Button>
         )
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * What a switched-on section asks for: whether it is required, what it
+ * takes, how many photos and where, and a line for the crew.
+ *
+ * Everything past the three ticks decides what checkout refuses, or what the
+ * crew is told, so it follows the Required switch: somebody who may not
+ * demand a section may not change how much it demands either.
+ */
+function RuleSettings({
+  rule,
+  locations,
+  canEdit,
+  canRequire,
+  onChange,
+}: {
+  rule: EditableRule;
+  locations: string[];
+  canEdit: boolean;
+  canRequire: boolean;
+  onChange: (patch: Partial<EditableRule>) => void;
+}) {
+  const id = React.useId();
+  const planning = canEdit && canRequire;
+  // What a required section takes is part of what it demands.
+  const kindLocked = !canEdit || (rule.required && !canRequire);
+  const [note, setNote] = React.useState(rule.note ?? "");
+
+  // Saved when the person is done with it, not on every key: a save per
+  // letter is a hundred requests and a field that fights the cursor.
+  function commitNote() {
+    const next = note.replace(/\s+/g, " ").trim();
+    if (next !== (rule.note ?? "")) onChange({ note: next || null });
+    if (next !== note) setNote(next);
+  }
+
+  const count = Math.max(1, rule.minPhotos);
+
+  return (
+    <div className="flex flex-col gap-3.5">
+      <div className="flex flex-wrap gap-x-4.5 gap-y-2 text-[13px]">
+        <label className="flex items-center gap-1.5" hidden={!canRequire}>
+          <input
+            type="checkbox"
+            checked={rule.required}
+            disabled={!canEdit}
+            onChange={(event) => onChange({ required: event.target.checked })}
+            className="size-4 accent-[var(--color-primary)]"
+          />
+          Required
+        </label>
+        <label className="flex items-center gap-1.5">
+          <input
+            type="checkbox"
+            checked={rule.requiresPhoto}
+            disabled={kindLocked}
+            onChange={(event) =>
+              onChange({ requiresPhoto: event.target.checked })
+            }
+            className="size-4 accent-[var(--color-primary)]"
+          />
+          Photo
+        </label>
+        <label className="flex items-center gap-1.5">
+          <input
+            type="checkbox"
+            checked={rule.requiresText}
+            disabled={kindLocked}
+            onChange={(event) =>
+              onChange({ requiresText: event.target.checked })
+            }
+            className="size-4 accent-[var(--color-primary)]"
+          />
+          Text entry
+        </label>
+      </div>
+
+      {/* How many it takes. Only for a required section that takes photos:
+          an optional one has nothing to fall short of. */}
+      {rule.required && rule.requiresPhoto ? (
+        <div className="flex flex-col gap-1.5">
+          <span
+            id={`${id}-needed`}
+            className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"
+          >
+            Photos needed
+          </span>
+          <div className="flex items-center gap-3">
+            <div
+              role="group"
+              aria-labelledby={`${id}-needed`}
+              className="flex h-11 items-center rounded-[10px] bg-input ring-1 ring-inset ring-border"
+            >
+              <button
+                type="button"
+                aria-label="One fewer photo"
+                disabled={!planning || count <= 1}
+                onClick={() => onChange({ minPhotos: count - 1 })}
+                className="flex size-11 items-center justify-center text-muted-foreground disabled:opacity-40"
+              >
+                <Minus className="size-4" />
+              </button>
+              <span
+                aria-live="polite"
+                className="tabular min-w-9 text-center text-base font-semibold"
+              >
+                {count}
+              </span>
+              <button
+                type="button"
+                aria-label="One more photo"
+                disabled={!planning || count >= MAX_MIN_PHOTOS}
+                onClick={() => onChange({ minPhotos: count + 1 })}
+                className="flex size-11 items-center justify-center disabled:opacity-40"
+              >
+                <Plus className="size-4" />
+              </button>
+            </div>
+            {rule.perLocation ? (
+              <span className="text-[13px] text-foreground/85">
+                at each location
+              </span>
+            ) : null}
+          </div>
+          <span className="text-xs text-muted-foreground">
+            More are welcome. Fewer leaves it incomplete, and checkout waits.
+          </span>
+        </div>
+      ) : null}
+
+      {rule.requiresPhoto ? (
+        <div className="flex flex-col gap-2">
+          <label className="flex items-center gap-2 text-[13px]">
+            <input
+              type="checkbox"
+              checked={rule.perLocation}
+              disabled={!planning}
+              onChange={(event) =>
+                onChange({ perLocation: event.target.checked })
+              }
+              className="size-4 accent-[var(--color-primary)]"
+            />
+            Separately at each location
+          </label>
+          {rule.perLocation ? (
+            locations.length > 0 ? (
+              <div className="flex flex-wrap gap-1.5 pl-6">
+                {locations.map((location) => (
+                  <span
+                    key={location}
+                    className="rounded-lg px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ring-border"
+                  >
+                    {location}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <span className="pl-6 text-xs text-muted-foreground">
+                The crew names the locations on the job — MDF, IDF, the
+                install point — and photographs each one.
+              </span>
+            )
+          ) : null}
+        </div>
+      ) : null}
+
+      <div className="flex flex-col gap-1.5">
+        <div className="flex items-baseline gap-2">
+          <label
+            htmlFor={`${id}-note`}
+            className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"
+          >
+            Note for the crew
+          </label>
+          <span className="tabular ml-auto text-xs text-muted-foreground">
+            {note.length} / {MAX_RULE_NOTE}
+          </span>
+        </div>
+        <Input
+          id={`${id}-note`}
+          value={note}
+          maxLength={MAX_RULE_NOTE}
+          disabled={!planning}
+          placeholder="Shoot the rack front and the patch panel labels."
+          onChange={(event) => setNote(event.target.value)}
+          onBlur={commitNote}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              commitNote();
+            }
+          }}
+        />
+        <span className="text-xs text-muted-foreground">
+          Optional. Shown on the job under the section’s name.
+        </span>
+      </div>
     </div>
   );
 }

@@ -82,6 +82,7 @@ export async function loadJobForExport(jobId: string) {
           category: true,
           customLabel: true,
           textValue: true,
+          location: { select: { name: true } },
           assignment: { select: { user: { select: { name: true } } } },
           attachments: {
             select: {

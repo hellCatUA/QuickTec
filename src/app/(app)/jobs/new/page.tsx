@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { EmptyState, PageHeader } from "@/components/ui/page-header";
 import { getCompanySettings } from "@/lib/company";
 import { db } from "@/lib/db";
-import { effectiveRules } from "@/lib/deliverables";
+import { effectiveRules, RULE_SELECT } from "@/lib/deliverables";
 import { can, getSessionUser } from "@/lib/session";
 import { readJobDraft } from "@/lib/job-draft";
 import { JobForm } from "./job-form";
@@ -69,14 +69,7 @@ export default async function NewJobPage() {
         // and the planner can change them for this job before it exists.
         deliverableRules: {
           where: { jobId: null },
-          select: {
-            category: true,
-            customLabel: true,
-            enabled: true,
-            required: true,
-            requiresPhoto: true,
-            requiresText: true,
-          },
+          select: RULE_SELECT,
         },
         // Who normally does this work. Shown first in the crew search rather
         // than enforced: a project member is a default, not a fence.

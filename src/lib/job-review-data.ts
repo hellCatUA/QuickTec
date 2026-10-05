@@ -2,7 +2,12 @@ import { siteLabel } from "@/lib/address";
 import { getCompanySettings } from "@/lib/company";
 import { usDateTimeInZone, usTimeInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
-import { deliverableLabel, effectiveRules } from "@/lib/deliverables";
+import {
+  effectiveRules,
+  fieldProgress,
+  itemMatchesRule,
+  RULE_SELECT,
+} from "@/lib/deliverables";
 import {
   flagsFingerprint,
   reviewDeliverables,
@@ -168,29 +173,13 @@ export async function loadReview(jobId: string): Promise<LoadedReview | null> {
       documents: { select: { jobDocumentKind: true } },
       deliverableRules: {
         where: { projectId: null },
-        select: {
-          category: true,
-          customLabel: true,
-          enabled: true,
-          required: true,
-          requiresPhoto: true,
-          requiresText: true,
-          order: true,
-        },
+        select: RULE_SELECT,
       },
       project: {
         select: {
           deliverableRules: {
             where: { jobId: null },
-            select: {
-              category: true,
-              customLabel: true,
-              enabled: true,
-              required: true,
-              requiresPhoto: true,
-              requiresText: true,
-              order: true,
-            },
+            select: RULE_SELECT,
           },
         },
       },
@@ -198,8 +187,14 @@ export async function loadReview(jobId: string): Promise<LoadedReview | null> {
         select: {
           category: true,
           customLabel: true,
+          locationId: true,
+          textValue: true,
           attachments: { select: { id: true } },
         },
+      },
+      locations: {
+        orderBy: [{ order: "asc" }, { createdAt: "asc" }],
+        select: { id: true, name: true },
       },
       reimbursements: {
         select: {
@@ -258,16 +253,27 @@ export async function loadReview(jobId: string): Promise<LoadedReview | null> {
     })
     .filter((entry) => entry !== null);
 
-  const sections = rules.map((rule) => {
-    const items = job.deliverables.filter(
-      (item) =>
-        item.category === rule.category &&
-        (rule.category !== "CUSTOM" || item.customLabel === rule.customLabel),
+  const progress = fieldProgress(
+    rules,
+    job.deliverables.map((item) => ({
+      category: item.category,
+      customLabel: item.customLabel,
+      locationId: item.locationId,
+      textValue: item.textValue,
+      fileCount: item.attachments.length,
+    })),
+    job.locations,
+  );
+
+  const sections = progress.map((field) => {
+    const items = job.deliverables.filter((item) =>
+      itemMatchesRule(item, field.rule),
     );
     return {
-      label: deliverableLabel(rule.category, rule.customLabel),
-      required: rule.required,
-      filled: items.length > 0,
+      label: field.label,
+      required: field.rule.required,
+      filled: field.files > 0 || field.hasText,
+      gap: field.gap,
       attachmentIds: items.flatMap((item) =>
         item.attachments.map((attachment) => attachment.id),
       ),

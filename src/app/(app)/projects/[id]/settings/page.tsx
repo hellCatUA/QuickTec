@@ -9,7 +9,7 @@ import {
 import { DeliverableRules } from "@/components/deliverable-rules";
 import { PageHeader } from "@/components/ui/page-header";
 import { db } from "@/lib/db";
-import { ruleSheet } from "@/lib/deliverables";
+import { RULE_SELECT, ruleSheet } from "@/lib/deliverables";
 import { can, getSessionUser } from "@/lib/session";
 import { ProjectForm } from "../../project-form";
 import { saveDeliverableRule } from "../../actions";
@@ -77,14 +77,7 @@ export default async function ProjectSettingsPage({
           },
           deliverableRules: {
             where: { jobId: null },
-            select: {
-              category: true,
-              customLabel: true,
-              enabled: true,
-              required: true,
-              requiresPhoto: true,
-              requiresText: true,
-            },
+            select: RULE_SELECT,
           },
           dispatchContacts: {
             orderBy: { order: "asc" },

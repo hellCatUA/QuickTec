@@ -8,7 +8,7 @@ import { syncJobInBackground } from "@/lib/calendar/sync";
 import { getCompanySettings } from "@/lib/company";
 import { parseDatetimeLocalInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
-import { ruleSheet } from "@/lib/deliverables";
+import { RULE_SELECT, ruleSheet } from "@/lib/deliverables";
 import { flag, optionalText } from "@/lib/form";
 import { jobDraftSchema } from "@/lib/job-draft";
 import { copyTemplateToJob, storeDocument } from "@/lib/job-documents";
@@ -83,15 +83,7 @@ export async function createJob(
           pmContactId: true,
           deliverableRules: {
             where: { jobId: null },
-            select: {
-              category: true,
-              customLabel: true,
-              enabled: true,
-              required: true,
-              requiresPhoto: true,
-              requiresText: true,
-              order: true,
-            },
+            select: RULE_SELECT,
           },
         },
       })
@@ -210,6 +202,9 @@ export async function createJob(
     required: rule.enabled && rule.required,
     requiresPhoto: rule.requiresPhoto,
     requiresText: rule.requiresText,
+    minPhotos: rule.minPhotos,
+    perLocation: rule.perLocation,
+    note: rule.note,
     order: rule.order,
   }));
 
@@ -504,15 +499,11 @@ export async function createRevisit(
         },
       },
       deliverableRules: {
-        select: {
-          category: true,
-          customLabel: true,
-          enabled: true,
-          required: true,
-          requiresPhoto: true,
-          requiresText: true,
-          order: true,
-        },
+        select: RULE_SELECT,
+      },
+      locations: {
+        orderBy: { order: "asc" },
+        select: { name: true, order: true },
       },
     },
   });
@@ -716,7 +707,22 @@ export async function createRevisit(
                   required: rule.required,
                   requiresPhoto: rule.requiresPhoto,
                   requiresText: rule.requiresText,
+                  minPhotos: rule.minPhotos,
+                  perLocation: rule.perLocation,
+                  note: rule.note,
                   order: rule.order,
+                })),
+              }
+            : undefined,
+        // Same site, so the same rooms: the MDF is still where it was, and
+        // the crew going back should not have to name it again.
+        locations:
+          carries.has("deliverables") && parent.locations.length > 0
+            ? {
+                create: parent.locations.map((location) => ({
+                  name: location.name,
+                  order: location.order,
+                  createdById: actor.id,
                 })),
               }
             : undefined,

@@ -175,7 +175,9 @@ export async function buildWorkOrderPdf(data: JobExportData): Promise<Buffer> {
       const photos = item.attachments.length;
       line(
         doc,
-        deliverableLabel(item.category, item.customLabel),
+        item.location
+          ? `${deliverableLabel(item.category, item.customLabel)} at ${item.location.name}`
+          : deliverableLabel(item.category, item.customLabel),
         [
           photos > 0 ? `${photos} file${photos === 1 ? "" : "s"}` : null,
           item.textValue?.trim() || null,

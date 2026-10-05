@@ -116,10 +116,14 @@ export async function buildJobZip(data: JobExportData) {
   }
 
   for (const item of job.deliverables) {
-    const folder =
+    const section =
       item.category === "CUSTOM" && item.customLabel
         ? safeName(item.customLabel)
         : DELIVERABLE_META[item.category].label;
+    // Before and after at the MDF sit together, and apart from the IDF's.
+    const folder = item.location
+      ? `${section}/${safeName(item.location.name)}`
+      : section;
 
     const tech = item.assignment?.user.name
       ? safeName(item.assignment.user.name)

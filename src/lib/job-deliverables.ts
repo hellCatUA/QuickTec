@@ -1,5 +1,12 @@
 import { db } from "@/lib/db";
-import { effectiveRules } from "@/lib/deliverables";
+import {
+  effectiveRules,
+  type FieldProgress,
+  fieldProgress,
+  missingDeliverables,
+  type ProgressItem,
+  RULE_SELECT,
+} from "@/lib/deliverables";
 import type { DeliverableCategory } from "@prisma-client";
 
 /**
@@ -13,16 +20,6 @@ import type { DeliverableCategory } from "@prisma-client";
  * other section off. The whole sheet is written before the first edit lands.
  */
 
-const RULE_FIELDS = {
-  category: true,
-  customLabel: true,
-  enabled: true,
-  required: true,
-  requiresPhoto: true,
-  requiresText: true,
-  order: true,
-} as const;
-
 export type JobRuleInput = {
   category: DeliverableCategory;
   /** Names a custom section, and is what tells two of them apart. */
@@ -31,6 +28,9 @@ export type JobRuleInput = {
   required: boolean;
   requiresPhoto: boolean;
   requiresText: boolean;
+  minPhotos: number;
+  perLocation: boolean;
+  note: string | null;
 };
 
 /** The sheet a job is answering to right now, sections that are off included. */
@@ -38,10 +38,10 @@ export async function jobRuleSheet(jobId: string) {
   const job = await db.job.findUnique({
     where: { id: jobId },
     select: {
-      deliverableRules: { where: { projectId: null }, select: RULE_FIELDS },
+      deliverableRules: { where: { projectId: null }, select: RULE_SELECT },
       project: {
         select: {
-          deliverableRules: { where: { jobId: null }, select: RULE_FIELDS },
+          deliverableRules: { where: { jobId: null }, select: RULE_SELECT },
         },
       },
     },
@@ -74,6 +74,9 @@ export async function materialiseJobRules(jobId: string): Promise<void> {
       required: rule.required,
       requiresPhoto: rule.requiresPhoto,
       requiresText: rule.requiresText,
+      minPhotos: rule.minPhotos,
+      perLocation: rule.perLocation,
+      note: rule.note,
       order: rule.order,
     })),
     skipDuplicates: true,
@@ -113,6 +116,9 @@ export async function saveJobRule(
     required: rule.required,
     requiresPhoto: rule.requiresPhoto,
     requiresText: rule.requiresText,
+    minPhotos: rule.minPhotos,
+    perLocation: rule.perLocation,
+    note: rule.note,
   };
 
   if (existing) {
@@ -146,4 +152,74 @@ export async function removeJobCustomRule(
   await db.deliverableRequirement.deleteMany({
     where: { jobId, category: "CUSTOM", customLabel },
   });
+}
+
+/** What an upload is counted with. */
+export const PROGRESS_ITEM_SELECT = {
+  category: true,
+  customLabel: true,
+  locationId: true,
+  textValue: true,
+  _count: { select: { attachments: true } },
+} as const;
+
+export function toProgressItem(item: {
+  category: DeliverableCategory;
+  customLabel: string | null;
+  locationId: string | null;
+  textValue: string | null;
+  _count: { attachments: number };
+}): ProgressItem {
+  return {
+    category: item.category,
+    customLabel: item.customLabel,
+    locationId: item.locationId,
+    textValue: item.textValue,
+    fileCount: item._count.attachments,
+  };
+}
+
+/** Each section that is on, with how far it has got. Null for no such job. */
+export async function jobDeliverableProgress(
+  jobId: string,
+): Promise<FieldProgress[] | null> {
+  const job = await db.job.findUnique({
+    where: { id: jobId },
+    select: {
+      deliverableRules: { where: { projectId: null }, select: RULE_SELECT },
+      project: {
+        select: {
+          deliverableRules: { where: { jobId: null }, select: RULE_SELECT },
+        },
+      },
+      deliverables: { select: PROGRESS_ITEM_SELECT },
+      locations: {
+        orderBy: [{ order: "asc" }, { createdAt: "asc" }],
+        select: { id: true, name: true },
+      },
+    },
+  });
+  if (!job) return null;
+
+  const rules = effectiveRules(
+    job.deliverableRules,
+    job.project?.deliverableRules ?? [],
+  ).filter((rule) => rule.enabled);
+
+  return fieldProgress(
+    rules,
+    job.deliverables.map(toProgressItem),
+    job.locations,
+  );
+}
+
+/**
+ * What checkout is still waiting on, said the way the job page says it —
+ * "Pre-Install at Install point (1 of 2)" rather than just a section name.
+ */
+export async function missingRequiredDeliverables(
+  jobId: string,
+): Promise<string[]> {
+  const progress = await jobDeliverableProgress(jobId);
+  return progress ? missingDeliverables(progress) : [];
 }

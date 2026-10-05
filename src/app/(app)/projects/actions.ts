@@ -5,7 +5,8 @@ import { z } from "zod";
 import { diffFields, recordAudit } from "@/lib/audit";
 import { db } from "@/lib/db";
 import { flag, optionalMoney, optionalText, phoneText } from "@/lib/form";
-import { PROJECT_DEFAULT_RULES } from "@/lib/deliverables";
+import { minPhotosField, ruleNoteField } from "@/lib/deliverable-settings";
+import { normaliseRuleSettings, PROJECT_DEFAULT_RULES } from "@/lib/deliverables";
 import { notify } from "@/lib/notifications";
 import { requirePermission } from "@/lib/session";
 import { DeliverableCategory, PayType, ProjectRole, ProjectStatus } from "@prisma-client";
@@ -123,6 +124,9 @@ export async function saveProject(
           required: rule.required,
           requiresPhoto: rule.requiresPhoto,
           requiresText: rule.requiresText,
+          minPhotos: rule.minPhotos,
+          perLocation: rule.perLocation,
+          note: rule.note,
           order: rule.order,
         })),
       },
@@ -343,6 +347,9 @@ const ruleSchema = z.object({
   required: flag,
   requiresPhoto: flag,
   requiresText: flag,
+  minPhotos: minPhotosField,
+  perLocation: flag,
+  note: ruleNoteField,
   /** Custom sections are taken away rather than switched off. */
   remove: flag,
 });
@@ -358,6 +365,7 @@ export async function saveDeliverableRule(
     required: formData.get("required") === "true",
     requiresPhoto: formData.get("requiresPhoto") === "true",
     requiresText: formData.get("requiresText") === "true",
+    perLocation: formData.get("perLocation") === "true",
     remove: formData.get("remove") === "true",
   });
   if (!parsed.success) {
@@ -388,9 +396,7 @@ export async function saveDeliverableRule(
     return { ok: false, error: "Give the section a name." };
   }
 
-  // A section that is off cannot also be mandatory; letting both be true would
-  // block checkout on something the tech is never shown.
-  const normalised = { ...rule, required: rule.enabled && rule.required };
+  const normalised = normaliseRuleSettings(rule);
 
   const existing = await db.deliverableRequirement.findFirst({
     where,

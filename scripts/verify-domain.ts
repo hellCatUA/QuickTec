@@ -1467,6 +1467,24 @@ async function main() {
     "warn",
   );
   check(
+    "a section with photos but not enough is still a warning, named exactly",
+    reviewDeliverables({
+      sections: [
+        {
+          label: "Pre-Install",
+          required: true,
+          filled: true,
+          gap: "Pre-Install at IDF (1 of 2)",
+        },
+      ],
+      photoCount: 3,
+      hasSignOff: true,
+    })
+      .map((flag) => `${flag.level}:${flag.text}`)
+      .join(" | "),
+    "warn:Still needed: Pre-Install at IDF (1 of 2).",
+  );
+  check(
     "an optional one is worth mentioning and no more",
     worst(
       reviewDeliverables({
@@ -2282,6 +2300,9 @@ async function main() {
   const { effectiveRules, resolveDeliverableRules, ruleKey, ruleSheet } =
     await import("@/lib/deliverables");
 
+  // What a section saved before counts and locations existed reads back as.
+  const unset = { minPhotos: 1, perLocation: false, note: null };
+
   const sectionsOn = (rules: { category: string }[]) =>
     rules.map((rule) => rule.category).join(",");
 
@@ -2298,6 +2319,7 @@ async function main() {
             required: true,
             requiresPhoto: true,
             requiresText: false,
+            ...unset,
             order: 0,
           },
           {
@@ -2307,6 +2329,7 @@ async function main() {
             required: false,
             requiresPhoto: false,
             requiresText: true,
+            ...unset,
             order: 5,
           },
         ],
@@ -2335,6 +2358,7 @@ async function main() {
       required: false,
       requiresPhoto: true,
       requiresText: false,
+      ...unset,
     },
     {
       category: "CUSTOM",
@@ -2343,6 +2367,7 @@ async function main() {
       required: true,
       requiresPhoto: true,
       requiresText: false,
+      ...unset,
     },
   ]);
   // The bug this fixes: there was room for one, so the second name overwrote
@@ -2387,6 +2412,7 @@ async function main() {
           required: true,
           requiresPhoto: true,
           requiresText: false,
+          ...unset,
           order: 0,
         },
       ],
@@ -2398,6 +2424,228 @@ async function main() {
     "switching a section on for one job keeps what the project already asked for",
     sectionsOn(resolveDeliverableRules(jobSheet, [])),
     "PRE_INSTALL,ISSUES",
+  );
+
+  // --- how far each section has got ----------------------------------------
+  // One count for the job page, checkout and the review. They used to count
+  // by category alone: two custom sections looked like one, a photo anywhere
+  // in Pre-Install satisfied it, and nothing knew about the IDF.
+  const {
+    fieldProgress,
+    missingDeliverables,
+    normaliseRuleSettings,
+    progressCount,
+  } = await import("@/lib/deliverables");
+  const { minPhotosField, ruleNoteField } = await import(
+    "@/lib/deliverable-settings"
+  );
+
+  const section = (overrides: Record<string, unknown>) => ({
+    category: "PRE_INSTALL" as const,
+    customLabel: null,
+    enabled: true,
+    required: true,
+    requiresPhoto: true,
+    requiresText: false,
+    minPhotos: 1,
+    perLocation: false,
+    note: null,
+    order: 0,
+    ...overrides,
+  });
+  const upload = (overrides: Record<string, unknown>) => ({
+    category: "PRE_INSTALL" as const,
+    customLabel: null,
+    locationId: null,
+    textValue: null,
+    fileCount: 1,
+    ...overrides,
+  });
+  const rooms = [
+    { id: "mdf", name: "MDF" },
+    { id: "idf", name: "IDF" },
+    { id: "pt", name: "Install point" },
+  ];
+
+  check(
+    "a section saved before counts existed is done with one photo, as it was",
+    fieldProgress([section({})], [upload({})], [])[0].state,
+    "done",
+  );
+  check(
+    "fewer photos than it asks for is incomplete, and says how many",
+    missingDeliverables(
+      fieldProgress([section({ minPhotos: 3 })], [upload({ fileCount: 2 })], []),
+    ).join(" | "),
+    "Pre-Install (2 of 3)",
+  );
+  check(
+    "more than it asks for is welcome",
+    fieldProgress([section({ minPhotos: 2 })], [upload({ fileCount: 5 })], [])[0]
+      .state,
+    "done",
+  );
+  check(
+    "nothing at all is told apart from not enough",
+    fieldProgress([section({ minPhotos: 2 })], [], [])[0].state,
+    "required",
+  );
+  check(
+    "an untouched one-photo section is named plainly",
+    missingDeliverables(fieldProgress([section({})], [], [])).join(" | "),
+    "Pre-Install",
+  );
+
+  const perRoom = section({ minPhotos: 2, perLocation: true });
+  check(
+    "counted at each location: one short at one room names that room",
+    missingDeliverables(
+      fieldProgress(
+        [perRoom],
+        [
+          upload({ locationId: "mdf", fileCount: 3 }),
+          upload({ locationId: "idf", fileCount: 2 }),
+          upload({ locationId: "pt", fileCount: 1 }),
+        ],
+        rooms,
+      ),
+    ).join(" | "),
+    "Pre-Install at Install point (1 of 2)",
+  );
+  check(
+    "a spare photo at one room does not cover another",
+    fieldProgress(
+      [perRoom],
+      [
+        upload({ locationId: "mdf", fileCount: 5 }),
+        upload({ locationId: "idf", fileCount: 2 }),
+        upload({ locationId: "pt", fileCount: 1 }),
+      ],
+      rooms,
+    )[0].state,
+    "incomplete",
+  );
+  check(
+    "nothing anywhere says so once rather than room by room",
+    missingDeliverables(fieldProgress([perRoom], [], rooms)).join(" | "),
+    "Pre-Install at all 3 locations",
+  );
+  check(
+    "a photo with no location does not count towards any room",
+    fieldProgress(
+      [section({ perLocation: true })],
+      [upload({ locationId: null, fileCount: 4 })],
+      rooms,
+    ).map((field) => `${field.state}/${field.unfiled}`)[0],
+    "incomplete/4",
+  );
+  check(
+    "per location on a job with no locations yet counts the section as a whole",
+    fieldProgress(
+      [section({ minPhotos: 2, perLocation: true })],
+      [upload({ fileCount: 2 })],
+      [],
+    )[0].state,
+    "done",
+  );
+  check(
+    "the folded row reads 0 of the total when nothing is in yet",
+    progressCount(fieldProgress([perRoom], [], rooms)[0]),
+    "0 of 6",
+  );
+
+  check(
+    "two custom sections are counted apart — the bug this replaces",
+    missingDeliverables(
+      fieldProgress(
+        [
+          section({ category: "CUSTOM", customLabel: "Rack elevation" }),
+          section({ category: "CUSTOM", customLabel: "Cable route" }),
+        ],
+        [upload({ category: "CUSTOM", customLabel: "Rack elevation" })],
+        [],
+      ),
+    ).join(" | "),
+    "Cable route",
+  );
+  check(
+    "a text-only section is done by what was typed",
+    fieldProgress(
+      [section({ category: "OLD_SERIALS", requiresPhoto: false, requiresText: true })],
+      [upload({ category: "OLD_SERIALS", fileCount: 0, textValue: "FDO2214X0QA" })],
+      [],
+    )[0].state,
+    "done",
+  );
+  check(
+    "a photo section is not satisfied by text alone",
+    fieldProgress(
+      [section({ category: "RETURN_LABELS", requiresText: true })],
+      [upload({ category: "RETURN_LABELS", fileCount: 0, textValue: "1Z999" })],
+      [],
+    )[0].state,
+    "required",
+  );
+  check(
+    "an optional section is never missing",
+    missingDeliverables(fieldProgress([section({ required: false })], [], []))
+      .length,
+    0,
+  );
+
+  check(
+    "settings that cannot hold together are put right before saving",
+    (() => {
+      const fixed = normaliseRuleSettings({
+        enabled: false,
+        required: true,
+        requiresPhoto: false,
+        perLocation: true,
+        minPhotos: 40,
+      });
+      return `${fixed.required}/${fixed.perLocation}/${fixed.minPhotos}`;
+    })(),
+    "false/false/20",
+  );
+  check(
+    "photos needed refuses nought",
+    minPhotosField.safeParse("0").success,
+    false,
+  );
+  check(
+    "and anything past the cap",
+    minPhotosField.safeParse("21").success,
+    false,
+  );
+  check(
+    "and a half",
+    minPhotosField.safeParse("1.5").success,
+    false,
+  );
+  check(
+    "an older form that sends no count means one",
+    minPhotosField.parse(undefined),
+    1,
+  );
+  check(
+    "the crew note holds 100 characters",
+    ruleNoteField.safeParse("x".repeat(100)).success,
+    true,
+  );
+  check(
+    "and not 101",
+    ruleNoteField.safeParse("x".repeat(101)).success,
+    false,
+  );
+  check(
+    "a blank note is no note",
+    ruleNoteField.parse("   "),
+    null,
+  );
+  check(
+    "a pasted line break becomes a space, not a second line",
+    ruleNoteField.parse("Shoot the rack\r\nfront"),
+    "Shoot the rack front",
   );
 
   // --- who may raise a job, and who may wave their own through -------------

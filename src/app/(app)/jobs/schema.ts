@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { minPhotosField, ruleNoteField } from "@/lib/deliverable-settings";
 import { flag, optionalInt, optionalMoney, optionalText } from "@/lib/form";
 import { DeliverableCategory } from "@prisma-client";
 
@@ -6,7 +7,7 @@ import { DeliverableCategory } from "@prisma-client";
  * The deliverable sections chosen while raising the job.
  *
  * Sent as JSON in one field rather than as ten parallel arrays: the checklist
- * is the same component the project and job pages use, and a row of it has five
+ * is the same component the project and job pages use, and a row of it has eight
  * settings — repeated form fields would have to be zipped back together by
  * position, which is exactly the kind of thing that silently misaligns.
  */
@@ -17,6 +18,9 @@ export const deliverableRuleSchema = z.object({
   required: z.boolean(),
   requiresPhoto: z.boolean(),
   requiresText: z.boolean(),
+  minPhotos: minPhotosField,
+  perLocation: z.boolean().default(false),
+  note: ruleNoteField,
 });
 
 const deliverableRules = z
