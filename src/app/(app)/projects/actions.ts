@@ -111,25 +111,41 @@ const STILL_OPEN = [...OPEN_LIFECYCLES, "DRAFT" as const];
  * Puts a project's open jobs under its new paying or rep company.
  *
  * Only when asked: a job already raised belongs to whoever the work was for
- * when it was raised, and by default stays there. Asked, the rep company
- * moves on every open job. The paying company does not move on a job that
- * already has their work order attached, or a week on it that payroll has
- * approved — that job is the old company's on paper already — and the answer
- * says how many were kept for that reason.
+ * when it was raised, and by default stays there. Asked, it moves the jobs
+ * still on the project's old company and nothing else — one somebody put on
+ * a different company by hand, or left on an older one at an earlier change,
+ * was a decision about that job and is left alone.
+ *
+ * The paying company does not move on a job that already has their work
+ * order uploaded, or a week on it that payroll has approved: that job is the
+ * old company's on paper already. A moved job loses a coordinator who works
+ * for the old company, and the answer says which moved jobs still carry the
+ * old company's blank.
  */
 async function moveOpenJobs(input: {
   actorId: string;
   projectId: string;
-  client: { id: string; from: string; to: string } | null;
-  repCompany: { id: string | null; from: string | null; to: string | null } | null;
+  client: { fromId: string; id: string; from: string; to: string } | null;
+  repCompany: {
+    fromId: string | null;
+    id: string | null;
+    from: string | null;
+    to: string | null;
+  } | null;
 }): Promise<string> {
   const jobs = await db.job.findMany({
     where: { projectId: input.projectId, lifecycle: { in: STILL_OPEN } },
     select: {
       id: true,
+      clientId: true,
+      repCompanyId: true,
+      pmContact: { select: { clientId: true } },
       documents: {
-        where: { jobDocumentKind: "CLIENT_WORK_ORDER" },
-        select: { id: true },
+        select: {
+          jobDocumentKind: true,
+          sourceTemplateId: true,
+          sourceTemplate: { select: { clientId: true } },
+        },
       },
       assignments: {
         select: {
@@ -144,23 +160,50 @@ async function moveOpenJobs(input: {
 
   let movedClient = 0;
   let keptClient = 0;
+  let withOldBlank = 0;
+  let movedRep = 0;
+  let leftAlone = 0;
   for (const job of jobs) {
+    const onOldClient = input.client !== null && job.clientId === input.client.fromId;
+    const onOldRep =
+      input.repCompany !== null && (job.repCompanyId ?? null) === input.repCompany.fromId;
+    if ((input.client && !onOldClient) || (input.repCompany && !onOldRep)) leftAlone++;
+
+    // Their work order uploaded — not a blank copied from their template —
+    // or a week on the job already paid.
     const settled =
-      job.documents.length > 0 ||
-      job.assignments.some((assignment) => assignment.payrollLines.length > 0);
-    const moveClient = input.client !== null && !settled;
-    if (input.client && settled) keptClient++;
-    if (!moveClient && !input.repCompany) continue;
+      job.documents.some(
+        (document) =>
+          document.jobDocumentKind === "CLIENT_WORK_ORDER" && !document.sourceTemplateId,
+      ) || job.assignments.some((assignment) => assignment.payrollLines.length > 0);
+    const moveClient = onOldClient && !settled;
+    if (onOldClient && settled) keptClient++;
+    if (!moveClient && !onOldRep) continue;
 
     await db.job.update({
       where: { id: job.id },
       data: {
-        ...(moveClient ? { clientId: input.client!.id } : {}),
-        ...(input.repCompany ? { repCompanyId: input.repCompany.id } : {}),
+        ...(moveClient
+          ? {
+              clientId: input.client!.id,
+              // Their coordinator, not the new company's.
+              ...(job.pmContact?.clientId === input.client!.fromId
+                ? { pmContactId: null }
+                : {}),
+            }
+          : {}),
+        ...(onOldRep ? { repCompanyId: input.repCompany!.id } : {}),
       },
     });
     if (moveClient) {
       movedClient++;
+      if (
+        job.documents.some(
+          (document) => document.sourceTemplate?.clientId === input.client!.fromId,
+        )
+      ) {
+        withOldBlank++;
+      }
       await recordAudit({
         actorId: input.actorId,
         entityType: "Job",
@@ -170,7 +213,8 @@ async function moveOpenJobs(input: {
         detail: { field: "Paying company", from: input.client!.from, to: input.client!.to },
       });
     }
-    if (input.repCompany) {
+    if (onOldRep) {
+      movedRep++;
       await recordAudit({
         actorId: input.actorId,
         entityType: "Job",
@@ -179,17 +223,23 @@ async function moveOpenJobs(input: {
         action: "field_edited",
         detail: {
           field: "Rep company",
-          from: input.repCompany.from,
-          to: input.repCompany.to,
+          from: input.repCompany!.from,
+          to: input.repCompany!.to,
         },
       });
     }
+    revalidatePath(`/jobs/${job.id}`);
   }
 
   const plural = (count: number) => `${count} open job${count === 1 ? "" : "s"}`;
   const parts: string[] = [];
   if (input.client) {
     parts.push(`${plural(movedClient)} moved to ${input.client.to}`);
+    if (withOldBlank > 0) {
+      parts.push(
+        `${withOldBlank} of them still carr${withOldBlank === 1 ? "ies" : "y"} ${input.client.from}'s blank`,
+      );
+    }
     if (keptClient > 0) {
       parts.push(
         `${plural(keptClient)} kept ${input.client.from}: their work order is attached or a week on them is already paid`,
@@ -197,9 +247,11 @@ async function moveOpenJobs(input: {
     }
   }
   if (input.repCompany) {
-    parts.push(`rep company set on ${plural(jobs.length)}`);
+    parts.push(`rep company changed on ${plural(movedRep)}`);
   }
-  for (const job of jobs) revalidatePath(`/jobs/${job.id}`);
+  if (leftAlone > 0) {
+    parts.push(`${plural(leftAlone)} left as they were, being on another company already`);
+  }
   return `${parts.join("; ")}.`.replace(/^./, (first) => first.toUpperCase());
 }
 
@@ -375,10 +427,16 @@ export async function saveProject(
             actorId: actor.id,
             projectId: id,
             client: before.clientId !== data.clientId
-              ? { id: data.clientId, from: before.client.name, to: client.name }
+              ? {
+                  fromId: before.clientId,
+                  id: data.clientId,
+                  from: before.client.name,
+                  to: client.name,
+                }
               : null,
             repCompany: (before.repCompanyId ?? null) !== (data.repCompanyId ?? null)
               ? {
+                  fromId: before.repCompanyId ?? null,
                   id: data.repCompanyId ?? null,
                   from: before.repCompany?.name ?? null,
                   to: repCompany?.name ?? null,
@@ -803,6 +861,7 @@ export async function addDispatchContact(
   const contact = await db.dispatchContact.create({
     data: { projectId, ...data, order: count },
   });
+  revalidatePath(`/projects/${projectId}/settings`);
 
   await recordAudit({
     actorId: actor.id,
@@ -832,6 +891,7 @@ export async function deleteDispatchContact(
   if (removed.count === 0) {
     return { ok: false, error: "That number is not on this project." };
   }
+  revalidatePath(`/projects/${projectId}/settings`);
 
   await recordAudit({
     actorId: actor.id,
@@ -961,8 +1021,11 @@ export async function addProjectLocation(formData: FormData): Promise<ActionResu
       },
     });
   } catch (error) {
-    // Two people naming the same room at once: the room is there.
+    // Two people naming the same room at once: the room is there, and the
+    // timeline already says who added it.
     if ((error as { code?: string })?.code !== "P2002") throw error;
+    revalidatePath(`/projects/${projectId}/settings`);
+    return { ok: true };
   }
 
   await recordAudit({
@@ -1332,8 +1395,24 @@ export async function saveProjectJobSettings(
       : null;
     const wrong = terms ? termsError(terms) : null;
     if (wrong) return { ok: false, error: wrong };
+    // A priced budget with nothing in it would be saved as Non-billable and
+    // split every new job's crew to $0, over the project's rate.
+    if (
+      terms?.payType === "NON_BILLABLE" &&
+      input.defaultBudgetType !== "NON_BILLABLE"
+    ) {
+      return {
+        ok: false,
+        error: "Give the budget an amount, or choose Non-billable.",
+      };
+    }
     budget = budgetColumns(terms);
-    budgetSplit = input.defaultBudgetSplit;
+    // How it is shared is only asked while there is something to share; a
+    // choice made earlier is kept rather than reset by a hidden box.
+    budgetSplit =
+      terms && terms.payType !== "NON_BILLABLE"
+        ? input.defaultBudgetSplit
+        : before.defaultBudgetSplit;
   }
 
   const project = await db.project.update({

@@ -4,7 +4,7 @@ import { FileText, Info, Plus, Upload, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import * as React from "react";
-import { useActionState, useMemo, useState } from "react";
+import { useActionState, useMemo, useState, useTransition } from "react";
 import { Badge } from "@/components/ui/badge";
 import {
   DeliverableRules,
@@ -212,6 +212,7 @@ export function JobForm({
     startMode,
   };
 
+  const [, startSubmit] = useTransition();
   const [state, formAction, pending] = useActionState<ActionResult | null, FormData>(
     async (prev, formData) => {
       const result = await createJob(prev, formData);
@@ -470,8 +471,8 @@ export function JobForm({
 
   const paperworkSummary = noWorkOrder
     ? "no work order issued"
-    : pickedTemplates && pickedTemplates.length > 0
-      ? `${pickedTemplates.length} blank${pickedTemplates.length === 1 ? "" : "s"}`
+    : chosenTemplates.length > 0
+      ? `${chosenTemplates.length} blank${chosenTemplates.length === 1 ? "" : "s"}`
       : "nothing attached";
 
   const deliverablesSummary = `${deliverableSummaryCount} on`;
@@ -544,7 +545,19 @@ export function JobForm({
   }
 
   return (
-    <form action={formAction} className="flex flex-col gap-4">
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        const formData = new FormData(event.currentTarget);
+        startSubmit(() => formAction(formData));
+      }}
+      className="flex flex-col gap-4"
+    >
+      {/* Submitted by hand rather than through the form's action prop. React
+          resets a form once its action has run, and a select comes back on its
+          first option while the component still holds the choice: after a
+          refused submit the pay type read "each tech's own rate", and the job
+          went out without the rate everybody was looking at. */}
       {offerRestore ? (
         <Card className="border-primary/50 bg-primary/5">
           <CardContent className="flex flex-col gap-3">

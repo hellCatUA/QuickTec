@@ -42,10 +42,11 @@ const BLANK: Draft = { label: "", name: "", phone: "", email: "", note: "" };
 /**
  * Numbers to reach mid-job. Tap to dial.
  *
- * The tech's own supervisor heads the list and the project's contacts follow;
- * neither is edited here, because neither belongs to this job. What can be
- * added is the number that turned up on the call — a bridge line for today, a
- * duty manager's mobile — which previously had nowhere to go at all.
+ * On a job, the tech's own supervisor heads the list and the project's
+ * contacts follow; neither is edited there, because neither belongs to the
+ * job. What can be added is the number that turned up on the call — a bridge
+ * line for today, a duty manager's mobile. On a project's settings the same
+ * panel holds the project's own numbers, which every job under it shows.
  *
  * One that belongs to the job can now be corrected as well as removed. These
  * are taken down from somebody speaking, often over a bad line, and a wrong
@@ -313,6 +314,12 @@ function ContactForm({
           />
         </Field>
       </div>
+
+      {projectId ? (
+        <p className="text-xs text-muted-foreground">
+          A phone number or an email — every job here will be dialling it.
+        </p>
+      ) : null}
 
       <div className="flex gap-2">
         <Button

@@ -331,7 +331,10 @@ export default async function ProjectSettingsPage({
               Which of the paying company&rsquo;s blanks a new job here starts
               with. Still changeable on the job before it is created.
             </p>
+            {/* Keyed by the company: a change of paying company resets the
+                choice on the server, and the form must start again from it. */}
             <ProjectTemplates
+              key={project.clientId}
               projectId={project.id}
               clientName={project.client.name}
               templates={templates}

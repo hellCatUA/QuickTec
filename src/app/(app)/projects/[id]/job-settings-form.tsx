@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useState, useTransition } from "react";
 import { Field, Input, Select } from "@/components/ui/field";
 import { FormStatus, type SaveState } from "@/components/ui/form-status";
 import { saveProjectJobSettings, type ActionResult } from "../actions";
@@ -43,13 +43,25 @@ export function JobSettingsForm({
     ActionResult | null,
     FormData
   >(async (prev, formData) => saveProjectJobSettings(prev, formData), null);
+  const [, startTransition] = useTransition();
   const [payType, setPayType] = useState(project.defaultPayType ?? "");
   const [budgetType, setBudgetType] = useState(project.defaultBudgetType ?? "");
   const hasFlat = budgetType === "FLAT" || budgetType === "FLAT_HOURLY";
   const hasHourly = budgetType === "HOURLY" || budgetType === "FLAT_HOURLY";
 
   return (
-    <form action={formAction} className="flex flex-col gap-4">
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        const formData = new FormData(event.currentTarget);
+        startTransition(() => formAction(formData));
+      }}
+      className="flex flex-col gap-4"
+    >
+      {/* Submitted by hand rather than through the form's action prop: React
+          resets a form once its action has run, which puts every select back
+          on its first option while the component still holds the choice — so
+          the next save sent "none" for whatever was picked. */}
       <input type="hidden" name="id" value={project.id} />
 
       <label className="flex items-center gap-2 text-sm">

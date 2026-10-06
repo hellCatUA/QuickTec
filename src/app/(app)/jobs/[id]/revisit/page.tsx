@@ -96,6 +96,11 @@ export default async function RevisitPage({
   if (!allowed) notFound();
 
   const budget = jobTerms(job);
+  const canSetPay = await canOnJob(user, "pay.edit_rates", {
+    projectId: job.projectId,
+    assigneeIds: job.assignments.map((assignment) => assignment.user.id),
+    createdById: job.createdById,
+  });
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4">
@@ -144,7 +149,7 @@ export default async function RevisitPage({
                 .join(" · "),
               // The amounts are for whoever sets pay; anybody else planning
               // the trip is told that it comes across, not what it is.
-              pay: can(user, "pay.edit_rates")
+              pay: canSetPay
                 ? [
                     budget
                       ? `Budget ${describeTerms(budget)}`

@@ -748,6 +748,11 @@ function coerceField(
   const trimmed = raw.trim();
   const kind = JOB_FIELDS[field].kind;
 
+  // Every job has a title: a suggestion to clear it could never be approved.
+  if (field === "title" && trimmed === "") {
+    return { error: "A job needs a title." };
+  }
+
   // A site is picked, never typed, and a job always has one — there is no
   // blank to clear it to.
   if (kind === "site") {
@@ -1547,6 +1552,27 @@ export async function saveJobDetails(
     },
   });
 
+  // Who represented the work, learned later more often than not. A
+  // planner's decision rather than a detail a tech fills in, so it is not
+  // offered as a suggestion: whoever can plan the job sets it. Checked before
+  // anything is written, so a refusal here is not a half-saved form.
+  const wantedRep = parsed.data.repCompanyId;
+  const repChange =
+    wantedRep !== undefined && wantedRep !== (current.repCompanyId ?? "");
+  if (repChange && !canEditPlanned) {
+    return fail("Only somebody who plans this job can change its rep company.");
+  }
+  const newRep =
+    repChange && wantedRep
+      ? await db.repCompany.findUnique({
+          where: { id: wantedRep },
+          select: { name: true },
+        })
+      : null;
+  if (repChange && wantedRep && !newRep) {
+    return fail("That rep company is not in the directory.");
+  }
+
   const saved: string[] = [];
   const suggested: string[] = [];
   let scheduleTouched = false;
@@ -1567,9 +1593,6 @@ export async function saveJobDetails(
 
     const coerced = coerceField(field, wanted, job.timeZone);
     if ("error" in coerced) return fail(coerced.error);
-    if (field === "title" && coerced.value === null) {
-      return fail("A job needs a title.");
-    }
 
     const isEmpty = previous === null || previous === "";
     const decision = fieldAction({
@@ -1647,21 +1670,8 @@ export async function saveJobDetails(
     }
   }
 
-  // Who represented the work, learned later more often than not. A
-  // planner's decision rather than a detail a tech fills in, so it is not
-  // offered as a suggestion: whoever can plan the job sets it.
-  const wantedRep = parsed.data.repCompanyId;
-  if (wantedRep !== undefined && wantedRep !== (current.repCompanyId ?? "")) {
-    if (!canEditPlanned) {
-      return fail("Only somebody who plans this job can change its rep company.");
-    }
-    const repCompany = wantedRep
-      ? await db.repCompany.findUnique({
-          where: { id: wantedRep },
-          select: { name: true },
-        })
-      : null;
-    if (wantedRep && !repCompany) return fail("That rep company is not in the directory.");
+
+  if (repChange) {
     await db.job.update({
       where: { id: jobId },
       data: { repCompanyId: wantedRep || null },
@@ -1675,7 +1685,7 @@ export async function saveJobDetails(
       detail: {
         field: "Rep company",
         from: current.repCompany?.name ?? null,
-        to: repCompany?.name ?? null,
+        to: newRep?.name ?? null,
       },
     });
     saved.push("Rep company");
@@ -2285,7 +2295,21 @@ export async function setJobTravel(formData: FormData): Promise<ActionResult> {
     // the start has been answered — and is wrong now besides.
     db.$executeRaw`
       UPDATE "JobAssignment"
-      SET "payRateNote" = NULLIF(BTRIM(REPLACE("payRateNote", ${LATE_TRAVEL_NOTE}, ''), ' ·'), '')
+      SET "payRateNote" = NULLIF(
+        BTRIM(
+          REPLACE(
+            REPLACE(
+              REPLACE("payRateNote", ' · ' || ${LATE_TRAVEL_NOTE}, ''),
+              ${LATE_TRAVEL_NOTE} || ' · ',
+              ''
+            ),
+            ${LATE_TRAVEL_NOTE},
+            ''
+          ),
+          ' ·'
+        ),
+        ''
+      )
       WHERE "jobId" = ${jobId}
         AND "payOverridden" = false
         AND "payRateNote" LIKE '%' || ${LATE_TRAVEL_NOTE} || '%'

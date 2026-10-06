@@ -71,6 +71,8 @@ async function main() {
   await page.getByRole("tab", { name: "Blank" }).click();
   await open("Pay & dispatch");
   await page.fill("#travelReimbursement", "35");
+  await page.selectOption("#payType", "FLAT");
+  await page.fill("#payRate", "600");
   await page.getByRole("button", { name: "Add a dispatch contact" }).click();
   await page.fill("#dispatch-label-0", "Bridge line");
   await page.fill("#dispatch-phone-0", "206-555-0188");
@@ -86,6 +88,9 @@ async function main() {
   check("scope of work survives", await page.inputValue('textarea[name="scopeOfWork"]'), "Swap the failed switch at rack 3");
   check("and so does the title", await page.inputValue("#title"), "Repro job");
   check("travel survives", await page.inputValue("#travelReimbursement"), "35");
+  // A select came back on its first option while the form still held the
+  // choice, and the next press sent the job out without its pay.
+  check("and the pay type, which a select used to drop", await page.inputValue("#payType"), "FLAT");
   check("a dispatch number survives", await page.inputValue("#dispatch-label-0"), "Bridge line");
 
   // --- autosave ------------------------------------------------------------

@@ -32,6 +32,7 @@ export function ProjectTemplates({
   own: boolean;
   chosen: string[];
 }) {
+  const [, startTransition] = React.useTransition();
   const [mode, setMode] = React.useState<"company" | "own">(own ? "own" : "company");
   const [picked, setPicked] = React.useState<string[]>(() =>
     own ? chosen : templates.filter((one) => one.isDefault).map((one) => one.id),
@@ -51,7 +52,18 @@ export function ProjectTemplates({
   }
 
   return (
-    <form action={action} className="flex flex-col gap-3">
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        const formData = new FormData(event.currentTarget);
+        startTransition(() => action(formData));
+      }}
+      className="flex flex-col gap-3"
+    >
+      {/* Submitted by hand rather than through the form's action prop: React
+          resets a form once its action has run, which puts every select back
+          on its first option while the component still holds the choice — so
+          the next save sent "none" for whatever was picked. */}
       <input type="hidden" name="projectId" value={projectId} />
       <input type="hidden" name="own" value={mode === "own" ? "true" : "false"} />
 

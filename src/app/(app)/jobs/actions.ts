@@ -27,7 +27,12 @@ import {
   revisitAssignmentId,
 } from "@/lib/int-wo";
 import { notify } from "@/lib/notifications";
-import { jobRateNote, resolvePayRate, withoutLateTravel } from "@/lib/pay-rates";
+import {
+  jobRateNote,
+  LATE_TRAVEL_NOTE,
+  resolvePayRate,
+  withoutLateTravel,
+} from "@/lib/pay-rates";
 import { formatPhone } from "@/lib/phone";
 import { canOnJob, resolveJobSupervisor } from "@/lib/scope";
 import { timeZoneForZip } from "@/lib/us-regions";
@@ -269,7 +274,7 @@ export async function createJob(
       timeZone,
     });
 
-    return tx.job.create({
+    const created = await tx.job.create({
       data: {
         intWoId,
         intWoSequence: sequence,
@@ -354,8 +359,9 @@ export async function createJob(
             isLead: userId === leadId,
             payType: rate.payType,
             payRate: rate.rate,
-            payRateNote:
-              rate.source === "job"
+            payRateNote: project?.defaultBudgetType
+              ? "From the job's budget"
+              : rate.source === "job"
                 ? jobRateNote(
                     { payType: input.payType as PayType, payRate: input.payRate },
                     project,
@@ -369,11 +375,14 @@ export async function createJob(
       },
       select: { id: true, intWoId: true },
     });
+    // A budget is shared between the crew, so their lines come from it
+    // rather than from whatever rate each of them resolved to above — split
+    // in the same transaction, so the job never exists with lines unsplit.
+    if (project?.defaultBudgetType && rates.length > 0) {
+      await resplitJob(created.id, tx);
+    }
+    return created;
   });
-
-  // A budget is shared between the crew, so their lines come from it rather
-  // than from whatever rate each of them resolved to above.
-  if (project?.defaultBudgetType && rates.length > 0) await resplitJob(job.id);
 
   // Numbers for this job alone. The project's own travel with every job under
   // it and are not copied here — two rows saying the same thing is how one of
@@ -400,7 +409,7 @@ export async function createJob(
   // template next year cannot change what a job that ran this year went out on.
   if (input.templateIds.length > 0) {
     const allowed = await db.clientDocumentTemplate.findMany({
-      where: { id: { in: input.templateIds }, clientId },
+      where: { id: { in: input.templateIds }, clientId, active: true },
       select: { id: true },
     });
     for (const template of allowed) {
@@ -568,7 +577,7 @@ export async function createRevisit(
         select: { sourceTemplateId: true },
       },
       createdById: true,
-      project: { select: { managerId: true } },
+      project: { select: { managerId: true, travelReimbursement: true } },
       // Who worked it, so the same people can be sent back without being
       // looked up and re-added by hand.
       assignments: {
@@ -692,7 +701,15 @@ export async function createRevisit(
         withoutLateTravel(entry.payRateNote) ?? "Carried from the original visit",
       travelReimbursement: entry.payOverridden
         ? entry.travelReimbursement
-        : (parent.travelReimbursement ?? entry.travelReimbursement),
+        : (parent.travelReimbursement?.toString() ??
+          // An older job with no travel of its own: somebody held at $0 for
+          // joining late goes back on what anybody joining at the start gets.
+          (entry.payRateNote?.includes(LATE_TRAVEL_NOTE)
+            ? ((await resolvePayRate(entry.userId, parent.projectId, parent.clientId))
+                .travelReimbursement ??
+              parent.project?.travelReimbursement?.toString() ??
+              null)
+            : (entry.travelReimbursement?.toString() ?? null))),
     })),
   );
 

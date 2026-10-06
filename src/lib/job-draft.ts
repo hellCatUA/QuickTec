@@ -88,6 +88,11 @@ export function draftHasContent(draft: JobDraftPayload): boolean {
       return false;
     }
     if (value === null || value === undefined) return false;
+    // A pay cleared to nothing is a choice, but not something typed.
+    if (key === "payChoice") {
+      const choice = value as { type?: string; rate?: string };
+      return Boolean(choice.type || choice.rate);
+    }
     if (typeof value === "string") return value.trim() !== "";
     if (Array.isArray(value)) return value.length > 0;
     if (typeof value === "boolean") return value;

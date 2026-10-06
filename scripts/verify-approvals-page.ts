@@ -1485,7 +1485,16 @@ async function main() {
   });
   await managerPage.goto(`${BASE}/projects/${project.id}/settings`, { waitUntil: "load" });
   await managerPage.waitForTimeout(1000);
+  // A priced budget with no amount would be saved as Non-billable and pay
+  // every new job's crew nothing.
   await managerPage.locator("#defaultBudgetType").selectOption("HOURLY");
+  await managerPage.getByRole("button", { name: "Save job settings" }).click();
+  await managerPage.waitForTimeout(1500);
+  check(
+    "a budget with a type and no amount is refused, not saved as unpaid",
+    await managerPage.getByText("Give the budget an amount, or choose Non-billable.").isVisible(),
+    true,
+  );
   await managerPage.locator("#defaultBudgetHourly").fill("60");
   await managerPage.getByRole("button", { name: "Save job settings" }).click();
   await managerPage.waitForTimeout(2000);
@@ -1610,14 +1619,22 @@ async function main() {
   await managerPage.waitForTimeout(2500);
   const afterMove = await db.job.findMany({
     where: { projectId: project.id },
-    select: { lifecycle: true, clientId: true, repCompanyId: true },
+    select: { title: true, lifecycle: true, clientId: true, repCompanyId: true },
   });
-  const stillOpen = afterMove.filter((one) => one.lifecycle !== "APPROVED");
+  const raisedHere = ["Register swap", "Raised by the supervisor", "No travel on this one"];
   check(
-    "they go to the new paying and rep company",
-    stillOpen.length > 0 &&
-      stillOpen.every((one) => one.clientId === client.id && one.repCompanyId === repTwo.id),
+    "the open jobs still on the old companies go to the new ones",
+    afterMove
+      .filter((one) => raisedHere.includes(one.title))
+      .every((one) => one.clientId === client.id && one.repCompanyId === repTwo.id),
     true,
+  );
+  // Raised before the project had a rep company, and never on the paying
+  // company being left: not the old company's to move.
+  check(
+    "one on another company already is left as it was",
+    afterMove.find((one) => one.title === "Job under the coordinator")?.repCompanyId ?? null,
+    null,
   );
   check(
     "a job already signed off stays with the company it was done for",
@@ -1628,7 +1645,7 @@ async function main() {
   );
   check(
     "and the save says what it did",
-    await managerPage.getByText(/moved to/).isVisible(),
+    (await managerPage.getByText(/moved to/).textContent())?.includes("left as they were"),
     true,
   );
   check(

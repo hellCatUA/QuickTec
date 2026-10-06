@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Field, Input, Select } from "@/components/ui/field";
 import { MarkdownEditor } from "@/components/ui/markdown-editor";
@@ -77,6 +77,7 @@ export function ProjectForm({
   );
 
   const key = project?.id ?? "new";
+  const [, startTransition] = useTransition();
   const [clientId, setClientId] = useState(project?.clientId ?? "");
   const [repCompanyId, setRepCompanyId] = useState(project?.repCompanyId ?? "");
   // Asked only once a company actually changed, and only when there are jobs
@@ -89,7 +90,18 @@ export function ProjectForm({
   const [pmContactId, setPmContactId] = useState(project?.pmContactId ?? "");
 
   return (
-    <form action={formAction} className="flex flex-col gap-4">
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        const formData = new FormData(event.currentTarget);
+        startTransition(() => formAction(formData));
+      }}
+      className="flex flex-col gap-4"
+    >
+      {/* Submitted by hand rather than through the form's action prop: React
+          resets a form once its action has run, which puts every select back
+          on its first option while the component still holds the choice — so
+          the next save sent "none" for whatever was picked. */}
       {project ? <input type="hidden" name="id" value={project.id} /> : null}
 
       <div className="grid gap-4 sm:grid-cols-2">
