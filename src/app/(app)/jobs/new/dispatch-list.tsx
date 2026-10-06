@@ -1,7 +1,6 @@
 "use client";
 
 import { Plus, X } from "lucide-react";
-import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { capitaliseName } from "@/lib/names";
 import { formatPhoneAsTyped } from "@/lib/phone";
@@ -38,6 +37,8 @@ const EMPTY: DraftContact = {
 export function DispatchList({
   inherited,
   companyDefaults,
+  contacts,
+  onChange,
 }: {
   /** From the project, shown so nobody re-types what is already there. */
   inherited: { id: string; label: string; name: string | null }[];
@@ -50,8 +51,15 @@ export function DispatchList({
     email: string | null;
     note: string | null;
   }[];
+  /**
+   * Held by the form rather than here, so they are in its draft: typed in,
+   * they used to vanish with the tab, and with a refused submit.
+   */
+  contacts: DraftContact[];
+  onChange: (next: DraftContact[]) => void;
 }) {
-  const [contacts, setContacts] = React.useState<DraftContact[]>([]);
+  const setContacts = (next: (current: DraftContact[]) => DraftContact[]) =>
+    onChange(next(contacts));
 
   /**
    * Offered rather than added on their own.

@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { recordAudit } from "@/lib/audit";
+import { resplitJob } from "@/lib/budget-split";
 import { syncJobInBackground } from "@/lib/calendar/sync";
 import { getCompanySettings } from "@/lib/company";
 import { parseDatetimeLocalInZone } from "@/lib/datetime";
@@ -28,7 +29,6 @@ import {
 import { notify } from "@/lib/notifications";
 import { jobRateNote, resolvePayRate } from "@/lib/pay-rates";
 import { formatPhone } from "@/lib/phone";
-import { REVISIT_CARRIES, type RevisitCarry } from "@/lib/revisit";
 import { canOnJob, resolveJobSupervisor } from "@/lib/scope";
 import { timeZoneForZip } from "@/lib/us-regions";
 import { can, getSessionUser, requirePermission } from "@/lib/session";
@@ -174,6 +174,11 @@ export async function createJob(
     input.payType = projectPay.payType;
     input.payRate = projectPay.payRate;
   }
+  // Travel likewise: the project's, on the job itself, so the crew added
+  // later get the same — what the form sent when its sender could see it.
+  const jobTravel = can(actor, "pay.edit_rates")
+    ? input.travelReimbursement
+    : (project?.travelReimbursement?.toString() ?? null);
 
   const rates = await Promise.all(
     assigneeIds.map(async (userId) => {
@@ -295,7 +300,7 @@ export async function createJob(
         // On the job, so somebody assigned tomorrow gets the same decision.
         payType: (input.payType as PayType | null) ?? null,
         payRate: input.payRate,
-        travelReimbursement: input.travelReimbursement,
+        travelReimbursement: jobTravel,
         noWorkOrder: input.noWorkOrder,
         lifecycle: needsApproval
           ? "PENDING_APPROVAL"
@@ -326,11 +331,7 @@ export async function createJob(
                 : rate.source === "none"
                   ? "No rate configured — defaulted to non-billable"
                   : null,
-            travelReimbursement:
-              input.travelReimbursement ??
-              rate.travelReimbursement ??
-              project?.travelReimbursement?.toString() ??
-              null,
+            travelReimbursement: jobTravel ?? rate.travelReimbursement ?? null,
           })),
         },
       },
@@ -450,16 +451,6 @@ const revisitSchema = z.object({
   /** Who is going back. Ticked from the original crew, and editable. */
   crewIds: z.array(z.string()).default([]),
   leadId: optionalText,
-  /**
-   * Which parts of the original this one starts from.
-   *
-   * A list rather than a flag per field, so adding something that can be
-   * carried is one name in REVISIT_CARRIES and one checkbox, not a schema
-   * change and a migration.
-   */
-  carry: z.array(z.enum(REVISIT_CARRIES)).default([]),
-  /** Fresh resolution, or the rate each person was actually on last time. */
-  rates: z.enum(["fresh", "keep"]).default("fresh"),
 });
 
 export async function createRevisit(
@@ -471,7 +462,6 @@ export async function createRevisit(
   const parsed = revisitSchema.safeParse({
     ...Object.fromEntries(formData),
     crewIds: formData.getAll("crewIds").map(String).filter(Boolean),
-    carry: formData.getAll("carry").map(String).filter(Boolean),
   });
   if (!parsed.success) {
     return { ok: false, error: z.prettifyError(parsed.error) };
@@ -499,8 +489,25 @@ export async function createRevisit(
       payType: true,
       payRate: true,
       travelReimbursement: true,
+      budgetType: true,
+      budgetFlat: true,
+      budgetFlatHours: true,
+      budgetHourly: true,
+      budgetSplit: true,
       pmContactId: true,
       site: { select: { timeZone: true } },
+      // Who is at the site — the same store, so most likely the same people.
+      pointsOfContact: {
+        orderBy: [{ type: "asc" }, { order: "asc" }],
+        select: {
+          type: true,
+          name: true,
+          position: true,
+          phone: true,
+          email: true,
+          order: true,
+        },
+      },
       extraTickets: {
         orderBy: { order: "asc" },
         select: { number: true, order: true },
@@ -534,8 +541,11 @@ export async function createRevisit(
           supervisorId: true,
           payType: true,
           payRate: true,
+          payFlat: true,
+          payFlatHours: true,
           payRateNote: true,
           payOverridden: true,
+          shareBasisPoints: true,
           travelReimbursement: true,
           user: { select: { name: true, directSupervisorId: true } },
         },
@@ -607,14 +617,18 @@ export async function createRevisit(
   // could not clock in on it, because as far as the record was concerned they
   // were not on the job at all. A tech cannot see a job they are not on
   // either, so it did not even fail loudly; it just was not there.
-  const carries = new Set<RevisitCarry>(input.carry);
+  //
+  // Everything else comes across as the original has it. A revisit is the
+  // same work at the same site, and it used to be assembled from ticked boxes
+  // — so an unticked one quietly became a different job: breaks paid, no
+  // travel, nobody to ring. Now it starts as the original stands, and what is
+  // different about this trip is changed on the revisit itself.
 
   // The original's sheet goes with it only when it had changed it for
-  // itself; rows written down at its checkout are only what it was following.
+  // itself; rows written down at its checkout are only what it was following,
+  // so the revisit follows the project the way the original did.
   const carriesOwnSheet =
-    carries.has("deliverables") &&
-    parent.deliverablesOwn &&
-    parent.deliverableRules.length > 0;
+    parent.deliverablesOwn && parent.deliverableRules.length > 0;
   const wanted = new Set(input.crewIds);
   const crew = parent.assignments.filter((entry) => wanted.has(entry.userId));
 
@@ -622,53 +636,21 @@ export async function createRevisit(
     return { ok: false, error: "You cannot assign techs to a job." };
   }
 
+  // Each person on what they were on: their rate, their travel, and whether
+  // they had been deliberately set apart from the job's pay.
   const carried = await Promise.all(
-    crew.map(async (entry) => {
-      const supervisorId = await resolveJobSupervisor(
-        entry.userId,
-        parent.projectId,
-      );
-
-      // A rate somebody was deliberately put on — a trainee, a favour — is a
-      // decision about that person and travels with them whatever else was
-      // chosen. Beyond that it is the planner's call: resolve afresh, because
-      // a revisit is a new job and last month's rate may not be what they are
-      // on now, or keep exactly what they were paid last time.
-      if (entry.payOverridden || input.rates === "keep") {
-        return {
-          userId: entry.userId,
-          supervisorId,
-          payType: entry.payType,
-          payRate: entry.payRate.toString(),
-          // The exception flag is theirs, not this form's: it means "leave
-          // this person alone when the job's pay is set", and carrying a rate
-          // forward is not the same claim.
-          payOverridden: entry.payOverridden,
-          payRateNote:
-            entry.payRateNote ??
-            (entry.payOverridden ? null : "Carried from the original visit"),
-          travelReimbursement: entry.travelReimbursement?.toString() ?? null,
-        };
-      }
-
-      const resolved = await resolvePayRate(
-        entry.userId,
-        parent.projectId,
-        parent.clientId,
-      );
-      return {
-        userId: entry.userId,
-        supervisorId,
-        payType: resolved.payType,
-        payRate: resolved.rate,
-        payRateNote:
-          resolved.source === "none"
-            ? "No rate configured — defaulted to non-billable"
-            : null,
-        payOverridden: false,
-        travelReimbursement: resolved.travelReimbursement ?? null,
-      };
-    }),
+    crew.map(async (entry) => ({
+      userId: entry.userId,
+      supervisorId: await resolveJobSupervisor(entry.userId, parent.projectId),
+      payType: entry.payType,
+      payRate: entry.payRate,
+      payFlat: entry.payFlat,
+      payFlatHours: entry.payFlatHours,
+      payOverridden: entry.payOverridden,
+      shareBasisPoints: entry.shareBasisPoints,
+      payRateNote: entry.payRateNote ?? "Carried from the original visit",
+      travelReimbursement: entry.travelReimbursement,
+    })),
   );
 
   // Whoever led it last time keeps it, unless the planner said otherwise or
@@ -702,31 +684,33 @@ export async function createRevisit(
         siteId: parent.siteId,
         projectId: parent.projectId,
         externalAssignmentId: assignmentId,
-        ticketNumber: carries.has("tickets") ? parent.ticketNumber : null,
-        incNumber: carries.has("tickets") ? parent.incNumber : null,
+        ticketNumber: parent.ticketNumber,
+        incNumber: parent.incNumber,
         extraTickets:
-          carries.has("tickets") && parent.extraTickets.length > 0
+          parent.extraTickets.length > 0
             ? { create: parent.extraTickets.map((row) => ({ ...row })) }
             : undefined,
         scheduledStart,
-        estimateMinutes: carries.has("estimate")
-          ? parent.estimateMinutes
-          : null,
-        techsRequired: carries.has("estimate") ? parent.techsRequired : 1,
-        scopeOfWork: carries.has("scope") ? parent.scopeOfWork : null,
-        // The break rule travels with pay, being the same kind of decision.
-        // Unticked, the revisit falls back to what the project says, which is
-        // where a job with nobody's opinion on it should start.
-        breakPaid: carries.has("pay") ? parent.breakPaid : true,
-        payType: carries.has("pay") ? parent.payType : null,
-        payRate: carries.has("pay") ? parent.payRate : null,
-        travelReimbursement: carries.has("pay")
-          ? parent.travelReimbursement
-          : null,
-        pmContactId: carries.has("dispatch") ? parent.pmContactId : null,
+        estimateMinutes: parent.estimateMinutes,
+        techsRequired: parent.techsRequired,
+        scopeOfWork: parent.scopeOfWork,
+        breakPaid: parent.breakPaid,
+        payType: parent.payType,
+        payRate: parent.payRate,
+        travelReimbursement: parent.travelReimbursement,
+        budgetType: parent.budgetType,
+        budgetFlat: parent.budgetFlat,
+        budgetFlatHours: parent.budgetFlatHours,
+        budgetHourly: parent.budgetHourly,
+        budgetSplit: parent.budgetSplit,
+        pmContactId: parent.pmContactId,
         dispatchContacts:
-          carries.has("dispatch") && parent.dispatchContacts.length > 0
+          parent.dispatchContacts.length > 0
             ? { create: parent.dispatchContacts.map((row) => ({ ...row })) }
+            : undefined,
+        pointsOfContact:
+          parent.pointsOfContact.length > 0
+            ? { create: parent.pointsOfContact.map((row) => ({ ...row })) }
             : undefined,
         lifecycle: scheduledStart ? "SCHEDULED" : "DRAFT",
         createdById: actor.id,
@@ -734,19 +718,13 @@ export async function createRevisit(
           carried.length > 0
             ? {
                 create: carried.map((entry) => ({
-                  userId: entry.userId,
-                  supervisorId: entry.supervisorId,
+                  ...entry,
                   isLead: entry.userId === leadId,
-                  payType: entry.payType,
-                  payRate: entry.payRate,
-                  payRateNote: entry.payRateNote,
-                  payOverridden: entry.payOverridden,
-                  travelReimbursement: entry.travelReimbursement,
                 })),
               }
             : undefined,
-        // Unticked leaves the revisit with no rows of its own, which is how a
-        // job says "whatever the project asks for" rather than "nothing".
+        // No rows of its own is how a job says "whatever the project asks
+        // for" rather than "nothing".
         deliverableRules:
           // Only what the original had changed for itself. Rows written down
           // at its checkout are not a change — they are what it was
@@ -771,7 +749,7 @@ export async function createRevisit(
         // Same site, so the same rooms: the MDF is still where it was, and
         // the crew going back should not have to name it again.
         locations:
-          carries.has("deliverables") && parent.locations.length > 0
+          parent.locations.length > 0
             ? {
                 create: parent.locations.map((location) => ({
                   name: location.name,
@@ -786,9 +764,13 @@ export async function createRevisit(
     });
   });
 
+  // A budget is split between whoever is on the job, and the crew going back
+  // may not be the crew that went: their lines are re-split from it.
+  if (parent.budgetType) await resplitJob(job.id);
+
   // Their sign-off blank, taken fresh from the company template the original
   // used rather than pointed at the original's own file.
-  if (carries.has("signOff")) {
+  {
     const templateIds = Array.from(
       new Set(
         parent.documents

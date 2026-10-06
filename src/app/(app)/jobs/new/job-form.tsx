@@ -29,7 +29,7 @@ import { HoursPicker, Stepper } from "@/components/ui/stepper";
 import { formatIntWo } from "@/lib/int-wo-format";
 import { cn } from "@/lib/utils";
 import { createJob, type ActionResult } from "../actions";
-import { DispatchList } from "./dispatch-list";
+import { DispatchList, type DraftContact } from "./dispatch-list";
 import { SitePicker, type SiteOption } from "./site-picker";
 
 type Client = { id: string; name: string };
@@ -152,6 +152,14 @@ export function JobForm({
   const [payChoice, setPayChoice] = useState<{ type: string; rate: string } | null>(
     null,
   );
+  const [travelChoice, setTravelChoice] = useState<string | null>(null);
+  const [dispatch, setDispatch] = useState<DraftContact[]>([]);
+  // Whether somebody arrived with a project in mind or is building a one-off.
+  // Starts on the project when there is one to pick, because that is the
+  // common case and the one that fills the most in.
+  const [startMode, setStartMode] = useState<"project" | "blank">(
+    projects.length > 0 ? "project" : "blank",
+  );
   // Controlled, all four of them, because uncontrolled was the bug: React
   // resets a form once its action has run, so a refused submit came back with
   // these blank while everything held in state survived.
@@ -191,6 +199,9 @@ export function JobForm({
     // set their own.
     payType: payChoice?.type ?? "",
     payRate: payChoice?.rate ?? "",
+    travelChoice,
+    dispatch,
+    startMode,
   };
 
   const [state, formAction, pending] = useActionState<ActionResult | null, FormData>(
@@ -228,6 +239,11 @@ export function JobForm({
               : (selectedProject.defaultPayRate ?? ""),
         }
       : null;
+  // Travel the same way: the project's until somebody types over it, and
+  // clearing it means none rather than "the project's after all".
+  const travel = travelChoice ?? selectedProject?.travelReimbursement ?? "";
+  const travelFromProject =
+    travelChoice === null && Boolean(selectedProject?.travelReimbursement);
   const payType = payChoice?.type ?? projectPay?.type ?? "";
   const payRate = payChoice?.rate ?? projectPay?.rate ?? "";
   const payFromProject =
@@ -376,13 +392,6 @@ export function JobForm({
     );
   }
 
-  // Whether somebody arrived with a project in mind or is building a one-off.
-  // Starts on the project when there is one to pick, because that is the
-  // common case and the one that fills the most in.
-  const [startMode, setStartMode] = useState<"project" | "blank">(
-    projects.length > 0 ? "project" : "blank",
-  );
-
   const deliverableSummaryCount = (deliverables ?? baseDeliverables).filter(
     (rule) => rule.enabled,
   ).length;
@@ -394,6 +403,14 @@ export function JobForm({
     ? [
         { label: "Paying company", value: selectedProject.clientName },
         { label: "Rep company", value: selectedProject.repCompanyName ?? "None" },
+        ...(selectedProject.travelReimbursement
+          ? [
+              {
+                label: "Travel",
+                value: `$${Number(selectedProject.travelReimbursement).toFixed(2)} for everybody on it`,
+              },
+            ]
+          : []),
         ...(projectPay
           ? [
               {
@@ -493,6 +510,14 @@ export function JobForm({
       values.payType || values.payRate
         ? { type: values.payType ?? "", rate: values.payRate ?? "" }
         : null,
+    );
+    setTravelChoice(values.travelChoice ?? null);
+    setDispatch(values.dispatch ?? []);
+    // A draft from before the mode was kept: a company with no project was a
+    // one-off, and reopening it on the project tab hid the company it had.
+    setStartMode(
+      values.startMode ??
+        (!values.projectId && values.clientId ? "blank" : startMode),
     );
     setRestored(true);
   }
@@ -612,9 +637,9 @@ export function JobForm({
               value: project.id,
               label: project.name,
               hint: `${project.code} · ${project.clientName}`,
-              // Found by our ID, and by whatever the paying or rep company
-              // calls it — that is often what is on the email.
-              keywords: [project.code, project.clientName, project.theirRefs].join(" "),
+              // The hint already holds our ID and the company; this adds what
+              // the paying or rep company calls it — often what is on the email.
+              keywords: project.theirRefs,
             }))}
           />
         </Field>
@@ -1022,6 +1047,8 @@ export function JobForm({
           <DispatchList
             inherited={selectedProject?.dispatchContacts ?? []}
             companyDefaults={companyDispatch}
+            contacts={dispatch}
+            onChange={setDispatch}
           />
           {canSetPay ? (
             <div className="grid gap-4 border-t border-border pt-4 sm:grid-cols-2">
@@ -1071,9 +1098,9 @@ export function JobForm({
               label="Travel reimbursement ($)"
               htmlFor="travelReimbursement"
               hint={
-                selectedProject?.travelReimbursement
-                  ? `Blank uses the project's $${Number(selectedProject.travelReimbursement).toFixed(2)}.`
-                  : "Money the customer allocates for travel. Separate from mileage."
+                travelFromProject
+                  ? "The project's, for everybody on the job. Clear it for none."
+                  : "Money the customer allocates for travel, for everybody on the job. Separate from mileage."
               }
               className="sm:col-span-2"
             >
@@ -1083,7 +1110,9 @@ export function JobForm({
                 type="number"
                 step="0.01"
                 min={0}
-                placeholder="Leave blank for the project default"
+                value={travel}
+                onChange={(event) => setTravelChoice(event.target.value)}
+                placeholder="None"
               />
             </Field>
             </div>

@@ -31,15 +31,22 @@ export function projectCodeError(code: string): string | null {
   return null;
 }
 
-/** The next P001, P002 … nobody has, offered when a project is created. */
+/**
+ * The next P001, P002 … nobody has, offered when a project is created.
+ *
+ * Skips one that is some project's paying-company ID too: jobs numbered
+ * before we had our own IDs carry those, and a new project given one would be
+ * numbering its jobs alongside them.
+ */
 export async function nextProjectCode(): Promise<string> {
+  const projects = await db.project.findMany({
+    select: { code: true, externalProjectId: true },
+  });
   const taken = new Set(
-    (
-      await db.project.findMany({
-        where: { code: { startsWith: "P" } },
-        select: { code: true },
-      })
-    ).map((project) => project.code),
+    projects.flatMap((project) => [
+      project.code,
+      project.externalProjectId?.trim().toUpperCase() ?? "",
+    ]),
   );
   for (let counter = 1; ; counter++) {
     const code = `P${String(counter).padStart(3, "0")}`;

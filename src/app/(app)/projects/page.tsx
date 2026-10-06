@@ -89,7 +89,8 @@ export default async function ProjectsPage() {
         clientId: true,
       },
     }),
-    nextProjectCode(),
+    // Only for somebody who is offered the form it fills.
+    canManage ? nextProjectCode() : Promise.resolve(""),
   ]);
 
   return (

@@ -64,6 +64,17 @@ async function main() {
   await page.fill('textarea[name="scopeOfWork"]', "Swap the failed switch at rack 3");
   await page.fill("#title", "Repro job");
 
+  // A one-off, with travel and a number of its own: all three used to be
+  // lost — the travel box was the one plain input left on the form, the
+  // numbers lived in a component the draft never saw, and a one-off draft
+  // came back on the project tab with its company hidden.
+  await page.getByRole("tab", { name: "Blank" }).click();
+  await open("Pay & dispatch");
+  await page.fill("#travelReimbursement", "35");
+  await page.getByRole("button", { name: "Add a dispatch contact" }).click();
+  await page.fill("#dispatch-label-0", "Bridge line");
+  await page.fill("#dispatch-phone-0", "206-555-0188");
+
   // --- the bug: a refused submit must keep everything -----------------------
   await page.getByRole("button", { name: /create job/i }).first().click();
   await page.waitForTimeout(2500);
@@ -74,6 +85,8 @@ async function main() {
   check("inc number survives", await page.inputValue("#incNumber"), "INC0042");
   check("scope of work survives", await page.inputValue('textarea[name="scopeOfWork"]'), "Swap the failed switch at rack 3");
   check("and so does the title", await page.inputValue("#title"), "Repro job");
+  check("travel survives", await page.inputValue("#travelReimbursement"), "35");
+  check("a dispatch number survives", await page.inputValue("#dispatch-label-0"), "Bridge line");
 
   // --- autosave ------------------------------------------------------------
   await page.waitForTimeout(1800);
@@ -82,6 +95,15 @@ async function main() {
   const payload = (saved?.payload ?? {}) as Record<string, unknown>;
   check("with the fields in it", payload.externalAssignmentId, "A-12345");
   check("and the scope", payload.scopeOfWork, "Swap the failed switch at rack 3");
+  check("the travel", payload.travelChoice, "35");
+  check(
+    "the dispatch numbers",
+    (payload.dispatch as { label: string; phone: string }[] | undefined)?.map(
+      (row) => `${row.label} ${row.phone}`,
+    ),
+    ["Bridge line 206-555-0188"],
+  );
+  check("and that it is a one-off", payload.startMode, "blank");
   check("the footer says so", /Draft saved|Saving/.test(await page.locator("form").innerText()), true);
 
   // --- coming back ---------------------------------------------------------
@@ -97,6 +119,15 @@ async function main() {
   await page2.waitForTimeout(300);
   check("Continue puts it back", await page2.inputValue("#externalAssignmentId"), "A-12345");
   check("all of it", await page2.inputValue('textarea[name="scopeOfWork"]'), "Swap the failed switch at rack 3");
+  check(
+    "back on the one-off tab it was on",
+    await page2.getByRole("tab", { name: "Blank" }).getAttribute("aria-selected"),
+    "true",
+  );
+  await page2.locator("summary", { hasText: "Pay & dispatch" }).first().click();
+  await page2.waitForTimeout(300);
+  check("with its travel", await page2.inputValue("#travelReimbursement"), "35");
+  check("and its dispatch number", await page2.inputValue("#dispatch-phone-0"), "206-555-0188");
 
   // --- start fresh keeps the old one ---------------------------------------
   const page3 = await ctx.newPage();

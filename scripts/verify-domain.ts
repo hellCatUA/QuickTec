@@ -528,8 +528,10 @@ async function main() {
     update: { intWoCounter: 0 },
     create: {
       id: "seed-project-second",
-      name: "Second project, no paying company ID",
+      name: "Second project",
       code: "SECOND",
+      // Its jobs were numbered with this before we had our own IDs.
+      externalProjectId: "THEIRS7",
       clientId: client.id,
     },
   });
@@ -596,6 +598,82 @@ async function main() {
     "a revisit of a job numbered before project IDs keeps the original's",
     revisitOfOld.intWoId,
     "2608-THEIRS7-0009-R1",
+  );
+  // A number in an older shape does not lend the revisit nonsense.
+  const oldShape = await db.job.create({
+    data: {
+      ...base,
+      projectId: secondProject.id,
+      intWoId: "2026-05-0000-0123",
+      intWoSequence: 123,
+    },
+  });
+  check(
+    "a revisit of a number in an older shape uses the project's ID",
+    (
+      await db.$transaction(async (tx) =>
+        allocateRevisitIntWo(tx, {
+          parentJobId: oldShape.id,
+          effectiveDate: august,
+          timeZone: TZ,
+        }),
+      )
+    ).intWoId,
+    "2608-SECOND-0123-R1",
+  );
+  // Two originals sharing a sequence — two old projects' 0000 jobs — revisited
+  // in the same month do not make one number twice.
+  const twinA = await db.job.create({
+    data: { ...base, projectId: secondProject.id, intWoId: "2601-0000-0077", intWoSequence: 77 },
+  });
+  const twinB = await db.job.create({
+    data: { ...base, intWoId: "2602-0000-0077", intWoSequence: 77 },
+  });
+  const twinRevisits = [];
+  for (const twin of [twinA, twinB]) {
+    twinRevisits.push(
+      await db.$transaction(async (tx) => {
+        const alloc = await allocateRevisitIntWo(tx, {
+          parentJobId: twin.id,
+          effectiveDate: august,
+          timeZone: TZ,
+        });
+        return tx.job.create({
+          data: {
+            ...base,
+            parentJobId: twin.id,
+            intWoId: alloc.intWoId,
+            intWoSequence: alloc.sequence,
+            revisitNumber: alloc.revisitNumber,
+          },
+        });
+      }),
+    );
+  }
+  check(
+    "two originals with one sequence get different revisit numbers",
+    twinRevisits.map((job) => job.intWoId).join(" "),
+    "2608-0000-0077-R1 2608-0000-0077-R2",
+  );
+  await db.job.deleteMany({ where: { parentJobId: { in: [twinA.id, twinB.id] } } });
+  await db.job.deleteMany({ where: { id: twinB.id } });
+  // A busy old project's 0000 run is jumped in one move, not stepped through.
+  const julyCounter =
+    (await db.intWoCounter.findUniqueOrThrow({ where: { scope: "global:2026" } })).value;
+  await db.job.createMany({
+    data: Array.from({ length: 60 }, (_, index) => ({
+      ...base,
+      intWoId: `2607-0000-${String(julyCounter + 1 + index).padStart(4, "0")}`,
+      intWoSequence: julyCounter + 1 + index,
+    })),
+  });
+  const pastRun = await db.$transaction(async (tx) =>
+    allocateIntWo(tx, { projectId: null, projectCode: null, effectiveDate: july, timeZone: TZ }),
+  );
+  check(
+    "sixty old numbers in a row are jumped, not a reason to fail",
+    pastRun.intWoId,
+    `2607-0000-${String(julyCounter + 61).padStart(4, "0")}`,
   );
   await db.job.deleteMany({ where: { projectId: secondProject.id } });
   await db.project.delete({ where: { id: secondProject.id } });

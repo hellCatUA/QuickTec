@@ -21,7 +21,13 @@ import {
   requirePermission,
   type SessionUser,
 } from "@/lib/session";
-import { DeliverableCategory, PayType, ProjectRole, ProjectStatus } from "@prisma-client";
+import {
+  DeliverableCategory,
+  PayType,
+  Prisma,
+  ProjectRole,
+  ProjectStatus,
+} from "@prisma-client";
 
 export type ActionResult = { ok: true; id?: string } | { ok: false; error: string };
 
@@ -50,11 +56,30 @@ async function projectActor(projectId: string): Promise<SessionUser | null> {
  */
 const PROJECT_PAY_TYPES = ["HOURLY", "FLAT", "NON_BILLABLE"] as const;
 
-/** Somebody else saved the same project ID a moment ago. */
+/**
+ * Somebody else saved the same project ID a moment ago.
+ *
+ * Through the Postgres driver adapter a unique violation carries no
+ * `meta.target`; the constraint is under the adapter's own error instead. All
+ * three shapes are looked at, by the index's name or its one field.
+ */
 function takenCode(error: unknown): boolean {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return false;
+  if (error.code !== "P2002") return false;
+  const meta = (error.meta ?? {}) as {
+    target?: unknown;
+    driverAdapterError?: {
+      cause?: { originalMessage?: string; constraint?: { fields?: string[] } };
+    };
+  };
+  const cause = meta.driverAdapterError?.cause;
+  const fields = [
+    ...(Array.isArray(meta.target) ? meta.target : [meta.target]),
+    ...(cause?.constraint?.fields ?? []),
+  ].map((field) => String(field ?? "").replace(/"/g, ""));
   return (
-    (error as { code?: string })?.code === "P2002" &&
-    JSON.stringify((error as { meta?: unknown }).meta ?? "").includes("code")
+    fields.includes("code") ||
+    Boolean(cause?.originalMessage?.includes("Project_code_key"))
   );
 }
 
@@ -117,9 +142,13 @@ export async function saveProject(
     select: { id: true, name: true },
   });
   if (sameCode && sameCode.id !== id) {
+    // Named only to somebody who could open it anyway: guessing IDs is not a
+    // way to learn the names of projects one is not on.
     return {
       ok: false,
-      error: `${data.code} is already the ID of ${sameCode.name}. Each project needs its own.`,
+      error: canOnProject(actor, "project.manage", sameCode.id)
+        ? `${data.code} is already the ID of ${sameCode.name}. Each project needs its own.`
+        : `${data.code} is already another project's ID. Each project needs its own.`,
     };
   }
 
@@ -159,16 +188,29 @@ export async function saveProject(
     // project's work across two IDs — and free the old one for another
     // project, whose counter starting again at 1 would issue numbers its
     // jobs already have.
+    const lockedOut = (jobs: number) => ({
+      ok: false as const,
+      error: `The project ID is in the work order numbers of its ${jobs} job${jobs === 1 ? "" : "s"}, so it stays ${before.code}.`,
+    });
     if (before.code !== data.code && before._count.jobs > 0) {
-      return {
-        ok: false,
-        error: `The project ID is in the work order numbers of its ${before._count.jobs} job${before._count.jobs === 1 ? "" : "s"}, so it stays ${before.code}.`,
-      };
+      return lockedOut(before._count.jobs);
     }
 
     let project;
     try {
-      project = await db.project.update({ where: { id }, data });
+      // Counted again under the project's row lock — the one a job's number
+      // takes its counter under — so a job raised between the count above
+      // and this save cannot be numbered with an ID that is about to change.
+      const saved = await db.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT "id" FROM "Project" WHERE "id" = ${id} FOR UPDATE`;
+        if (before.code !== data.code) {
+          const jobs = await tx.job.count({ where: { projectId: id } });
+          if (jobs > 0) return { locked: jobs, project: null };
+        }
+        return { locked: 0, project: await tx.project.update({ where: { id }, data }) };
+      });
+      if (!saved.project) return lockedOut(saved.locked);
+      project = saved.project;
     } catch (error) {
       if (takenCode(error)) return codeTaken(data.code);
       throw error;

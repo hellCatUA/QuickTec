@@ -1,12 +1,11 @@
 "use client";
 
-import { RotateCcw } from "lucide-react";
+import { Check, RotateCcw } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useActionState, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/field";
 import { FormStatus, type SaveState } from "@/components/ui/form-status";
-import { type RevisitCarry } from "@/lib/revisit";
 import { createRevisit, type ActionResult } from "../actions";
 
 /** Somebody who worked the original job. */
@@ -21,30 +20,32 @@ export type RevisitSource = {
   locations: number;
   tickets: string[];
   estimate: string | null;
-  pay: string | null;
+  /** Its pay and break rule, and travel, as one line. */
+  pay: string;
   dispatch: number;
+  /** MOD, POC and the rest of who is at the site. */
+  contacts: number;
   signOff: boolean;
 };
 
 /**
- * What can be started from, in the order somebody thinks about a job.
+ * What comes across, in the order somebody thinks about a job.
  *
- * Everything is offered ticked. A revisit is the same work at the same site
- * for the same people, and the planner is here to say what is *different*
- * about this trip — which is a much shorter list than what is the same.
+ * All of it. A revisit is the same work at the same site for the same people,
+ * and it used to be put together from ticked boxes — so one left unticked
+ * quietly became a different job: breaks paid, no travel, nobody to ring.
+ * Now it starts as the original stands, and what is different about this trip
+ * is changed on the revisit, where it can be seen.
  */
-const CARRIES: {
-  key: RevisitCarry;
+const COMES_ACROSS: {
   label: string;
   detail: (source: RevisitSource) => string | null;
 }[] = [
   {
-    key: "scope",
     label: "Scope of work",
     detail: (source) => (source.scope ? null : "The original has none."),
   },
   {
-    key: "deliverables",
     label: "Deliverables",
     detail: (source) => {
       const places =
@@ -57,7 +58,6 @@ const CARRIES: {
     },
   },
   {
-    key: "tickets",
     label: "Ticket and INC numbers",
     detail: (source) =>
       source.tickets.length > 0
@@ -65,25 +65,28 @@ const CARRIES: {
         : "The original has none.",
   },
   {
-    key: "estimate",
     label: "Estimate and crew size",
     detail: (source) => source.estimate,
   },
   {
-    key: "pay",
-    label: "Job pay and break rule",
+    label: "Pay, breaks and travel",
     detail: (source) => source.pay,
   },
   {
-    key: "dispatch",
-    label: "Dispatch numbers",
+    label: "Dispatch numbers and the coordinator",
     detail: (source) =>
       source.dispatch > 0
-        ? `${source.dispatch} number${source.dispatch === 1 ? "" : "s"}, and the coordinator.`
-        : "The original has none of its own.",
+        ? `${source.dispatch} number${source.dispatch === 1 ? "" : "s"} of its own.`
+        : "No numbers of its own; the coordinator comes across.",
   },
   {
-    key: "signOff",
+    label: "Who is at the site",
+    detail: (source) =>
+      source.contacts > 0
+        ? `${source.contacts} contact${source.contacts === 1 ? "" : "s"} — MOD, POC and the rest.`
+        : "The original has none recorded.",
+  },
+  {
     label: "Sign-off blank",
     detail: (source) =>
       source.signOff
@@ -112,13 +115,6 @@ export function RevisitPanel({
   const [mode, setMode] = useState<"same" | "new">(
     externalAssignmentId ? "same" : "new",
   );
-
-  const [carry, setCarry] = useState<RevisitCarry[]>(() =>
-    CARRIES.map((entry) => entry.key),
-  );
-  // Resolved afresh by default: a revisit is a new job, and a rate copied
-  // from a month ago is the kind of thing nobody notices until payroll.
-  const [rates, setRates] = useState<"fresh" | "keep">("fresh");
 
   // Ticked by default: a revisit is the same work at the same site, and the
   // overwhelmingly common case is the same person going back. Untick anybody
@@ -286,50 +282,11 @@ export function RevisitPanel({
             </p>
           ) : null}
 
-          {/* Only worth asking once somebody is actually going. */}
           {going.length > 0 ? (
-            <div className="flex flex-col gap-1 rounded-lg border border-border p-2">
-              <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Their rates
-              </span>
-              <label className="flex items-start gap-2 text-sm">
-                <input
-                  type="radio"
-                  name="rates"
-                  value="fresh"
-                  checked={rates === "fresh"}
-                  onChange={() => setRates("fresh")}
-                  className="mt-0.5 size-4 accent-[var(--color-primary)]"
-                />
-                <span>
-                  Work them out again
-                  <span className="block text-xs text-muted-foreground">
-                    Their own rate, then the project&rsquo;s — as if they were
-                    being put on a new job today.
-                  </span>
-                </span>
-              </label>
-              <label className="flex items-start gap-2 text-sm">
-                <input
-                  type="radio"
-                  name="rates"
-                  value="keep"
-                  checked={rates === "keep"}
-                  onChange={() => setRates("keep")}
-                  className="mt-0.5 size-4 accent-[var(--color-primary)]"
-                />
-                <span>
-                  Keep what they were on
-                  <span className="block text-xs text-muted-foreground">
-                    Exactly what the original visit paid them, whatever has
-                    changed since.
-                  </span>
-                </span>
-              </label>
-              <p className="text-xs text-muted-foreground">
-                Anybody deliberately put on their own rate keeps it either way.
-              </p>
-            </div>
+            <p className="text-xs text-muted-foreground">
+              Each goes back on the rate and travel they were on. Change
+              anybody&rsquo;s on the revisit if this trip pays differently.
+            </p>
           ) : null}
         </fieldset>
       ) : null}
@@ -341,54 +298,35 @@ export function RevisitPanel({
         </p>
       ) : null}
 
-      {/* Everything else the original is carrying. Offered ticked: the planner
-          is here to say what is different about this trip, and that is a much
-          shorter list than what is the same. */}
-      <fieldset className="flex flex-col gap-1">
-        <legend className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          Start from the original
-        </legend>
-
-        {CARRIES.map((entry) => {
-          const ticked = carry.includes(entry.key);
-          const detail = entry.detail(source);
-          return (
-            <label
-              key={entry.key}
-              className="flex items-start gap-2 rounded-lg p-1.5 text-sm hover:bg-muted"
-            >
-              <input
-                type="checkbox"
-                name="carry"
-                value={entry.key}
-                checked={ticked}
-                onChange={() =>
-                  setCarry((was) =>
-                    ticked
-                      ? was.filter((key) => key !== entry.key)
-                      : [...was, entry.key],
-                  )
-                }
-                className="mt-0.5 size-4 accent-[var(--color-primary)]"
-              />
-              <span className="min-w-0">
-                {entry.label}
-                {detail ? (
-                  <span className="block truncate text-xs text-muted-foreground">
-                    {detail}
-                  </span>
-                ) : null}
-              </span>
-            </label>
-          );
-        })}
-
+      <div className="flex flex-col gap-1">
+        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          Comes across from the original
+        </div>
+        <ul className="flex flex-col gap-1">
+          {COMES_ACROSS.map((entry) => {
+            const detail = entry.detail(source);
+            return (
+              <li key={entry.label} className="flex items-start gap-2 p-1.5 text-sm">
+                <Check className="mt-0.5 size-4 shrink-0 text-success" />
+                <span className="min-w-0">
+                  {entry.label}
+                  {detail ? (
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {detail}
+                    </span>
+                  ) : null}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
         <p className="pt-1 text-xs text-muted-foreground">
-          The site, customer, paying company and project always come
-          across — that is what makes this a revisit. The original&rsquo;s work
-          order does not: a return trip is issued its own.
+          So do the site, customer, paying and rep company and the project —
+          that is what makes this a revisit. Change whatever is different about
+          this trip on the revisit once it exists. The original&rsquo;s work
+          order does not come across: a return trip is issued its own.
         </p>
-      </fieldset>
+      </div>
 
       <div className="flex items-center gap-2">
         <FormStatus

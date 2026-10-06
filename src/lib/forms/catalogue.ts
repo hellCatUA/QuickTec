@@ -166,13 +166,16 @@ const SOURCES: FormSource[] = [
   { group: "Companies", key: "project.code", label: "Project ID",
     resolve: (context) => context.data.job.project?.code ?? null },
   // Their names and IDs for the same work, for the blanks that ask for theirs.
-  { group: "Companies", key: "project.clientName", label: "Paying company's project name",
+  // Keyed by what they are rather than by column: "project.clientId" would
+  // read as the paying company itself, and a key cannot be renamed once a
+  // blank is mapped to it.
+  { group: "Companies", key: "project.clientProjectName", label: "Paying company project name",
     resolve: (context) => context.data.job.project?.clientProjectName ?? null },
-  { group: "Companies", key: "project.clientId", label: "Paying company's project ID",
+  { group: "Companies", key: "project.clientProjectId", label: "Paying company project ID",
     resolve: (context) => context.data.job.project?.externalProjectId ?? null },
-  { group: "Companies", key: "project.repName", label: "Rep company's project name",
+  { group: "Companies", key: "project.repProjectName", label: "Rep company project name",
     resolve: (context) => context.data.job.project?.repProjectName ?? null },
-  { group: "Companies", key: "project.repId", label: "Rep company's project ID",
+  { group: "Companies", key: "project.repProjectId", label: "Rep company project ID",
     resolve: (context) => context.data.job.project?.repProjectId ?? null },
   { group: "Companies", key: "repCompany.name", label: "Rep company",
     resolve: (context) => context.data.job.repCompany?.name ?? null },

@@ -1,8 +1,10 @@
 import { redirect, notFound } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
+import { describeTerms, jobTerms } from "@/lib/budget";
 import { decimalHours } from "@/lib/datetime";
 import { db } from "@/lib/db";
+import { formatRate } from "@/lib/money";
 import { portalBackHref } from "@/lib/job-portal";
 import { canOnJob } from "@/lib/scope";
 import { can, getSessionUser } from "@/lib/session";
@@ -45,8 +47,15 @@ export default async function RevisitPage({
       payType: true,
       payRate: true,
       breakPaid: true,
+      travelReimbursement: true,
+      budgetType: true,
+      budgetFlat: true,
+      budgetFlatHours: true,
+      budgetHourly: true,
       extraTickets: { orderBy: { order: "asc" }, select: { number: true } },
-      _count: { select: { dispatchContacts: true, locations: true } },
+      _count: {
+        select: { dispatchContacts: true, locations: true, pointsOfContact: true },
+      },
       deliverablesOwn: true,
       deliverableRules: { where: { enabled: true }, select: { id: true } },
       documents: {
@@ -85,6 +94,8 @@ export default async function RevisitPage({
       ));
   if (!allowed) notFound();
 
+  const budget = jobTerms(job);
+
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4">
       <PageHeader
@@ -97,8 +108,9 @@ export default async function RevisitPage({
         <CardContent className="flex flex-col gap-3">
           <p className="text-sm text-muted-foreground">
             Creates a new job carrying the same internal number with an -R
-            suffix, in the month the revisit happens. Site, scope, deliverable
-            rules and the crew are copied across.
+            suffix, in the month the revisit happens. Everything on this job
+            comes across; change what is different about the trip on the
+            revisit.
           </p>
           <RevisitPanel
             jobId={job.id}
@@ -129,11 +141,19 @@ export default async function RevisitPage({
               ]
                 .filter(Boolean)
                 .join(" · "),
-              pay:
-                job.payType && job.payRate
-                  ? `${job.payType} ${job.payRate}, breaks ${job.breakPaid ? "paid" : "unpaid"}`
-                  : `No pay set on the job — breaks ${job.breakPaid ? "paid" : "unpaid"}.`,
+              pay: [
+                budget
+                  ? `Budget ${describeTerms(budget)}`
+                  : job.payType
+                    ? `${formatRate(job.payType, job.payRate?.toString() ?? "0")} for the crew`
+                    : "Each tech's own rate",
+                `breaks ${job.breakPaid ? "paid" : "unpaid"}`,
+                job.travelReimbursement
+                  ? `travel $${Number(job.travelReimbursement).toFixed(2)}`
+                  : "no travel",
+              ].join(" · "),
               dispatch: job._count.dispatchContacts,
+              contacts: job._count.pointsOfContact,
               signOff: job.documents.length > 0,
             }}
           />

@@ -256,9 +256,10 @@ export function CrewPanel({
               />
             </Field>
             <p className="text-xs text-muted-foreground">
-              Their rate is read from the project or client when they are added
-              and copied onto the job, so re-rating later cannot rewrite work
-              that has already happened.
+              They go on the job&rsquo;s rate and travel, copied onto their line
+              so re-rating later cannot rewrite work already done. Somebody
+              added after the job has started gets no travel until whoever pays
+              the job checks it.
             </p>
             <div className="flex gap-2">
               <Button

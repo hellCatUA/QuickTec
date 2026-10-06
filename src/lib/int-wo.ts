@@ -31,19 +31,23 @@ export function revisitAssignmentId(original: string | null): string | null {
 /**
  * Consumes a sequence number. Both branches are single atomic statements, so
  * two people creating jobs at the same moment cannot collide.
+ *
+ * A project's number is read in the same statement as its counter: the ID it
+ * carries is whatever the project says at the moment the number is taken, not
+ * what it said a moment earlier when the form was read.
  */
 async function nextSequence(
   tx: Prisma.TransactionClient,
   projectId: string | null,
   year: number,
-): Promise<number> {
+): Promise<{ sequence: number; code: string | null }> {
   if (projectId) {
     const project = await tx.project.update({
       where: { id: projectId },
       data: { intWoCounter: { increment: 1 } },
-      select: { intWoCounter: true },
+      select: { intWoCounter: true, code: true },
     });
-    return project.intWoCounter;
+    return { sequence: project.intWoCounter, code: project.code };
   }
 
   // Prisma's upsert would read then write; INSERT … ON CONFLICT does it in one
@@ -56,13 +60,56 @@ async function nextSequence(
     RETURNING "value"
   `;
 
-  return rows[0].value;
+  return { sequence: rows[0].value, code: null };
+}
+
+/**
+ * Moves a counter past every number already issued under one prefix.
+ *
+ * Project IDs are unique now, but jobs numbered before they were carried the
+ * paying company's ID or 0000, each project counting from 1 — so a run of
+ * them can sit exactly where fresh numbers land. Stepping over them one at a
+ * time is a long walk for a busy old project; this jumps the counter to the
+ * last one taken in a single move.
+ */
+async function skipTaken(
+  tx: Prisma.TransactionClient,
+  projectId: string | null,
+  year: number,
+  prefix: string,
+): Promise<void> {
+  const taken = await tx.job.findMany({
+    where: { intWoId: { startsWith: prefix } },
+    select: { intWoId: true },
+  });
+  const highest = Math.max(
+    0,
+    ...taken.map((job) => {
+      const match = /^(\d+)(?:-R\d+)?$/.exec(job.intWoId.slice(prefix.length));
+      return match ? Number(match[1]) : 0;
+    }),
+  );
+  if (projectId) {
+    await tx.$executeRaw`
+      UPDATE "Project" SET "intWoCounter" = GREATEST("intWoCounter", ${highest})
+      WHERE "id" = ${projectId}
+    `;
+  } else {
+    await tx.$executeRaw`
+      UPDATE "IntWoCounter" SET "value" = GREATEST("value", ${highest})
+      WHERE "scope" = ${`global:${year}`}
+    `;
+  }
 }
 
 export type AllocateIntWoInput = {
   /** Null for jobs with no project. */
   projectId: string | null;
-  /** Our project ID (Project.code); null — no project — renders as 0000. */
+  /**
+   * Our project ID as the caller last saw it. The number uses the one read
+   * with the counter, so this only matters for a job with no project (null,
+   * which renders as 0000).
+   */
   projectCode: string | null;
   /** Scheduled date if known, otherwise now. Decides the YYYY-MM. */
   effectiveDate: Date;
@@ -76,16 +123,15 @@ export async function allocateIntWo(
 ): Promise<{ intWoId: string; sequence: number }> {
   const { year, month } = zonedParts(input.effectiveDate, input.timeZone);
 
-  // A number taken already is skipped rather than issued twice. Project IDs
-  // are unique now, but jobs numbered before they were carried the paying
-  // company's ID or 0000, and one of those can still sit where a fresh number
-  // lands — a job with no project in a month an old project job used.
-  for (let attempt = 0; attempt < 50; attempt++) {
-    const sequence = await nextSequence(tx, input.projectId, year);
+  // A number taken already is skipped rather than issued twice — see
+  // skipTaken. Twice round is enough: the second number is past everything
+  // under the prefix, and the third try is only for the impossible.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { sequence, code } = await nextSequence(tx, input.projectId, year);
     const intWoId = formatIntWo({
       year,
       month,
-      projectRef: input.projectCode || NO_PROJECT_REF,
+      projectRef: code ?? input.projectCode ?? NO_PROJECT_REF,
       sequence,
     });
     const taken = await tx.job.findUnique({
@@ -93,8 +139,15 @@ export async function allocateIntWo(
       select: { id: true },
     });
     if (!taken) return { sequence, intWoId };
+    // "2607-PRJ12-" — everything up to the sequence.
+    await skipTaken(
+      tx,
+      input.projectId,
+      year,
+      intWoId.slice(0, intWoId.lastIndexOf("-") + 1),
+    );
   }
-  throw new Error("No free INT WO number after 50 tries");
+  throw new Error("No free INT WO number");
 }
 
 /**
@@ -116,7 +169,7 @@ export async function allocateRevisitIntWo(
       intWoSequence: true,
       revisitNumber: true,
       parentJobId: true,
-      project: { select: { code: true } },
+      project: { select: { code: true, externalProjectId: true } },
     },
   });
 
@@ -131,21 +184,44 @@ export async function allocateRevisitIntWo(
     _max: { revisitNumber: true },
   });
 
-  const revisitNumber = (siblings._max.revisitNumber ?? 0) + 1;
   const { year, month } = zonedParts(input.effectiveDate, input.timeZone);
 
-  return {
-    revisitNumber,
-    sequence: parent.intWoSequence,
-    intWoId: formatIntWo({
+  // What the original's number says, so R1 reads as the same job even when
+  // the project's ID is not the one it was numbered under — but only a
+  // reference this project could have issued. A number in some older shape
+  // (2026-05-0000-123) reads as nonsense, and the project's own ID is better.
+  const fromNumber = projectRefOf(parent.intWoId);
+  const projectRef =
+    fromNumber !== null &&
+    [
+      NO_PROJECT_REF,
+      parent.project?.code,
+      parent.project?.externalProjectId?.trim().toUpperCase(),
+      parent.project?.externalProjectId?.trim(),
+    ].includes(fromNumber)
+      ? fromNumber
+      : (parent.project?.code ?? NO_PROJECT_REF);
+
+  // Two originals can share a sequence — the old 0000 jobs of two projects —
+  // and revisiting both in one month would otherwise make one number twice.
+  for (
+    let revisitNumber = (siblings._max.revisitNumber ?? 0) + 1;
+    ;
+    revisitNumber++
+  ) {
+    const intWoId = formatIntWo({
       year,
       month,
-      // What the original's number says, so R1 reads as the same job even
-      // when the project's ID is not the one it was numbered under.
-      projectRef:
-        projectRefOf(parent.intWoId) ?? parent.project?.code ?? NO_PROJECT_REF,
+      projectRef,
       sequence: parent.intWoSequence,
       revisitNumber,
-    }),
-  };
+    });
+    const taken = await tx.job.findUnique({
+      where: { intWoId },
+      select: { id: true },
+    });
+    if (!taken) {
+      return { revisitNumber, sequence: parent.intWoSequence, intWoId };
+    }
+  }
 }

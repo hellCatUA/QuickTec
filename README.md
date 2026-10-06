@@ -19,8 +19,9 @@ the client-facing report, the full job archive, and the weekly pay journal.
 - Editable permission matrix
 - Company settings, user management, direct-supervisor assignment
 - Clients, customers and sites, with tappable addresses
-- Projects: client project ID, general scope, membership, deliverable defaults,
-  dispatch contacts, and their own work order counter
+- Projects: our own unique project ID (with the paying and rep company's
+  names and IDs beside it), general scope, membership, Job Settings that every
+  new job starts from, dispatch contacts, and their own work order counter
 - Job creation with automatic internal work order numbering, tech assignment,
   automatic pay rate resolution and revisit scheduling
 - Scope-filtered job list and the job working page
@@ -321,7 +322,10 @@ with the public `AUTH_URL` and `NEXTCLOUD_ISSUER=http://127.0.0.1:9999`.
 **Internal work order ID** — `YYMM-PRJID-NNNN`
 
 - `YYMM` is two digits of year and two of month, run together
-- `PRJID` is the client's project ID, or `0000` when the job has no project
+- `PRJID` is our own project ID (unique, fixed once the project has jobs), or
+  `0000` when the job has no project. Jobs numbered before project IDs carry
+  the paying company's ID there, and their revisits keep it
+- A number already taken by an older job is skipped, never issued twice
 - Jobs without a project use a global counter that resets each January
 - Jobs in a project use that project's own counter, which never resets
 - Revisits append `-R1`, `-R2`, …, and the month is the revisit's month:

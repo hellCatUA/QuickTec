@@ -83,6 +83,10 @@ export type ActionResult =
     };
 
 const ok: ActionResult = { ok: true };
+
+/** On the line of somebody put on a job after it started. */
+const LATE_TRAVEL_NOTE =
+  "Added after the job started: travel set to $0 — check it";
 const fail = (error: string): ActionResult => ({ ok: false, error });
 const failField = (field: "reason", error: string): ActionResult => ({
   ok: false,
@@ -917,10 +921,24 @@ export async function assignTech(formData: FormData): Promise<ActionResult> {
     ? {
         payType: details.payType,
         rate: details.payRate?.toString() ?? "0",
-        travelReimbursement: details.travelReimbursement?.toString() ?? null,
         source: "job" as const,
       }
     : resolved;
+
+  // Travel is the job's, for everybody on it — somebody put on before the
+  // crew sets off is going on the same trip. Somebody joining a job already
+  // under way is not obviously owed it: they may live round the corner, or
+  // have been on site for something else. They start on nothing, and the
+  // line says so, so whoever pays the job looks at it rather than finding
+  // out at payroll.
+  const jobTravel =
+    details.travelReimbursement?.toString() ??
+    resolved.travelReimbursement ??
+    details.project?.travelReimbursement?.toString() ??
+    null;
+  const started =
+    (await db.visit.count({ where: { assignment: { jobId } } })) > 0;
+  const travelHeld = started && jobTravel !== null && Number(jobTravel) > 0;
 
   await db.jobAssignment.create({
     data: {
@@ -932,15 +950,17 @@ export async function assignTech(formData: FormData): Promise<ActionResult> {
       payType: rate.payType,
       payRate: rate.rate,
       payRateNote:
-        rate.source === "job"
-          ? jobRateNote(details, details.project)
-          : rate.source === "none"
-            ? "No rate configured — defaulted to non-billable"
-            : null,
-      travelReimbursement:
-        rate.travelReimbursement ??
-        details.project?.travelReimbursement?.toString() ??
-        null,
+        [
+          rate.source === "job"
+            ? jobRateNote(details, details.project)
+            : rate.source === "none"
+              ? "No rate configured — defaulted to non-billable"
+              : null,
+          travelHeld ? LATE_TRAVEL_NOTE : null,
+        ]
+          .filter(Boolean)
+          .join(" · ") || null,
+      travelReimbursement: travelHeld ? "0" : jobTravel,
     },
   });
 
@@ -955,7 +975,12 @@ export async function assignTech(formData: FormData): Promise<ActionResult> {
     entityId: jobId,
     jobId,
     action: "tech_assigned",
-    detail: { who: person.name, payType: rate.payType, rate: rate.rate },
+    detail: {
+      who: person.name,
+      payType: rate.payType,
+      rate: rate.rate,
+      ...(travelHeld ? { travel: "0 — added after the job started" } : {}),
+    },
   });
 
   const jobRef = await db.job.findUniqueOrThrow({

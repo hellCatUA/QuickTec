@@ -47,6 +47,20 @@ export const jobDraftSchema = z
     breakPaidChoice: z.boolean().nullable(),
     payType: z.string(),
     payRate: z.string(),
+    /** What was typed over the project's travel; null follows the project. */
+    travelChoice: z.string().nullable(),
+    /** Dispatch numbers for this job alone, as typed. */
+    dispatch: z.array(
+      z.object({
+        label: z.string(),
+        name: z.string(),
+        phone: z.string(),
+        email: z.string(),
+        note: z.string(),
+      }),
+    ),
+    /** Started from a project, or from nothing. */
+    startMode: z.enum(["project", "blank"]),
   })
   .partial();
 
@@ -68,7 +82,9 @@ export function readJobDraft(payload: unknown): JobDraftPayload | null {
 export function draftHasContent(draft: JobDraftPayload): boolean {
   return Object.entries(draft).some(([key, value]) => {
     // Not content on its own: the form sets these before anybody types.
-    if (key === "techsRequired" || key === "titleTouched") return false;
+    if (key === "techsRequired" || key === "titleTouched" || key === "startMode") {
+      return false;
+    }
     if (value === null || value === undefined) return false;
     if (typeof value === "string") return value.trim() !== "";
     if (Array.isArray(value)) return value.length > 0;

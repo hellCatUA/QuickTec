@@ -2958,6 +2958,70 @@ async function main() {
       await planner.locator('input[role="combobox"]#crew-add').isVisible(),
       true,
     );
+
+    // Somebody joining a job already under way is not obviously owed its
+    // travel — they may live round the corner. They start on nothing, and
+    // their line says so, for whoever pays the job to check.
+    const started = await db.visit.count({
+      where: { assignment: { jobId: assignment.jobId } },
+    });
+    const seededVisit =
+      started === 0
+        ? await db.visit.create({
+            data: {
+              assignmentId: assignment.id,
+              clockInAt: new Date("2026-06-25T15:05:00Z"),
+              clockOutAt: new Date("2026-06-25T18:05:00Z"),
+            },
+          })
+        : null;
+    const travelBefore = (
+      await db.job.findUniqueOrThrow({
+        where: { id: assignment.jobId },
+        select: { travelReimbursement: true },
+      })
+    ).travelReimbursement;
+    await db.job.update({
+      where: { id: assignment.jobId },
+      data: { travelReimbursement: "40" },
+    });
+    await db.jobAssignment.deleteMany({
+      where: { jobId: assignment.jobId, user: { email: "tech2@417group.org" } },
+    });
+    await planner.reload({ waitUntil: "load" });
+    await planner.getByRole("button", { name: "Add a tech" }).click();
+    await planner.locator("#crew-add").click();
+    await planner.locator("#crew-add").fill("Tina");
+    await planner.getByRole("option", { name: /Tina Two/ }).click();
+    await planner.getByRole("button", { name: "Add to crew" }).click();
+    await planner.waitForTimeout(2500);
+    const late = await db.jobAssignment.findFirst({
+      where: { jobId: assignment.jobId, user: { email: "tech2@417group.org" } },
+      select: { travelReimbursement: true, payRateNote: true },
+    });
+    check(
+      "somebody added after the job started is given no travel",
+      late?.travelReimbursement?.toString(),
+      "0",
+    );
+    check(
+      "and their line says to check it",
+      late?.payRateNote?.includes("Added after the job started") ?? false,
+      true,
+    );
+    check(
+      "where whoever pays the job sees it",
+      await planner.getByText(/Added after the job started/).first().isVisible(),
+      true,
+    );
+    await db.jobAssignment.deleteMany({
+      where: { jobId: assignment.jobId, user: { email: "tech2@417group.org" } },
+    });
+    await db.job.update({
+      where: { id: assignment.jobId },
+      data: { travelReimbursement: travelBefore },
+    });
+    if (seededVisit) await db.visit.delete({ where: { id: seededVisit.id } });
   });
 
   // --- the read-through before signing off ----------------------------------
@@ -3171,6 +3235,16 @@ async function main() {
     });
     await planner.waitForTimeout(1500);
     await planner.getByRole("button", { name: "Schedule a revisit" }).click();
+    check(
+      "the planner is told what comes across",
+      await planner.getByText("Comes across from the original").isVisible(),
+      true,
+    );
+    check(
+      "rather than asked which parts to leave behind",
+      await planner.getByRole("checkbox", { name: /Scope of work/ }).count(),
+      0,
+    );
     await planner.getByRole("button", { name: "Create revisit" }).click();
 
     // Not waitForURL: the page is already on a job URL, so the pattern matches
@@ -3226,106 +3300,78 @@ async function main() {
       back.assignments[0]?.isLead,
       true,
     );
-    // A revisit is a new job, so the rate is resolved afresh rather than
-    // copied from a month ago — unless it was a deliberate exception. The
-    // parent carries a rate set on that job; the revisit does not inherit it.
+    // A revisit is the same work: each person goes back on what they were
+    // on, and the planner changes it on the revisit if this trip pays
+    // differently.
     const parentRate = await db.jobAssignment.findUniqueOrThrow({
       where: { id: assignment.id },
-      select: { payType: true, payRate: true },
+      select: { payType: true, payRate: true, travelReimbursement: true },
     });
     check(
-      "on the tech's own rate, resolved afresh",
+      "on the rate they were on",
       `${back.assignments[0]?.payType} ${back.assignments[0]?.payRate}`,
-      "HOURLY 45",
-    );
-    check(
-      "which is not the rate somebody set on the job it came from",
-      `${parentRate.payType} ${parentRate.payRate}` ===
-        `${back.assignments[0]?.payType} ${back.assignments[0]?.payRate}`,
-      false,
+      `${parentRate.payType} ${parentRate.payRate}`,
     );
 
-    // Everything offered is ticked, so pressing straight through carries the
-    // lot — which is what a revisit almost always wants. Read against the
-    // original rather than against a literal: the fixture's numbers are not
-    // this check's business.
+    // Everything comes across — it used to be a row of ticked boxes, and one
+    // left unticked quietly made a different job. Read against the original
+    // rather than against a literal: the fixture's numbers are not this
+    // check's business.
     const from = await db.job.findUniqueOrThrow({
       where: { id: assignment.jobId },
       select: {
         ticketNumber: true,
+        incNumber: true,
         scopeOfWork: true,
         estimateMinutes: true,
-        _count: { select: { extraTickets: true, deliverableRules: true } },
+        techsRequired: true,
+        breakPaid: true,
+        travelReimbursement: true,
+        payType: true,
+        payRate: true,
+        pmContactId: true,
+        repCompanyId: true,
+        _count: {
+          select: {
+            extraTickets: true,
+            deliverableRules: true,
+            dispatchContacts: true,
+            pointsOfContact: true,
+            locations: true,
+          },
+        },
       },
     });
-
-    check(
-      "the ticket comes across by default",
-      back.ticketNumber,
-      from.ticketNumber,
-    );
-    check(
-      "the ones after it too",
-      back._count.extraTickets,
-      from._count.extraTickets,
-    );
-    check(
-      "and the sheet this job asked for",
-      back._count.deliverableRules,
-      from._count.deliverableRules,
-    );
-    check("and the scope", back.scopeOfWork, from.scopeOfWork);
-    check("and the estimate", back.estimateMinutes, from.estimateMinutes);
-
-    // --- and the parts that were unticked stay behind ----------------------
-    await db.job.deleteMany({ where: { parentJobId: assignment.jobId } });
-
-    await planner.goto(`${BASE}/jobs/${assignment.jobId}/revisit`, {
-      waitUntil: "load",
-    });
-    await planner.waitForTimeout(1000);
-    await planner.getByRole("button", { name: "Schedule a revisit" }).click();
-
-    await planner
-      .getByRole("checkbox", { name: /Ticket and INC numbers/ })
-      .uncheck({ force: true });
-    await planner
-      .getByRole("checkbox", { name: /Scope of work/ })
-      .uncheck({ force: true });
-    await planner
-      .getByRole("checkbox", { name: /Estimate and crew size/ })
-      .uncheck({ force: true });
-    await planner.getByRole("button", { name: "Create revisit" }).click();
-
-    for (let attempt = 0; attempt < 30; attempt++) {
-      const made = await db.job.count({
-        where: { parentJobId: assignment.jobId },
-      });
-      if (made > 0) break;
-      await planner.waitForTimeout(1000);
-    }
-
-    const bare = await db.job.findFirstOrThrow({
+    const whole = await db.job.findFirstOrThrow({
       where: { parentJobId: assignment.jobId },
       select: {
         ticketNumber: true,
         incNumber: true,
         scopeOfWork: true,
         estimateMinutes: true,
-        _count: { select: { extraTickets: true, deliverableRules: true } },
-        assignments: { select: { userId: true } },
+        techsRequired: true,
+        breakPaid: true,
+        travelReimbursement: true,
+        payType: true,
+        payRate: true,
+        pmContactId: true,
+        repCompanyId: true,
+        _count: {
+          select: {
+            extraTickets: true,
+            deliverableRules: true,
+            dispatchContacts: true,
+            pointsOfContact: true,
+            locations: true,
+          },
+        },
       },
     });
-
-    check("an unticked ticket number is not carried", bare.ticketNumber, null);
-    check("nor the ones after it", bare._count.extraTickets, 0);
-    check("nor the INC", bare.incNumber, null);
-    check("an unticked scope is not carried", bare.scopeOfWork, null);
-    check("an unticked estimate is not carried", bare.estimateMinutes, null);
-    // Ticked things are unaffected by what was unticked beside them.
-    check("what stayed ticked still is", bare._count.deliverableRules > 0, true);
-    check("and the crew is a separate question", bare.assignments.length, 1);
-
+    check(
+      "the revisit starts as the original stands, all of it",
+      JSON.stringify(whole),
+      JSON.stringify(from),
+    );
     // Not left behind for the next run to trip over.
     await db.job.deleteMany({ where: { parentJobId: assignment.jobId } });
     await db.job.update({

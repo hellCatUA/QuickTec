@@ -1096,6 +1096,7 @@ async function main() {
   await managerPage.locator("#defaultJobTitle").fill("Register swap");
   await managerPage.locator("#defaultPayType").selectOption("HOURLY");
   await managerPage.locator("#defaultPayRate").fill("52.50");
+  await managerPage.locator("#travelReimbursement").fill("30");
   await managerPage.getByRole("button", { name: "Save job settings" }).click();
   await managerPage.waitForTimeout(2500);
 
@@ -1246,6 +1247,11 @@ async function main() {
     `${await managerPage.locator("#payType").inputValue()} ${Number(await managerPage.locator("#payRate").inputValue())}`,
     "HOURLY 52.5",
   );
+  check(
+    "and its travel",
+    Number(await managerPage.locator("#travelReimbursement").inputValue()),
+    30,
+  );
   await managerPage.getByRole("button", { name: "Create job" }).click();
   await managerPage.waitForURL(JOB_URL, { timeout: 20_000 }).catch(() => undefined);
 
@@ -1257,9 +1263,27 @@ async function main() {
       repCompanyId: true,
       payType: true,
       payRate: true,
-      assignments: { select: { payType: true, payRate: true, payRateNote: true } },
+      travelReimbursement: true,
+      assignments: {
+        select: {
+          payType: true,
+          payRate: true,
+          payRateNote: true,
+          travelReimbursement: true,
+        },
+      },
     },
   });
+  check(
+    "the job holds the project's travel itself",
+    raised?.travelReimbursement?.toString(),
+    "30",
+  );
+  check(
+    "and so does the crew's line",
+    raised?.assignments.map((one) => one.travelReimbursement?.toString()).join(),
+    "30",
+  );
   check(
     "the job is filed under the project's companies",
     `${raised?.clientId} ${raised?.repCompanyId}`,
@@ -1287,6 +1311,23 @@ async function main() {
       "the project's rate",
     ),
     true,
+  );
+
+  // Somebody put on before the crew sets off goes on the same trip.
+  await managerPage.getByRole("button", { name: "Add a tech" }).click();
+  await managerPage.locator("#crew-add").click();
+  await managerPage.locator("#crew-add").fill("Tina");
+  await managerPage.getByRole("option", { name: /Tina Two/ }).click();
+  await managerPage.getByRole("button", { name: "Add to crew" }).click();
+  await managerPage.waitForTimeout(2500);
+  const early = await db.jobAssignment.findFirst({
+    where: { jobId: raised!.id, user: { email: "tech2@417group.org" } },
+    select: { payType: true, payRate: true, travelReimbursement: true, payRateNote: true },
+  });
+  check(
+    "somebody added before the job starts gets its rate and travel",
+    `${early?.payType} ${early?.payRate} · travel ${early?.travelReimbursement} · ${early?.payRateNote}`,
+    "HOURLY 52.5 · travel 30 · The project's rate",
   );
 
   // Ours is what the app shows; theirs only where they are asked about.

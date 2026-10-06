@@ -307,11 +307,11 @@ async function main() {
   check("our project ID", formSource("project.code")?.resolve?.(ctx, 0), "MEL");
   check(
     "the paying company's project name and ID",
-    `${formSource("project.clientName")?.resolve?.(ctx, 0)} / ${formSource("project.clientId")?.resolve?.(ctx, 0)}`,
+    `${formSource("project.clientProjectName")?.resolve?.(ctx, 0)} / ${formSource("project.clientProjectId")?.resolve?.(ctx, 0)}`,
     "Elevator emergency lines / P-9",
   );
-  check("the rep company's project ID", formSource("project.repId")?.resolve?.(ctx, 0), "R-12");
-  check("one nobody recorded is left empty", formSource("project.repName")?.resolve?.(ctx, 0), null);
+  check("the rep company's project ID", formSource("project.repProjectId")?.resolve?.(ctx, 0), "R-12");
+  check("one nobody recorded is left empty", formSource("project.repProjectName")?.resolve?.(ctx, 0), null);
   check("and the rep company", formSource("repCompany.name")?.resolve?.(ctx, 0), "Northstar Reps");
   check("visit row 0 hours", formSource("visit.hours")?.resolve?.(ctx, 0), "3.83 hrs");
   check("visit row 0 break", formSource("visit.break")?.resolve?.(ctx, 0), "0.50 hrs");
