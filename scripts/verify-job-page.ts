@@ -2371,7 +2371,7 @@ async function main() {
     );
     check(
       "ahead of the company that pays for it",
-      fields.indexOf("Project") < fields.indexOf("Company"),
+      fields.indexOf("Project") < fields.indexOf("Paying company"),
       true,
     );
     // Ours then theirs, and both at the foot of the block.

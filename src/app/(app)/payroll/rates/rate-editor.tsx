@@ -225,7 +225,7 @@ function OverrideForm({
             }}
           >
             <option value="project">A project</option>
-            <option value="client">A client</option>
+            <option value="client">A paying company</option>
           </Select>
         </Field>
 

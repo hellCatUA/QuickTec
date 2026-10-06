@@ -9,11 +9,13 @@ import { ProjectForm, type Option } from "./project-form";
 
 export function NewProjectPanel({
   clients,
+  repCompanies,
   customers,
   managers,
   contacts,
 }: {
   clients: Option[];
+  repCompanies: Option[];
   customers: Option[];
   managers: Option[];
   contacts: ContactOption[];
@@ -45,6 +47,7 @@ export function NewProjectPanel({
         <div className="text-sm font-semibold">New project</div>
         <ProjectForm
           clients={clients}
+          repCompanies={repCompanies}
           customers={customers}
           managers={managers}
           contacts={contacts}

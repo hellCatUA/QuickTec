@@ -806,16 +806,31 @@ async function main() {
   // --- project manager handover ---------------------------------------------
   // Being handed a project is exactly the kind of thing to find out about now
   // rather than by noticing the project moved.
+  // Its own project ID, so the jobs raised under it further down cannot be
+  // numbered the same as a job with no project in the same month.
   const project = await db.project.upsert({
     where: { id: "verify-pm-project" },
-    update: { managerId: null, pmContactId: null, name: "PM handover project" },
+    update: {
+      managerId: null,
+      pmContactId: null,
+      name: "PM handover project",
+      clientId: client.id,
+      repCompanyId: null,
+      externalProjectId: "VPM",
+      defaultJobTitle: null,
+      defaultPayType: null,
+      defaultPayRate: null,
+    },
     create: {
       id: "verify-pm-project",
       name: "PM handover project",
       clientId: client.id,
       managerId: null,
+      externalProjectId: "VPM",
     },
   });
+  await db.job.deleteMany({ where: { projectId: project.id } });
+  await db.projectMember.deleteMany({ where: { projectId: project.id } });
   await db.notification.deleteMany({ where: { projectId: project.id } });
   await db.auditEvent.deleteMany({ where: { projectId: project.id } });
 
@@ -1109,6 +1124,266 @@ async function main() {
     "HOURLY 52.5",
   );
 
+  // --- who the project's work belongs to ------------------------------------
+  // Both companies on the chain are the project's to set: the one that pays
+  // us, and the rep company above it — which could not be seen or set on a
+  // project at all. A change of either says what it was on the timeline.
+  const repCompany = await db.repCompany.upsert({
+    where: { name: "Verify Rep Co" },
+    update: { active: true },
+    create: { name: "Verify Rep Co" },
+  });
+  const otherClient = await db.client.upsert({
+    where: { name: "Verify Paying Co" },
+    update: { active: true },
+    create: { name: "Verify Paying Co" },
+  });
+  await managerPage.goto(`${BASE}/projects/${project.id}/settings`, {
+    waitUntil: "load",
+  });
+  await managerPage.waitForTimeout(1000);
+  check(
+    "the project's details ask for its rep company",
+    await managerPage.locator('select[name="repCompanyId"]').isVisible(),
+    true,
+  );
+  await managerPage.locator('select[name="repCompanyId"]').selectOption(repCompany.id);
+  await managerPage.locator('select[name="clientId"]').selectOption(otherClient.id);
+  await managerPage.getByRole("button", { name: "Save project" }).click();
+  await managerPage.waitForTimeout(2500);
+
+  const companies = await db.project.findUniqueOrThrow({
+    where: { id: project.id },
+    select: { clientId: true, repCompanyId: true },
+  });
+  check("the rep company is stored on the project", companies.repCompanyId, repCompany.id);
+  check("and so is the new paying company", companies.clientId, otherClient.id);
+  check(
+    "each company change is on the timeline by name",
+    (
+      await db.auditEvent.findMany({
+        where: { projectId: project.id, action: "project_updated" },
+        select: { detail: true },
+      })
+    )
+      .map((event) => (event.detail as { field?: string; to?: string } | null))
+      .filter((detail) => detail?.field)
+      .map((detail) => `${detail!.field}: ${detail!.to}`)
+      .sort()
+      .join(" · "),
+    "Paying company: Verify Paying Co · Rep company: Verify Rep Co",
+  );
+
+  // --- a job raised under it starts on what the project says ----------------
+  // The project's rate is the crew's on every job raised under it: the form
+  // shows it, and the job keeps it for whoever is on it — over a tech's own.
+  const JOB_URL = /\/jobs\/c[a-z0-9]{10,}$/;
+  await managerPage.goto(`${BASE}/projects/${project.id}`, { waitUntil: "load" });
+  await managerPage.getByRole("link", { name: "New job" }).click();
+  await managerPage.waitForURL(/\/jobs\/new/);
+  await managerPage.waitForTimeout(1500);
+  check(
+    "New job on a project's page starts in that project",
+    await managerPage.locator('input[name="projectId"]').inputValue(),
+    project.id,
+  );
+  check(
+    "with both its companies",
+    [
+      await managerPage.locator('input[name="clientId"]').inputValue(),
+      await managerPage.locator('input[name="repCompanyId"]').inputValue(),
+    ].join(" "),
+    `${otherClient.id} ${repCompany.id}`,
+  );
+  check("and its job title", await managerPage.locator("#title").inputValue(), "Register swap");
+  check(
+    "the crew's pay is said out loud",
+    await managerPage.getByText("$52.50/hr for the whole crew").isVisible(),
+    true,
+  );
+
+  await managerPage.locator("#siteId").click();
+  await managerPage.locator("#siteId").fill("90210");
+  await managerPage.locator("#siteId-list").getByRole("option").first().click();
+  await managerPage.locator("summary", { hasText: "Schedule & crew" }).first().click();
+  await managerPage.waitForTimeout(250);
+  await managerPage.locator("#assignee-search").click();
+  await managerPage.locator("#assignee-search").fill("terry");
+  await managerPage.getByRole("option", { name: /Terry/ }).click();
+  await managerPage.locator("summary", { hasText: "Pay & dispatch" }).first().click();
+  await managerPage.waitForTimeout(250);
+  check(
+    "the pay fields already hold the project's rate",
+    `${await managerPage.locator("#payType").inputValue()} ${Number(await managerPage.locator("#payRate").inputValue())}`,
+    "HOURLY 52.5",
+  );
+  await managerPage.getByRole("button", { name: "Create job" }).click();
+  await managerPage.waitForURL(JOB_URL, { timeout: 20_000 }).catch(() => undefined);
+
+  const raised = await db.job.findFirst({
+    where: { projectId: project.id, title: "Register swap", createdById: boss.user.id },
+    select: {
+      id: true,
+      clientId: true,
+      repCompanyId: true,
+      payType: true,
+      payRate: true,
+      assignments: { select: { payType: true, payRate: true, payRateNote: true } },
+    },
+  });
+  check(
+    "the job is filed under the project's companies",
+    `${raised?.clientId} ${raised?.repCompanyId}`,
+    `${otherClient.id} ${repCompany.id}`,
+  );
+  check(
+    "and keeps the project's rate",
+    `${raised?.payType} ${raised?.payRate}`,
+    "HOURLY 52.5",
+  );
+  check(
+    "which the crew is on, over the tech's own $45",
+    raised?.assignments
+      .map((one) => `${one.payType} ${one.payRate} · ${one.payRateNote}`)
+      .join(),
+    "HOURLY 52.5 · The project's rate",
+  );
+
+  await managerPage.goto(`${BASE}/jobs/${raised?.id}/manage/schedule`, {
+    waitUntil: "load",
+  });
+  check(
+    "the job's own page says what the crew is paid, and why",
+    (await managerPage.getByText(/Everybody on this job is paid/).textContent())?.includes(
+      "the project's rate",
+    ),
+    true,
+  );
+
+  // --- a supervisor runs the projects they are on, and only those -----------
+  // Checking only "manages projects" let a supervisor open, change and join
+  // any project there was. And the project's pay is not theirs to see or set.
+  const elsewhere = await db.project.upsert({
+    where: { id: "verify-other-project" },
+    update: { managerId: null },
+    create: {
+      id: "verify-other-project",
+      name: "Somebody else's project",
+      clientId: client.id,
+      externalProjectId: "VOP",
+    },
+  });
+  await db.projectMember.deleteMany({ where: { projectId: elsewhere.id } });
+  const supProjects = await pageFor(sup.token);
+  await supProjects.goto(`${BASE}/projects/${elsewhere.id}/settings`, {
+    waitUntil: "load",
+  });
+  check(
+    "a supervisor cannot open the settings of a project they are not on",
+    new URL(supProjects.url()).pathname,
+    "/projects",
+  );
+  await supProjects.goto(`${BASE}/projects/${elsewhere.id}`, { waitUntil: "load" });
+  check(
+    "nor its overview",
+    new URL(supProjects.url()).pathname,
+    "/projects",
+  );
+
+  // They ran this one earlier, so it is theirs to open.
+  await supProjects.goto(`${BASE}/projects/${project.id}/settings`, {
+    waitUntil: "load",
+  });
+  await supProjects.waitForTimeout(1000);
+  check(
+    "on their own project they can",
+    await supProjects.getByRole("heading", { name: "In Project Jobs Settings" }).isVisible(),
+    true,
+  );
+  check(
+    "but the project's pay is not shown to them",
+    await supProjects.locator("#defaultPayType").count(),
+    0,
+  );
+  await supProjects.getByRole("button", { name: "Save job settings" }).click();
+  await supProjects.waitForTimeout(2500);
+  check(
+    "and saving the rest leaves it as it was",
+    (
+      await db.project.findUniqueOrThrow({
+        where: { id: project.id },
+        select: { defaultPayRate: true },
+      })
+    ).defaultPayRate?.toString(),
+    "52.5",
+  );
+
+  // A job they raise under it is on the project's rate all the same: the
+  // form never shows it to them, so the server applies it.
+  await supProjects.goto(`${BASE}/jobs/new?projectId=${project.id}`, { waitUntil: "load" });
+  await supProjects.waitForTimeout(1500);
+  await supProjects.locator("summary", { hasText: "Pay & dispatch" }).first().click();
+  await supProjects.waitForTimeout(250);
+  check("nor on the form", await supProjects.locator("#payType").count(), 0);
+  await supProjects.locator("#siteId").click();
+  await supProjects.locator("#siteId").fill("90210");
+  await supProjects.locator("#siteId-list").getByRole("option").first().click();
+  await supProjects.locator("#title").fill("Raised by the supervisor");
+  await supProjects.getByRole("button", { name: "Create job" }).click();
+  await supProjects.waitForURL(JOB_URL, { timeout: 20_000 }).catch(() => undefined);
+  const bySup = await db.job.findFirst({
+    where: { projectId: project.id, title: "Raised by the supervisor" },
+    select: { payType: true, payRate: true },
+  });
+  check(
+    "a job they raise is on the project's rate",
+    `${bySup?.payType} ${bySup?.payRate}`,
+    "HOURLY 52.5",
+  );
+
+  // --- a tech's rate on one project, set where rates are set ----------------
+  // Saving one threw every time — one half of the key is always empty — so no
+  // tech ever had a project or company rate, however often one was set.
+  await db.payRate.deleteMany({ where: { userId: tech.user.id } });
+  await managerPage.goto(`${BASE}/payroll/rates`, { waitUntil: "load" });
+  await managerPage.waitForTimeout(1000);
+  const terryCard = managerPage
+    .locator(`#type-${tech.user.id}`)
+    .locator("xpath=ancestor::div[contains(@class,'rounded-xl')][1]");
+  await terryCard.getByRole("button", { name: "Add a project or client rate" }).click();
+  await managerPage.locator(`#which-${tech.user.id}`).selectOption(project.id);
+  await managerPage.locator(`#orate-${tech.user.id}`).fill("61");
+  await terryCard.getByRole("button", { name: "Save rate" }).click();
+  await managerPage.waitForTimeout(2500);
+  check(
+    "a tech's project rate is saved",
+    (
+      await db.payRate.findFirst({
+        where: { userId: tech.user.id, projectId: project.id },
+        select: { rate: true },
+      })
+    )?.rate.toString(),
+    "61",
+  );
+  await terryCard.getByRole("button", { name: "Add a project or client rate" }).click();
+  await managerPage.locator(`#which-${tech.user.id}`).selectOption(project.id);
+  await managerPage.locator(`#orate-${tech.user.id}`).fill("63");
+  await terryCard.getByRole("button", { name: "Save rate" }).click();
+  await managerPage.waitForTimeout(2500);
+  check(
+    "and setting it again replaces it rather than adding a second",
+    (
+      await db.payRate.findMany({
+        where: { userId: tech.user.id, projectId: project.id },
+        select: { rate: true },
+      })
+    )
+      .map((one) => one.rate.toString())
+      .join(),
+    "63",
+  );
+  await db.payRate.deleteMany({ where: { userId: tech.user.id } });
+
   await db.job.deleteMany({ where: { projectId: project.id } });
   await db.externalContact.deleteMany({
     where: { id: { in: [withPm.pmContactId!, replacement.id] } },
@@ -1118,7 +1393,11 @@ async function main() {
   await db.job.deleteMany({ where: { siteId: site.id } });
   await db.payrollPeriod.deleteMany({ where: { userId: tech.user.id } });
   await db.notification.deleteMany({ where: { projectId: "verify-pm-project" } });
-  await db.project.deleteMany({ where: { id: "verify-pm-project" } });
+  await db.project.deleteMany({
+    where: { id: { in: ["verify-pm-project", "verify-other-project"] } },
+  });
+  await db.client.deleteMany({ where: { name: "Verify Paying Co" } });
+  await db.repCompany.deleteMany({ where: { name: "Verify Rep Co" } });
   await db.$disconnect();
 
   console.log(

@@ -18,12 +18,11 @@ export type ProjectFormValues = {
   name: string;
   externalProjectId: string | null;
   clientId: string;
+  repCompanyId: string | null;
   customerId: string | null;
   managerId: string | null;
   pmContactId: string | null;
   generalScopeOfWork: string | null;
-  travelReimbursement: string | null;
-  breakPaid: boolean;
   status: string;
 };
 
@@ -37,6 +36,7 @@ export type ProjectFormValues = {
 export function ProjectForm({
   project,
   clients,
+  repCompanies,
   customers,
   managers,
   contacts,
@@ -44,6 +44,7 @@ export function ProjectForm({
 }: {
   project?: ProjectFormValues;
   clients: Option[];
+  repCompanies: Option[];
   customers: Option[];
   managers: Option[];
   contacts: ContactOption[];
@@ -100,7 +101,7 @@ export function ProjectForm({
         <Field
           label="Paying company"
           htmlFor={`pclient-${key}`}
-          hint="Who dispatches this work and pays for it. Goes onto every job raised under the project."
+          hint="Who dispatches this work and pays for it. Goes onto every job raised under the project; jobs already raised keep theirs."
         >
           <Select
             id={`pclient-${key}`}
@@ -110,11 +111,32 @@ export function ProjectForm({
             required
           >
             <option value="" disabled>
-              Select a client…
+              Select a paying company…
             </option>
             {clients.map((client) => (
               <option key={client.id} value={client.id}>
                 {client.label}
+              </option>
+            ))}
+          </Select>
+        </Field>
+
+        {/* The link above the one that pays us. Optional: plenty of work
+            arrives without anybody knowing who represented the customer. */}
+        <Field
+          label="Rep company"
+          htmlFor={`prep-${key}`}
+          hint="Who represents the customer above the paying company. Goes onto every job raised under the project."
+        >
+          <Select
+            id={`prep-${key}`}
+            name="repCompanyId"
+            defaultValue={project?.repCompanyId ?? ""}
+          >
+            <option value="">— none —</option>
+            {repCompanies.map((repCompany) => (
+              <option key={repCompany.id} value={repCompany.id}>
+                {repCompany.label}
               </option>
             ))}
           </Select>

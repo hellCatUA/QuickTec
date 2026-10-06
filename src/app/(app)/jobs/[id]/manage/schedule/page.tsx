@@ -12,7 +12,8 @@ import { getCompanySettings } from "@/lib/company";
 import { toDatetimeLocalInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
 import { detailsEditable } from "@/lib/job-fields";
-import { toCents } from "@/lib/money";
+import { formatRate, toCents } from "@/lib/money";
+import { jobRateNote } from "@/lib/pay-rates";
 import { loadPunchBlocks } from "@/lib/punch-blocks";
 import { canOnJob } from "@/lib/scope";
 import { getSessionUser } from "@/lib/session";
@@ -72,6 +73,8 @@ export default async function ManagePage({
       projectId: true,
       createdById: true,
       travelReimbursement: true,
+      payType: true,
+      payRate: true,
       scheduledStart: true,
       estimateMinutes: true,
       techsRequired: true,
@@ -81,7 +84,13 @@ export default async function ManagePage({
       budgetHourly: true,
       budgetSplit: true,
       site: { select: { timeZone: true } },
-      project: { select: { travelReimbursement: true } },
+      project: {
+        select: {
+          travelReimbursement: true,
+          defaultPayType: true,
+          defaultPayRate: true,
+        },
+      },
       assignments: {
         orderBy: [{ isLead: "desc" }, { createdAt: "asc" }],
         select: {
@@ -286,7 +295,27 @@ export default async function ManagePage({
               added up, so payroll has one number to reconcile against.
             </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="flex flex-col gap-4">
+            {/* What the crew is on until a budget is set, which is otherwise
+                only to be read off each person's line. */}
+            {job.budgetType ? null : (
+              <p className="text-sm text-muted-foreground">
+                {job.payType ? (
+                  <>
+                    No budget yet. Everybody on this job is paid{" "}
+                    <span className="font-medium text-foreground">
+                      {formatRate(job.payType, job.payRate?.toString() ?? "0")}
+                    </span>{" "}
+                    — {jobRateNote(job, job.project) === "The project's rate"
+                      ? "the project's rate"
+                      : "set when the job was created"}
+                    , including anybody added later.
+                  </>
+                ) : (
+                  "No budget yet. Each tech is paid their own rate."
+                )}
+              </p>
+            )}
             <BudgetForm
               jobId={job.id}
               crew={crew}

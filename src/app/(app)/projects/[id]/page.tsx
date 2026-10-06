@@ -24,6 +24,7 @@ import {
   RULE_SELECT,
 } from "@/lib/deliverables";
 import { formatRate } from "@/lib/money";
+import { canOnProject } from "@/lib/scope";
 import { can, getSessionUser } from "@/lib/session";
 import { loadTimeline } from "@/lib/timeline-data";
 import { ProjectJobs } from "./project-jobs";
@@ -72,8 +73,10 @@ export default async function ProjectPage({
   if (!user) redirect("/signin");
 
   const { id } = await params;
-  const canManage = can(user, "project.manage", { projectId: id });
-  if (!canManage) redirect("/projects");
+  if (!canOnProject(user, "project.manage", id)) redirect("/projects");
+  // What the project pays is for whoever sets pay, not for everybody who
+  // runs the work.
+  const canSeePay = can(user, "pay.edit_rates");
 
   const project = await db.project.findUnique({
     where: { id },
@@ -90,6 +93,7 @@ export default async function ProjectPage({
       defaultPayType: true,
       defaultPayRate: true,
       client: { select: { id: true, name: true } },
+      repCompany: { select: { name: true } },
       customer: { select: { id: true, name: true, code: true } },
       manager: { select: { id: true, name: true } },
       pmContact: {
@@ -190,7 +194,7 @@ export default async function ProjectPage({
               <Settings /> Settings
             </Link>
             <Link
-              href="/jobs/new"
+              href={`/jobs/new?projectId=${project.id}`}
               className={buttonVariants({ size: "sm" })}
             >
               <Plus /> New job
@@ -205,6 +209,7 @@ export default async function ProjectPage({
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2">
           <Fact label="Paying company" value={project.client.name} />
+          <Fact label="Rep company" value={project.repCompany?.name ?? null} />
           <Fact
             label="Customer"
             value={
@@ -302,25 +307,29 @@ export default async function ProjectPage({
             value={project.defaultJobTitle ?? "Not prefilled"}
           />
           <Fact label="Paid Breaks" value={project.breakPaid ? "Yes" : "No"} />
-          <Fact
-            label="Travel reimbursement"
-            value={
-              project.travelReimbursement
-                ? `$${Number(project.travelReimbursement).toFixed(2)}`
-                : "None"
-            }
-          />
-          <Fact
-            label="Default pay"
-            value={
-              project.defaultPayType
-                ? formatRate(
-                    project.defaultPayType,
-                    project.defaultPayRate?.toString() ?? "0",
-                  )
-                : "Each tech's own rate"
-            }
-          />
+          {canSeePay ? (
+            <>
+              <Fact
+                label="Travel reimbursement"
+                value={
+                  project.travelReimbursement
+                    ? `$${Number(project.travelReimbursement).toFixed(2)}`
+                    : "None"
+                }
+              />
+              <Fact
+                label="Crew pay"
+                value={
+                  project.defaultPayType
+                    ? `${formatRate(
+                        project.defaultPayType,
+                        project.defaultPayRate?.toString() ?? "0",
+                      )} for the whole crew`
+                    : "Each tech's own rate"
+                }
+              />
+            </>
+          ) : null}
           <Fact
             label="Required deliverables"
             value={

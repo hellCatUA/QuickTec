@@ -974,9 +974,9 @@ export default async function JobPage({
                       {/* Company is the one that pays us. The rep company is a link
                         above them, and is blank on every job raised before it
                         existed — Static already renders that as a dash. */}
-                      <Static label="Company" value={job.client.name} />
+                      <Static label="Paying company" value={job.client.name} />
                       <Static
-                        label="Rep Company"
+                        label="Rep company"
                         value={job.repCompany?.name ?? null}
                       />
 

@@ -88,6 +88,27 @@ export async function canOnJob(
   return false;
 }
 
+/**
+ * Whether the user may exercise a permission on one specific project.
+ *
+ * PROJECT scope reaches the projects somebody runs or supervises, not every
+ * project there is. Checking the permission alone allowed exactly that: a
+ * supervisor could open any project's settings, change who pays for it, and
+ * add themselves as a member — which then widened what jobs they could see.
+ */
+export function canOnProject(
+  user: SessionUser,
+  permission: Permission,
+  projectId: string,
+): boolean {
+  const scope = permissionScope(user, permission, projectId);
+  if (!scope) return false;
+  if (scope === "ALL") return true;
+  // Granted on this project by name.
+  if (user.projectGrants.get(permission)?.has(projectId)) return true;
+  return scope === "PROJECT" && user.scopedProjectIds.includes(projectId);
+}
+
 /** Same shape, for records owned by a single user (mileage, payroll). */
 export async function userScopeWhere(
   user: SessionUser,

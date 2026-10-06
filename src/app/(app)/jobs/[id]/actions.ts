@@ -50,7 +50,7 @@ import {
   JOB_FIELDS,
   type JobFieldName,
 } from "@/lib/job-fields";
-import { resolvePayRate } from "@/lib/pay-rates";
+import { jobRateNote, resolvePayRate } from "@/lib/pay-rates";
 import { capitaliseName } from "@/lib/names";
 import { formatPhone } from "@/lib/phone";
 import { notify } from "@/lib/notifications";
@@ -883,7 +883,13 @@ export async function assignTech(formData: FormData): Promise<ActionResult> {
       payRate: true,
       budgetType: true,
       travelReimbursement: true,
-      project: { select: { travelReimbursement: true } },
+      project: {
+        select: {
+          travelReimbursement: true,
+          defaultPayType: true,
+          defaultPayRate: true,
+        },
+      },
     },
   });
 
@@ -927,7 +933,7 @@ export async function assignTech(formData: FormData): Promise<ActionResult> {
       payRate: rate.rate,
       payRateNote:
         rate.source === "job"
-          ? "Set on this job"
+          ? jobRateNote(details, details.project)
           : rate.source === "none"
             ? "No rate configured — defaulted to non-billable"
             : null,
@@ -2543,6 +2549,7 @@ export async function clearAssignmentPay(
           payRate: true,
           budgetType: true,
           travelReimbursement: true,
+          project: { select: { defaultPayType: true, defaultPayRate: true } },
         },
       },
     },
@@ -2611,7 +2618,7 @@ export async function clearAssignmentPay(
       payRate: resolved.rate,
       payRateNote:
         resolved.source === "job"
-          ? "Set on this job"
+          ? jobRateNote(assignment.job, assignment.job.project)
           : resolved.source === "none"
             ? "No rate configured — defaulted to non-billable"
             : null,

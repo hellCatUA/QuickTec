@@ -40,6 +40,8 @@ type Project = {
   externalProjectId: string | null;
   clientId: string;
   clientName: string;
+  repCompanyId: string | null;
+  repCompanyName: string | null;
   customerId: string | null;
   intWoCounter: number;
   breakPaid: boolean;
@@ -87,6 +89,7 @@ export function JobForm({
   globalNextSequence,
   breakPaidByDefault,
   adHocDeliverableRules,
+  start,
 }: {
   canAssign: boolean;
   needsApproval: boolean;
@@ -106,15 +109,24 @@ export function JobForm({
   breakPaidByDefault: boolean;
   /** What a job raised without a project asks for. */
   adHocDeliverableRules: EditableRule[];
+  /** Opened from a project's page: what that project answers, to start from. */
+  start?: {
+    projectId: string;
+    clientId: string;
+    repCompanyId: string;
+    customerId: string;
+    title: string;
+  };
 }) {
   const router = useRouter();
 
   // Nothing is preselected. A company chosen for you is a company nobody
-  // checked, and this form files the work order under it.
-  const [projectId, setProjectId] = useState("");
-  const [clientId, setClientId] = useState("");
-  const [repCompanyId, setRepCompanyId] = useState("");
-  const [customerId, setCustomerId] = useState("");
+  // checked, and this form files the work order under it — unless the form
+  // was opened from a project's own page, which is that choice made already.
+  const [projectId, setProjectId] = useState(start?.projectId ?? "");
+  const [clientId, setClientId] = useState(start?.clientId ?? "");
+  const [repCompanyId, setRepCompanyId] = useState(start?.repCompanyId ?? "");
+  const [customerId, setCustomerId] = useState(start?.customerId ?? "");
   const [siteId, setSiteId] = useState("");
   const [scheduledStart, setScheduledStart] = useState("");
   const [estimateMinutes, setEstimateMinutes] = useState<number | null>(null);
@@ -122,7 +134,7 @@ export function JobForm({
   const [assignees, setAssignees] = useState<string[]>([]);
   const [leadId, setLeadId] = useState("");
   const [breakPaidChoice, setBreakPaidChoice] = useState<boolean | null>(null);
-  const [title, setTitle] = useState("");
+  const [title, setTitle] = useState(start?.title ?? "");
   const [titleTouched, setTitleTouched] = useState(false);
   const [noWorkOrder, setNoWorkOrder] = useState(false);
   const [pickedTemplates, setPickedTemplates] = useState<string[] | null>(null);
@@ -130,8 +142,13 @@ export function JobForm({
   // server "as the project says" apart from "these sections, none of them".
   const [deliverables, setDeliverables] = useState<EditableRule[] | null>(null);
   const [addedSites, setAddedSites] = useState<SiteOption[]>([]);
-  const [payType, setPayType] = useState("");
-  const [payRate, setPayRate] = useState("");
+  // Follows the project's pay until somebody types in it, after which theirs
+  // stands — including clearing it, which pays each tech their own rate.
+  // Derived rather than copied in when the project is picked, the same as the
+  // break policy, so changing project cannot leave the old one's rate behind.
+  const [payChoice, setPayChoice] = useState<{ type: string; rate: string } | null>(
+    null,
+  );
   // Controlled, all four of them, because uncontrolled was the bug: React
   // resets a form once its action has run, so a refused submit came back with
   // these blank while everything held in state survived.
@@ -140,6 +157,7 @@ export function JobForm({
   const [extraTickets, setExtraTickets] = useState<string[]>([]);
   const [incNumber, setIncNumber] = useState("");
   const [scopeOfWork, setScopeOfWork] = useState("");
+
 
   // Everything the form holds, in one place. This is what is saved, and it is
   // also the answer to the wiped-fields bug: a value that lives here survives a
@@ -165,8 +183,11 @@ export function JobForm({
     pickedTemplates,
     deliverables,
     breakPaidChoice,
-    payType,
-    payRate,
+    // What somebody chose, not what the project supplies: a draft reopened
+    // after the project's rate changed takes the new one unless they had
+    // set their own.
+    payType: payChoice?.type ?? "",
+    payRate: payChoice?.rate ?? "",
   };
 
   const [state, formAction, pending] = useActionState<ActionResult | null, FormData>(
@@ -188,8 +209,30 @@ export function JobForm({
   const draft = useJobDraft(draftPayload, { enabled: !pending && !state?.ok });
   const savedLabel = draftLabel(draft);
 
-
   const selectedProject = projects.find((project) => project.id === projectId);
+
+  // A project's pay as one rate for the whole crew. Flat + hourly is a
+  // budget's shape, not a rate's, so a project still holding one offers
+  // nothing here rather than half of it.
+  const projectPay =
+    selectedProject?.defaultPayType &&
+    ["HOURLY", "FLAT", "NON_BILLABLE"].includes(selectedProject.defaultPayType)
+      ? {
+          type: selectedProject.defaultPayType,
+          rate:
+            selectedProject.defaultPayType === "NON_BILLABLE"
+              ? ""
+              : (selectedProject.defaultPayRate ?? ""),
+        }
+      : null;
+  const payType = payChoice?.type ?? projectPay?.type ?? "";
+  const payRate = payChoice?.rate ?? projectPay?.rate ?? "";
+  const payFromProject =
+    projectPay !== null &&
+    payType === projectPay.type &&
+    (payType === "NON_BILLABLE" || Number(payRate) === Number(projectPay.rate));
+
+
 
   /**
    * Choosing the project answers the company and often the customer too, which
@@ -202,6 +245,7 @@ export function JobForm({
     if (!project) return;
 
     setClientId(project.clientId);
+    setRepCompanyId(project.repCompanyId ?? "");
     if (project.customerId && project.customerId !== customerId) {
       setCustomerId(project.customerId);
       setSiteId("");
@@ -300,11 +344,13 @@ export function JobForm({
       (tech) => assignees.includes(tech.id) && tech.baseRole !== "TECH",
     );
 
-  // Says out loud what happens if the field is left alone, which is the whole
-  // reason it can be left alone.
-  const payFallback = selectedProject?.defaultPayType
-    ? `Blank means each tech's own rate, then the project's ${selectedProject.defaultPayType.toLowerCase().replace("_", "-")} $${Number(selectedProject.defaultPayRate ?? 0).toFixed(2)}.`
-    : "Blank means each tech's own rate.";
+  // Says out loud what the field does and what leaving it empty does, which
+  // is the whole reason it can be left empty.
+  const payFallback = payFromProject
+    ? "The project's rate, for the whole crew — over each tech's own rate. Clear it to pay each tech their own."
+    : payType
+      ? "For the whole crew on this job, over each tech's own rate."
+      : "Blank pays each tech their own rate.";
 
   const projectMembers = selectedProject?.memberIds ?? [];
 
@@ -344,6 +390,18 @@ export function JobForm({
   const filledFromProject = selectedProject
     ? [
         { label: "Paying company", value: selectedProject.clientName },
+        { label: "Rep company", value: selectedProject.repCompanyName ?? "None" },
+        ...(projectPay
+          ? [
+              {
+                label: "Crew pay",
+                value:
+                  projectPay.type === "NON_BILLABLE"
+                    ? "Non-billable, for the whole crew"
+                    : `$${Number(projectPay.rate).toFixed(2)}${projectPay.type === "HOURLY" ? "/hr" : " flat"} for the whole crew`,
+              },
+            ]
+          : []),
         {
           label: "Breaks",
           value: selectedProject.breakPaid ?? breakPaidByDefault ? "Paid" : "Unpaid",
@@ -379,7 +437,11 @@ export function JobForm({
 
   const deliverablesSummary = `${deliverableSummaryCount} on`;
 
-  const paySummary = payType ? "overridden for this job" : "default rates";
+  const paySummary = payFromProject
+    ? "the project's rate"
+    : payType
+      ? "set for this job"
+      : "each tech's own rate";
 
   // Offered rather than applied. Reopening the page and finding yesterday's
   // half-finished job already typed in is startling when what you wanted was a
@@ -424,8 +486,11 @@ export function JobForm({
         : null,
     );
     setBreakPaidChoice(values.breakPaidChoice ?? null);
-    setPayType(values.payType ?? "");
-    setPayRate(values.payRate ?? "");
+    setPayChoice(
+      values.payType || values.payRate
+        ? { type: values.payType ?? "", rate: values.payRate ?? "" }
+        : null,
+    );
     setRestored(true);
   }
 
@@ -966,9 +1031,11 @@ export function JobForm({
                 id="payType"
                 name="payType"
                 value={payType}
-                onChange={(event) => setPayType(event.target.value)}
+                onChange={(event) =>
+                  setPayChoice({ type: event.target.value, rate: payRate })
+                }
               >
-                <option value="">— leave as it resolves —</option>
+                <option value="">— each tech&rsquo;s own rate —</option>
                 <option value="HOURLY">Hourly</option>
                 <option value="FLAT">Flat rate</option>
                 <option value="NON_BILLABLE">Non-billable</option>
@@ -982,9 +1049,18 @@ export function JobForm({
                 type="number"
                 step="0.01"
                 min={0}
-                value={payRate}
-                onChange={(event) => setPayRate(event.target.value)}
-                placeholder={payType ? "Required with a pay type" : "Leave blank"}
+                value={payType === "NON_BILLABLE" ? "" : payRate}
+                disabled={payType === "NON_BILLABLE"}
+                onChange={(event) =>
+                  setPayChoice({ type: payType, rate: event.target.value })
+                }
+                placeholder={
+                  payType === "NON_BILLABLE"
+                    ? "Pays nothing"
+                    : payType
+                      ? "Required with a pay type"
+                      : "Leave blank"
+                }
               />
             </Field>
 

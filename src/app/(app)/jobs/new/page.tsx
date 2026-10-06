@@ -9,10 +9,19 @@ import { JobForm } from "./job-form";
 
 export const metadata = { title: "New job" };
 
-export default async function NewJobPage() {
+export default async function NewJobPage({
+  searchParams,
+}: {
+  /** ?projectId= — "New job" on a project's page starts in that project. */
+  searchParams: Promise<{ projectId?: string }>;
+}) {
   const user = await getSessionUser();
   if (!user) redirect("/signin");
   if (!can(user, "job.create")) redirect("/jobs");
+  const { projectId: startProjectId } = await searchParams;
+  // What a project pays is for whoever sets pay. Everybody else's form never
+  // sees it; the server applies it to their job all the same.
+  const canSetPay = can(user, "pay.edit_rates");
 
   const [
     company,
@@ -54,6 +63,8 @@ export default async function NewJobPage() {
         externalProjectId: true,
         clientId: true,
         client: { select: { name: true } },
+        repCompanyId: true,
+        repCompany: { select: { name: true } },
         customerId: true,
         intWoCounter: true,
         breakPaid: true,
@@ -167,13 +178,19 @@ export default async function NewJobPage() {
           externalProjectId: project.externalProjectId,
           clientId: project.clientId,
           clientName: project.client.name,
+          repCompanyId: project.repCompanyId,
+          repCompanyName: project.repCompany?.name ?? null,
           customerId: project.customerId,
           intWoCounter: project.intWoCounter,
           breakPaid: project.breakPaid,
           defaultJobTitle: project.defaultJobTitle,
-          defaultPayType: project.defaultPayType,
-          defaultPayRate: project.defaultPayRate?.toString() ?? null,
-          travelReimbursement: project.travelReimbursement?.toString() ?? null,
+          defaultPayType: canSetPay ? project.defaultPayType : null,
+          defaultPayRate: canSetPay
+            ? (project.defaultPayRate?.toString() ?? null)
+            : null,
+          travelReimbursement: canSetPay
+            ? (project.travelReimbursement?.toString() ?? null)
+            : null,
           memberIds: project.members.map((member) => member.userId),
           dispatchContacts: project.dispatchContacts,
           deliverableRules: effectiveRules([], project.deliverableRules),
@@ -186,7 +203,19 @@ export default async function NewJobPage() {
           ...contact,
           clientId: contact.clientId!,
         }))}
-        canSetPay={can(user, "pay.edit_rates")}
+        canSetPay={canSetPay}
+        start={(() => {
+          const project = projects.find((one) => one.id === startProjectId);
+          return project
+            ? {
+                projectId: project.id,
+                clientId: project.clientId,
+                repCompanyId: project.repCompanyId ?? "",
+                customerId: project.customerId ?? "",
+                title: project.defaultJobTitle ?? "",
+              }
+            : undefined;
+        })()}
         globalNextSequence={
           (await db.intWoCounter.findUnique({
             where: { scope: `global:${new Date().getFullYear()}` },

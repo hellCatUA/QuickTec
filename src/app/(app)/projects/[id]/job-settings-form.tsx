@@ -1,9 +1,8 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { Field, Input, Select } from "@/components/ui/field";
 import { FormStatus, type SaveState } from "@/components/ui/form-status";
-import { PAY_TYPE_LABEL } from "@/lib/money";
 import { saveProjectJobSettings, type ActionResult } from "../actions";
 
 export type JobSettingsValues = {
@@ -25,15 +24,21 @@ export type JobSettingsValues = {
 export function JobSettingsForm({
   project,
   clientName,
+  repCompanyName,
+  canSetPay,
 }: {
   project: JobSettingsValues;
-  /** Shown, not edited: the company is the project's, set in its details. */
+  /** Shown, not edited: the companies are the project's, set in its details. */
   clientName: string;
+  repCompanyName: string | null;
+  /** Pay and travel are money, set only by whoever may set pay. */
+  canSetPay: boolean;
 }) {
   const [state, formAction, pending] = useActionState<
     ActionResult | null,
     FormData
   >(async (prev, formData) => saveProjectJobSettings(prev, formData), null);
+  const [payType, setPayType] = useState(project.defaultPayType ?? "");
 
   return (
     <form action={formAction} className="flex flex-col gap-4">
@@ -77,60 +82,73 @@ export function JobSettingsForm({
             />
           </Field>
 
-          <Field
-            label="Paying company"
-            htmlFor="prefill-client"
-            hint="The project's own — change it in Details if it is wrong."
-          >
-            <Input id="prefill-client" value={clientName} readOnly disabled />
-          </Field>
+          {/* Said here because they are what a new job is filed under, and
+              set in Details because they are what the project is. */}
+          <div className="flex flex-col gap-1 text-sm sm:col-span-2">
+            <div>
+              <span className="text-muted-foreground">Paying company: </span>
+              <span className="font-medium">{clientName}</span>
+              <span className="text-muted-foreground"> · Rep company: </span>
+              <span className="font-medium">{repCompanyName ?? "none"}</span>
+            </div>
+            <span className="text-xs text-muted-foreground">
+              Both go onto every job raised here. Change them under Details
+              above.
+            </span>
+          </div>
 
-          <Field
-            label="Travel reimbursement ($)"
-            htmlFor="travelReimbursement"
-            hint="Money the customer allocates for travel. Separate from mileage, which is a write-off record."
-          >
-            <Input
-              id="travelReimbursement"
-              name="travelReimbursement"
-              type="number"
-              step="0.01"
-              min={0}
-              defaultValue={project.travelReimbursement ?? ""}
-              placeholder="Leave blank for none"
-            />
-          </Field>
+          {canSetPay ? (
+            <>
+              <Field
+                label="Pay type"
+                htmlFor="defaultPayType"
+                hint="Every job raised here starts on this, for its whole crew — over each tech's own rate. It can still be changed on the job before it is created."
+              >
+                <Select
+                  id="defaultPayType"
+                  name="defaultPayType"
+                  value={payType}
+                  onChange={(event) => setPayType(event.target.value)}
+                >
+                  <option value="">— each tech&rsquo;s own rate —</option>
+                  <option value="HOURLY">Hourly</option>
+                  <option value="FLAT">Flat rate</option>
+                  <option value="NON_BILLABLE">Non-billable</option>
+                </Select>
+              </Field>
 
-          <Field
-            label="Pay type"
-            htmlFor="defaultPayType"
-            hint="For anybody on this project with no rate of their own. Their own project or company rate still wins."
-          >
-            <Select
-              id="defaultPayType"
-              name="defaultPayType"
-              defaultValue={project.defaultPayType ?? ""}
-            >
-              <option value="">— none —</option>
-              {Object.entries(PAY_TYPE_LABEL).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </Select>
-          </Field>
+              {payType === "NON_BILLABLE" ? null : (
+                <Field label="Pay rate ($)" htmlFor="defaultPayRate">
+                  <Input
+                    id="defaultPayRate"
+                    name="defaultPayRate"
+                    type="number"
+                    step="0.01"
+                    min={0}
+                    defaultValue={project.defaultPayRate ?? ""}
+                    placeholder={payType ? "Required with a pay type" : "Leave blank"}
+                  />
+                </Field>
+              )}
 
-          <Field label="Pay rate ($)" htmlFor="defaultPayRate">
-            <Input
-              id="defaultPayRate"
-              name="defaultPayRate"
-              type="number"
-              step="0.01"
-              min={0}
-              defaultValue={project.defaultPayRate ?? ""}
-              placeholder="Leave blank for none"
-            />
-          </Field>
+              <Field
+                label="Travel reimbursement ($)"
+                htmlFor="travelReimbursement"
+                hint="Money the customer allocates for travel. Separate from mileage, which is a write-off record."
+                className="sm:col-span-2"
+              >
+                <Input
+                  id="travelReimbursement"
+                  name="travelReimbursement"
+                  type="number"
+                  step="0.01"
+                  min={0}
+                  defaultValue={project.travelReimbursement ?? ""}
+                  placeholder="Leave blank for none"
+                />
+              </Field>
+            </>
+          ) : null}
         </div>
       </div>
 

@@ -10,6 +10,7 @@ import { DeliverableRules } from "@/components/deliverable-rules";
 import { PageHeader } from "@/components/ui/page-header";
 import { db } from "@/lib/db";
 import { effectiveRules, RULE_SELECT } from "@/lib/deliverables";
+import { canOnProject } from "@/lib/scope";
 import { can, getSessionUser } from "@/lib/session";
 import { ProjectForm } from "../../project-form";
 import { saveDeliverableRule } from "../../actions";
@@ -45,9 +46,11 @@ export default async function ProjectSettingsPage({
   if (!user) redirect("/signin");
 
   const { id } = await params;
-  if (!can(user, "project.manage", { projectId: id })) redirect("/projects");
+  if (!canOnProject(user, "project.manage", id)) redirect("/projects");
+  // Pay and travel are money: shown and changed only by whoever sets pay.
+  const canSetPay = can(user, "pay.edit_rates");
 
-  const [project, clients, customers, managers, staff, contacts] =
+  const [project, clients, repCompanies, customers, managers, staff, contacts] =
     await Promise.all([
       db.project.findUnique({
         where: { id },
@@ -57,6 +60,8 @@ export default async function ProjectSettingsPage({
           externalProjectId: true,
           clientId: true,
           client: { select: { name: true } },
+          repCompanyId: true,
+          repCompany: { select: { name: true } },
           customerId: true,
           managerId: true,
           pmContactId: true,
@@ -93,6 +98,11 @@ export default async function ProjectSettingsPage({
         },
       }),
       db.client.findMany({
+        where: { active: true },
+        orderBy: { name: "asc" },
+        select: { id: true, name: true },
+      }),
+      db.repCompany.findMany({
         where: { active: true },
         orderBy: { name: "asc" },
         select: { id: true, name: true },
@@ -152,18 +162,34 @@ export default async function ProjectSettingsPage({
               name: project.name,
               externalProjectId: project.externalProjectId,
               clientId: project.clientId,
+              repCompanyId: project.repCompanyId,
               customerId: project.customerId,
               managerId: project.managerId,
               pmContactId: project.pmContactId,
               generalScopeOfWork: project.generalScopeOfWork,
-              travelReimbursement:
-                project.travelReimbursement?.toString() ?? null,
-              breakPaid: project.breakPaid,
               status: project.status,
             }}
-            clients={clients.map((client) => ({
+            // A company since retired from the directory still shows as what
+            // the project holds, rather than as nothing picked.
+            clients={[
+              ...clients,
+              ...(!clients.some((one) => one.id === project.clientId)
+                ? [{ id: project.clientId, name: project.client.name }]
+                : []),
+            ].map((client) => ({
               id: client.id,
               label: client.name,
+            }))}
+            repCompanies={[
+              ...repCompanies,
+              ...(project.repCompanyId &&
+              project.repCompany &&
+              !repCompanies.some((one) => one.id === project.repCompanyId)
+                ? [{ id: project.repCompanyId, name: project.repCompany.name }]
+                : []),
+            ].map((repCompany) => ({
+              id: repCompany.id,
+              label: repCompany.name,
             }))}
             customers={customers.map((customer) => ({
               id: customer.id,
@@ -217,6 +243,8 @@ export default async function ProjectSettingsPage({
         <CardContent className="flex flex-col gap-6">
           <JobSettingsForm
             clientName={project.client.name}
+            repCompanyName={project.repCompany?.name ?? null}
+            canSetPay={canSetPay}
             project={{
               id: project.id,
               breakPaid: project.breakPaid,

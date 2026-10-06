@@ -13,12 +13,41 @@ import {
 import { normaliseRuleSettings, PROJECT_DEFAULT_RULES } from "@/lib/deliverables";
 import { materialiseProjectRules } from "@/lib/job-deliverables";
 import { notify } from "@/lib/notifications";
-import { requirePermission } from "@/lib/session";
+import { canOnProject } from "@/lib/scope";
+import {
+  can,
+  getSessionUser,
+  requirePermission,
+  type SessionUser,
+} from "@/lib/session";
 import { DeliverableCategory, PayType, ProjectRole, ProjectStatus } from "@prisma-client";
 
 export type ActionResult = { ok: true; id?: string } | { ok: false; error: string };
 
+const NOT_YOURS: ActionResult = {
+  ok: false,
+  error: "You cannot change this project.",
+};
 
+/**
+ * The signed-in user, when they may change this particular project.
+ *
+ * Every action below names its project, and is checked against it. Asking only
+ * whether somebody manages projects at all let a supervisor reach any project
+ * there is — including adding themselves to it, which then opened its jobs.
+ */
+async function projectActor(projectId: string): Promise<SessionUser | null> {
+  const user = await getSessionUser();
+  if (!user || !projectId) return null;
+  return canOnProject(user, "project.manage", projectId) ? user : null;
+}
+
+/**
+ * The pay a project can start its jobs on: one rate for the whole crew.
+ * Flat + hourly needs a flat amount and the hours it covers, which is a
+ * budget's shape rather than a rate's — the job's budget is where that lives.
+ */
+const PROJECT_PAY_TYPES = ["HOURLY", "FLAT", "NON_BILLABLE"] as const;
 
 /** How a membership role reads in a message. */
 const ROLE_WORDING: Record<ProjectRole, string> = {
@@ -35,7 +64,8 @@ const ROLE_WORDING: Record<ProjectRole, string> = {
 const projectSchema = z.object({
   name: z.string().trim().min(1, "Name is required"),
   externalProjectId: optionalText,
-  clientId: z.string().min(1, "Pick a client"),
+  clientId: z.string().min(1, "Pick a paying company"),
+  repCompanyId: optionalText,
   customerId: optionalText,
   managerId: optionalText,
   pmContactId: optionalText,
@@ -47,8 +77,9 @@ export async function saveProject(
   _prev: ActionResult | null,
   formData: FormData,
 ): Promise<ActionResult> {
-  const actor = await requirePermission("project.manage");
   const id = String(formData.get("id") ?? "");
+  const actor = id ? await projectActor(id) : await getSessionUser();
+  if (!actor || (!id && !can(actor, "project.manage"))) return NOT_YOURS;
 
   const parsed = projectSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) {
@@ -57,13 +88,63 @@ export async function saveProject(
 
   const data = parsed.data;
 
+  // Both are picked from lists, but what arrives is whatever was posted.
+  const [client, repCompany] = await Promise.all([
+    db.client.findUnique({ where: { id: data.clientId }, select: { name: true } }),
+    data.repCompanyId
+      ? db.repCompany.findUnique({
+          where: { id: data.repCompanyId },
+          select: { name: true },
+        })
+      : null,
+  ]);
+  if (!client) return { ok: false, error: "That paying company is not in the directory." };
+  if (data.repCompanyId && !repCompany) {
+    return { ok: false, error: "That rep company is not in the directory." };
+  }
+
   if (id) {
     const before = await db.project.findUnique({
       where: { id },
-      select: { managerId: true, pmContactId: true, name: true },
+      select: {
+        managerId: true,
+        pmContactId: true,
+        name: true,
+        clientId: true,
+        client: { select: { name: true } },
+        repCompanyId: true,
+        repCompany: { select: { name: true } },
+      },
     });
+    if (!before) return { ok: false, error: "Project not found." };
 
     const project = await db.project.update({ where: { id }, data });
+
+    // Who the work belongs to is not a detail to bury under "details
+    // updated": the jobs raised from now on go to the new company, and the
+    // ones already raised stay with the old. Each change says what it was.
+    const companyChanges = [
+      before.clientId !== data.clientId
+        ? { field: "Paying company", from: before.client.name, to: client.name }
+        : null,
+      (before.repCompanyId ?? null) !== (data.repCompanyId ?? null)
+        ? {
+            field: "Rep company",
+            from: before.repCompany?.name ?? null,
+            to: repCompany?.name ?? null,
+          }
+        : null,
+    ].filter((change) => change !== null);
+    for (const change of companyChanges) {
+      await recordAudit({
+        actorId: actor.id,
+        entityType: "Project",
+        entityId: project.id,
+        projectId: project.id,
+        action: "project_updated",
+        detail: change,
+      });
+    }
 
     // Handing the project to someone new must also make them a member,
     // otherwise their PROJECT-scoped queries would not reach their own project.
@@ -136,10 +217,20 @@ export async function saveProject(
         })),
       },
       // The project manager is a member by definition; leaving them out would
-      // hide their own project from their PROJECT-scoped queries.
-      members: data.managerId
-        ? { create: { userId: data.managerId, role: "PROJECT_MANAGER" } }
-        : undefined,
+      // hide their own project from their PROJECT-scoped queries. So is
+      // whoever made it when they can only manage the projects they are on —
+      // otherwise the project they just created is one they cannot open.
+      members: {
+        create: [
+          ...(data.managerId
+            ? [{ userId: data.managerId, role: "PROJECT_MANAGER" as const }]
+            : []),
+          ...(!can(actor, "project.manage", { minScope: "ALL" }) &&
+          data.managerId !== actor.id
+            ? [{ userId: actor.id, role: "SUPERVISOR" as const }]
+            : []),
+        ],
+      },
     },
   });
 
@@ -244,14 +335,14 @@ const memberSchema = z.object({
 export async function upsertProjectMember(
   formData: FormData,
 ): Promise<ActionResult> {
-  const actor = await requirePermission("project.manage");
-
   const parsed = memberSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) {
     return { ok: false, error: z.prettifyError(parsed.error) };
   }
 
   const { projectId, userId, role } = parsed.data;
+  const actor = await projectActor(projectId);
+  if (!actor) return NOT_YOURS;
 
   const member = await db.user.findUniqueOrThrow({
     where: { id: userId },
@@ -294,10 +385,11 @@ export async function upsertProjectMember(
 export async function removeProjectMember(
   formData: FormData,
 ): Promise<ActionResult> {
-  const actor = await requirePermission("project.manage");
   const projectId = String(formData.get("projectId") ?? "");
   const userId = String(formData.get("userId") ?? "");
   if (!projectId || !userId) return { ok: false, error: "Missing member" };
+  const actor = await projectActor(projectId);
+  if (!actor) return NOT_YOURS;
 
   const project = await db.project.findUnique({
     where: { id: projectId },
@@ -362,8 +454,6 @@ const ruleSchema = z.object({
 export async function saveDeliverableRule(
   formData: FormData,
 ): Promise<ActionResult> {
-  const actor = await requirePermission("project.manage");
-
   const parsed = ruleSchema.safeParse({
     ...Object.fromEntries(formData),
     enabled: formData.get("enabled") === "true",
@@ -378,6 +468,8 @@ export async function saveDeliverableRule(
   }
 
   const { projectId, category, remove, ...rule } = parsed.data;
+  const actor = await projectActor(projectId);
+  if (!actor) return NOT_YOURS;
 
   await materialiseProjectRules(projectId);
 
@@ -447,14 +539,14 @@ export async function addDispatchContact(
   _prev: ActionResult | null,
   formData: FormData,
 ): Promise<ActionResult> {
-  const actor = await requirePermission("project.manage");
-
   const parsed = contactSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) {
     return { ok: false, error: z.prettifyError(parsed.error) };
   }
 
   const { projectId, ...data } = parsed.data;
+  const actor = await projectActor(projectId);
+  if (!actor) return NOT_YOURS;
 
   if (!data.phone && !data.email) {
     return { ok: false, error: "Give at least a phone number or an email." };
@@ -481,12 +573,18 @@ export async function addDispatchContact(
 export async function deleteDispatchContact(
   formData: FormData,
 ): Promise<ActionResult> {
-  const actor = await requirePermission("project.manage");
   const id = String(formData.get("id") ?? "");
   const projectId = String(formData.get("projectId") ?? "");
   if (!id) return { ok: false, error: "Missing contact" };
+  const actor = await projectActor(projectId);
+  if (!actor) return NOT_YOURS;
 
-  await db.dispatchContact.delete({ where: { id } });
+  // This project's own number, and nothing else by that id: jobs and paying
+  // companies keep dispatch numbers in the same table.
+  const removed = await db.dispatchContact.deleteMany({ where: { id, projectId } });
+  if (removed.count === 0) {
+    return { ok: false, error: "That number is not on this project." };
+  }
 
   await recordAudit({
     actorId: actor.id,
@@ -677,9 +775,10 @@ export async function saveProjectJobSettings(
   _prev: ActionResult | null,
   formData: FormData,
 ): Promise<ActionResult> {
-  const actor = await requirePermission("project.manage");
   const id = String(formData.get("id") ?? "");
   if (!id) return { ok: false, error: "Project not found." };
+  const actor = await projectActor(id);
+  if (!actor) return NOT_YOURS;
 
   const parsed = jobSettingsSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) {
@@ -687,9 +786,14 @@ export async function saveProjectJobSettings(
   }
   const input = parsed.data;
 
-  if (input.defaultPayType && !(input.defaultPayType in PayType)) {
+  if (
+    input.defaultPayType &&
+    !(PROJECT_PAY_TYPES as readonly string[]).includes(input.defaultPayType)
+  ) {
     return { ok: false, error: "Unknown pay type." };
   }
+  // Non-billable pays nothing, so there is no rate to ask for.
+  if (input.defaultPayType === "NON_BILLABLE") input.defaultPayRate = "0";
   // A rate with no type would be a number nobody can interpret, and a type
   // with no rate pays zero without saying so.
   if (Boolean(input.defaultPayType) !== Boolean(input.defaultPayRate)) {
@@ -710,6 +814,15 @@ export async function saveProjectJobSettings(
     },
   });
   if (!before) return { ok: false, error: "Project not found." };
+
+  // Pay and travel are money, and setting money is its own permission. The
+  // form leaves them out for anybody without it; what they posted anyway is
+  // kept as it was rather than cleared.
+  if (!can(actor, "pay.edit_rates")) {
+    input.travelReimbursement = before.travelReimbursement?.toString() ?? null;
+    input.defaultPayType = before.defaultPayType;
+    input.defaultPayRate = before.defaultPayRate?.toString() ?? null;
+  }
 
   const project = await db.project.update({
     where: { id },

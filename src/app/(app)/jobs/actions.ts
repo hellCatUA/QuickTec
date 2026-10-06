@@ -26,7 +26,7 @@ import {
   revisitAssignmentId,
 } from "@/lib/int-wo";
 import { notify } from "@/lib/notifications";
-import { resolvePayRate } from "@/lib/pay-rates";
+import { jobRateNote, resolvePayRate } from "@/lib/pay-rates";
 import { formatPhone } from "@/lib/phone";
 import { REVISIT_CARRIES, type RevisitCarry } from "@/lib/revisit";
 import { canOnJob, resolveJobSupervisor } from "@/lib/scope";
@@ -82,10 +82,13 @@ export async function createJob(
         select: {
           id: true,
           externalProjectId: true,
+          clientId: true,
           repCompanyId: true,
           breakPaid: true,
           travelReimbursement: true,
           defaultJobTitle: true,
+          defaultPayType: true,
+          defaultPayRate: true,
           pmContactId: true,
           deliverableRules: {
             where: { jobId: null },
@@ -98,6 +101,10 @@ export async function createJob(
   if (input.projectId && !project) {
     return { ok: false, error: "Project not found." };
   }
+  // A job under a project is the project's paying company's work, whatever
+  // the form sent — a draft restored after the project changed company would
+  // otherwise file it under the old one.
+  const clientId = project?.clientId ?? input.clientId;
 
   const company = await getCompanySettings();
   const timeZone = site.timeZone ?? company.defaultTimeZone;
@@ -135,6 +142,8 @@ export async function createJob(
   if (input.payType && !(input.payType in PayType)) {
     return { ok: false, error: "Unknown pay type." };
   }
+  // Non-billable pays nothing, so there is no rate to ask for.
+  if (input.payType === "NON_BILLABLE" && !input.payRate) input.payRate = "0";
   // A rate with no type is a number nobody can interpret; a type with no rate
   // pays zero without saying so.
   if (Boolean(input.payType) !== Boolean(input.payRate)) {
@@ -147,21 +156,40 @@ export async function createJob(
     return { ok: false, error: "You cannot set pay on a job." };
   }
 
+  // The project's rate is the crew's on every job raised under it. Somebody
+  // who sets pay sees it on the form already and sends what they kept; for
+  // anybody else the form never shows it, so it is applied here instead.
+  const projectPay =
+    project?.defaultPayType &&
+    (["HOURLY", "FLAT", "NON_BILLABLE"] as PayType[]).includes(project.defaultPayType)
+      ? {
+          payType: project.defaultPayType,
+          payRate:
+            project.defaultPayType === "NON_BILLABLE"
+              ? "0"
+              : (project.defaultPayRate?.toString() ?? "0"),
+        }
+      : null;
+  if (!can(actor, "pay.edit_rates") && projectPay) {
+    input.payType = projectPay.payType;
+    input.payRate = projectPay.payRate;
+  }
+
   const rates = await Promise.all(
     assigneeIds.map(async (userId) => {
       const resolved = await resolvePayRate(
         userId,
         project?.id ?? null,
-        input.clientId,
+        clientId,
       );
       const supervisorId = await resolveJobSupervisor(
         userId,
         project?.id ?? null,
       );
 
-      // Blank leaves the usual chain alone — each tech's own rate, then the
-      // project's. A value here is a decision about this job and overrides
-      // both, which is the case the field exists for.
+      // Blank leaves the usual chain alone — each tech's own rate. A value
+      // here, the project's or one typed for this job, is a decision about
+      // the work and is everybody's on it.
       if (!input.payType) return { userId, rate: resolved, supervisorId };
 
       return {
@@ -232,7 +260,7 @@ export async function createJob(
         intWoId,
         intWoSequence: sequence,
         title: input.title,
-        clientId: input.clientId,
+        clientId,
         // Blank on the form means "take the project's", not "none": a job
         // raised under a project belongs to whoever represents that work.
         // Outside a project there is nothing to fall back to, and blank is
@@ -291,7 +319,10 @@ export async function createJob(
             payRate: rate.rate,
             payRateNote:
               rate.source === "job"
-                ? "Set on this job"
+                ? jobRateNote(
+                    { payType: input.payType as PayType, payRate: input.payRate },
+                    project,
+                  )
                 : rate.source === "none"
                   ? "No rate configured — defaulted to non-billable"
                   : null,
@@ -332,7 +363,7 @@ export async function createJob(
   // template next year cannot change what a job that ran this year went out on.
   if (input.templateIds.length > 0) {
     const allowed = await db.clientDocumentTemplate.findMany({
-      where: { id: { in: input.templateIds }, clientId: input.clientId },
+      where: { id: { in: input.templateIds }, clientId },
       select: { id: true },
     });
     for (const template of allowed) {

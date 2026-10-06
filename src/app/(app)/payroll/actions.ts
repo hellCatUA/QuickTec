@@ -481,29 +481,32 @@ export async function savePayRate(
       data: { defaultPayType: payType, defaultPayRate: rate },
     });
   } else {
-    await db.payRate.upsert({
-      where: {
-        userId_projectId_clientId: {
-          userId,
-          projectId: projectId || null,
-          clientId: clientId || null,
-        } as never,
-      },
-      update: {
-        payType,
-        rate,
-        travelReimbursement: travel || null,
-        note: note || null,
-      },
-      create: {
-        userId,
-        projectId: projectId || null,
-        clientId: clientId || null,
-        payType,
-        rate,
-        travelReimbursement: travel || null,
-        note: note || null,
-      },
+    // Found and then written rather than upserted. A rate is held against a
+    // project or a company, never both, so one side of the compound key is
+    // always null — and Prisma refuses a null there outright. The upsert this
+    // replaces threw on every save, which is why no tech ever had a project or
+    // company rate however many times somebody set one.
+    const key = {
+      userId,
+      projectId: projectId || null,
+      clientId: clientId || null,
+    };
+    const terms = {
+      payType,
+      rate,
+      travelReimbursement: travel || null,
+      note: note || null,
+    };
+    await db.$transaction(async (tx) => {
+      const existing = await tx.payRate.findFirst({
+        where: key,
+        select: { id: true },
+      });
+      if (existing) {
+        await tx.payRate.update({ where: { id: existing.id }, data: terms });
+      } else {
+        await tx.payRate.create({ data: { ...key, ...terms } });
+      }
     });
   }
 

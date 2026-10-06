@@ -40,7 +40,8 @@ export default async function ProjectsPage() {
           ],
         };
 
-  const [projects, clients, customers, managers, contacts] = await Promise.all([
+  const [projects, clients, repCompanies, customers, managers, contacts] =
+    await Promise.all([
     db.project.findMany({
       where: visibility,
       orderBy: [{ status: "asc" }, { name: "asc" }],
@@ -57,6 +58,11 @@ export default async function ProjectsPage() {
       },
     }),
     db.client.findMany({
+      where: { active: true },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true },
+    }),
+    db.repCompany.findMany({
       where: { active: true },
       orderBy: { name: "asc" },
       select: { id: true, name: true },
@@ -97,6 +103,10 @@ export default async function ProjectsPage() {
           clients={clients.map((client) => ({
             id: client.id,
             label: client.name,
+          }))}
+          repCompanies={repCompanies.map((repCompany) => ({
+            id: repCompany.id,
+            label: repCompany.name,
           }))}
           customers={customers.map((customer) => ({
             id: customer.id,

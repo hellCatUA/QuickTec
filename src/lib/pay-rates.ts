@@ -114,4 +114,27 @@ export async function resolvePayRate(
   };
 }
 
+/**
+ * What a crew line on the job's own rate says about where it came from.
+ *
+ * A job raised under a project starts on the project's rate for its whole
+ * crew; one somebody typed for this job alone reads differently, because the
+ * question asked of it later — "why is Terry on $45 here?" — has a different
+ * answer.
+ */
+export function jobRateNote(
+  job: { payType: PayType | null; payRate: { toString(): string } | null },
+  project: {
+    defaultPayType: PayType | null;
+    defaultPayRate: { toString(): string } | null;
+  } | null,
+): string {
+  const fromProject =
+    project?.defaultPayType != null &&
+    job.payType === project.defaultPayType &&
+    Number(job.payRate?.toString() ?? 0) ===
+      Number(project.defaultPayRate?.toString() ?? 0);
+  return fromProject ? "The project's rate" : "Set on this job";
+}
+
 export { PAY_TYPE_LABEL, formatMoney, formatRate } from "@/lib/money";
