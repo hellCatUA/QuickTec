@@ -2691,6 +2691,9 @@ async function main() {
   check("a whole word beats one that merely starts the same: pos", firstFor("pos"), "Registers");
   check("telco", searchIcons("telco").map((entry) => entry.label).includes("Demarc"), true);
   check("a number says which one, not what: idf 2", firstFor("idf 2"), "Server rack");
+  check("even stuck to the word: dt lane3", firstFor("dt lane3"), "Drive-thru");
+  check("front of house by its short name: foh", firstFor("foh"), "Dining");
+  check("and back of house: boh", firstFor("boh"), "Kitchen");
   check("nothing typed is everything", searchIcons("  ").length, LOCATION_ICONS.length);
   check("nonsense finds nothing", searchIcons("zzzz").length, 0);
 

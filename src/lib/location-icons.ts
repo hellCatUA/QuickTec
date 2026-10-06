@@ -255,8 +255,8 @@ export const LOCATION_ICONS: IconEntry[] = [
     ["armchair", Armchair, "Lobby", "lobby waiting area lounge"],
     ["concierge-bell", ConciergeBell, "Front desk", "front desk reception check-in counter"],
     ["coffee", Coffee, "Break room", "break room kitchenette lounge"],
-    ["utensils-crossed", UtensilsCrossed, "Dining", "dining cafeteria restaurant food court"],
-    ["chef-hat", ChefHat, "Kitchen", "kitchen back of house"],
+    ["utensils-crossed", UtensilsCrossed, "Dining", "dining foh front of house cafeteria restaurant food court lobby"],
+    ["chef-hat", ChefHat, "Kitchen", "kitchen boh back of house"],
     ["toilet", Toilet, "Restroom", "restroom bathroom toilet washroom"],
     ["bath", Bath, "Bathroom", "bathroom shower"],
     ["baby", Baby, "Nursery", "nursery family room"],
@@ -297,7 +297,7 @@ export const LOCATION_ICONS: IconEntry[] = [
   ]),
   ...group("Transport", [
     ["square-parking", SquareParking, "Parking", "parking garage lot deck"],
-    ["car", Car, "Garage", "garage car vehicle drive-thru"],
+    ["car", Car, "Drive-thru", "drive-thru drivethru dt lane window garage car vehicle"],
     ["truck", Truck, "Loading dock", "loading dock receiving truck bay"],
     ["forklift", Forklift, "Dock floor", "forklift warehouse dock"],
     ["fuel", Fuel, "Fuel island", "fuel gas pump station canopy"],
@@ -335,12 +335,13 @@ export function locationIcon(key: string | null | undefined): IconEntry {
  * the things that merely have one.
  */
 export function searchIcons(query: string): IconEntry[] {
-  // Numbers say which one — "IDF 2" — not what it is, so they are not
-  // searched for.
+  // Numbers say which one — "IDF 2", "DT Lane1" — not what it is, so they
+  // are not searched for, standing alone or stuck to the end of a word.
   const terms = query
     .toLowerCase()
     .split(/[\s/,-]+/)
-    .filter((term) => term && !/^\d+$/.test(term));
+    .map((term) => term.replace(/\d+$/, ""))
+    .filter(Boolean);
   if (terms.length === 0) return LOCATION_ICONS;
 
   const scored = LOCATION_ICONS.map((entry, index) => {
