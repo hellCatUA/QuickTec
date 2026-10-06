@@ -2541,6 +2541,15 @@ async function main() {
       where: { id: assignment.jobId },
       data: { ticketNumber: "6682752", incNumber: null },
     });
+    // Likewise a suggestion a run that died half way through left waiting:
+    // the checks below count what this block raises, and nothing else.
+    await db.changeRequest.deleteMany({
+      where: {
+        jobId: assignment.jobId,
+        status: "PENDING",
+        NOT: { fieldPath: { startsWith: "visit." } },
+      },
+    });
 
     const before = await db.job.findUniqueOrThrow({
       where: { id: assignment.jobId },
@@ -2698,11 +2707,11 @@ async function main() {
       // customer's site therefore starts with the customer.
       await planner.locator("#detail-customer").click();
       await planner.waitForTimeout(200);
-      await planner.getByRole("option").nth(0).click();
+      await planner.locator("#detail-customer-list").getByRole("option").nth(0).click();
       await planner.waitForTimeout(300);
       await planner.locator("#detail-site").click();
       await planner.waitForTimeout(200);
-      await planner.getByRole("option").nth(0).click();
+      await planner.locator("#detail-site-list").getByRole("option").nth(0).click();
       await planner.waitForTimeout(200);
       await planner.getByRole("button", { name: "Save changes" }).click();
       await planner.waitForTimeout(2500);
