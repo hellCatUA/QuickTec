@@ -789,30 +789,32 @@ function Opened({
                 className="flex scroll-mt-24 flex-col gap-2"
               >
                 <div className="flex min-h-8 items-center gap-2">
-                  <span className="flex items-center gap-1.5 text-[13px] font-semibold">
+                  <span className="flex min-w-0 items-center gap-1.5 text-[13px] font-semibold">
                     <LocationIcon
                       icon={location.icon}
                       className="size-4 text-muted-foreground"
                     />
-                    {location.name}
+                    <span className="min-w-0 [overflow-wrap:anywhere]">
+                      {location.name}
+                    </span>
                   </span>
                   {counted ? (
                     short === 0 ? (
-                      <span className="flex items-center gap-0.5 text-xs text-success">
+                      <span className="flex shrink-0 items-center gap-0.5 whitespace-nowrap text-xs text-success">
                         <Check className="size-3" strokeWidth={3} />
                         {location.files} of {location.needed}
                       </span>
                     ) : (
-                      <span className="text-xs font-semibold text-warning">
+                      <span className="shrink-0 whitespace-nowrap text-xs font-semibold text-warning">
                         {location.files} of {location.needed}
                       </span>
                     )
                   ) : (
-                    <span className="text-xs text-muted-foreground">
+                    <span className="shrink-0 whitespace-nowrap text-xs text-muted-foreground">
                       {plural(location.files, "photo")}
                     </span>
                   )}
-                  <div className="ml-auto flex items-center gap-1">
+                  <div className="ml-auto flex shrink-0 items-center gap-1">
                     {removable ? (
                       <RemoveLocation
                         id={location.id}

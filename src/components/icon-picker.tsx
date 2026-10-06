@@ -146,7 +146,9 @@ function IconGrid({
       role="dialog"
       aria-label={`Pick an icon for ${label}`}
       className={cn(
-        "absolute left-0 top-12 z-50 flex w-[min(24rem,calc(100vw-2rem))] flex-col",
+        // Opens from a button that sits inset in its row, so the width leaves
+        // room for that inset as well as the page's gutters.
+        "absolute left-0 top-12 z-50 flex w-[min(24rem,calc(100vw-4.5rem))] flex-col",
         "rounded-xl border border-border bg-surface-raised shadow-xl",
       )}
     >
