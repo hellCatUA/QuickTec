@@ -5,6 +5,7 @@ import {
   extensionFor,
   planDeliverableExport,
   safeSegment,
+  uniqueSegment,
 } from "@/lib/exports/photo-layout";
 import { buildTextReport } from "@/lib/exports/text-report";
 import { buildWorkOrderPdf } from "@/lib/exports/work-order-pdf";
@@ -21,6 +22,8 @@ import { absolutePath, fileExists } from "@/lib/storage";
  *   Signatures/MOD-Dana Reyes-Signature.png
  *   Receipts/…
  *   <Company> INT WO/2607-PRJ12-0001.pdf
+ *   <Client> WO/<their work order, as attached>
+ *   Sign-off sheets/<the blank>.pdf, <the blank> — filled.pdf
  *   887766-Report.txt
  *
  * Photos sit under their field and then their location, numbered in the
@@ -95,6 +98,13 @@ export async function buildJobZip(data: JobExportData) {
     );
   }
 
+  // The paying company's own paperwork, beside ours: "Mettel WO" next to
+  // "NetCom INT WO", so nobody has to open both to tell them apart. Kept apart
+  // from each other however the two companies happen to be named.
+  const rootTaken = new Set([workOrderFolder.toLowerCase()]);
+  const clientWorkOrderFolder = uniqueSegment(safeName(`${job.client.name} WO`), rootTaken);
+  const signOffFolder = uniqueSegment("Sign-off sheets", rootTaken);
+
   const used = new Set<string>();
 
   /** Keeps two IMG_0001.jpg from different phones from colliding. */
@@ -129,6 +139,8 @@ export async function buildJobZip(data: JobExportData) {
       "Signatures",
       "Receipts",
       workOrderFolder,
+      clientWorkOrderFolder,
+      signOffFolder,
       reportFileName(data),
       "Photo index.csv",
       "MISSING FILES.txt",
@@ -184,6 +196,22 @@ export async function buildJobZip(data: JobExportData) {
     archive.file(absolutePath(signature.attachment.storagePath), {
       name: uniquePath(path),
     });
+  }
+
+  // Under the names they were attached with, so the sheet the client sent is
+  // recognisably theirs; the filled copy carries "— filled" from when it was
+  // made. Both go: the blank is what the job was given, the filled one what
+  // came back.
+  for (const document of job.documents) {
+    const folder =
+      document.jobDocumentKind === "SIGN_OFF" ? signOffFolder : clientWorkOrderFolder;
+    const stem = document.originalName.replace(/\.[a-z0-9]{1,5}$/i, "");
+    const path = `${folder}/${safeName(stem)}.${extensionFor(document.mimeType, document.originalName)}`;
+    if (!(await fileExists(document.storagePath))) {
+      missing.push(path);
+      continue;
+    }
+    archive.file(absolutePath(document.storagePath), { name: uniquePath(path) });
   }
 
   for (const entry of job.reimbursements) {

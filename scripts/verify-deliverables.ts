@@ -73,12 +73,21 @@ async function main() {
   });
   const assignment = await db.jobAssignment.findFirstOrThrow({
     where: { userId: tech.id, job: { title: "Elevator phone line" } },
-    select: { id: true, jobId: true, isLead: true, job: { select: { lifecycle: true } } },
+    select: {
+      id: true,
+      jobId: true,
+      isLead: true,
+      job: { select: { lifecycle: true, deliverablesFrozenAt: true } },
+    },
   });
   const jobId = assignment.jobId;
-  // Before checkout, as a job is while the crew is photographing it. The job
-  // page suite checks it out and leaves it that way.
-  await db.job.update({ where: { id: jobId }, data: { lifecycle: "SCHEDULED" } });
+  // Before checkout, as a job is while the crew is photographing it, and
+  // following its project. The job page suite checks it out and leaves it that
+  // way — fixed at checkout, which is not where this starts.
+  await db.job.update({
+    where: { id: jobId },
+    data: { lifecycle: "SCHEDULED", deliverablesFrozenAt: null, deliverablesOwn: false },
+  });
   const url = `${BASE}/jobs/${jobId}`;
 
   // --- a clean slate ---------------------------------------------------------
@@ -842,7 +851,10 @@ async function main() {
     "with no folder per tech any more",
     [...zipEntries(
       await (await planner.request.get(`${BASE}/api/jobs/${jobId}/export/zip`)).body(),
-    ).keys()].some((name) => name.includes("Terry Tech")),
+    ).keys()].some(
+      // Their signature is theirs to have a name on; the photos are not.
+      (name) => name.includes("Terry Tech") && !name.startsWith("Signatures/"),
+    ),
     false,
   );
 
@@ -899,6 +911,87 @@ async function main() {
     true,
   );
 
+  // --- the paying company's paperwork goes in the archive too ---------------
+  // Their work order and the sign-off sheet, blank and filled, each in a
+  // folder of its own beside our photos — the archive is the whole job.
+  const { safeSegment } = await import("@/lib/exports/photo-layout");
+  const { deleteFile } = await import("@/lib/storage");
+  const { client } = await db.job.findUniqueOrThrow({
+    where: { id: jobId },
+    select: { client: { select: { name: true } } },
+  });
+  const theirFolder = safeSegment(`${client.name} WO`);
+  const pdf = (label: string) => Buffer.from(`%PDF-1.4\n% ${label}\n%%EOF\n`);
+  const seededDocuments: { id: string; storagePath: string }[] = [];
+  async function seedDocument(
+    kind: "CLIENT_WORK_ORDER" | "SIGN_OFF",
+    originalName: string,
+    mimeType: string,
+    bytes: Buffer,
+    generated = false,
+  ) {
+    const stored = await storeFile(jobId, bytes, mimeType);
+    seededDocuments.push(
+      await db.attachment.create({
+        data: {
+          storagePath: stored.storagePath,
+          originalName,
+          mimeType,
+          sizeBytes: stored.sizeBytes,
+          uploadedById: tech.id,
+          jobDocumentId: jobId,
+          jobDocumentKind: kind,
+          generated,
+        },
+        select: { id: true, storagePath: true },
+      }),
+    );
+  }
+  await seedDocument("CLIENT_WORK_ORDER", "WO-55120.pdf", "application/pdf", pdf("work order"));
+  await seedDocument("CLIENT_WORK_ORDER", "scan.png", "image/jpeg", await photo("#708090"));
+  await seedDocument("SIGN_OFF", "Sign-off.pdf", "application/pdf", pdf("blank"));
+  await seedDocument("SIGN_OFF", "Sign-off — filled.pdf", "application/pdf", pdf("filled"), true);
+
+  const withDocuments = zipEntries(
+    await (await planner.request.get(`${BASE}/api/jobs/${jobId}/export/zip`)).body(),
+  );
+  check(
+    "their work order is in the archive, under their name",
+    withDocuments.get(`${theirFolder}/WO-55120.pdf`)?.toString("utf8").includes("work order") ?? false,
+    true,
+  );
+  check(
+    "a photographed one carries the extension its bytes are",
+    withDocuments.has(`${theirFolder}/scan.jpg`),
+    true,
+  );
+  check(
+    "and the sign-off sheet, blank and filled",
+    [
+      withDocuments.get("Sign-off sheets/Sign-off.pdf")?.toString("utf8").includes("blank"),
+      withDocuments.get("Sign-off sheets/Sign-off — filled.pdf")?.toString("utf8").includes("filled"),
+    ],
+    [true, true],
+  );
+  check(
+    "every document on the job is there",
+    [...withDocuments.keys()].filter(
+      (name) => name.startsWith(`${theirFolder}/`) || name.startsWith("Sign-off sheets/"),
+    ).length,
+    await db.attachment.count({ where: { jobDocumentId: jobId } }),
+  );
+  check("and nothing had to be left out", withDocuments.has("MISSING FILES.txt"), false);
+  check(
+    "the photos are where they were",
+    await exported(),
+    "Post Install/001.jpg=p4.jpg Pre-Install/IDF/001.jpg=p1.jpg Pre-Install/IDF/002.jpg=p2.jpg Pre-Install/MDF/001.jpg=p3.jpg",
+  );
+
+  for (const document of seededDocuments) {
+    await db.attachment.delete({ where: { id: document.id } });
+    await deleteFile(document.storagePath);
+  }
+
   await browser.close();
 
   // Back to following the project, as the fixtures left it: the job page
@@ -913,7 +1006,11 @@ async function main() {
   });
   await db.job.update({
     where: { id: jobId },
-    data: { lifecycle: assignment.job.lifecycle },
+    data: {
+      lifecycle: assignment.job.lifecycle,
+      deliverablesFrozenAt: assignment.job.deliverablesFrozenAt,
+      deliverablesOwn: false,
+    },
   });
   await db.$disconnect();
 

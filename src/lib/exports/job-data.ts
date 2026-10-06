@@ -113,6 +113,19 @@ export async function loadJobForExport(jobId: string) {
         select: { id: true, name: true },
       },
       deliverableRules: { where: { projectId: null }, select: RULE_SELECT },
+      /// The paying company's paperwork: their work order, and the sign-off
+      /// sheets — the blank the job was given and the copy filled in from it.
+      documents: {
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        select: {
+          id: true,
+          storagePath: true,
+          originalName: true,
+          mimeType: true,
+          jobDocumentKind: true,
+          generated: true,
+        },
+      },
       reimbursements: {
         orderBy: { createdAt: "asc" },
         select: {
