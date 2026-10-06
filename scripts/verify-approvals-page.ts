@@ -1313,6 +1313,33 @@ async function main() {
     true,
   );
 
+  // Clearing the project's travel on New job means none, not "the project's
+  // after all" — an empty box used to fall back to it.
+  await managerPage.goto(`${BASE}/jobs/new?projectId=${project.id}`, { waitUntil: "load" });
+  await managerPage.waitForTimeout(1500);
+  await managerPage.locator("#siteId").click();
+  await managerPage.locator("#siteId").fill("90210");
+  await managerPage.locator("#siteId-list").getByRole("option").first().click();
+  await managerPage.locator("#title").fill("No travel on this one");
+  await managerPage.locator("summary", { hasText: "Pay & dispatch" }).first().click();
+  await managerPage.waitForTimeout(250);
+  await managerPage.locator("#travelReimbursement").fill("");
+  await managerPage.getByRole("button", { name: "Create job" }).click();
+  await managerPage.waitForURL(JOB_URL, { timeout: 20_000 }).catch(() => undefined);
+  check(
+    "a cleared travel box is none, not the project's",
+    (
+      await db.job.findFirst({
+        where: { projectId: project.id, title: "No travel on this one" },
+        select: { travelReimbursement: true },
+      })
+    )?.travelReimbursement?.toString(),
+    "0",
+  );
+  await managerPage.goto(`${BASE}/jobs/${raised!.id}/manage/schedule`, {
+    waitUntil: "load",
+  });
+
   // Somebody put on before the crew sets off goes on the same trip.
   await managerPage.getByRole("button", { name: "Add a tech" }).click();
   await managerPage.locator("#crew-add").click();
@@ -1434,6 +1461,93 @@ async function main() {
     "52.5",
   );
 
+  // --- what else a project gives its jobs -----------------------------------
+  // A budget, the rooms, and which blanks — each said once on the project
+  // rather than on every job raised under it. And its dispatch numbers can
+  // be corrected, not only deleted.
+  const blankFile = await db.attachment.create({
+    data: {
+      storagePath: "templates/verify-usual-blank.pdf",
+      originalName: "Usual sign-off.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 10,
+      uploadedById: boss.user.id,
+    },
+  });
+  await db.clientDocumentTemplate.create({
+    data: {
+      clientId: otherClient.id,
+      kind: "SIGN_OFF",
+      label: "Usual sign-off",
+      isDefault: true,
+      attachmentId: blankFile.id,
+    },
+  });
+  await managerPage.goto(`${BASE}/projects/${project.id}/settings`, { waitUntil: "load" });
+  await managerPage.waitForTimeout(1000);
+  await managerPage.locator("#defaultBudgetType").selectOption("HOURLY");
+  await managerPage.locator("#defaultBudgetHourly").fill("60");
+  await managerPage.getByRole("button", { name: "Save job settings" }).click();
+  await managerPage.waitForTimeout(2000);
+  const withBudget = await db.project.findUniqueOrThrow({
+    where: { id: project.id },
+    select: { defaultBudgetType: true, defaultBudgetHourly: true, defaultPayRate: true },
+  });
+  check(
+    "a budget for its jobs is kept on the project",
+    `${withBudget.defaultBudgetType} ${withBudget.defaultBudgetHourly} · rate still ${withBudget.defaultPayRate}`,
+    "HOURLY 60 · rate still 52.5",
+  );
+
+  await managerPage.getByRole("button", { name: "Add a location" }).click();
+  await managerPage.getByLabel("Name of the location").fill("MDF");
+  await managerPage.keyboard.press("Enter");
+  await managerPage.waitForTimeout(1500);
+  check(
+    "and the rooms its jobs start with",
+    (await db.projectLocation.findMany({ where: { projectId: project.id } }))
+      .map((one) => `${one.name}${one.icon ? " (icon)" : ""}`)
+      .join(),
+    "MDF (icon)",
+  );
+
+  // The company's usual blank, turned down for this project's jobs.
+  await managerPage.getByText("These, for this project").click();
+  await managerPage.locator('input[name="templateIds"]').uncheck();
+  await managerPage.getByRole("button", { name: "Save paperwork" }).click();
+  await managerPage.waitForTimeout(1500);
+  const paperwork = await db.project.findUniqueOrThrow({
+    where: { id: project.id },
+    select: { ownTemplates: true, templates: { select: { id: true } } },
+  });
+  check(
+    "and that its jobs start with no blank, not the company's usual one",
+    `${paperwork.ownTemplates} ${paperwork.templates.length}`,
+    "true 0",
+  );
+
+  await managerPage.getByRole("button", { name: "Add a number" }).click();
+  await managerPage.locator("#dispatch-add-label").fill("NOC bridge");
+  await managerPage.locator("#dispatch-add-phone").fill("206-555-0101");
+  await managerPage.getByRole("button", { name: "Add contact" }).click();
+  await managerPage.waitForTimeout(2000);
+  const bridge = await db.dispatchContact.findFirstOrThrow({
+    where: { projectId: project.id, label: "NOC bridge" },
+    select: { id: true },
+  });
+  await managerPage.getByRole("button", { name: "Options for NOC bridge" }).click();
+  await managerPage.getByRole("menuitem", { name: "Edit" }).click();
+  await managerPage.locator(`#dispatch-${bridge.id}-phone`).fill("206-555-0102");
+  await managerPage.getByRole("button", { name: "Save changes" }).click();
+  await managerPage.waitForTimeout(2000);
+  check(
+    "a project's dispatch number can be corrected, not only deleted",
+    (await db.dispatchContact.findUniqueOrThrow({ where: { id: bridge.id } })).phone?.includes(
+      "0102",
+    ),
+    true,
+  );
+
   // A job they raise under it is on the project's rate all the same: the
   // form never shows it to them, so the server applies it.
   await supProjects.goto(`${BASE}/jobs/new?projectId=${project.id}`, { waitUntil: "load" });
@@ -1449,12 +1563,95 @@ async function main() {
   await supProjects.waitForURL(JOB_URL, { timeout: 20_000 }).catch(() => undefined);
   const bySup = await db.job.findFirst({
     where: { projectId: project.id, title: "Raised by the supervisor" },
-    select: { payType: true, payRate: true },
+    select: {
+      id: true,
+      payType: true,
+      payRate: true,
+      budgetType: true,
+      budgetHourly: true,
+      locations: { select: { name: true } },
+      _count: { select: { documents: true } },
+    },
   });
   check(
     "a job they raise is on the project's rate",
     `${bySup?.payType} ${bySup?.payRate}`,
     "HOURLY 52.5",
+  );
+  check(
+    "and starts with its budget",
+    `${bySup?.budgetType} ${bySup?.budgetHourly}`,
+    "HOURLY 60",
+  );
+  check(
+    "its rooms",
+    bySup?.locations.map((one) => one.name).join(),
+    "MDF",
+  );
+  check("and no blank, as the project chose", bySup?._count.documents, 0);
+
+  // --- a company change, carried to the jobs still open ----------------------
+  const repTwo = await db.repCompany.upsert({
+    where: { name: "Verify Rep Two" },
+    update: { active: true },
+    create: { name: "Verify Rep Two" },
+  });
+  await managerPage.goto(`${BASE}/projects/${project.id}/settings`, { waitUntil: "load" });
+  await managerPage.waitForTimeout(1000);
+  await managerPage.locator('select[name="repCompanyId"]').first().selectOption(repTwo.id);
+  await managerPage.locator('select[name="clientId"]').selectOption(client.id);
+  check(
+    "changing a company offers to move the jobs still open",
+    await managerPage.getByText(/Also move its \d+ open job/).isVisible(),
+    true,
+  );
+  await managerPage.locator('input[name="applyToOpenJobs"]').check();
+  await managerPage.getByRole("button", { name: "Save project" }).click();
+  await managerPage.waitForTimeout(2500);
+  const afterMove = await db.job.findMany({
+    where: { projectId: project.id },
+    select: { lifecycle: true, clientId: true, repCompanyId: true },
+  });
+  const stillOpen = afterMove.filter((one) => one.lifecycle !== "APPROVED");
+  check(
+    "they go to the new paying and rep company",
+    stillOpen.length > 0 &&
+      stillOpen.every((one) => one.clientId === client.id && one.repCompanyId === repTwo.id),
+    true,
+  );
+  check(
+    "a job already signed off stays with the company it was done for",
+    afterMove
+      .filter((one) => one.lifecycle === "APPROVED")
+      .every((one) => one.repCompanyId !== repTwo.id),
+    true,
+  );
+  check(
+    "and the save says what it did",
+    await managerPage.getByText(/moved to/).isVisible(),
+    true,
+  );
+  check(
+    "a new paying company does not inherit the old one's blanks",
+    (await db.project.findUniqueOrThrow({ where: { id: project.id } })).ownTemplates,
+    false,
+  );
+
+  // --- the job's own details: its title and rep company ---------------------
+  await managerPage.goto(`${BASE}/jobs/${bySup!.id}/edit`, { waitUntil: "load" });
+  await managerPage.waitForTimeout(1000);
+  await managerPage.locator("#detail-title").fill("Raised by the supervisor, renamed");
+  await managerPage.locator("#detail-rep").selectOption(repCompany.id);
+  await managerPage.getByRole("button", { name: "Save changes" }).click();
+  await managerPage.waitForTimeout(2000);
+  const renamed = await db.job.findUniqueOrThrow({
+    where: { id: bySup!.id },
+    select: { title: true, repCompanyId: true },
+  });
+  check(
+    "a job's title and rep company can be corrected on its details page",
+    `${renamed.title} · ${renamed.repCompanyId === repCompany.id}`,
+    "Raised by the supervisor, renamed · true",
   );
 
   // --- a tech's rate on one project, set where rates are set ----------------
@@ -1513,7 +1710,10 @@ async function main() {
     where: { id: { in: ["verify-pm-project", "verify-other-project"] } },
   });
   await db.client.deleteMany({ where: { name: "Verify Paying Co" } });
-  await db.repCompany.deleteMany({ where: { name: "Verify Rep Co" } });
+  await db.attachment.deleteMany({ where: { storagePath: "templates/verify-usual-blank.pdf" } });
+  await db.repCompany.deleteMany({
+    where: { name: { in: ["Verify Rep Co", "Verify Rep Two"] } },
+  });
   await db.$disconnect();
 
   console.log(

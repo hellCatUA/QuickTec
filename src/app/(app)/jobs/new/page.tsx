@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { EmptyState, PageHeader } from "@/components/ui/page-header";
 import { getCompanySettings } from "@/lib/company";
 import { db } from "@/lib/db";
+import { describeTerms, jobTerms } from "@/lib/budget";
 import { effectiveRules, RULE_SELECT } from "@/lib/deliverables";
 import { can, getSessionUser } from "@/lib/session";
 import { readJobDraft } from "@/lib/job-draft";
@@ -76,6 +77,16 @@ export default async function NewJobPage({
         defaultPayType: true,
         defaultPayRate: true,
         travelReimbursement: true,
+        defaultBudgetType: true,
+        defaultBudgetFlat: true,
+        defaultBudgetFlatHours: true,
+        defaultBudgetHourly: true,
+        ownTemplates: true,
+        templates: { select: { id: true } },
+        locations: {
+          orderBy: [{ order: "asc" }, { createdAt: "asc" }],
+          select: { name: true },
+        },
         dispatchContacts: {
           orderBy: { order: "asc" },
           select: { id: true, label: true, name: true },
@@ -203,6 +214,21 @@ export default async function NewJobPage({
           travelReimbursement: canSetPay
             ? (project.travelReimbursement?.toString() ?? null)
             : null,
+          budget: (() => {
+            if (!canSetPay) return null;
+            const terms = jobTerms({
+              budgetType: project.defaultBudgetType,
+              budgetFlat: project.defaultBudgetFlat,
+              budgetFlatHours: project.defaultBudgetFlatHours,
+              budgetHourly: project.defaultBudgetHourly,
+            });
+            return terms ? describeTerms(terms) : null;
+          })(),
+          // Null: the paying company's usual blanks. A list: exactly these.
+          templateIds: project.ownTemplates
+            ? project.templates.map((template) => template.id)
+            : null,
+          locations: project.locations.map((location) => location.name),
           memberIds: project.members.map((member) => member.userId),
           dispatchContacts: project.dispatchContacts,
           deliverableRules: effectiveRules([], project.deliverableRules),

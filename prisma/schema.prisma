@@ -435,6 +435,9 @@ model ClientDocumentTemplate {
   /// Copies of this blank sitting on jobs, filled and unfilled.
   copies Attachment[] @relation("TemplateCopies")
 
+  /// Projects that start their jobs with this blank by choice.
+  projects Project[] @relation("ProjectTemplates")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -682,6 +685,19 @@ model Project {
   defaultPayType PayType?
   defaultPayRate Decimal? @db.Decimal(10, 2)
 
+  /// The total tech budget every job raised here starts with — Job.budget*,
+  /// in the same shape. Null type: none, and the job is paid by rate.
+  defaultBudgetType      PayType?
+  defaultBudgetFlat      Decimal?  @db.Decimal(10, 2)
+  defaultBudgetFlatHours Decimal?  @db.Decimal(6, 2)
+  defaultBudgetHourly    Decimal?  @db.Decimal(10, 2)
+  defaultBudgetSplit     SplitMode @default(EVEN)
+
+  /// Which company blanks a new job here starts with. False: the paying
+  /// company's defaults, as before. True: exactly `templates`, none included.
+  ownTemplates Boolean                  @default(false)
+  templates    ClientDocumentTemplate[] @relation("ProjectTemplates")
+
   /// Lifetime counter for INT WO IDs inside this project — never reset.
   intWoCounter Int @default(0)
 
@@ -692,6 +708,8 @@ model Project {
   members             ProjectMember[]
   jobs                Job[]
   deliverableRules    DeliverableRequirement[]
+  /// The rooms every job here starts with.
+  locations           ProjectLocation[]
   dispatchContacts    DispatchContact[]
   payRates            PayRate[]
   permissionOverrides PermissionOverride[]
@@ -1448,6 +1466,26 @@ model JobLocation {
 
   @@unique([jobId, name])
   @@index([jobId])
+}
+
+/// A room every job under a project starts with — copied onto the job as a
+/// JobLocation when it is raised, so the crew does not name the MDF again on
+/// every store. Copied, not linked: a job keeps its rooms whatever the project
+/// says later.
+model ProjectLocation {
+  id        String  @id @default(cuid())
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  name  String
+  /// As on JobLocation: the dictionary's icon when picked from there.
+  icon  String?
+  order Int     @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@unique([projectId, name])
+  @@index([projectId])
 }
 
 /// The locations offered by name while somebody adds one to a job — MDF, IDF,

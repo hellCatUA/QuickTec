@@ -10,11 +10,14 @@ import { DeliverableRules } from "@/components/deliverable-rules";
 import { PageHeader } from "@/components/ui/page-header";
 import { db } from "@/lib/db";
 import { effectiveRules, RULE_SELECT } from "@/lib/deliverables";
+import { OPEN_LIFECYCLES } from "@/lib/job-status";
 import { canOnProject } from "@/lib/scope";
 import { can, getSessionUser } from "@/lib/session";
 import { ProjectForm } from "../../project-form";
 import { saveDeliverableRule } from "../../actions";
-import { DispatchContacts } from "../dispatch-contacts";
+import { DispatchPanel } from "../../../jobs/[id]/dispatch-panel";
+import { ProjectLocations } from "../project-locations";
+import { ProjectTemplates } from "../project-templates";
 import { JobSettingsForm } from "../job-settings-form";
 import { ProjectMembers } from "../project-members";
 
@@ -76,6 +79,17 @@ export default async function ProjectSettingsPage({
           defaultJobTitle: true,
           defaultPayType: true,
           defaultPayRate: true,
+          defaultBudgetType: true,
+          defaultBudgetFlat: true,
+          defaultBudgetFlatHours: true,
+          defaultBudgetHourly: true,
+          defaultBudgetSplit: true,
+          ownTemplates: true,
+          templates: { select: { id: true } },
+          locations: {
+            orderBy: [{ order: "asc" }, { createdAt: "asc" }],
+            select: { id: true, name: true, icon: true },
+          },
           status: true,
           members: {
             orderBy: { role: "asc" },
@@ -143,6 +157,27 @@ export default async function ProjectSettingsPage({
 
   if (!project) notFound();
 
+  // The dictionary the rooms are picked from, the paying company's blanks,
+  // and how many jobs a company change could still reach.
+  const [known, templates, openJobs] = await Promise.all([
+    db.knownLocation.findMany({
+      where: { active: true },
+      orderBy: [{ order: "asc" }, { label: "asc" }],
+      select: { label: true, icon: true },
+    }),
+    db.clientDocumentTemplate.findMany({
+      where: { clientId: project.clientId, active: true },
+      orderBy: [{ isDefault: "desc" }, { label: "asc" }],
+      select: { id: true, label: true, kind: true, isDefault: true },
+    }),
+    db.job.count({
+      where: {
+        projectId: project.id,
+        lifecycle: { in: [...OPEN_LIFECYCLES, "DRAFT"] },
+      },
+    }),
+  ]);
+
   // The sheet its jobs answer to, sections that are off included. A project
   // nothing has been saved on yet shows the defaults its jobs are using, not
   // a list with everything off that no job actually follows.
@@ -167,6 +202,7 @@ export default async function ProjectSettingsPage({
               name: project.name,
               code: project.code,
               codeLocked: project._count.jobs > 0,
+              openJobs,
               clientProjectName: project.clientProjectName,
               externalProjectId: project.externalProjectId,
               repProjectName: project.repProjectName,
@@ -263,8 +299,46 @@ export default async function ProjectSettingsPage({
                 project.travelReimbursement?.toString() ?? null,
               defaultPayType: project.defaultPayType,
               defaultPayRate: project.defaultPayRate?.toString() ?? null,
+              defaultBudgetType: project.defaultBudgetType,
+              defaultBudgetFlat: project.defaultBudgetFlat?.toString() ?? null,
+              defaultBudgetFlatHours:
+                project.defaultBudgetFlatHours?.toString() ?? null,
+              defaultBudgetHourly: project.defaultBudgetHourly?.toString() ?? null,
+              defaultBudgetSplit: project.defaultBudgetSplit,
             }}
           />
+
+          <div className="border-t border-border pt-4">
+            <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Locations
+            </div>
+            <p className="mb-3 text-xs text-muted-foreground">
+              The rooms every job here starts with, so the crew does not name
+              them again at every site. Jobs already raised keep their own.
+            </p>
+            <ProjectLocations
+              projectId={project.id}
+              locations={project.locations}
+              known={known}
+            />
+          </div>
+
+          <div className="border-t border-border pt-4">
+            <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Paperwork
+            </div>
+            <p className="mb-3 text-xs text-muted-foreground">
+              Which of the paying company&rsquo;s blanks a new job here starts
+              with. Still changeable on the job before it is created.
+            </p>
+            <ProjectTemplates
+              projectId={project.id}
+              clientName={project.client.name}
+              templates={templates}
+              own={project.ownTemplates}
+              chosen={project.templates.map((template) => template.id)}
+            />
+          </div>
 
           <div className="border-t border-border pt-4">
             <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -274,9 +348,13 @@ export default async function ProjectSettingsPage({
               Bridge numbers and inboxes a tech may need mid-job. Their own
               supervisor is always shown first and does not need adding here.
             </p>
-            <DispatchContacts
+            <DispatchPanel
               projectId={project.id}
-              contacts={project.dispatchContacts}
+              canEdit
+              contacts={project.dispatchContacts.map((contact) => ({
+                ...contact,
+                removable: true,
+              }))}
             />
           </div>
 

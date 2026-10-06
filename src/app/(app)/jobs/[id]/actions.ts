@@ -50,7 +50,7 @@ import {
   JOB_FIELDS,
   type JobFieldName,
 } from "@/lib/job-fields";
-import { jobRateNote, resolvePayRate } from "@/lib/pay-rates";
+import { jobRateNote, LATE_TRAVEL_NOTE, resolvePayRate } from "@/lib/pay-rates";
 import { capitaliseName } from "@/lib/names";
 import { formatPhone } from "@/lib/phone";
 import { notify } from "@/lib/notifications";
@@ -83,10 +83,6 @@ export type ActionResult =
     };
 
 const ok: ActionResult = { ok: true };
-
-/** On the line of somebody put on a job after it started. */
-const LATE_TRAVEL_NOTE =
-  "Added after the job started: travel set to $0 — check it";
 const fail = (error: string): ActionResult => ({ ok: false, error });
 const failField = (field: "reason", error: string): ActionResult => ({
   ok: false,
@@ -1470,6 +1466,9 @@ export async function reviewChangeRequest(
  */
 const detailsSchema = z.object({
   jobId: z.string().min(1),
+  title: z.string().trim().optional(),
+  /** Picked from the directory; empty is "none". Planners only. */
+  repCompanyId: z.string().trim().optional(),
   siteId: z.string().trim().optional(),
   externalAssignmentId: z.string().trim().optional(),
   ticketNumber: z.string().trim().optional(),
@@ -1534,6 +1533,9 @@ export async function saveJobDetails(
   const current = await db.job.findUniqueOrThrow({
     where: { id: jobId },
     select: {
+      title: true,
+      repCompanyId: true,
+      repCompany: { select: { name: true } },
       siteId: true,
       externalAssignmentId: true,
       ticketNumber: true,
@@ -1565,6 +1567,9 @@ export async function saveJobDetails(
 
     const coerced = coerceField(field, wanted, job.timeZone);
     if ("error" in coerced) return fail(coerced.error);
+    if (field === "title" && coerced.value === null) {
+      return fail("A job needs a title.");
+    }
 
     const isEmpty = previous === null || previous === "";
     const decision = fieldAction({
@@ -1640,6 +1645,40 @@ export async function saveJobDetails(
     ) {
       scheduleTouched = true;
     }
+  }
+
+  // Who represented the work, learned later more often than not. A
+  // planner's decision rather than a detail a tech fills in, so it is not
+  // offered as a suggestion: whoever can plan the job sets it.
+  const wantedRep = parsed.data.repCompanyId;
+  if (wantedRep !== undefined && wantedRep !== (current.repCompanyId ?? "")) {
+    if (!canEditPlanned) {
+      return fail("Only somebody who plans this job can change its rep company.");
+    }
+    const repCompany = wantedRep
+      ? await db.repCompany.findUnique({
+          where: { id: wantedRep },
+          select: { name: true },
+        })
+      : null;
+    if (wantedRep && !repCompany) return fail("That rep company is not in the directory.");
+    await db.job.update({
+      where: { id: jobId },
+      data: { repCompanyId: wantedRep || null },
+    });
+    await recordAudit({
+      actorId: user.id,
+      entityType: "Job",
+      entityId: jobId,
+      jobId,
+      action: current.repCompanyId ? "field_edited" : "field_filled",
+      detail: {
+        field: "Rep company",
+        from: current.repCompany?.name ?? null,
+        to: repCompany?.name ?? null,
+      },
+    });
+    saved.push("Rep company");
   }
 
   if (saved.length === 0 && suggested.length === 0) {
@@ -2242,6 +2281,15 @@ export async function setJobTravel(formData: FormData): Promise<ActionResult> {
       where: { jobId, payOverridden: false },
       data: { travelReimbursement: amount === null ? null : travel },
     }),
+    // Travel has been looked at again, so the warning on anybody added after
+    // the start has been answered — and is wrong now besides.
+    db.$executeRaw`
+      UPDATE "JobAssignment"
+      SET "payRateNote" = NULLIF(BTRIM(REPLACE("payRateNote", ${LATE_TRAVEL_NOTE}, ''), ' ·'), '')
+      WHERE "jobId" = ${jobId}
+        AND "payOverridden" = false
+        AND "payRateNote" LIKE '%' || ${LATE_TRAVEL_NOTE} || '%'
+    `,
   ]);
 
   await recordAudit({
@@ -2574,7 +2622,13 @@ export async function clearAssignmentPay(
           payRate: true,
           budgetType: true,
           travelReimbursement: true,
-          project: { select: { defaultPayType: true, defaultPayRate: true } },
+          project: {
+            select: {
+              defaultPayType: true,
+              defaultPayRate: true,
+              travelReimbursement: true,
+            },
+          },
         },
       },
     },
@@ -2647,7 +2701,13 @@ export async function clearAssignmentPay(
           : resolved.source === "none"
             ? "No rate configured — defaulted to non-billable"
             : null,
-      travelReimbursement: resolved.travelReimbursement,
+      // Back on what everybody else on the job is on: the job's travel when
+      // it has one, as assignTech gives it.
+      travelReimbursement:
+        assignment.job.travelReimbursement?.toString() ??
+        resolved.travelReimbursement ??
+        assignment.job.project?.travelReimbursement?.toString() ??
+        null,
       payOverridden: false,
     },
   });

@@ -41,6 +41,12 @@ type Project = {
   code: string;
   /** The paying and rep company's names and IDs for it, to search by. */
   theirRefs: string;
+  /** The total tech budget its jobs start with, described; null for none. */
+  budget: string | null;
+  /** The blanks its jobs start with; null leaves it to the paying company. */
+  templateIds: string[] | null;
+  /** The rooms its jobs start with. */
+  locations: string[];
   clientId: string;
   clientName: string;
   repCompanyId: string | null;
@@ -199,6 +205,8 @@ export function JobForm({
     // set their own.
     payType: payChoice?.type ?? "",
     payRate: payChoice?.rate ?? "",
+    // Null follows the project; a choice — clearing included — is kept.
+    payChoice,
     travelChoice,
     dispatch,
     startMode,
@@ -328,8 +336,13 @@ export function JobForm({
 
   // Their defaults start ticked; once somebody touches the list their choice
   // stands, even if they then switch company and switch back.
+  // A project that chose its own blanks starts every job on those; otherwise
+  // the paying company's usual ones.
   const chosenTemplates =
     pickedTemplates ??
+    selectedProject?.templateIds?.filter((id) =>
+      clientTemplates.some((template) => template.id === id),
+    ) ??
     clientTemplates.filter((template) => template.isDefault).map((t) => t.id);
 
   // The same function the server allocates with, not a second copy of the
@@ -410,6 +423,12 @@ export function JobForm({
                 value: `$${Number(selectedProject.travelReimbursement).toFixed(2)} for everybody on it`,
               },
             ]
+          : []),
+        ...(selectedProject.budget
+          ? [{ label: "Budget", value: selectedProject.budget }]
+          : []),
+        ...(selectedProject.locations.length > 0
+          ? [{ label: "Locations", value: selectedProject.locations.join(", ") }]
           : []),
         ...(projectPay
           ? [
@@ -507,9 +526,11 @@ export function JobForm({
     );
     setBreakPaidChoice(values.breakPaidChoice ?? null);
     setPayChoice(
-      values.payType || values.payRate
-        ? { type: values.payType ?? "", rate: values.payRate ?? "" }
-        : null,
+      values.payChoice !== undefined
+        ? values.payChoice
+        : values.payType || values.payRate
+          ? { type: values.payType ?? "", rate: values.payRate ?? "" }
+          : null,
     );
     setTravelChoice(values.travelChoice ?? null);
     setDispatch(values.dispatch ?? []);
@@ -1106,13 +1127,24 @@ export function JobForm({
             >
               <Input
                 id="travelReimbursement"
-                name="travelReimbursement"
                 type="number"
                 step="0.01"
                 min={0}
                 value={travel}
                 onChange={(event) => setTravelChoice(event.target.value)}
                 placeholder="None"
+              />
+              {/* Cleared means none — said as 0, because an empty box reads
+                  on the server as "nobody decided" and the crew's lines would
+                  fall back to the project's travel after all. */}
+              <input
+                type="hidden"
+                name="travelReimbursement"
+                value={
+                  travelChoice === "" && selectedProject?.travelReimbursement
+                    ? "0"
+                    : travel
+                }
               />
             </Field>
             </div>

@@ -26,6 +26,8 @@ export type ProjectFormValues = {
   clientId: string;
   repCompanyId: string | null;
   customerId: string | null;
+  /** Jobs not yet signed off, which a company change can be applied to. */
+  openJobs: number;
   managerId: string | null;
   pmContactId: string | null;
   generalScopeOfWork: string | null;
@@ -76,6 +78,14 @@ export function ProjectForm({
 
   const key = project?.id ?? "new";
   const [clientId, setClientId] = useState(project?.clientId ?? "");
+  const [repCompanyId, setRepCompanyId] = useState(project?.repCompanyId ?? "");
+  // Asked only once a company actually changed, and only when there are jobs
+  // still open for it to reach.
+  const companyChanged =
+    Boolean(project) &&
+    (clientId !== project?.clientId ||
+      repCompanyId !== (project?.repCompanyId ?? ""));
+  const offerMove = companyChanged && (project?.openJobs ?? 0) > 0;
   const [pmContactId, setPmContactId] = useState(project?.pmContactId ?? "");
 
   return (
@@ -151,7 +161,8 @@ export function ProjectForm({
           <Select
             id={`prep-${key}`}
             name="repCompanyId"
-            defaultValue={project?.repCompanyId ?? ""}
+            value={repCompanyId}
+            onChange={(event) => setRepCompanyId(event.target.value)}
           >
             <option value="">— none —</option>
             {repCompanies.map((repCompany) => (
@@ -292,6 +303,31 @@ export function ProjectForm({
           hint="Lines you start with the tick become a checklist the crew can tick off on every job under this project."
         />
       </Field>
+
+      {offerMove ? (
+        <label className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm">
+          <input
+            type="checkbox"
+            name="applyToOpenJobs"
+            value="true"
+            className="mt-0.5 size-4 accent-[var(--color-primary)]"
+          />
+          <span>
+            Also move its {project!.openJobs} open job
+            {project!.openJobs === 1 ? "" : "s"} to the new company
+            <span className="block text-xs text-muted-foreground">
+              Left unticked, jobs already raised keep the company they were
+              raised for. A job that already has the paying company&rsquo;s
+              work order attached, or a week on it already paid, keeps the old
+              paying company either way.
+            </span>
+          </span>
+        </label>
+      ) : null}
+
+      {state?.ok && state.note ? (
+        <p className="text-sm text-muted-foreground">{state.note}</p>
+      ) : null}
 
       <FormStatus
         state={state as SaveState}

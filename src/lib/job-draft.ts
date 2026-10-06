@@ -47,6 +47,8 @@ export const jobDraftSchema = z
     breakPaidChoice: z.boolean().nullable(),
     payType: z.string(),
     payRate: z.string(),
+    /** What was chosen over the project's pay; null follows the project. */
+    payChoice: z.object({ type: z.string(), rate: z.string() }).nullable(),
     /** What was typed over the project's travel; null follows the project. */
     travelChoice: z.string().nullable(),
     /** Dispatch numbers for this job alone, as typed. */

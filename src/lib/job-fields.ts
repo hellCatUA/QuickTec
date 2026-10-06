@@ -130,6 +130,7 @@ export function fieldAction(input: {
  * code, the paperwork — stays on the job page, where it is read and added to.
  */
 export const DETAIL_FIELDS = [
+  "title",
   "siteId",
   "externalAssignmentId",
   "ticketNumber",

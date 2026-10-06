@@ -25,6 +25,10 @@ export type RevisitSource = {
   dispatch: number;
   /** MOD, POC and the rest of who is at the site. */
   contacts: number;
+  /** Paid from a budget, which is re-split between whoever goes back. */
+  budgeted: boolean;
+  /** The paying company's coordinator is recorded on it. */
+  coordinator: boolean;
   signOff: boolean;
 };
 
@@ -75,9 +79,12 @@ const COMES_ACROSS: {
   {
     label: "Dispatch numbers and the coordinator",
     detail: (source) =>
-      source.dispatch > 0
-        ? `${source.dispatch} number${source.dispatch === 1 ? "" : "s"} of its own.`
-        : "No numbers of its own; the coordinator comes across.",
+      [
+        source.dispatch > 0
+          ? `${source.dispatch} number${source.dispatch === 1 ? "" : "s"} of its own`
+          : "No numbers of its own",
+        source.coordinator ? "and the coordinator." : "and no coordinator recorded.",
+      ].join(", "),
   },
   {
     label: "Who is at the site",
@@ -284,8 +291,10 @@ export function RevisitPanel({
 
           {going.length > 0 ? (
             <p className="text-xs text-muted-foreground">
-              Each goes back on the rate and travel they were on. Change
-              anybody&rsquo;s on the revisit if this trip pays differently.
+              {source.budgeted
+                ? "The budget comes across and is shared between whoever goes back."
+                : "Each goes back on the rate they were on, and the job's travel."}{" "}
+              Change anybody&rsquo;s on the revisit if this trip pays differently.
             </p>
           ) : null}
         </fieldset>

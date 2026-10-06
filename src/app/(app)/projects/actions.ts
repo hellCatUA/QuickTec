@@ -10,9 +10,16 @@ import {
   minPhotosField,
   ruleNoteField,
 } from "@/lib/deliverable-settings";
-import { normaliseRuleSettings, PROJECT_DEFAULT_RULES } from "@/lib/deliverables";
+import {
+  MAX_LOCATION_NAME,
+  normaliseRuleSettings,
+  PROJECT_DEFAULT_RULES,
+} from "@/lib/deliverables";
+import { isLocationIcon } from "@/lib/location-icons";
 import { materialiseProjectRules } from "@/lib/job-deliverables";
+import { OPEN_LIFECYCLES } from "@/lib/job-status";
 import { notify } from "@/lib/notifications";
+import { budgetColumns, jobTerms, normaliseTerms, termsError } from "@/lib/budget";
 import { normaliseProjectCode, projectCodeError } from "@/lib/project-code";
 import { canOnProject } from "@/lib/scope";
 import {
@@ -29,7 +36,14 @@ import {
   ProjectStatus,
 } from "@prisma-client";
 
-export type ActionResult = { ok: true; id?: string } | { ok: false; error: string };
+export type ActionResult =
+  | {
+      ok: true;
+      id?: string;
+      /** Something the save did beyond saving, said to whoever pressed it. */
+      note?: string;
+    }
+  | { ok: false; error: string };
 
 const NOT_YOURS: ActionResult = {
   ok: false,
@@ -88,6 +102,105 @@ function codeTaken(code: string): ActionResult {
     ok: false,
     error: `${code} was just taken by another project. Each project needs its own ID.`,
   };
+}
+
+/** Every job not yet signed off, the ones a company change can still reach. */
+const STILL_OPEN = [...OPEN_LIFECYCLES, "DRAFT" as const];
+
+/**
+ * Puts a project's open jobs under its new paying or rep company.
+ *
+ * Only when asked: a job already raised belongs to whoever the work was for
+ * when it was raised, and by default stays there. Asked, the rep company
+ * moves on every open job. The paying company does not move on a job that
+ * already has their work order attached, or a week on it that payroll has
+ * approved — that job is the old company's on paper already — and the answer
+ * says how many were kept for that reason.
+ */
+async function moveOpenJobs(input: {
+  actorId: string;
+  projectId: string;
+  client: { id: string; from: string; to: string } | null;
+  repCompany: { id: string | null; from: string | null; to: string | null } | null;
+}): Promise<string> {
+  const jobs = await db.job.findMany({
+    where: { projectId: input.projectId, lifecycle: { in: STILL_OPEN } },
+    select: {
+      id: true,
+      documents: {
+        where: { jobDocumentKind: "CLIENT_WORK_ORDER" },
+        select: { id: true },
+      },
+      assignments: {
+        select: {
+          payrollLines: {
+            where: { payrollPeriod: { status: { not: "DRAFT" } } },
+            select: { id: true },
+          },
+        },
+      },
+    },
+  });
+
+  let movedClient = 0;
+  let keptClient = 0;
+  for (const job of jobs) {
+    const settled =
+      job.documents.length > 0 ||
+      job.assignments.some((assignment) => assignment.payrollLines.length > 0);
+    const moveClient = input.client !== null && !settled;
+    if (input.client && settled) keptClient++;
+    if (!moveClient && !input.repCompany) continue;
+
+    await db.job.update({
+      where: { id: job.id },
+      data: {
+        ...(moveClient ? { clientId: input.client!.id } : {}),
+        ...(input.repCompany ? { repCompanyId: input.repCompany.id } : {}),
+      },
+    });
+    if (moveClient) {
+      movedClient++;
+      await recordAudit({
+        actorId: input.actorId,
+        entityType: "Job",
+        entityId: job.id,
+        jobId: job.id,
+        action: "field_edited",
+        detail: { field: "Paying company", from: input.client!.from, to: input.client!.to },
+      });
+    }
+    if (input.repCompany) {
+      await recordAudit({
+        actorId: input.actorId,
+        entityType: "Job",
+        entityId: job.id,
+        jobId: job.id,
+        action: "field_edited",
+        detail: {
+          field: "Rep company",
+          from: input.repCompany.from,
+          to: input.repCompany.to,
+        },
+      });
+    }
+  }
+
+  const plural = (count: number) => `${count} open job${count === 1 ? "" : "s"}`;
+  const parts: string[] = [];
+  if (input.client) {
+    parts.push(`${plural(movedClient)} moved to ${input.client.to}`);
+    if (keptClient > 0) {
+      parts.push(
+        `${plural(keptClient)} kept ${input.client.from}: their work order is attached or a week on them is already paid`,
+      );
+    }
+  }
+  if (input.repCompany) {
+    parts.push(`rep company set on ${plural(jobs.length)}`);
+  }
+  for (const job of jobs) revalidatePath(`/jobs/${job.id}`);
+  return `${parts.join("; ")}.`.replace(/^./, (first) => first.toUpperCase());
 }
 
 /** How a membership role reads in a message. */
@@ -202,8 +315,12 @@ export async function saveProject(
       // takes its counter under — so a job raised between the count above
       // and this save cannot be numbered with an ID that is about to change.
       const saved = await db.$transaction(async (tx) => {
-        await tx.$queryRaw`SELECT "id" FROM "Project" WHERE "id" = ${id} FOR UPDATE`;
-        if (before.code !== data.code) {
+        // The code as it stands under the lock, not as it was read before:
+        // somebody else's save in between could have changed it.
+        const [locked] = await tx.$queryRaw<{ code: string }[]>`
+          SELECT "code" FROM "Project" WHERE "id" = ${id} FOR UPDATE
+        `;
+        if (locked && locked.code !== data.code) {
           const jobs = await tx.job.count({ where: { projectId: id } });
           if (jobs > 0) return { locked: jobs, project: null };
         }
@@ -241,6 +358,34 @@ export async function saveProject(
         detail: change,
       });
     }
+
+    // The blanks it chose were the old paying company's: a new job here
+    // starting on another company's sheet would be a form they never issued.
+    if (before.clientId !== data.clientId) {
+      await db.project.update({
+        where: { id },
+        data: { ownTemplates: false, templates: { set: [] } },
+      });
+    }
+
+    // Asked for: the jobs still being worked go to the new company too.
+    const moved =
+      companyChanges.length > 0 && formData.get("applyToOpenJobs") === "true"
+        ? await moveOpenJobs({
+            actorId: actor.id,
+            projectId: id,
+            client: before.clientId !== data.clientId
+              ? { id: data.clientId, from: before.client.name, to: client.name }
+              : null,
+            repCompany: (before.repCompanyId ?? null) !== (data.repCompanyId ?? null)
+              ? {
+                  id: data.repCompanyId ?? null,
+                  from: before.repCompany?.name ?? null,
+                  to: repCompany?.name ?? null,
+                }
+              : null,
+          })
+        : null;
 
     // Handing the project to someone new must also make them a member,
     // otherwise their PROJECT-scoped queries would not reach their own project.
@@ -291,7 +436,7 @@ export async function saveProject(
     revalidatePath(`/projects/${id}`);
     revalidatePath(`/projects/${id}/settings`);
     revalidatePath("/projects");
-    return { ok: true, id };
+    return { ok: true, id, note: moved ?? undefined };
   }
 
   // A new project starts with the standard deliverable rules so a planner has
@@ -701,6 +846,226 @@ export async function deleteDispatchContact(
   return { ok: true };
 }
 
+/**
+ * Corrects one of the project's numbers.
+ *
+ * Taken down from somebody speaking, often over a bad line; a wrong digit in
+ * the number every job here dials used to mean deleting the row and typing it
+ * all again. Jobs have been able to correct theirs; now the project can too.
+ */
+export async function updateDispatchContact(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  const parsed = contactSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) {
+    return { ok: false, error: z.prettifyError(parsed.error) };
+  }
+  const { projectId, ...data } = parsed.data;
+  const id = String(formData.get("id") ?? "");
+  const actor = await projectActor(projectId);
+  if (!actor) return NOT_YOURS;
+
+  if (!data.phone && !data.email) {
+    return { ok: false, error: "Give at least a phone number or an email." };
+  }
+
+  // This project's own number, and nothing else by that id.
+  const contact = await db.dispatchContact.findFirst({
+    where: { id, projectId },
+    select: { label: true },
+  });
+  if (!contact) return { ok: false, error: "That number is not on this project." };
+
+  await db.dispatchContact.update({ where: { id }, data });
+
+  await recordAudit({
+    actorId: actor.id,
+    entityType: "DispatchContact",
+    entityId: id,
+    projectId,
+    action: "project_updated",
+    detail: { field: "Dispatch contact", from: contact.label, to: data.label },
+  });
+
+  revalidatePath(`/projects/${projectId}`);
+  revalidatePath(`/projects/${projectId}/settings`);
+  return { ok: true, id };
+}
+
+// ---------------------------------------------------------------------------
+// The rooms every job here starts with
+// ---------------------------------------------------------------------------
+
+const projectLocationSchema = z.object({
+  projectId: z.string().min(1),
+  name: z
+    .string()
+    .transform((value) => value.replace(/\s+/g, " ").trim())
+    .pipe(
+      z
+        .string()
+        .min(1, "Name the location.")
+        .max(MAX_LOCATION_NAME, `Keep it to ${MAX_LOCATION_NAME} characters.`)
+        // The same rule as on a job, where it becomes a folder in the export.
+        .regex(/[\p{L}\p{N}]/u, "Give the location a name with a letter or a number in it."),
+    ),
+});
+
+/**
+ * Adds a room every job raised here will start with.
+ *
+ * Named as a job names one — the dictionary's name and icon when it knows
+ * it, the icon the picker suggested when it does not — because it is copied
+ * onto the job as if it had been added there.
+ */
+export async function addProjectLocation(formData: FormData): Promise<ActionResult> {
+  const parsed = projectLocationSchema.safeParse({
+    projectId: formData.get("projectId"),
+    name: formData.get("name") ?? "",
+  });
+  if (!parsed.success) return { ok: false, error: z.prettifyError(parsed.error) };
+  const { projectId } = parsed.data;
+  const actor = await projectActor(projectId);
+  if (!actor) return NOT_YOURS;
+
+  const known = await db.knownLocation.findFirst({
+    where: { label: { equals: parsed.data.name, mode: "insensitive" } },
+    select: { label: true, icon: true },
+  });
+  const name = known?.label ?? parsed.data.name;
+  const offered = formData.get("icon");
+  const icon = known
+    ? isLocationIcon(known.icon)
+      ? known.icon
+      : null
+    : typeof offered === "string" && isLocationIcon(offered)
+      ? offered
+      : null;
+
+  const existing = await db.projectLocation.findMany({
+    where: { projectId },
+    select: { name: true, order: true },
+  });
+  if (existing.some((one) => one.name.toLowerCase() === name.toLowerCase())) {
+    return { ok: false, error: `There is already a location called ${name}.` };
+  }
+
+  try {
+    await db.projectLocation.create({
+      data: {
+        projectId,
+        name,
+        icon,
+        order: Math.max(-1, ...existing.map((one) => one.order)) + 1,
+      },
+    });
+  } catch (error) {
+    // Two people naming the same room at once: the room is there.
+    if ((error as { code?: string })?.code !== "P2002") throw error;
+  }
+
+  await recordAudit({
+    actorId: actor.id,
+    entityType: "Project",
+    entityId: projectId,
+    projectId,
+    action: "project_job_settings_updated",
+    detail: { fields: "Locations", to: name },
+  });
+
+  revalidatePath(`/projects/${projectId}/settings`);
+  revalidatePath("/jobs/new");
+  return { ok: true };
+}
+
+/** Takes a room off the list. Jobs already raised keep theirs. */
+export async function removeProjectLocation(formData: FormData): Promise<ActionResult> {
+  const projectId = String(formData.get("projectId") ?? "");
+  const id = String(formData.get("id") ?? "");
+  const actor = await projectActor(projectId);
+  if (!actor) return NOT_YOURS;
+
+  const location = await db.projectLocation.findFirst({
+    where: { id, projectId },
+    select: { name: true },
+  });
+  if (!location) return { ok: false, error: "That location is not on this project." };
+  await db.projectLocation.delete({ where: { id } });
+
+  await recordAudit({
+    actorId: actor.id,
+    entityType: "Project",
+    entityId: projectId,
+    projectId,
+    action: "project_job_settings_updated",
+    detail: { fields: "Locations", from: location.name },
+  });
+
+  revalidatePath(`/projects/${projectId}/settings`);
+  revalidatePath("/jobs/new");
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Which company blanks a new job starts with
+// ---------------------------------------------------------------------------
+
+/**
+ * The paperwork every job here starts with.
+ *
+ * By default, the paying company's usual blanks — the ones it has ticked as
+ * defaults. A project whose work goes out on a different sheet, or on none,
+ * says so once here rather than on every job raised under it.
+ */
+export async function saveProjectTemplates(formData: FormData): Promise<ActionResult> {
+  const projectId = String(formData.get("projectId") ?? "");
+  const actor = await projectActor(projectId);
+  if (!actor) return NOT_YOURS;
+
+  const own = formData.get("own") === "true";
+  const wanted = formData.getAll("templateIds").map(String).filter(Boolean);
+
+  const project = await db.project.findUnique({
+    where: { id: projectId },
+    select: { clientId: true },
+  });
+  if (!project) return { ok: false, error: "Project not found." };
+
+  // Only the paying company's own blanks: another company's sheet on these
+  // jobs would be a form they never issued.
+  const allowed = own
+    ? await db.clientDocumentTemplate.findMany({
+        where: { id: { in: wanted }, clientId: project.clientId, active: true },
+        select: { id: true },
+      })
+    : [];
+
+  await db.project.update({
+    where: { id: projectId },
+    data: {
+      ownTemplates: own,
+      templates: { set: allowed.map((template) => ({ id: template.id })) },
+    },
+  });
+
+  await recordAudit({
+    actorId: actor.id,
+    entityType: "Project",
+    entityId: projectId,
+    projectId,
+    action: "project_job_settings_updated",
+    detail: {
+      fields: "Paperwork",
+      to: own ? `${allowed.length} chosen blank${allowed.length === 1 ? "" : "s"}` : "the company's usual",
+    },
+  });
+
+  revalidatePath(`/projects/${projectId}/settings`);
+  revalidatePath("/jobs/new");
+  return { ok: true };
+}
+
 // ---------------------------------------------------------------------------
 // The paying company's PM/PC — their side, not ours
 // ---------------------------------------------------------------------------
@@ -864,6 +1229,13 @@ const jobSettingsSchema = z.object({
   travelReimbursement: optionalMoney,
   defaultPayType: optionalText,
   defaultPayRate: optionalMoney,
+  // The budget every job starts with. Manual shares are per crew, so a
+  // project can only say even or by each tech's rate.
+  defaultBudgetType: optionalText,
+  defaultBudgetFlat: optionalMoney,
+  defaultBudgetFlatHours: optionalMoney,
+  defaultBudgetHourly: optionalMoney,
+  defaultBudgetSplit: z.enum(["EVEN", "BY_TECH_RATE"]).catch("EVEN"),
 });
 
 /**
@@ -913,6 +1285,11 @@ export async function saveProjectJobSettings(
       travelReimbursement: true,
       defaultPayType: true,
       defaultPayRate: true,
+      defaultBudgetType: true,
+      defaultBudgetFlat: true,
+      defaultBudgetFlatHours: true,
+      defaultBudgetHourly: true,
+      defaultBudgetSplit: true,
     },
   });
   if (!before) return { ok: false, error: "Project not found." };
@@ -920,10 +1297,43 @@ export async function saveProjectJobSettings(
   // Pay and travel are money, and setting money is its own permission. The
   // form leaves them out for anybody without it; what they posted anyway is
   // kept as it was rather than cleared.
-  if (!can(actor, "pay.edit_rates")) {
+  const canPay = can(actor, "pay.edit_rates");
+  if (!canPay) {
     input.travelReimbursement = before.travelReimbursement?.toString() ?? null;
     input.defaultPayType = before.defaultPayType;
     input.defaultPayRate = before.defaultPayRate?.toString() ?? null;
+  }
+
+  // The budget, in the job's own shape and through the same zero rule, so it
+  // lands on a job exactly as if it had been typed there.
+  const beforeBudget = budgetColumns(
+    before.defaultBudgetType
+      ? jobTerms({
+          budgetType: before.defaultBudgetType,
+          budgetFlat: before.defaultBudgetFlat,
+          budgetFlatHours: before.defaultBudgetFlatHours,
+          budgetHourly: before.defaultBudgetHourly,
+        })
+      : null,
+  );
+  let budget = beforeBudget;
+  let budgetSplit = before.defaultBudgetSplit;
+  if (canPay) {
+    if (input.defaultBudgetType && !(input.defaultBudgetType in PayType)) {
+      return { ok: false, error: "Unknown budget type." };
+    }
+    const terms = input.defaultBudgetType
+      ? normaliseTerms({
+          payType: input.defaultBudgetType as PayType,
+          flatCents: Math.round(Number(input.defaultBudgetFlat ?? 0) * 100),
+          flatMinutes: Math.round(Number(input.defaultBudgetFlatHours ?? 0) * 60),
+          hourlyCents: Math.round(Number(input.defaultBudgetHourly ?? 0) * 100),
+        })
+      : null;
+    const wrong = terms ? termsError(terms) : null;
+    if (wrong) return { ok: false, error: wrong };
+    budget = budgetColumns(terms);
+    budgetSplit = input.defaultBudgetSplit;
   }
 
   const project = await db.project.update({
@@ -934,6 +1344,11 @@ export async function saveProjectJobSettings(
       travelReimbursement: input.travelReimbursement,
       defaultPayType: (input.defaultPayType as PayType | null) ?? null,
       defaultPayRate: input.defaultPayRate,
+      defaultBudgetType: budget.type,
+      defaultBudgetFlat: budget.flat,
+      defaultBudgetFlatHours: budget.flatHours,
+      defaultBudgetHourly: budget.hourly,
+      defaultBudgetSplit: budgetSplit,
     },
     select: { id: true, name: true },
   });
@@ -945,6 +1360,13 @@ export async function saveProjectJobSettings(
       travelReimbursement: before.travelReimbursement,
       defaultPayType: before.defaultPayType,
       defaultPayRate: before.defaultPayRate,
+      defaultBudget: [
+        beforeBudget.type,
+        beforeBudget.flat,
+        beforeBudget.flatHours,
+        beforeBudget.hourly,
+        before.defaultBudgetSplit,
+      ].join(" "),
     },
     {
       breakPaid: input.breakPaid,
@@ -952,6 +1374,13 @@ export async function saveProjectJobSettings(
       travelReimbursement: input.travelReimbursement,
       defaultPayType: input.defaultPayType,
       defaultPayRate: input.defaultPayRate,
+      defaultBudget: [
+        budget.type,
+        budget.flat,
+        budget.flatHours,
+        budget.hourly,
+        budgetSplit,
+      ].join(" "),
     },
   );
 

@@ -48,6 +48,7 @@ export default async function RevisitPage({
       payRate: true,
       breakPaid: true,
       travelReimbursement: true,
+      pmContactId: true,
       budgetType: true,
       budgetFlat: true,
       budgetFlatHours: true,
@@ -141,17 +142,23 @@ export default async function RevisitPage({
               ]
                 .filter(Boolean)
                 .join(" · "),
-              pay: [
-                budget
-                  ? `Budget ${describeTerms(budget)}`
-                  : job.payType
-                    ? `${formatRate(job.payType, job.payRate?.toString() ?? "0")} for the crew`
-                    : "Each tech's own rate",
-                `breaks ${job.breakPaid ? "paid" : "unpaid"}`,
-                job.travelReimbursement
-                  ? `travel $${Number(job.travelReimbursement).toFixed(2)}`
-                  : "no travel",
-              ].join(" · "),
+              // The amounts are for whoever sets pay; anybody else planning
+              // the trip is told that it comes across, not what it is.
+              pay: can(user, "pay.edit_rates")
+                ? [
+                    budget
+                      ? `Budget ${describeTerms(budget)}`
+                      : job.payType
+                        ? `${formatRate(job.payType, job.payRate?.toString() ?? "0")} for the crew`
+                        : "Each tech's own rate",
+                    `breaks ${job.breakPaid ? "paid" : "unpaid"}`,
+                    job.travelReimbursement !== null
+                      ? `travel $${Number(job.travelReimbursement).toFixed(2)}`
+                      : "travel as each tech had it",
+                  ].join(" · ")
+                : `As the original has them · breaks ${job.breakPaid ? "paid" : "unpaid"}`,
+              budgeted: Boolean(budget),
+              coordinator: Boolean(job.pmContactId),
               dispatch: job._count.dispatchContacts,
               contacts: job._count.pointsOfContact,
               signOff: job.documents.length > 0,

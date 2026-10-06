@@ -18,7 +18,9 @@ import type { PayType } from "@prisma-client";
  * Travel reimbursement is intentionally absent from steps 4 and 5: it is money
  * the customer allocates for a particular job or project, so a tech never
  * carries a default. It is separate from mileage, which is a write-off record
- * rather than a payment.
+ * rather than a payment. A job's own travel — the project's, unless it was
+ * changed on the job — is everybody's on it and comes before any of this; a
+ * project rate row's travel only fills in on a job that has none.
  */
 
 export type ResolvedRate = {
@@ -135,6 +137,24 @@ export function jobRateNote(
     Number(job.payRate?.toString() ?? 0) ===
       Number(project.defaultPayRate?.toString() ?? 0);
   return fromProject ? "The project's rate" : "Set on this job";
+}
+
+/** On the line of somebody put on a job after it started. */
+export const LATE_TRAVEL_NOTE =
+  "Added after the job started: travel set to $0 — check it";
+
+/**
+ * A crew line's note without the late-travel warning, once whoever pays the
+ * job has looked at travel again — or on a revisit, where everybody is going
+ * from the start.
+ */
+export function withoutLateTravel(note: string | null): string | null {
+  if (!note) return note;
+  const rest = note
+    .split(" · ")
+    .filter((part) => part !== LATE_TRAVEL_NOTE)
+    .join(" · ");
+  return rest || null;
 }
 
 export { PAY_TYPE_LABEL, formatMoney, formatRate } from "@/lib/money";

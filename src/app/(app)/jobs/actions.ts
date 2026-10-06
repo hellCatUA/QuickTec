@@ -27,7 +27,7 @@ import {
   revisitAssignmentId,
 } from "@/lib/int-wo";
 import { notify } from "@/lib/notifications";
-import { jobRateNote, resolvePayRate } from "@/lib/pay-rates";
+import { jobRateNote, resolvePayRate, withoutLateTravel } from "@/lib/pay-rates";
 import { formatPhone } from "@/lib/phone";
 import { canOnJob, resolveJobSupervisor } from "@/lib/scope";
 import { timeZoneForZip } from "@/lib/us-regions";
@@ -89,6 +89,15 @@ export async function createJob(
           defaultJobTitle: true,
           defaultPayType: true,
           defaultPayRate: true,
+          defaultBudgetType: true,
+          defaultBudgetFlat: true,
+          defaultBudgetFlatHours: true,
+          defaultBudgetHourly: true,
+          defaultBudgetSplit: true,
+          locations: {
+            orderBy: [{ order: "asc" }, { createdAt: "asc" }],
+            select: { name: true, icon: true, order: true },
+          },
           pmContactId: true,
           deliverableRules: {
             where: { jobId: null },
@@ -315,6 +324,29 @@ export async function createJob(
         deliverableRules:
           jobRules.length > 0 ? { create: jobRules } : undefined,
         deliverablesOwn: jobRules.length > 0,
+        // The project's budget, as the job's own from the start. The crew's
+        // lines are split from it once they are on.
+        budgetType: project?.defaultBudgetType ?? null,
+        budgetFlat: project?.defaultBudgetType ? project.defaultBudgetFlat : null,
+        budgetFlatHours: project?.defaultBudgetType
+          ? project.defaultBudgetFlatHours
+          : null,
+        budgetHourly: project?.defaultBudgetType ? project.defaultBudgetHourly : null,
+        budgetSplit: project?.defaultBudgetType ? project.defaultBudgetSplit : "EVEN",
+        // The project's rooms, copied so the crew does not name the MDF
+        // again on every store — and so a later change to the project's list
+        // leaves this job's alone.
+        locations:
+          project && project.locations.length > 0
+            ? {
+                create: project.locations.map((location) => ({
+                  name: location.name,
+                  icon: location.icon,
+                  order: location.order,
+                  createdById: actor.id,
+                })),
+              }
+            : undefined,
         assignments: {
           create: rates.map(({ userId, rate, supervisorId }) => ({
             userId,
@@ -338,6 +370,10 @@ export async function createJob(
       select: { id: true, intWoId: true },
     });
   });
+
+  // A budget is shared between the crew, so their lines come from it rather
+  // than from whatever rate each of them resolved to above.
+  if (project?.defaultBudgetType && rates.length > 0) await resplitJob(job.id);
 
   // Numbers for this job alone. The project's own travel with every job under
   // it and are not copied here — two rows saying the same thing is how one of
@@ -485,6 +521,7 @@ export async function createRevisit(
       estimateMinutes: true,
       techsRequired: true,
       scopeOfWork: true,
+      noWorkOrder: true,
       breakPaid: true,
       payType: true,
       payRate: true,
@@ -648,8 +685,14 @@ export async function createRevisit(
       payFlatHours: entry.payFlatHours,
       payOverridden: entry.payOverridden,
       shareBasisPoints: entry.shareBasisPoints,
-      payRateNote: entry.payRateNote ?? "Carried from the original visit",
-      travelReimbursement: entry.travelReimbursement,
+      // Everybody going back goes from the start, so somebody who joined the
+      // original late is owed the travel this time, and the warning about it
+      // is about a different trip.
+      payRateNote:
+        withoutLateTravel(entry.payRateNote) ?? "Carried from the original visit",
+      travelReimbursement: entry.payOverridden
+        ? entry.travelReimbursement
+        : (parent.travelReimbursement ?? entry.travelReimbursement),
     })),
   );
 
@@ -667,7 +710,7 @@ export async function createRevisit(
       timeZone,
     });
 
-    return tx.job.create({
+    const created = await tx.job.create({
       data: {
         intWoId,
         intWoSequence: sequence,
@@ -694,6 +737,9 @@ export async function createRevisit(
         estimateMinutes: parent.estimateMinutes,
         techsRequired: parent.techsRequired,
         scopeOfWork: parent.scopeOfWork,
+        // The paying company issuing no work order for the job is true of
+        // its return trip too, until one arrives.
+        noWorkOrder: parent.noWorkOrder,
         breakPaid: parent.breakPaid,
         payType: parent.payType,
         payRate: parent.payRate,
@@ -762,11 +808,12 @@ export async function createRevisit(
       },
       select: { id: true, intWoId: true },
     });
+    // A budget is split between whoever is on the job, and the crew going
+    // back may not be the crew that went: their lines are re-split from it,
+    // in the same transaction so a revisit never exists with lines unsplit.
+    if (parent.budgetType) await resplitJob(created.id, tx);
+    return created;
   });
-
-  // A budget is split between whoever is on the job, and the crew going back
-  // may not be the crew that went: their lines are re-split from it.
-  if (parent.budgetType) await resplitJob(job.id);
 
   // Their sign-off blank, taken fresh from the company template the original
   // used rather than pointed at the original's own file.

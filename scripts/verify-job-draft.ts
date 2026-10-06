@@ -139,6 +139,35 @@ async function main() {
   const still = await db.jobDraft.findUnique({ where: { userId: boss.id } });
   check("and does not delete the old draft", Boolean(still), true);
 
+  // --- a company's usual numbers, all at once -------------------------------
+  // "Add them all" put on only the last of them: each addition was worked out
+  // from the list as it was before the press, and the last one won.
+  const netcom = await db.client.findUniqueOrThrow({ where: { name: "NetCom Sub" } });
+  await db.dispatchContact.deleteMany({ where: { clientId: netcom.id, label: "Field desk" } });
+  const second = await db.dispatchContact.create({
+    data: { clientId: netcom.id, label: "Field desk", phone: "800-555-0101", order: 1 },
+  });
+  // Offered from what the page was loaded with, so loaded again after it.
+  await page3.reload({ waitUntil: "load" });
+  await page3.waitForTimeout(1000);
+  await page3.getByRole("button", { name: "Start fresh" }).click();
+  await page3.getByRole("tab", { name: "Blank" }).click();
+  await page3.locator("#clientId").click();
+  await page3.locator("#clientId").fill("netcom");
+  await page3.getByRole("option", { name: /NetCom/ }).click();
+  await page3.locator("summary", { hasText: "Pay & dispatch" }).first().click();
+  await page3.waitForTimeout(300);
+  await page3.getByRole("button", { name: "Add them all" }).click();
+  await page3.waitForTimeout(300);
+  check(
+    "Add them all adds every one of the company's numbers",
+    await page3.locator('input[name="dispatchLabel"]').evaluateAll((inputs) =>
+      inputs.map((input) => (input as HTMLInputElement).value).sort(),
+    ),
+    ["Field desk", "NOC"],
+  );
+  await db.dispatchContact.delete({ where: { id: second.id } });
+
   await browser.close();
   await db.jobDraft.deleteMany({ where: { userId: boss.id } });
   await db.$disconnect();

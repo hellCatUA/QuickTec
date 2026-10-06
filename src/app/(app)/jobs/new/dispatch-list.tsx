@@ -1,6 +1,7 @@
 "use client";
 
 import { Plus, X } from "lucide-react";
+import type * as React from "react";
 import { Button } from "@/components/ui/button";
 import { capitaliseName } from "@/lib/names";
 import { formatPhoneAsTyped } from "@/lib/phone";
@@ -56,10 +57,10 @@ export function DispatchList({
    * they used to vanish with the tab, and with a refused submit.
    */
   contacts: DraftContact[];
-  onChange: (next: DraftContact[]) => void;
+  /** A state setter, so several changes in one go each see the last. */
+  onChange: React.Dispatch<React.SetStateAction<DraftContact[]>>;
 }) {
-  const setContacts = (next: (current: DraftContact[]) => DraftContact[]) =>
-    onChange(next(contacts));
+  const setContacts = onChange;
 
   /**
    * Offered rather than added on their own.

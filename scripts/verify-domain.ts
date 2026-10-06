@@ -937,7 +937,9 @@ async function main() {
     check(
       "the page covers what the job was raised as, and nothing collected since",
       [...DETAIL_FIELDS].join(","),
-      "siteId,externalAssignmentId,ticketNumber,incNumber,scheduledStart,estimateMinutes,techsRequired,scopeOfWork",
+      // The title is a decision made when the job was raised, and could not
+      // be corrected anywhere until it was added here.
+      "title,siteId,externalAssignmentId,ticketNumber,incNumber,scheduledStart,estimateMinutes,techsRequired,scopeOfWork",
     );
     // The release code is not on it: that is collected on site at checkout,
     // not a decision somebody made when the job was raised.

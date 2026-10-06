@@ -12,6 +12,11 @@ export type JobSettingsValues = {
   travelReimbursement: string | null;
   defaultPayType: string | null;
   defaultPayRate: string | null;
+  defaultBudgetType: string | null;
+  defaultBudgetFlat: string | null;
+  defaultBudgetFlatHours: string | null;
+  defaultBudgetHourly: string | null;
+  defaultBudgetSplit: string;
 };
 
 /**
@@ -39,6 +44,9 @@ export function JobSettingsForm({
     FormData
   >(async (prev, formData) => saveProjectJobSettings(prev, formData), null);
   const [payType, setPayType] = useState(project.defaultPayType ?? "");
+  const [budgetType, setBudgetType] = useState(project.defaultBudgetType ?? "");
+  const hasFlat = budgetType === "FLAT" || budgetType === "FLAT_HOURLY";
+  const hasHourly = budgetType === "HOURLY" || budgetType === "FLAT_HOURLY";
 
   return (
     <form action={formAction} className="flex flex-col gap-4">
@@ -147,6 +155,80 @@ export function JobSettingsForm({
                   placeholder="Leave blank for none"
                 />
               </Field>
+
+              {/* The job's own budget, in its own shape: the crew's lines are
+                  split from it, and a job can still change it under Schedule
+                  & Budget. */}
+              <div className="flex flex-col gap-3 border-t border-border pt-3 sm:col-span-2">
+                <Field
+                  label="Total tech budget"
+                  htmlFor="defaultBudgetType"
+                  hint="Every job raised here starts with this budget, shared by its crew. With one set, it decides what the crew is paid rather than the rate above."
+                >
+                  <Select
+                    id="defaultBudgetType"
+                    name="defaultBudgetType"
+                    value={budgetType}
+                    onChange={(event) => setBudgetType(event.target.value)}
+                  >
+                    <option value="">— none —</option>
+                    <option value="HOURLY">Hourly</option>
+                    <option value="FLAT">Flat</option>
+                    <option value="FLAT_HOURLY">Flat + Hourly</option>
+                    <option value="NON_BILLABLE">Non-billable</option>
+                  </Select>
+                </Field>
+                {budgetType && budgetType !== "NON_BILLABLE" ? (
+                  <div className="grid gap-4 sm:grid-cols-3">
+                    {hasFlat ? (
+                      <Field label="Flat amount ($)" htmlFor="defaultBudgetFlat">
+                        <Input
+                          id="defaultBudgetFlat"
+                          name="defaultBudgetFlat"
+                          type="number"
+                          step="0.01"
+                          min={0}
+                          defaultValue={project.defaultBudgetFlat ?? ""}
+                        />
+                      </Field>
+                    ) : null}
+                    {budgetType === "FLAT_HOURLY" ? (
+                      <Field label="Hours it covers" htmlFor="defaultBudgetFlatHours">
+                        <Input
+                          id="defaultBudgetFlatHours"
+                          name="defaultBudgetFlatHours"
+                          type="number"
+                          step="0.25"
+                          min={0}
+                          defaultValue={project.defaultBudgetFlatHours ?? ""}
+                        />
+                      </Field>
+                    ) : null}
+                    {hasHourly ? (
+                      <Field label="Hourly ($)" htmlFor="defaultBudgetHourly">
+                        <Input
+                          id="defaultBudgetHourly"
+                          name="defaultBudgetHourly"
+                          type="number"
+                          step="0.01"
+                          min={0}
+                          defaultValue={project.defaultBudgetHourly ?? ""}
+                        />
+                      </Field>
+                    ) : null}
+                    <Field label="Shared" htmlFor="defaultBudgetSplit">
+                      <Select
+                        id="defaultBudgetSplit"
+                        name="defaultBudgetSplit"
+                        defaultValue={project.defaultBudgetSplit}
+                      >
+                        <option value="EVEN">Evenly</option>
+                        <option value="BY_TECH_RATE">By each tech&rsquo;s rate</option>
+                      </Select>
+                    </Field>
+                  </div>
+                ) : null}
+              </div>
             </>
           ) : null}
         </div>

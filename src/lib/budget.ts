@@ -135,6 +135,33 @@ export function termsColumns(terms: Terms): {
   };
 }
 
+/**
+ * A budget's columns, as a job or a project holds them: budgetType and the
+ * three amounts, each only where the type has it. Null terms clear them.
+ */
+export function budgetColumns(terms: Terms | null): {
+  type: PayType | null;
+  flat: string | null;
+  flatHours: string | null;
+  hourly: string | null;
+} {
+  if (!terms) return { type: null, flat: null, flatHours: null, hourly: null };
+  const money = (cents: number) => (cents / 100).toFixed(2);
+  return {
+    type: terms.payType,
+    flat:
+      terms.payType === "FLAT" || terms.payType === "FLAT_HOURLY"
+        ? money(terms.flatCents)
+        : null,
+    flatHours:
+      terms.payType === "FLAT_HOURLY" ? (terms.flatMinutes / 60).toFixed(2) : null,
+    hourly:
+      terms.payType === "HOURLY" || terms.payType === "FLAT_HOURLY"
+        ? money(terms.hourlyCents)
+        : null,
+  };
+}
+
 function hoursToMinutes(hours: Moneyish): number {
   return Math.round(Number(hours.toString()) * 60);
 }

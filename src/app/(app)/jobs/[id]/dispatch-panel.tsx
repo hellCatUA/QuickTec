@@ -8,6 +8,11 @@ import { capitaliseName } from "@/lib/names";
 import { Field, Input } from "@/components/ui/field";
 import { RowMenu } from "@/components/ui/row-menu";
 import {
+  addDispatchContact,
+  deleteDispatchContact,
+  updateDispatchContact,
+} from "../../projects/actions";
+import {
   addJobDispatchContact,
   deleteJobDispatchContact,
   updateJobDispatchContact,
@@ -48,12 +53,18 @@ const BLANK: Draft = { label: "", name: "", phone: "", email: "", note: "" };
  * deleting the row and typing all of it again.
  */
 export function DispatchPanel({
-  jobId,
+  jobId = "",
+  projectId,
   contacts,
   canEdit,
   canAdd = canEdit,
 }: {
-  jobId: string;
+  jobId?: string;
+  /**
+   * A project's own numbers rather than a job's: the same list, corrected and
+   * removed the same way, kept on the project for every job under it.
+   */
+  projectId?: string;
   contacts: DispatchEntry[];
   /** Change or remove a number somebody else is already dialling. */
   canEdit: boolean;
@@ -65,12 +76,17 @@ export function DispatchPanel({
   const [error, setError] = React.useState<string | null>(null);
   const [pending, startTransition] = React.useTransition();
 
+  const owner = projectId ? "project" : "job";
+
   function remove(id: string) {
     setError(null);
     startTransition(async () => {
       const formData = new FormData();
       formData.set("id", id);
-      const result = await deleteJobDispatchContact(formData);
+      if (projectId) formData.set("projectId", projectId);
+      const result = projectId
+        ? await deleteDispatchContact(formData)
+        : await deleteJobDispatchContact(formData);
       if (!result.ok) setError(result.error);
     });
   }
@@ -79,7 +95,7 @@ export function DispatchPanel({
     <div className="flex flex-col gap-2">
       {contacts.length === 0 && open !== "new" ? (
         <p className="text-sm text-muted-foreground">
-          No numbers on this job yet.
+          No numbers on this {owner} yet.
         </p>
       ) : null}
 
@@ -88,6 +104,7 @@ export function DispatchPanel({
           <ContactForm
             key={contact.id}
             jobId={jobId}
+            projectId={projectId}
             existing={contact}
             pending={pending}
             onError={setError}
@@ -139,7 +156,7 @@ export function DispatchPanel({
                   {
                     label: "Delete",
                     tone: "danger",
-                    confirm: `Remove ${contact.label} from this job?`,
+                    confirm: `Remove ${contact.label} from this ${owner}?`,
                     onSelect: () => remove(contact.id),
                   },
                 ]}
@@ -161,6 +178,7 @@ export function DispatchPanel({
         open === "new" ? (
           <ContactForm
             jobId={jobId}
+            projectId={projectId}
             pending={pending}
             onError={setError}
             onDone={() => setOpen(null)}
@@ -183,12 +201,14 @@ export function DispatchPanel({
 
 function ContactForm({
   jobId,
+  projectId,
   existing,
   pending,
   onDone,
   onError,
 }: {
   jobId: string;
+  projectId?: string;
   existing?: DispatchEntry;
   pending: boolean;
   onDone: () => void;
@@ -223,15 +243,21 @@ function ContactForm({
         formData.set(field, value);
       }
 
+      if (projectId) formData.set("projectId", projectId);
+
       if (existing) {
         formData.set("id", existing.id);
-        const result = await updateJobDispatchContact(null, formData);
+        const result = projectId
+          ? await updateDispatchContact(null, formData)
+          : await updateJobDispatchContact(null, formData);
         if (!result.ok) return onError(result.error);
         return onDone();
       }
 
       formData.set("jobId", jobId);
-      const result = await addJobDispatchContact(null, formData);
+      const result = projectId
+        ? await addDispatchContact(null, formData)
+        : await addJobDispatchContact(null, formData);
       if (!result.ok) return onError(result.error);
       onDone();
     });

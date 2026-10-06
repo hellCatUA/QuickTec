@@ -45,6 +45,8 @@ export default async function EditDetailsPage({
       projectId: true,
       createdById: true,
       siteId: true,
+      repCompanyId: true,
+      repCompany: { select: { id: true, name: true } },
       externalAssignmentId: true,
       ticketNumber: true,
       incNumber: true,
@@ -116,6 +118,12 @@ export default async function EditDetailsPage({
     customerName: site.customer.name,
   }));
 
+  const repCompanies = await db.repCompany.findMany({
+    where: { active: true },
+    orderBy: { name: "asc" },
+    select: { id: true, name: true },
+  });
+
   const pending: Record<string, string> = {};
   for (const request of job.changeRequests) {
     pending[request.fieldPath] = request.newValue ?? "(cleared)";
@@ -150,6 +158,7 @@ export default async function EditDetailsPage({
           <DetailsForm
             jobId={job.id}
             values={{
+              title: job.title,
               siteId: job.siteId,
               externalAssignmentId: job.externalAssignmentId ?? "",
               ticketNumber: job.ticketNumber ?? "",
@@ -157,6 +166,16 @@ export default async function EditDetailsPage({
               scopeOfWork: job.scopeOfWork ?? "",
             }}
             sites={options}
+            repCompanyId={job.repCompanyId ?? ""}
+            // One since retired from the directory still shows as what the
+            // job holds rather than as none.
+            repCompanies={[
+              ...repCompanies,
+              ...(job.repCompany &&
+              !repCompanies.some((one) => one.id === job.repCompany!.id)
+                ? [job.repCompany]
+                : []),
+            ]}
             canEditPlanned={canEditPlanned}
             canFillMissing={canFillMissing}
             canSuggest={canSuggest}
