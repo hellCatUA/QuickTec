@@ -7,6 +7,7 @@ import { db } from "@/lib/db";
 import { flag, optionalMoney, optionalText, phoneText } from "@/lib/form";
 import { minPhotosField, ruleNoteField } from "@/lib/deliverable-settings";
 import { normaliseRuleSettings, PROJECT_DEFAULT_RULES } from "@/lib/deliverables";
+import { materialiseProjectRules } from "@/lib/job-deliverables";
 import { notify } from "@/lib/notifications";
 import { requirePermission } from "@/lib/session";
 import { DeliverableCategory, PayType, ProjectRole, ProjectStatus } from "@prisma-client";
@@ -373,6 +374,8 @@ export async function saveDeliverableRule(
   }
 
   const { projectId, category, remove, ...rule } = parsed.data;
+
+  await materialiseProjectRules(projectId);
 
   // A project may hold several custom sections, so the category alone no
   // longer names one of them.

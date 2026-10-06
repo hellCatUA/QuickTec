@@ -644,6 +644,39 @@ async function main() {
   );
   await db.knownLocation.deleteMany({ where: { label: "Kitchen" } });
 
+  // --- the project's sheet is the one its jobs follow ------------------------
+  // A project nothing has been saved on answers with the defaults. Its
+  // settings used to show every section off all the same, and saving one
+  // section there turned the rest off for every job under it.
+  const projectId = (
+    await db.job.findUniqueOrThrow({ where: { id: jobId }, select: { projectId: true } })
+  ).projectId!;
+  await db.deliverableRequirement.deleteMany({ where: { projectId, jobId: null } });
+  await planner.goto(`${BASE}/projects/${projectId}/settings`, { waitUntil: "load" });
+  check(
+    "a project with nothing saved shows the sections its jobs actually ask for",
+    await planner
+      .locator('[data-section="PRE_INSTALL"]')
+      .getByRole("checkbox", { name: "Pre-Install" })
+      .isChecked(),
+    true,
+  );
+  await planner
+    .locator('[data-section="ISSUES"]')
+    .getByRole("checkbox", { name: "Issues" })
+    .check({ force: true });
+  await planner.waitForTimeout(1500);
+  const projectRules = await db.deliverableRequirement.findMany({
+    where: { projectId, jobId: null, enabled: true },
+    select: { category: true },
+  });
+  check(
+    "and switching one on there keeps the ones it already asked for",
+    projectRules.map((rule) => rule.category).sort().join(","),
+    "ISSUES,POST_INSTALL,PRE_INSTALL",
+  );
+  await db.deliverableRequirement.deleteMany({ where: { projectId, jobId: null } });
+
   // The archive keeps each room's photos together.
   const zip = await planner.request.get(`${BASE}/api/jobs/${jobId}/export/zip`);
   check(

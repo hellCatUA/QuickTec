@@ -19,7 +19,7 @@ export const DEFAULT_LOCATIONS: { label: string; icon: string }[] = [
   { label: "Server room", icon: "server-cog" },
   { label: "Electrical room", icon: "zap" },
   { label: "Electrical panel", icon: "inspection-panel" },
-  { label: "Elevator machine room", icon: "cog" },
+  { label: "Elevator machine room", icon: "elevator-machine" },
   { label: "Elevator cab", icon: "arrow-up-down" },
   { label: "Elevator pit", icon: "arrow-down-to-line" },
   { label: "Fire alarm panel", icon: "siren" },

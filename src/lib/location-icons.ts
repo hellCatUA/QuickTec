@@ -28,6 +28,7 @@ import {
   Coffee,
   Cog,
   Computer,
+  createLucideIcon,
   ConciergeBell,
   Construction,
   Container,
@@ -137,6 +138,20 @@ import {
  * draws the plain pin.
  */
 
+/**
+ * An elevator's traction machine — the sheave whose ropes carry the car on
+ * one side and the counterweight on the other. The set has no elevator of
+ * its own, and the machine room is the one place a tech needs to find among
+ * the other plant rooms; drawn on the same grid and stroke as the rest.
+ */
+const ElevatorMachine = createLucideIcon("elevator-machine", [
+  ["circle", { cx: "12", cy: "6", r: "4", key: "sheave" }],
+  ["path", { d: "M8 6v9", key: "car-rope" }],
+  ["path", { d: "M16 6v5", key: "weight-rope" }],
+  ["rect", { x: "4", y: "15", width: "8", height: "7", rx: "1", key: "car" }],
+  ["rect", { x: "14", y: "11", width: "4", height: "7", rx: "1", key: "weight" }],
+]);
+
 export type IconEntry = {
   /** Stored on the location. Stable: renaming one orphans every row using it. */
   key: string;
@@ -220,7 +235,8 @@ export const LOCATION_ICONS: IconEntry[] = [
     ["droplets", Droplets, "Plumbing", "water plumbing sprinkler riser leak"],
     ["gauge", Gauge, "Meter", "meter gauge utility reading"],
     ["arrow-up-down", ArrowUpDown, "Elevator", "elevator lift cab car hoistway"],
-    ["cog", Cog, "Machine room", "machine room elevator motor equipment"],
+    ["elevator-machine", ElevatorMachine, "Elevator machine", "elevator lift machine control room traction hoist sheave motor"],
+    ["cog", Cog, "Machine room", "machine room motor equipment gear"],
     ["wrench", Wrench, "Utility room", "utility maintenance janitor workshop"],
     ["toolbox", Toolbox, "Tools", "tools maintenance shop storage"],
   ]),

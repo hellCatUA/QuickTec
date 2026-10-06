@@ -18,7 +18,11 @@ import { siteLabel } from "@/lib/address";
 import { getCompanySettings } from "@/lib/company";
 import { usDateTimeInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
-import { deliverableLabel } from "@/lib/deliverables";
+import {
+  deliverableLabel,
+  resolveDeliverableRules,
+  RULE_SELECT,
+} from "@/lib/deliverables";
 import { formatRate } from "@/lib/money";
 import { can, getSessionUser } from "@/lib/session";
 import { loadTimeline } from "@/lib/timeline-data";
@@ -100,9 +104,8 @@ export default async function ProjectPage({
         },
       },
       deliverableRules: {
-        where: { jobId: null, enabled: true },
-        orderBy: { order: "asc" },
-        select: { category: true, customLabel: true, required: true },
+        where: { jobId: null },
+        select: RULE_SELECT,
       },
       dispatchContacts: {
         orderBy: { order: "asc" },
@@ -166,7 +169,11 @@ export default async function ProjectPage({
     };
   });
 
-  const required = project.deliverableRules.filter((rule) => rule.required);
+  // What its jobs answer to — the defaults while nothing has been saved — so
+  // this says what the settings page and every job under it say.
+  const required = resolveDeliverableRules([], project.deliverableRules).filter(
+    (rule) => rule.required,
+  );
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4">

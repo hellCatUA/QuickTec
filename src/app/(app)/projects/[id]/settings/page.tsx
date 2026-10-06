@@ -9,7 +9,7 @@ import {
 import { DeliverableRules } from "@/components/deliverable-rules";
 import { PageHeader } from "@/components/ui/page-header";
 import { db } from "@/lib/db";
-import { RULE_SELECT, ruleSheet } from "@/lib/deliverables";
+import { effectiveRules, RULE_SELECT } from "@/lib/deliverables";
 import { can, getSessionUser } from "@/lib/session";
 import { ProjectForm } from "../../project-form";
 import { saveDeliverableRule } from "../../actions";
@@ -128,8 +128,10 @@ export default async function ProjectSettingsPage({
 
   if (!project) notFound();
 
-  // Categories with no stored row yet still need a switch to turn on.
-  const rules = ruleSheet(project.deliverableRules);
+  // The sheet its jobs answer to, sections that are off included. A project
+  // nothing has been saved on yet shows the defaults its jobs are using, not
+  // a list with everything off that no job actually follows.
+  const rules = effectiveRules([], project.deliverableRules);
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4">

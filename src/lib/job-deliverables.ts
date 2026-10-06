@@ -154,6 +154,38 @@ export async function removeJobCustomRule(
   });
 }
 
+/**
+ * Gives a project rows for every section before one of them is changed.
+ *
+ * The same trap a job has: a project with no rows answers with the defaults,
+ * and rows win outright once there are any — so saving one section alone
+ * would turn every other one off for every job under it.
+ */
+export async function materialiseProjectRules(projectId: string): Promise<void> {
+  const stored = await db.deliverableRequirement.findMany({
+    where: { projectId, jobId: null },
+    select: RULE_SELECT,
+  });
+  if (stored.length > 0) return;
+
+  await db.deliverableRequirement.createMany({
+    data: effectiveRules([], []).map((rule) => ({
+      projectId,
+      category: rule.category,
+      customLabel: rule.customLabel,
+      enabled: rule.enabled,
+      required: rule.required,
+      requiresPhoto: rule.requiresPhoto,
+      requiresText: rule.requiresText,
+      minPhotos: rule.minPhotos,
+      perLocation: rule.perLocation,
+      note: rule.note,
+      order: rule.order,
+    })),
+    skipDuplicates: true,
+  });
+}
+
 /** What an upload is counted with. */
 export const PROGRESS_ITEM_SELECT = {
   category: true,
