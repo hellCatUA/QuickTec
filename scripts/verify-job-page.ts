@@ -761,11 +761,17 @@ async function main() {
     ),
     true,
   );
+  // Field, location, then a number — no folder per tech; who took each photo
+  // is in the index beside them.
   check(
-    "filed under the tech who took it",
-    entries.some((name) => name.startsWith(`Post Install/${tech.name}/`)),
-    true,
+    "photos are numbered, not filed under the tech who took them",
+    entries.some((name) => name.includes(`/${tech.name}/`)) ||
+      !entries
+        .filter((name) => name.startsWith("Post Install/") && name.endsWith(".jpg"))
+        .every((name) => /\/\d{3,}\.jpg$/.test(name)),
+    false,
   );
+  check("with an index saying who took each", entries.includes("Photo index.csv"), true);
   check(
     "both signatures are in it",
     entries.filter((name) => name.startsWith("Signatures/")).length,
