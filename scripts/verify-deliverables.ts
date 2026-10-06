@@ -65,9 +65,12 @@ async function main() {
   });
   const assignment = await db.jobAssignment.findFirstOrThrow({
     where: { userId: tech.id, job: { title: "Elevator phone line" } },
-    select: { id: true, jobId: true, isLead: true },
+    select: { id: true, jobId: true, isLead: true, job: { select: { lifecycle: true } } },
   });
   const jobId = assignment.jobId;
+  // Before checkout, as a job is while the crew is photographing it. The job
+  // page suite checks it out and leaves it that way.
+  await db.job.update({ where: { id: jobId }, data: { lifecycle: "SCHEDULED" } });
   const url = `${BASE}/jobs/${jobId}`;
 
   // --- a clean slate ---------------------------------------------------------
@@ -677,6 +680,59 @@ async function main() {
   );
   await db.deliverableRequirement.deleteMany({ where: { projectId, jobId: null } });
 
+  // --- a job follows its project until it is changed for itself --------------
+  await db.deliverableRequirement.deleteMany({ where: { jobId } });
+  await planner.goto(`${BASE}/projects/${projectId}/settings`, { waitUntil: "load" });
+  await planner.getByRole("button", { name: "Set up Post Install" }).click();
+  await planner.getByRole("button", { name: "One more photo" }).click();
+  await planner.waitForTimeout(1500);
+  check(
+    "a change on the project reaches a job that follows it",
+    (await missingRequiredDeliverables(jobId)).includes("Post Install (0 of 2)"),
+    true,
+  );
+
+  await openDeliverables(planner, url);
+  await planner.getByRole("button", { name: /Sections/ }).click();
+  check(
+    "and the job says whose sections it is following",
+    await planner.getByText(/Following the project’s sections/).isVisible(),
+    true,
+  );
+  await planner
+    .locator('[data-section="ISSUES"]')
+    .getByRole("checkbox", { name: "Issues" })
+    .check({ force: true });
+  await planner.waitForTimeout(1500);
+  check(
+    "changing a section on the job gives it its own copy",
+    await planner.getByText(/Changed for this job/).isVisible(),
+    true,
+  );
+  await db.deliverableRequirement.updateMany({
+    where: { projectId, jobId: null, category: "POST_INSTALL" },
+    data: { minPhotos: 3 },
+  });
+  check(
+    "which the project's later edits do not reach",
+    (await missingRequiredDeliverables(jobId)).includes("Post Install (0 of 2)"),
+    true,
+  );
+
+  await planner.getByRole("button", { name: "Use the project’s again" }).click();
+  await planner.waitForTimeout(1500);
+  check(
+    "until it is handed back to the project",
+    await db.deliverableRequirement.count({ where: { jobId } }),
+    0,
+  );
+  check(
+    "and asks for what the project asks for now",
+    (await missingRequiredDeliverables(jobId)).includes("Post Install (0 of 3)"),
+    true,
+  );
+  await db.deliverableRequirement.deleteMany({ where: { projectId, jobId: null } });
+
   // The archive keeps each room's photos together.
   const zip = await planner.request.get(`${BASE}/api/jobs/${jobId}/export/zip`);
   check(
@@ -698,6 +754,10 @@ async function main() {
   await db.jobAssignment.update({
     where: { id: assignment.id },
     data: { isLead: assignment.isLead },
+  });
+  await db.job.update({
+    where: { id: jobId },
+    data: { lifecycle: assignment.job.lifecycle },
   });
   await db.$disconnect();
 

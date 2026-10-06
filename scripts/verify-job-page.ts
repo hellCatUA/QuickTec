@@ -613,6 +613,13 @@ async function main() {
   check("outcome stored", finished.outcome, "COMPLETED");
   check("release code stored", finished.releaseCode, "RLS-4417");
   check("job is pending review", finished.lifecycle, "PENDING_REVIEW");
+  // It was following the project's sheet; checked out, it keeps the one it
+  // was checked out against, whatever the project says later.
+  check(
+    "and keeps the sections it was checked out against",
+    (await db.deliverableRequirement.count({ where: { jobId: assignment.jobId } })) > 0,
+    true,
+  );
 
   const signatures = await db.signature.findMany({
     where: { jobId: assignment.jobId },

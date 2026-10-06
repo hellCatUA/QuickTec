@@ -7,17 +7,26 @@ import {
   type ProgressItem,
   RULE_SELECT,
 } from "@/lib/deliverables";
-import type { DeliverableCategory } from "@prisma-client";
+import type { DeliverableCategory, JobLifecycle } from "@prisma-client";
 
 /**
  * A job's own deliverable rules.
  *
- * A job created under a project is given a copy of the project's sheet at
- * creation, so later edits to the project cannot change what work already
- * scheduled demands. A job raised without a project has no rows at all and
- * falls back to the ad-hoc defaults — which is where the care is needed: job
- * rows win outright over the fallback, so writing a single one would turn every
- * other section off. The whole sheet is written before the first edit lands.
+ * A job follows its project's sheet live — change the project's sections and
+ * every open job under it asks for the change — until somebody changes the
+ * sections on that job. Then it gets rows of its own, a copy of the sheet with
+ * the change made, and the project stops reaching it until somebody hands it
+ * back with "Use the project's again". A job raised without a project follows
+ * the ad-hoc defaults the same way.
+ *
+ * At checkout the job's sheet is written down whatever it was following, so a
+ * job that is finished keeps asking for what it was checked out against: the
+ * review, the banner and anything that recounts it later cannot be moved by a
+ * project edit made a month afterwards.
+ *
+ * The care needed is the same at every write: rows win outright over what the
+ * job would otherwise follow, so writing a single one would turn every other
+ * section off. The whole sheet is written before the first edit lands.
  */
 
 export type JobRuleInput = {
@@ -184,6 +193,49 @@ export async function materialiseProjectRules(projectId: string): Promise<void> 
     })),
     skipDuplicates: true,
   });
+}
+
+/**
+ * The stages in which a job still follows its project. From checkout on, what
+ * it asks for is what it was checked out against.
+ */
+export const FOLLOWING_LIFECYCLES: readonly JobLifecycle[] = [
+  "DRAFT",
+  "PENDING_APPROVAL",
+  "SCHEDULED",
+  "IN_PROGRESS",
+];
+
+/** Writes down what a job is answering to now, as it is checked out. */
+export async function freezeJobRules(jobId: string): Promise<void> {
+  await materialiseJobRules(jobId);
+}
+
+/**
+ * Hands a changed job back to its project: its own rows go, and it follows
+ * the project's sheet again from now on. Refused once the job is past
+ * checkout, and for a job with no project to follow.
+ */
+export async function followProjectRules(
+  jobId: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const job = await db.job.findUnique({
+    where: { id: jobId },
+    select: { projectId: true, lifecycle: true },
+  });
+  if (!job) return { ok: false, error: "Job not found." };
+  if (!job.projectId) {
+    return { ok: false, error: "This job has no project to follow." };
+  }
+  if (!FOLLOWING_LIFECYCLES.includes(job.lifecycle)) {
+    return {
+      ok: false,
+      error:
+        "This job has been checked out; it keeps what it was checked out against.",
+    };
+  }
+  await db.deliverableRequirement.deleteMany({ where: { jobId } });
+  return { ok: true };
 }
 
 /** What an upload is counted with. */

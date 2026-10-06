@@ -70,6 +70,7 @@ import { ScopeOfWork } from "./scope-of-work";
 import { SentBack } from "./sent-back";
 import { SiteNumberPrompt } from "./site-number";
 import { Deliverables } from "./deliverables";
+import { FOLLOWING_LIFECYCLES } from "@/lib/job-deliverables";
 import { DeliverableSections } from "./deliverable-sections";
 import { ExportsPanel } from "./exports-panel";
 import { Reimbursements } from "./reimbursements";
@@ -1375,6 +1376,16 @@ export default async function JobPage({
                     rules={sections}
                     canRequire={canManageJob}
                     locations={jobLocations}
+                    source={
+                      !FOLLOWING_LIFECYCLES.includes(job.lifecycle)
+                        ? "checkout"
+                        : job.deliverableRules.length > 0
+                          ? "own"
+                          : job.project
+                            ? "project"
+                            : "defaults"
+                    }
+                    hasProject={Boolean(job.project)}
                   />
                 ) : null}
               </CardHeader>

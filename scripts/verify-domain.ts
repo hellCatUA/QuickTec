@@ -2642,6 +2642,41 @@ async function main() {
     ruleNoteField.parse("   "),
     null,
   );
+  // --- a job following its project ---------------------------------------------
+  const { sameRules } = await import("@/lib/deliverables");
+  const projectSheet = [section({}), section({ category: "POST_INSTALL" })];
+  check(
+    "a checklist opened and left as it was is the project's, not a change",
+    sameRules(effectiveRules([], projectSheet), projectSheet),
+    true,
+  );
+  check(
+    "a section switched on is a change",
+    sameRules(
+      [...projectSheet, section({ category: "ISSUES", required: false })],
+      projectSheet,
+    ),
+    false,
+  );
+  check(
+    "so is one more photo",
+    sameRules([section({ minPhotos: 2 }), section({ category: "POST_INSTALL" })], projectSheet),
+    false,
+  );
+  check(
+    "and so is a note for the crew",
+    sameRules([section({ note: "Labels too" }), section({ category: "POST_INSTALL" })], projectSheet),
+    false,
+  );
+  check(
+    "but how a section that is off was left is not",
+    sameRules(
+      [...projectSheet, section({ category: "ISSUES", enabled: false, requiresText: true })],
+      projectSheet,
+    ),
+    true,
+  );
+
   // --- the icons a location is drawn with ------------------------------------
   const { LOCATION_ICONS, locationIcon, searchIcons } = await import(
     "@/lib/location-icons"

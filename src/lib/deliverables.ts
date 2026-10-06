@@ -209,6 +209,32 @@ export function normaliseRuleSettings<
   };
 }
 
+/**
+ * Whether two sheets ask a job for the same things.
+ *
+ * Only the sections that are on count, and only what decides checkout or
+ * what the crew is told: a section that is off asks for nothing, however
+ * its switches were left.
+ */
+export function sameRules(a: StoredRule[], b: StoredRule[]): boolean {
+  const signature = (rules: StoredRule[]) =>
+    JSON.stringify(
+      ruleSheet(rules)
+        .filter((rule) => rule.enabled)
+        .map((rule) => [
+          ruleKey(rule),
+          rule.required,
+          rule.requiresPhoto,
+          rule.requiresText,
+          rule.minPhotos,
+          rule.perLocation,
+          rule.note ?? "",
+        ])
+        .sort((x, y) => String(x[0]).localeCompare(String(y[0]))),
+    );
+  return signature(a) === signature(b);
+}
+
 /** What identifies a row: the category, or for a custom section its name. */
 export function ruleKey(rule: {
   category: DeliverableCategory;

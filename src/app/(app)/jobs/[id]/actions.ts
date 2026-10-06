@@ -32,6 +32,8 @@ import { describeReason, punchReasonProblem } from "@/lib/punch-reasons";
 import {
   jobRuleSheet,
   removeJobCustomRule,
+  followProjectRules,
+  freezeJobRules,
   missingRequiredDeliverables,
   saveJobRule,
 } from "@/lib/job-deliverables";
@@ -317,7 +319,7 @@ async function performClockOut(
     return fail("Clock-out has to be after clock-in.");
   }
 
-  await db.$transaction(async (tx) => {
+  const lastOut = await db.$transaction(async (tx) => {
     // A break left running would otherwise keep accruing past the visit and
     // quietly eat into the tech's paid time.
     for (const entry of visit.breaks) {
@@ -346,7 +348,12 @@ async function performClockOut(
         data: { lifecycle: "PENDING_REVIEW" },
       });
     }
+    return stillOpen === 0;
   });
+
+  // The last one out has checked the job out: from here on it asks for what
+  // it was checked out against, whatever its project says later.
+  if (lastOut) await freezeJobRules(jobId);
 
   await recordAudit({
     actorId: user.id,
@@ -420,6 +427,9 @@ export async function completeCheckout(
       );
     }
   }
+
+  // Checked out against this sheet; it stays the sheet the job is read by.
+  await freezeJobRules(jobId);
 
   await db.job.update({
     where: { id: jobId },
@@ -2748,6 +2758,46 @@ const jobRuleSchema = z.object({
   /** Custom sections are taken away rather than switched off. */
   remove: flag,
 });
+
+/**
+ * Hands a job whose sections were changed back to its project's sheet. From
+ * then on it asks for whatever the project asks for, edits included.
+ *
+ * The same people who may change what a section demands: it changes what
+ * checkout will refuse.
+ */
+export async function returnToProjectDeliverables(
+  formData: FormData,
+): Promise<ActionResult> {
+  const jobId = String(formData.get("jobId") ?? "");
+  const context = await loadContext(jobId);
+  if (!context) return fail("Job not found.");
+  const { user, job } = context;
+
+  const mayRequire =
+    job.isLead || (await canOnJob(user, "job.edit_planned_fields", job));
+  if (!mayRequire) {
+    return fail(
+      "Only a supervisor or the job's lead can change what this job has to produce.",
+    );
+  }
+
+  const result = await followProjectRules(jobId);
+  if (!result.ok) return fail(result.error);
+
+  await recordAudit({
+    actorId: user.id,
+    entityType: "Job",
+    entityId: jobId,
+    jobId,
+    projectId: job.projectId,
+    action: "updated",
+    detail: { field: "Deliverables", to: "the project's" },
+  });
+
+  touch(jobId);
+  return ok;
+}
 
 /**
  * Switches a deliverable section on or off for this job alone.

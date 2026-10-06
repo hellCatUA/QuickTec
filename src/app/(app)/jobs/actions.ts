@@ -8,7 +8,12 @@ import { syncJobInBackground } from "@/lib/calendar/sync";
 import { getCompanySettings } from "@/lib/company";
 import { parseDatetimeLocalInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
-import { RULE_SELECT, ruleSheet } from "@/lib/deliverables";
+import {
+  effectiveRules,
+  RULE_SELECT,
+  ruleSheet,
+  sameRules,
+} from "@/lib/deliverables";
 import { flag, optionalText } from "@/lib/form";
 import { jobDraftSchema } from "@/lib/job-draft";
 import { copyTemplateToJob, storeDocument } from "@/lib/job-documents";
@@ -187,14 +192,15 @@ export async function createJob(
   // What the job will have to produce. The checklist on the form starts from
   // the project's sheet, so an untouched one means "as the project says" —
   // which is the project's own rows, not an empty list.
+  // A job follows its project's sheet — or the ad-hoc defaults — and is only
+  // given rows of its own when the planner changed the checklist on the form.
+  // A checklist opened and left as it was is not a change, and should not cut
+  // the job off from the project's later edits.
+  const following = effectiveRules([], project?.deliverableRules ?? []);
   const jobRules = (
-    input.deliverableRules
+    input.deliverableRules && !sameRules(input.deliverableRules, following)
       ? ruleSheet(input.deliverableRules)
-      : project && project.deliverableRules.length > 0
-        ? ruleSheet(project.deliverableRules)
-        : // Nothing chosen and no project sheet to copy: no rows, so the job
-          // keeps following the ad-hoc defaults.
-          []
+      : []
   ).map((rule) => ({
     category: rule.category,
     customLabel: rule.category === "CUSTOM" ? rule.customLabel : null,
@@ -482,7 +488,12 @@ export async function createRevisit(
         select: { sourceTemplateId: true },
       },
       createdById: true,
-      project: { select: { managerId: true } },
+      project: {
+        select: {
+          managerId: true,
+          deliverableRules: { where: { jobId: null }, select: RULE_SELECT },
+        },
+      },
       // Who worked it, so the same people can be sent back without being
       // looked up and re-added by hand.
       assignments: {
@@ -698,7 +709,15 @@ export async function createRevisit(
         // Unticked leaves the revisit with no rows of its own, which is how a
         // job says "whatever the project asks for" rather than "nothing".
         deliverableRules:
-          carries.has("deliverables") && parent.deliverableRules.length > 0
+          // Only what the original had changed for itself. One that was
+          // following the project — or was checked out against the very
+          // sheet the project has now — sends the revisit back following it.
+          carries.has("deliverables") &&
+          parent.deliverableRules.length > 0 &&
+          !sameRules(
+            parent.deliverableRules,
+            effectiveRules([], parent.project?.deliverableRules ?? []),
+          )
             ? {
                 create: parent.deliverableRules.map((rule) => ({
                   category: rule.category,
