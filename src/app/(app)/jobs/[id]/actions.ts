@@ -25,7 +25,11 @@ import {
   toDatetimeLocalInZone,
 } from "@/lib/datetime";
 import { db } from "@/lib/db";
-import { minPhotosField, ruleNoteField } from "@/lib/deliverable-settings";
+import {
+  customLabelField,
+  minPhotosField,
+  ruleNoteField,
+} from "@/lib/deliverable-settings";
 import { deliverableLabel, normaliseRuleSettings } from "@/lib/deliverables";
 import { flag, optionalText } from "@/lib/form";
 import { describeReason, punchReasonProblem } from "@/lib/punch-reasons";
@@ -34,6 +38,7 @@ import {
   removeJobCustomRule,
   followProjectRules,
   freezeJobRules,
+  unfreezeJobRules,
   missingRequiredDeliverables,
   saveJobRule,
 } from "@/lib/job-deliverables";
@@ -256,6 +261,10 @@ export async function clockIn(formData: FormData): Promise<ActionResult> {
     return visit;
   });
 
+  // Somebody is on it again after the last clock-out: what it asks for goes
+  // back to what it was before checkout fixed it.
+  await unfreezeJobRules(jobId);
+
   // The event has been sitting on the planned time; it now knows when the day
   // actually started, which is what a supervisor's day view is for.
   syncJobInBackground(jobId);
@@ -423,13 +432,11 @@ export async function completeCheckout(
     );
     if (!canOverride) {
       return fail(
-        `Still missing: ${missing.join(", ")}. A manager has to approve closing without these.`,
+        `Still missing: ${missing.join("; ")}. A manager has to approve closing without these.`,
       );
     }
   }
 
-  // Checked out against this sheet; it stays the sheet the job is read by.
-  await freezeJobRules(jobId);
 
   await db.job.update({
     where: { id: jobId },
@@ -464,7 +471,7 @@ export async function completeCheckout(
     detail: {
       outcome,
       noReleaseCode,
-      overrodeMissing: missing.length > 0 ? missing.join(", ") : null,
+      overrodeMissing: missing.length > 0 ? missing.join("; ") : null,
     },
   });
 
@@ -2747,7 +2754,7 @@ export async function deleteJobTicket(
 const jobRuleSchema = z.object({
   jobId: z.string().min(1),
   category: z.enum(DeliverableCategory),
-  customLabel: optionalText,
+  customLabel: customLabelField,
   enabled: flag,
   required: flag,
   requiresPhoto: flag,
@@ -2845,9 +2852,14 @@ export async function saveJobDeliverableRule(
         item.category === category &&
         (category !== "CUSTOM" || item.customLabel === rule.customLabel),
     );
-    if (rule.required) {
+    if (rule.required && !current?.required) {
       return fail(
         "Only a supervisor or the job's lead can make a section required.",
+      );
+    }
+    if (current?.required && !rule.required) {
+      return fail(
+        "Only a supervisor or the job's lead can make a required section optional.",
       );
     }
     if (remove || (current?.enabled && !rule.enabled)) {
@@ -3029,13 +3041,15 @@ export async function removeVisit(formData: FormData): Promise<ActionResult> {
     where: { assignment: { jobId: job.id } },
   });
   if (left === 0) {
-    await db.job.updateMany({
+    const reopened = await db.job.updateMany({
       where: {
         id: job.id,
         lifecycle: { in: ["IN_PROGRESS", "PENDING_REVIEW"] },
       },
       data: { lifecycle: "SCHEDULED" },
     });
+    // Not checked out after all: its sheet is no longer fixed either.
+    if (reopened.count > 0) await unfreezeJobRules(job.id);
   }
 
   syncJobInBackground(job.id);
@@ -3157,10 +3171,13 @@ export async function addVisit(formData: FormData): Promise<ActionResult> {
   });
 
   // The job has time on it now, so it is no longer waiting to be started.
-  await db.job.updateMany({
+  const moved = await db.job.updateMany({
     where: { id: job.id, lifecycle: { in: ["SCHEDULED", "DRAFT"] } },
     data: { lifecycle: snappedOut ? "PENDING_REVIEW" : "IN_PROGRESS" },
   });
+  // Written in after the fact as a finished day: checked out, so its sheet
+  // is fixed the same as a clock-out would have fixed it.
+  if (moved.count > 0 && snappedOut) await freezeJobRules(job.id);
 
   await recordAudit({
     actorId: user.id,

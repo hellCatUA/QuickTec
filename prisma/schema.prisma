@@ -992,6 +992,15 @@ model Job {
   deliverableRules DeliverableRequirement[]
   deliverables     DeliverableItem[]
   locations        JobLocation[]
+
+  /// The job's deliverable sheet was changed on the job itself, so its rows
+  /// are its own and the project's later edits do not reach it. False while it
+  /// follows its project (no rows) — and for rows written only to freeze it.
+  deliverablesOwn      Boolean   @default(false)
+  /// When the sheet was written down at checkout. Set, the job is read by
+  /// that sheet whatever the project says later; cleared if the job is worked
+  /// again.
+  deliverablesFrozenAt DateTime?
   reimbursements   Reimbursement[]
   /// Ticket numbers after the first. `ticketNumber` above is the primary one
   /// — the field people mean when they say "the ticket".

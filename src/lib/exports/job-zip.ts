@@ -1,6 +1,11 @@
 import { ZipArchive, type ArchiverError } from "archiver";
-import { DELIVERABLE_META } from "@/lib/deliverables";
+import { usDateTimeInZone } from "@/lib/datetime";
 import { exportStem, type JobExportData } from "@/lib/exports/job-data";
+import {
+  extensionFor,
+  planDeliverableExport,
+  safeSegment,
+} from "@/lib/exports/photo-layout";
 import { buildTextReport } from "@/lib/exports/text-report";
 import { buildWorkOrderPdf } from "@/lib/exports/work-order-pdf";
 import { absolutePath, fileExists } from "@/lib/storage";
@@ -8,30 +13,29 @@ import { absolutePath, fileExists } from "@/lib/storage";
 /**
  * The archive handed to the client.
  *
- *   Pre-Install/<tech>/IMG_0001.jpg
- *   Post Install/<tech>/…
- *   Sign Off/…
+ *   Pre-Install/MDF/001.jpg
+ *   Pre-Install/IDF/001.jpg
+ *   Post Install/001.jpg
+ *   Return Labels/notes.txt
+ *   Photo index.csv
  *   Signatures/MOD-Dana Reyes-Signature.png
  *   Receipts/…
  *   <Company> INT WO/2607-PRJ12-0001.pdf
  *   887766-Report.txt
  *
- * Photos sit under their section and then under whoever took them, so a
- * two-tech job does not turn into an unsorted pile. The archive is streamed
- * rather than assembled in memory: thirty photos at 2400px is comfortably more
- * than a Node buffer should be holding while a phone downloads it over the
- * VPN.
+ * Photos sit under their field and then their location, numbered in the
+ * order they reached the job — see planDeliverableExport. Who took each one,
+ * when, and what the phone called it is in the photo index. The archive is
+ * streamed rather than assembled in memory: thirty photos at 2400px is
+ * comfortably more than a Node buffer should be holding while a phone
+ * downloads it over the VPN.
  */
 
-/** Strips anything that would upset a filesystem, on any platform. */
-function safeName(name: string): string {
-  return (
-    name
-      .replace(/[/\\?%*:|"<>\x00-\x1f]/g, "-")
-      .replace(/\s+/g, " ")
-      .trim()
-      .slice(0, 120) || "untitled"
-  );
+const safeName = safeSegment;
+
+/** One CSV cell, quoted when it has to be. */
+function csvCell(value: string): string {
+  return /[",\n\r]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
 }
 
 export function zipFileName(data: JobExportData): string {
@@ -115,38 +119,56 @@ export async function buildJobZip(data: JobExportData) {
     return next;
   }
 
-  for (const item of job.deliverables) {
-    const section =
-      item.category === "CUSTOM" && item.customLabel
-        ? safeName(item.customLabel)
-        : DELIVERABLE_META[item.category].label;
-    // Before and after at the MDF sit together, and apart from the IDF's.
-    const folder = item.location
-      ? `${section}/${safeName(item.location.name)}`
-      : section;
+  // Field, location, photo. The top-level names the rest of the archive uses
+  // are kept out of reach of a custom field that happens to share one.
+  const { photos, notes } = planDeliverableExport(
+    job.deliverables,
+    data.rules,
+    job.locations,
+    [
+      "Signatures",
+      "Receipts",
+      workOrderFolder,
+      reportFileName(data),
+      "Photo index.csv",
+      "MISSING FILES.txt",
+    ],
+  );
+  const attachments = new Map(
+    job.deliverables.flatMap((item) =>
+      item.attachments.map((attachment) => [attachment.id, attachment] as const),
+    ),
+  );
 
-    const tech = item.assignment?.user.name
-      ? safeName(item.assignment.user.name)
-      : "Unattributed";
-
-    // Serial numbers and return tracking are text, not files, so they would
-    // otherwise vanish from the archive entirely.
-    if (item.textValue?.trim()) {
-      archive.append(`${item.textValue.trim()}\n`, {
-        name: uniquePath(`${folder}/${tech}/notes.txt`),
-      });
+  const index: string[][] = [
+    ["File", "Field", "Location", "Uploaded by", "Taken", "Original name"],
+  ];
+  for (const photo of photos) {
+    const attachment = attachments.get(photo.attachmentId)!;
+    index.push([
+      photo.path,
+      photo.field,
+      photo.location ?? "",
+      attachment.uploadedBy?.name ?? "",
+      usDateTimeInZone(attachment.capturedAt ?? attachment.createdAt, data.timeZone),
+      attachment.originalName,
+    ]);
+    if (!(await fileExists(attachment.storagePath))) {
+      missing.push(photo.path);
+      continue;
     }
-
-    for (const attachment of item.attachments) {
-      const path = `${folder}/${tech}/${safeName(attachment.originalName)}`;
-      if (!(await fileExists(attachment.storagePath))) {
-        missing.push(path);
-        continue;
-      }
-      archive.file(absolutePath(attachment.storagePath), {
-        name: uniquePath(path),
-      });
-    }
+    archive.file(absolutePath(attachment.storagePath), {
+      name: uniquePath(photo.path),
+    });
+  }
+  for (const note of notes) {
+    archive.append(note.text, { name: uniquePath(note.path) });
+  }
+  if (photos.length > 0) {
+    archive.append(
+      index.map((row) => row.map(csvCell).join(",")).join("\r\n") + "\r\n",
+      { name: "Photo index.csv" },
+    );
   }
 
   for (const signature of job.signatures) {
@@ -167,7 +189,8 @@ export async function buildJobZip(data: JobExportData) {
   for (const entry of job.reimbursements) {
     for (const attachment of entry.attachments) {
       const label = safeName(entry.label ?? entry.type);
-      const path = `Receipts/${label} $${Number(entry.amount).toFixed(2)}.jpg`;
+      // The extension the bytes are: a PDF receipt is not a .jpg.
+      const path = `Receipts/${label} $${Number(entry.amount).toFixed(2)}.${extensionFor(attachment.mimeType)}`;
       if (!(await fileExists(attachment.storagePath))) {
         missing.push(path);
         continue;

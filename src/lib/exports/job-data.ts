@@ -2,6 +2,7 @@ import { siteLabel } from "@/lib/address";
 import { getCompanySettings } from "@/lib/company";
 import { isoDateInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
+import { resolveDeliverableRules, RULE_SELECT } from "@/lib/deliverables";
 import { jobSpan } from "@/lib/time-tracking";
 
 /**
@@ -54,7 +55,12 @@ export async function loadJobForExport(jobId: string) {
         },
       },
       project: {
-        select: { name: true, externalProjectId: true, generalScopeOfWork: true },
+        select: {
+          name: true,
+          externalProjectId: true,
+          generalScopeOfWork: true,
+          deliverableRules: { where: { jobId: null }, select: RULE_SELECT },
+        },
       },
       pointsOfContact: {
         orderBy: [{ type: "asc" }, { order: "asc" }],
@@ -76,24 +82,37 @@ export async function loadJobForExport(jobId: string) {
         },
       },
       deliverables: {
-        orderBy: { createdAt: "asc" },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         select: {
           id: true,
           category: true,
           customLabel: true,
           textValue: true,
+          createdAt: true,
+          locationId: true,
           location: { select: { name: true } },
           assignment: { select: { user: { select: { name: true } } } },
           attachments: {
+            // In the order they reached the job, which is the order they are
+            // numbered in the archive.
+            orderBy: [{ createdAt: "asc" }, { id: "asc" }],
             select: {
               id: true,
               storagePath: true,
               originalName: true,
               mimeType: true,
+              createdAt: true,
+              capturedAt: true,
+              uploadedBy: { select: { name: true } },
             },
           },
         },
       },
+      locations: {
+        orderBy: [{ order: "asc" }, { createdAt: "asc" }],
+        select: { id: true, name: true },
+      },
+      deliverableRules: { where: { projectId: null }, select: RULE_SELECT },
       reimbursements: {
         orderBy: { createdAt: "asc" },
         select: {
@@ -137,6 +156,11 @@ export async function loadJobForExport(jobId: string) {
     company,
     timeZone,
     span,
+    /** The fields the job asks for, in the order they are shown. */
+    rules: resolveDeliverableRules(
+      job.deliverableRules,
+      job.project?.deliverableRules ?? [],
+    ),
     siteName: siteLabel(job.customer.code, job.site.siteNumber),
     /**
      * The date the work happened, not the date of the export. A job finished

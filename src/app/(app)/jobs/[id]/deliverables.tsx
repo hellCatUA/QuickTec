@@ -25,6 +25,7 @@ import {
   itemMatchesRule,
   MAX_LOCATION_NAME,
   progressCount,
+  ruleKey,
 } from "@/lib/deliverables";
 import { searchIcons } from "@/lib/location-icons";
 import { prepareForUpload } from "@/lib/photo-upload";
@@ -131,10 +132,11 @@ function useWide(): boolean {
 
 /** How many tiles of a size fit across the strip, measured rather than guessed. */
 function useFit(tile: number, gap: number) {
-  const ref = React.useRef<HTMLDivElement>(null);
+  // A callback ref rather than an effect on mount: the strip only appears
+  // once the first photo lands, after this component has long been mounted.
+  const [node, setNode] = React.useState<HTMLDivElement | null>(null);
   const [fit, setFit] = React.useState(5);
   React.useEffect(() => {
-    const node = ref.current;
     if (!node) return;
     const measure = () =>
       setFit(Math.max(2, Math.floor((node.clientWidth + gap) / (tile + gap))));
@@ -142,8 +144,8 @@ function useFit(tile: number, gap: number) {
     const observer = new ResizeObserver(measure);
     observer.observe(node);
     return () => observer.disconnect();
-  }, [tile, gap]);
-  return [ref, fit] as const;
+  }, [node, tile, gap]);
+  return [setNode, fit] as const;
 }
 
 export function Deliverables({
@@ -180,10 +182,39 @@ export function Deliverables({
   const [error, setError] = React.useState<string | null>(null);
   const scrollTo = React.useRef<string | null>(null);
 
+  // Photos in a field the job no longer asks for — switched off, or a custom
+  // section taken away after they were taken — are still the job's and still
+  // go out in the export. Shown after the rest, to be moved where they belong,
+  // rather than vanishing from the page.
+  const orphaned = React.useMemo(() => {
+    const asked = new Set(rules.map((rule) => ruleKey(rule)));
+    const extra: DeliverableRule[] = [];
+    for (const item of items) {
+      const key = ruleKey(item);
+      if (asked.has(key) || extra.some((rule) => ruleKey(rule) === key)) continue;
+      extra.push({
+        category: item.category,
+        customLabel: item.category === "CUSTOM" ? item.customLabel : null,
+        enabled: true,
+        required: false,
+        requiresPhoto: true,
+        requiresText: items.some(
+          (other) => ruleKey(other) === key && Boolean(other.textValue?.trim()),
+        ),
+        minPhotos: 1,
+        perLocation: false,
+        note: null,
+        order: 99,
+      });
+    }
+    return extra;
+  }, [rules, items]);
+  const orphanKeys = new Set(orphaned.map((rule) => ruleKey(rule)));
+
   const progress = React.useMemo(
     () =>
       fieldProgress(
-        rules,
+        [...rules, ...orphaned],
         items.map((item) => ({
           category: item.category,
           customLabel: item.customLabel,
@@ -193,7 +224,7 @@ export function Deliverables({
         })),
         locations,
       ),
-    [rules, items, locations],
+    [rules, orphaned, items, locations],
   );
 
   const remaining = photoLimit - photoCount;
@@ -232,7 +263,7 @@ export function Deliverables({
 
   // Sections a photo can be moved to: any that takes photos or files.
   const targets: MoveTarget[] = progress
-    .filter((field) => field.rule.requiresPhoto)
+    .filter((field) => field.rule.requiresPhoto && !orphanKeys.has(field.key))
     .map((field) => ({
       key: field.key,
       label: field.label,
@@ -267,7 +298,8 @@ export function Deliverables({
           known={known}
           isOpen={open.includes(field.key)}
           adding={adding?.key === field.key ? adding : null}
-          canUpload={canUpload}
+          orphaned={orphanKeys.has(field.key)}
+          canUpload={canUpload && !orphanKeys.has(field.key)}
           canRemoveLocations={canRemoveLocations}
           remaining={remaining}
           onToggle={() => toggle(field.key)}
@@ -423,6 +455,7 @@ function Section({
   known,
   isOpen,
   adding,
+  orphaned,
   canUpload,
   canRemoveLocations,
   remaining,
@@ -440,6 +473,8 @@ function Section({
   known: KnownLocationView[];
   isOpen: boolean;
   adding: Adding | null;
+  /** Holds photos but is no longer a field this job asks for. */
+  orphaned: boolean;
   canUpload: boolean;
   canRemoveLocations: boolean;
   remaining: number;
@@ -466,10 +501,14 @@ function Section({
   // Shown folded only while the section still needs something: once it is
   // done the crew has read it, and it is one more line between them and the
   // next section.
-  const note =
-    rule.note && (isOpen || field.state !== "done") ? (
-      <Note text={rule.note} />
-    ) : null;
+  const note = orphaned ? (
+    <p className="text-xs text-muted-foreground">
+      No longer a field on this job. These still go out in the export — open a
+      photo to move it to a field the job asks for.
+    </p>
+  ) : rule.note && (isOpen || field.state !== "done") ? (
+    <Note text={rule.note} />
+  ) : null;
 
   // Nothing in it and nowhere to tap through to: just its name and Add.
   if (empty && !byLocation && !isOpen) {
@@ -1105,18 +1144,7 @@ function AddLocation({
       </div>
 
       <div className="flex max-h-64 flex-col overflow-y-auto">
-        {custom ? (
-          <button
-            type="button"
-            disabled={pending}
-            onClick={() => add(custom, customIcon)}
-            className={cn(row, "text-primary")}
-          >
-            <Plus className="size-4 shrink-0" />
-            <span className="min-w-0 flex-1 truncate">Add “{custom}”</span>
-            <LocationIcon icon={customIcon} className="size-4 text-muted-foreground" />
-          </button>
-        ) : null}
+
         {already ? (
           <p className="px-2.5 py-2 text-sm text-muted-foreground">
             “{already}” is already on this job.
@@ -1134,6 +1162,18 @@ function AddLocation({
             <span className="min-w-0 flex-1 truncate">{entry.label}</span>
           </button>
         ))}
+        {custom ? (
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => add(custom, customIcon)}
+            className={cn(row, "text-primary")}
+          >
+            <Plus className="size-4 shrink-0" />
+            <span className="min-w-0 flex-1 truncate">Add “{custom}”</span>
+            <LocationIcon icon={customIcon} className="size-4 text-muted-foreground" />
+          </button>
+        ) : null}
         {offered.length === 0 && !custom && !already ? (
           <p className="px-2.5 py-2 text-sm text-muted-foreground">
             Everything on the list is on this job. Type a name to add another.
@@ -1196,6 +1236,10 @@ function UploadForm({
 }) {
   const [files, setFiles] = React.useState<File[]>([]);
   const [text, setText] = React.useState("");
+  // The upload a failed attempt left behind, with whatever text it saved:
+  // trying again carries on in it rather than saving the same tracking
+  // numbers a second time.
+  const kept = React.useRef<{ itemId: string; text: string } | null>(null);
   const [pending, setPending] = React.useState(false);
   const [done, setDone] = React.useState(0);
   const textId = React.useId();
@@ -1242,14 +1286,18 @@ function UploadForm({
 
     // The upload is made by the first request and joined by the rest, so the
     // photos land together however many there are.
-    let itemId: string | undefined;
+    let itemId: string | undefined = kept.current?.itemId;
+    const textToSend =
+      kept.current && kept.current.text === textValue ? "" : textValue;
 
     for (const [index, original] of files.entries()) {
       const prepared = await prepareForUpload(original);
 
       const formData = base();
       // Text belongs to the upload, so it goes with the request that makes it.
-      if (textValue && index === 0) formData.set("textValue", textValue);
+      if (textToSend && index === 0 && !itemId) {
+        formData.set("textValue", textToSend);
+      }
       if (itemId) formData.set("itemId", itemId);
       formData.append("files", prepared.file);
       if (prepared.exif) formData.append("exif", prepared.exif, "exif.bin");
@@ -1257,12 +1305,19 @@ function UploadForm({
       const result = await saveDeliverable(null, formData);
       if (!result.ok) {
         setPending(false);
+        if (result.id) {
+          kept.current = {
+            itemId: result.id,
+            text: kept.current?.text ?? textValue,
+          };
+        }
         // Named, because the ones before it are already saved and retrying
-        // should not mean starting again.
-        onError(
-          `${original.name}: ${result.error}` +
-            (index > 0 ? ` (${index} already saved)` : ""),
-        );
+        // should not mean starting again. The server names the file itself
+        // when the trouble was the file.
+        const named = result.error.startsWith(original.name)
+          ? result.error
+          : `${original.name}: ${result.error}`;
+        onError(named + (index > 0 ? ` (${index} already saved)` : ""));
         return;
       }
 
@@ -1272,6 +1327,11 @@ function UploadForm({
 
     // Text on its own, with no photos to carry it.
     if (files.length === 0) {
+      // Already saved by the attempt that failed on its photo.
+      if (kept.current && kept.current.text === textValue) {
+        setPending(false);
+        return onDone();
+      }
       const formData = base();
       if (textValue) formData.set("textValue", textValue);
 

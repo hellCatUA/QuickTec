@@ -10,6 +10,7 @@ import { parseDatetimeLocalInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
 import {
   effectiveRules,
+  normaliseRuleSettings,
   RULE_SELECT,
   ruleSheet,
   sameRules,
@@ -201,18 +202,22 @@ export async function createJob(
     input.deliverableRules && !sameRules(input.deliverableRules, following)
       ? ruleSheet(input.deliverableRules)
       : []
-  ).map((rule) => ({
-    category: rule.category,
-    customLabel: rule.category === "CUSTOM" ? rule.customLabel : null,
-    enabled: rule.enabled,
-    required: rule.enabled && rule.required,
-    requiresPhoto: rule.requiresPhoto,
-    requiresText: rule.requiresText,
-    minPhotos: rule.minPhotos,
-    perLocation: rule.perLocation,
-    note: rule.note,
-    order: rule.order,
-  }));
+  ).map((sheetRule) => {
+    // The same corrections the job and project editors make before storing.
+    const rule = normaliseRuleSettings(sheetRule);
+    return {
+      category: rule.category,
+      customLabel: rule.category === "CUSTOM" ? rule.customLabel : null,
+      enabled: rule.enabled,
+      required: rule.required,
+      requiresPhoto: rule.requiresPhoto,
+      requiresText: rule.requiresText,
+      minPhotos: rule.minPhotos,
+      perLocation: rule.perLocation,
+      note: rule.note,
+      order: rule.order,
+    };
+  });
 
   const job = await db.$transaction(async (tx) => {
     const { intWoId, sequence } = await allocateIntWo(tx, {
@@ -270,13 +275,13 @@ export async function createJob(
             ? "SCHEDULED"
             : "DRAFT",
         createdById: actor.id,
-        // The job carries its own copy from the start, so later edits to the
-        // project cannot silently change what work already scheduled demands.
-        // The planner's own choices win where they made any; otherwise it is
-        // the project's sheet, and a job with no project keeps the ad-hoc
-        // defaults by having no rows at all.
+        // Rows only when the planner changed the checklist on the form: then
+        // the job has its own sheet and the project's later edits do not
+        // reach it. Otherwise none, and it follows its project — or, with no
+        // project, the ad-hoc defaults — until somebody changes it.
         deliverableRules:
           jobRules.length > 0 ? { create: jobRules } : undefined,
+        deliverablesOwn: jobRules.length > 0,
         assignments: {
           create: rates.map(({ userId, rate, supervisorId }) => ({
             userId,
@@ -488,12 +493,7 @@ export async function createRevisit(
         select: { sourceTemplateId: true },
       },
       createdById: true,
-      project: {
-        select: {
-          managerId: true,
-          deliverableRules: { where: { jobId: null }, select: RULE_SELECT },
-        },
-      },
+      project: { select: { managerId: true } },
       // Who worked it, so the same people can be sent back without being
       // looked up and re-added by hand.
       assignments: {
@@ -512,6 +512,7 @@ export async function createRevisit(
       deliverableRules: {
         select: RULE_SELECT,
       },
+      deliverablesOwn: true,
       locations: {
         orderBy: { order: "asc" },
         select: { name: true, icon: true, order: true },
@@ -576,6 +577,13 @@ export async function createRevisit(
   // were not on the job at all. A tech cannot see a job they are not on
   // either, so it did not even fail loudly; it just was not there.
   const carries = new Set<RevisitCarry>(input.carry);
+
+  // The original's sheet goes with it only when it had changed it for
+  // itself; rows written down at its checkout are only what it was following.
+  const carriesOwnSheet =
+    carries.has("deliverables") &&
+    parent.deliverablesOwn &&
+    parent.deliverableRules.length > 0;
   const wanted = new Set(input.crewIds);
   const crew = parent.assignments.filter((entry) => wanted.has(entry.userId));
 
@@ -709,15 +717,10 @@ export async function createRevisit(
         // Unticked leaves the revisit with no rows of its own, which is how a
         // job says "whatever the project asks for" rather than "nothing".
         deliverableRules:
-          // Only what the original had changed for itself. One that was
-          // following the project — or was checked out against the very
-          // sheet the project has now — sends the revisit back following it.
-          carries.has("deliverables") &&
-          parent.deliverableRules.length > 0 &&
-          !sameRules(
-            parent.deliverableRules,
-            effectiveRules([], parent.project?.deliverableRules ?? []),
-          )
+          // Only what the original had changed for itself. Rows written down
+          // at its checkout are not a change — they are what it was
+          // following — so the revisit goes back following the project.
+          carriesOwnSheet
             ? {
                 create: parent.deliverableRules.map((rule) => ({
                   category: rule.category,
@@ -733,6 +736,7 @@ export async function createRevisit(
                 })),
               }
             : undefined,
+        deliverablesOwn: carriesOwnSheet,
         // Same site, so the same rooms: the MDF is still where it was, and
         // the crew going back should not have to name it again.
         locations:

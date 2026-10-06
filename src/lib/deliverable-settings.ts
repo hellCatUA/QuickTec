@@ -9,6 +9,22 @@ import { MAX_MIN_PHOTOS, MAX_RULE_NOTE } from "@/lib/deliverables";
  * parse a section their own way but must refuse the same things.
  */
 
+/**
+ * A custom section's name. It is what tells two custom sections apart, what
+ * photos are filed under, and a folder in the export — so no longer than an
+ * upload accepts, and with a letter or a number in it: a name of dots alone
+ * would be no folder at all, and ".." one that climbs out of the archive.
+ */
+export const customLabelField = z.preprocess(
+  (value) =>
+    typeof value === "string" ? value.replace(/\s+/g, " ").trim() || null : null,
+  z
+    .string()
+    .max(80, "Keep the section's name to 80 characters.")
+    .regex(/[\p{L}\p{N}]/u, "Give the section a name with a letter or a number in it.")
+    .nullable(),
+);
+
 /** Absent from an older form means what it meant before: one is enough. */
 export const minPhotosField = z.preprocess(
   (value) =>

@@ -62,7 +62,7 @@ export function JobTabs({
               tech knows which room to walk back to, not just which section. */}
           <span>
             <strong className="font-semibold">Still needed to close</strong> —{" "}
-            {missing.join(", ")}
+            {missing.join("; ")}
           </span>
           <span className="ml-auto shrink-0 text-muted-foreground">›</span>
         </button>

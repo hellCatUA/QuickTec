@@ -347,7 +347,9 @@ export async function loadReview(jobId: string): Promise<LoadedReview | null> {
             ? `${section.attachmentIds.length} photo${section.attachmentIds.length === 1 ? "" : "s"}`
             : "Recorded"
           : "Empty",
-        missing: !section.filled,
+        // Short of what it asks for is as missing as empty: 2 photos of 3 is
+        // highlighted with the rest, as the flag above already says.
+        missing: section.required ? section.gap !== null : !section.filled,
       })),
       flags: reviewDeliverables({
         sections,

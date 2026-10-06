@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { minPhotosField, ruleNoteField } from "@/lib/deliverable-settings";
+import {
+  customLabelField,
+  minPhotosField,
+  ruleNoteField,
+} from "@/lib/deliverable-settings";
 import { flag, optionalInt, optionalMoney, optionalText } from "@/lib/form";
 import { DeliverableCategory } from "@prisma-client";
 
@@ -13,7 +17,7 @@ import { DeliverableCategory } from "@prisma-client";
  */
 export const deliverableRuleSchema = z.object({
   category: z.enum(DeliverableCategory),
-  customLabel: optionalText,
+  customLabel: customLabelField,
   enabled: z.boolean(),
   required: z.boolean(),
   requiresPhoto: z.boolean(),

@@ -354,8 +354,8 @@ const plural = (count: number, one: string, many = `${one}s`) =>
  * by category alone and two custom sections looked like one.
  *
  * A section that takes photos is counted in photos: as many as it asks for,
- * at each location when it is photographed per location. One that only takes
- * text needs some text. A per-location section on a job with no locations yet
+ * at each location when it is photographed per location. One that takes text
+ * needs some text — both, when it takes both. A per-location section on a job with no locations yet
  * is counted as a whole, so it never demands photos of places nobody named.
  */
 export function fieldProgress(
@@ -421,15 +421,31 @@ export function fieldProgress(
       };
     }
 
+    // A field that takes both photos and text — Return Labels: a photo of
+    // the label and the tracking number — needs both. The text is the field's,
+    // not a location's.
+    const textMissing = rule.requiresText && !hasText;
+    const textGap = (gap: string | null) =>
+      !textMissing ? gap : gap === null ? `${label} (text)` : `${gap} and text`;
+    const something = files > 0 || hasText;
+
     if (perLocation) {
       const short = perLocation.filter((location) => location.short > 0);
       const needed = need * perLocation.length;
       if (short.length === 0) {
-        return { ...base, state: "done" as const, needed, gap: null };
+        const gap = textGap(null);
+        return {
+          ...base,
+          state: gap === null ? ("done" as const) : ("incomplete" as const),
+          needed,
+          gap,
+        };
       }
 
       const allEmpty = short.length === perLocation.length &&
         short.every((location) => location.files === 0);
+      // Locations are joined with "·": the gaps themselves are joined with
+      // ";" wherever several are listed, and commas would blur the two.
       const gap = allEmpty && perLocation.length > 1
         ? perLocation.length === 2
           ? `${label} at both locations`
@@ -440,24 +456,30 @@ export function fieldProgress(
                 ? `${location.name} (${location.files} of ${need})`
                 : location.name,
             )
-            .join(", ")}`;
+            .join(" · ")}`;
 
       return {
         ...base,
-        state: files > 0 ? ("incomplete" as const) : ("required" as const),
+        state: something ? ("incomplete" as const) : ("required" as const),
         needed,
-        gap,
+        gap: textGap(gap),
       };
     }
 
     if (files >= need) {
-      return { ...base, state: "done" as const, needed: need, gap: null };
+      const gap = textGap(null);
+      return {
+        ...base,
+        state: gap === null ? ("done" as const) : ("incomplete" as const),
+        needed: need,
+        gap,
+      };
     }
     return {
       ...base,
-      state: files > 0 ? ("incomplete" as const) : ("required" as const),
+      state: something ? ("incomplete" as const) : ("required" as const),
       needed: need,
-      gap: need > 1 || files > 0 ? `${label} (${files} of ${need})` : label,
+      gap: textGap(need > 1 || files > 0 ? `${label} (${files} of ${need})` : label),
     };
   });
 }

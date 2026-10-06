@@ -108,7 +108,14 @@ export function DeliverableRules({
   const [, startTransition] = React.useTransition();
 
   // The saved-row callers hand over what is stored and let this hold the edits;
-  // the form caller keeps the list and passes it back down.
+  // the form caller keeps the list and passes it back down. When what is
+  // stored arrives again — after a save, or "Use the project's again" — it is
+  // the truth, and the edits held here give way to it.
+  const [stored, setStored] = React.useState(rules);
+  if (stored !== rules) {
+    setStored(rules);
+    setOverride(null);
+  }
   const shown = override ?? rules;
 
   function apply(next: EditableRule[]) {
@@ -122,6 +129,7 @@ export function DeliverableRules({
    */
   function write(rule: EditableRule, applied: EditableRule[], remove = false) {
     const key = ruleKey(rule);
+    const before = shown.find((item) => ruleKey(item) === key);
     apply(applied);
     setError(null);
 
@@ -147,7 +155,16 @@ export function DeliverableRules({
 
       if (!result.ok) {
         setError(result.error);
-        apply(shown);
+        // Only the row that was refused goes back: another save may have
+        // landed since this one set off, and rolling back the whole list
+        // would undo that too.
+        setOverride((current) => {
+          const list = current ?? rules;
+          if (!before) return list.filter((item) => ruleKey(item) !== key);
+          return list.some((item) => ruleKey(item) === key)
+            ? list.map((item) => (ruleKey(item) === key ? before : item))
+            : [...list, before];
+        });
       }
     });
   }
@@ -311,6 +328,7 @@ export function DeliverableRules({
             <Input
               value={newName}
               autoFocus
+              maxLength={80}
               aria-label="Name of the new section"
               placeholder="Rack elevation"
               onChange={(event) => setNewName(event.target.value)}
@@ -384,6 +402,13 @@ function RuleSettings({
   // What a required section takes is part of what it demands.
   const kindLocked = !canEdit || (rule.required && !canRequire);
   const [note, setNote] = React.useState(rule.note ?? "");
+  // What is stored wins when it changes underneath — a refused save rolled
+  // back, or the sheet refreshed from the server.
+  const [storedNote, setStoredNote] = React.useState(rule.note);
+  if (storedNote !== rule.note) {
+    setStoredNote(rule.note);
+    setNote(rule.note ?? "");
+  }
 
   // Saved when the person is done with it, not on every key: a save per
   // letter is a hundred requests and a field that fights the cursor.

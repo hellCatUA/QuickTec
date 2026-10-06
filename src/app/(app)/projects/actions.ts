@@ -5,7 +5,11 @@ import { z } from "zod";
 import { diffFields, recordAudit } from "@/lib/audit";
 import { db } from "@/lib/db";
 import { flag, optionalMoney, optionalText, phoneText } from "@/lib/form";
-import { minPhotosField, ruleNoteField } from "@/lib/deliverable-settings";
+import {
+  customLabelField,
+  minPhotosField,
+  ruleNoteField,
+} from "@/lib/deliverable-settings";
 import { normaliseRuleSettings, PROJECT_DEFAULT_RULES } from "@/lib/deliverables";
 import { materialiseProjectRules } from "@/lib/job-deliverables";
 import { notify } from "@/lib/notifications";
@@ -343,7 +347,7 @@ export async function removeProjectMember(
 const ruleSchema = z.object({
   projectId: z.string().min(1),
   category: z.enum(DeliverableCategory),
-  customLabel: optionalText,
+  customLabel: customLabelField,
   enabled: flag,
   required: flag,
   requiresPhoto: flag,

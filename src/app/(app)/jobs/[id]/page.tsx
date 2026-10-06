@@ -24,6 +24,7 @@ import {
   fieldProgress,
   missingDeliverables,
   RULE_SELECT,
+  ruleKey,
 } from "@/lib/deliverables";
 import {
   DETAIL_FIELDS,
@@ -70,7 +71,6 @@ import { ScopeOfWork } from "./scope-of-work";
 import { SentBack } from "./sent-back";
 import { SiteNumberPrompt } from "./site-number";
 import { Deliverables } from "./deliverables";
-import { FOLLOWING_LIFECYCLES } from "@/lib/job-deliverables";
 import { DeliverableSections } from "./deliverable-sections";
 import { ExportsPanel } from "./exports-panel";
 import { Reimbursements } from "./reimbursements";
@@ -134,6 +134,8 @@ export default async function JobPage({
       travelReimbursement: true,
       noWorkOrder: true,
       lifecycle: true,
+      deliverablesOwn: true,
+      deliverablesFrozenAt: true,
       outcome: true,
       internalStatus: true,
       reviewNote: true,
@@ -283,7 +285,6 @@ export default async function JobPage({
           id: true,
           name: true,
           icon: true,
-          _count: { select: { items: true } },
         },
       },
       reimbursements: {
@@ -467,11 +468,19 @@ export default async function JobPage({
   const knownIcon = new Map(
     knownLocations.map((entry) => [entry.label.toLowerCase(), entry.icon]),
   );
+  // A location is in use while a field photographed per location has
+  // something filed under it — the same test removing it applies.
+  const perLocationFields = new Set(
+    rules.filter((rule) => rule.perLocation).map((rule) => ruleKey(rule)),
+  );
   const jobLocations = job.locations.map((location) => ({
     id: location.id,
     name: location.name,
     icon: location.icon ?? knownIcon.get(location.name.toLowerCase()) ?? null,
-    inUse: location._count.items > 0,
+    inUse: job.deliverables.some(
+      (item) =>
+        item.locationId === location.id && perLocationFields.has(ruleKey(item)),
+    ),
   }));
 
   // The same count checkout makes, so the strip under the clock and the
@@ -1377,9 +1386,9 @@ export default async function JobPage({
                     canRequire={canManageJob}
                     locations={jobLocations}
                     source={
-                      !FOLLOWING_LIFECYCLES.includes(job.lifecycle)
+                      job.deliverablesFrozenAt
                         ? "checkout"
-                        : job.deliverableRules.length > 0
+                        : job.deliverablesOwn && job.deliverableRules.length > 0
                           ? "own"
                           : job.project
                             ? "project"

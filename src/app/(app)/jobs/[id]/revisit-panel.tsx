@@ -15,7 +15,10 @@ export type RevisitCrew = { id: string; name: string; isLead: boolean };
 /** What the original has to offer, so nothing is proposed that is not there. */
 export type RevisitSource = {
   scope: boolean;
+  /** Sections switched on, when the original changed its sheet for itself; 0 when it follows the project. */
   deliverables: number;
+  /** Its locations, which go with the deliverables. */
+  locations: number;
   tickets: string[];
   estimate: string | null;
   pay: string | null;
@@ -43,10 +46,15 @@ const CARRIES: {
   {
     key: "deliverables",
     label: "Deliverables",
-    detail: (source) =>
-      source.deliverables > 0
-        ? `${source.deliverables} section${source.deliverables === 1 ? "" : "s"} as this job asked for them.`
-        : "The original has no sheet of its own — the project's applies.",
+    detail: (source) => {
+      const places =
+        source.locations > 0
+          ? ` Its ${source.locations} location${source.locations === 1 ? "" : "s"} go with it.`
+          : "";
+      return source.deliverables > 0
+        ? `${source.deliverables} section${source.deliverables === 1 ? "" : "s"} on, as this job changed them.${places}`
+        : `It follows the project's sections, and so will the revisit.${places}`;
+    },
   },
   {
     key: "tickets",

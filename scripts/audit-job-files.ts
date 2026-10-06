@@ -40,6 +40,7 @@ async function auditJob(jobId: string): Promise<{
           customLabel: true,
           textValue: true,
           createdAt: true,
+          location: { select: { name: true } },
           assignment: { select: { user: { select: { name: true } } } },
           attachments: {
             orderBy: { createdAt: "asc" },
@@ -80,9 +81,10 @@ async function auditJob(jobId: string): Promise<{
         ? item.customLabel
         : DELIVERABLE_META[item.category].label;
     const who = item.assignment?.user.name ?? "Unattributed";
+    const where = item.location ? ` / ${item.location.name}` : "";
 
     lines.push(
-      `  ${section} / ${who} — ${item.attachments.length} file(s)` +
+      `  ${section}${where} / ${who} — ${item.attachments.length} file(s)` +
         (item.textValue?.trim() ? ", plus text" : ""),
     );
 

@@ -2584,7 +2584,7 @@ async function main() {
       [upload({ category: "RETURN_LABELS", fileCount: 0, textValue: "1Z999" })],
       [],
     )[0].state,
-    "required",
+    "incomplete",
   );
   check(
     "an optional section is never missing",
@@ -2642,6 +2642,162 @@ async function main() {
     ruleNoteField.parse("   "),
     null,
   );
+  check(
+    "a field that takes photos and text needs both: the photo alone",
+    missingDeliverables(
+      fieldProgress(
+        [section({ category: "RETURN_LABELS", requiresText: true })],
+        [upload({ category: "RETURN_LABELS", fileCount: 1 })],
+        [],
+      ),
+    ).join(" | "),
+    "Return Labels (text)",
+  );
+  check(
+    "the text alone",
+    fieldProgress(
+      [section({ category: "RETURN_LABELS", requiresText: true })],
+      [upload({ category: "RETURN_LABELS", fileCount: 0, textValue: "1Z999" })],
+      [],
+    )[0].state,
+    "incomplete",
+  );
+  check(
+    "and both together is done",
+    fieldProgress(
+      [section({ category: "RETURN_LABELS", requiresText: true })],
+      [upload({ category: "RETURN_LABELS", fileCount: 1, textValue: "1Z999" })],
+      [],
+    )[0].state,
+    "done",
+  );
+
+  // --- where each photo goes in the export ---------------------------------------
+  const { planDeliverableExport, safeSegment, uniqueSegment, extensionFor } =
+    await import("@/lib/exports/photo-layout");
+
+  check("a name of dots is no folder", safeSegment(".."), "untitled");
+  check("nor is one", safeSegment("."), "untitled");
+  check("a trailing dot Windows would drop is dropped here", safeSegment("IDF."), "IDF");
+  check("a name Windows reserves is made safe", safeSegment("CON"), "CON_");
+  check("a slash cannot make a sub-folder", safeSegment("MDF/IDF"), "MDF-IDF");
+  check("letters from anywhere are kept", safeSegment("Підвал"), "Підвал");
+  check(
+    "two names that differ only in case get two folders",
+    (() => {
+      const taken = new Set<string>();
+      return [uniqueSegment("MDF", taken), uniqueSegment("mdf", taken)].join("|");
+    })(),
+    "MDF|mdf (2)",
+  );
+  check("a photo is named for what it is", extensionFor("image/jpeg", "rack.png"), "jpg");
+  check("a PDF is a PDF", extensionFor("application/pdf", "scan"), "pdf");
+
+  const atMinute = (minutes: number) => new Date(Date.UTC(2026, 6, 28, 15, minutes));
+  const photo = (id: string, minutes: number, mimeType = "image/jpeg") => ({
+    id,
+    mimeType,
+    originalName: `${id}.jpg`,
+    createdAt: atMinute(minutes),
+  });
+  const layoutItem = (
+    category: "PRE_INSTALL" | "POST_INSTALL" | "CUSTOM" | "RETURN_LABELS",
+    locationId: string | null,
+    attachments: ReturnType<typeof photo>[],
+    extra: { customLabel?: string; textValue?: string; minutes?: number } = {},
+  ) => ({
+    category,
+    customLabel: extra.customLabel ?? null,
+    locationId,
+    textValue: extra.textValue ?? null,
+    createdAt: atMinute(extra.minutes ?? 0),
+    attachments,
+  });
+  const places = [
+    { id: "mdf", name: "MDF" },
+    { id: "idf", name: "IDF" },
+  ];
+  const fields = [
+    { category: "PRE_INSTALL" as const, customLabel: null, perLocation: true },
+    { category: "POST_INSTALL" as const, customLabel: null, perLocation: false },
+    { category: "RETURN_LABELS" as const, customLabel: null, perLocation: false },
+  ];
+  const layout = planDeliverableExport(
+    [
+      // Two uploads at the MDF; the second tech's photo was taken in between,
+      // so numbering goes by time, not by upload.
+      layoutItem("PRE_INSTALL", "mdf", [photo("a", 1), photo("c", 3)]),
+      layoutItem("PRE_INSTALL", "mdf", [photo("b", 2)]),
+      layoutItem("PRE_INSTALL", "idf", [photo("d", 4)]),
+      layoutItem("PRE_INSTALL", null, [photo("e", 5)]),
+      // Carries a location from before Post Install stopped being per location.
+      layoutItem("POST_INSTALL", "mdf", [photo("f", 6), photo("g", 7, "application/pdf")]),
+      layoutItem("RETURN_LABELS", null, [], { textValue: "1Z1\n1Z2" }),
+    ],
+    fields,
+    places,
+  );
+  const pathOf = (id: string) =>
+    layout.photos.find((one) => one.attachmentId === id)?.path ?? "(none)";
+  check("field, location, then the photo", pathOf("a"), "Pre-Install/MDF/001.jpg");
+  check("numbered by when they were taken, across uploads", pathOf("b"), "Pre-Install/MDF/002.jpg");
+  check("and on", pathOf("c"), "Pre-Install/MDF/003.jpg");
+  check("each location counts from one", pathOf("d"), "Pre-Install/IDF/001.jpg");
+  check("photos at no location have their own folder", pathOf("e"), "Pre-Install/No location/001.jpg");
+  check(
+    "a field not photographed per location has no location folders",
+    pathOf("f"),
+    "Post Install/001.jpg",
+  );
+  check("a PDF keeps its place in the count and its extension", pathOf("g"), "Post Install/002.pdf");
+  check(
+    "what was typed is a note in its field",
+    layout.notes.map((note) => `${note.path}=${JSON.stringify(note.text)}`).join(" "),
+    'Return Labels/notes.txt="1Z1\\n1Z2\\n"',
+  );
+  check(
+    "no two photos share a path",
+    new Set(layout.photos.map((one) => one.path)).size,
+    layout.photos.length,
+  );
+
+  const clash = planDeliverableExport(
+    [
+      layoutItem("CUSTOM", null, [photo("r", 1)], { customLabel: "Receipts" }),
+      layoutItem("PRE_INSTALL", "x1", [photo("s", 2)]),
+      layoutItem("PRE_INSTALL", "x2", [photo("t", 3)]),
+      layoutItem("PRE_INSTALL", "x3", [photo("u", 4)]),
+      layoutItem("PRE_INSTALL", null, [photo("v", 5)]),
+    ],
+    [
+      { category: "PRE_INSTALL", customLabel: null, perLocation: true },
+      { category: "CUSTOM", customLabel: "Receipts", perLocation: false },
+    ],
+    [
+      { id: "x1", name: "MDF/IDF" },
+      { id: "x2", name: "MDF-IDF" },
+      { id: "x3", name: "No location" },
+    ],
+    ["Signatures", "Receipts"],
+  );
+  const clashPath = (id: string) =>
+    clash.photos.find((one) => one.attachmentId === id)?.path ?? "(none)";
+  check(
+    "a custom field named like an archive folder does not merge into it",
+    clashPath("r"),
+    "Receipts (2)/001.jpg",
+  );
+  check(
+    "two locations that read the same once made safe stay apart",
+    `${clashPath("s")} ${clashPath("t")}`,
+    "Pre-Install/MDF-IDF/001.jpg Pre-Install/MDF-IDF (2)/001.jpg",
+  );
+  check(
+    "and a location called No location is not the unfiled folder",
+    `${clashPath("u")} ${clashPath("v")}`,
+    "Pre-Install/No location/001.jpg Pre-Install/No location (2)/001.jpg",
+  );
+
   // --- a job following its project ---------------------------------------------
   const { sameRules } = await import("@/lib/deliverables");
   const projectSheet = [section({}), section({ category: "POST_INSTALL" })];
@@ -3466,8 +3622,8 @@ async function main() {
     false,
   );
   check(
-    "return label text is preserved as a file",
-    names.some((name) => name === "Return Labels/Terry Tech/notes.txt"),
+    "return label text is preserved as a file, in its field",
+    names.some((name) => name === "Return Labels/notes.txt"),
     true,
   );
 

@@ -82,7 +82,7 @@ export function DeliverableSections({
                   ? "Changed for this job. The project’s later edits do not reach it."
                   : "Changed for this job."
                 : source === "checkout"
-                  ? "Kept as they were when the job was checked out."
+                  ? "Fixed when the job was checked out: the project’s later edits do not reach it."
                   : "The standard sections for a job with no project."}
           </span>
           {source === "own" && hasProject && canRequire ? (

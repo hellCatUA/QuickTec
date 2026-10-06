@@ -826,7 +826,9 @@ const locationLabel = z
     z
       .string()
       .min(1, "Give it a name")
-      .max(MAX_LOCATION_NAME, `Keep it to ${MAX_LOCATION_NAME} characters.`),
+      .max(MAX_LOCATION_NAME, `Keep it to ${MAX_LOCATION_NAME} characters.`)
+      // A folder in the export: dots or dashes alone are no name.
+      .regex(/[\p{L}\p{N}]/u, "Give it a name with a letter or a number in it."),
   );
 
 const locationIconField = z

@@ -7,7 +7,7 @@ import {
   type ProgressItem,
   RULE_SELECT,
 } from "@/lib/deliverables";
-import type { DeliverableCategory, JobLifecycle } from "@prisma-client";
+import type { DeliverableCategory } from "@prisma-client";
 
 /**
  * A job's own deliverable rules.
@@ -107,6 +107,7 @@ export async function saveJobRule(
   rule: JobRuleInput,
 ): Promise<void> {
   await materialiseJobRules(jobId);
+  await db.job.update({ where: { id: jobId }, data: { deliverablesOwn: true } });
 
   const where = {
     jobId,
@@ -158,6 +159,10 @@ export async function removeJobCustomRule(
   jobId: string,
   customLabel: string,
 ): Promise<void> {
+  // A job following its project has no rows to delete from: it takes its own
+  // copy first, or the section the project gave it would simply stay.
+  await materialiseJobRules(jobId);
+  await db.job.update({ where: { id: jobId }, data: { deliverablesOwn: true } });
   await db.deliverableRequirement.deleteMany({
     where: { jobId, category: "CUSTOM", customLabel },
   });
@@ -196,45 +201,73 @@ export async function materialiseProjectRules(projectId: string): Promise<void> 
 }
 
 /**
- * The stages in which a job still follows its project. From checkout on, what
- * it asks for is what it was checked out against.
+ * Writes down what a job is answering to, as the last of the crew checks out.
+ *
+ * The mark goes first and the rows after it, so a "Use the project's again"
+ * landing at the same moment either runs first — and this then writes the
+ * project's sheet — or finds the job already marked and leaves its rows alone.
  */
-export const FOLLOWING_LIFECYCLES: readonly JobLifecycle[] = [
-  "DRAFT",
-  "PENDING_APPROVAL",
-  "SCHEDULED",
-  "IN_PROGRESS",
-];
-
-/** Writes down what a job is answering to now, as it is checked out. */
 export async function freezeJobRules(jobId: string): Promise<void> {
+  await db.job.updateMany({
+    where: { id: jobId, deliverablesFrozenAt: null },
+    data: { deliverablesFrozenAt: new Date() },
+  });
   await materialiseJobRules(jobId);
 }
 
 /**
+ * The job is being worked again — somebody clocked in after the last
+ * clock-out, or its time was taken away. It goes back to what it was before
+ * checkout: its own sheet if it had one, otherwise following its project.
+ */
+export async function unfreezeJobRules(jobId: string): Promise<void> {
+  const job = await db.job.findUnique({
+    where: { id: jobId },
+    select: { deliverablesFrozenAt: true, deliverablesOwn: true },
+  });
+  if (!job?.deliverablesFrozenAt) return;
+  if (!job.deliverablesOwn) {
+    await db.deliverableRequirement.deleteMany({ where: { jobId } });
+  }
+  await db.job.update({
+    where: { id: jobId },
+    data: { deliverablesFrozenAt: null },
+  });
+}
+
+/**
  * Hands a changed job back to its project: its own rows go, and it follows
- * the project's sheet again from now on. Refused once the job is past
- * checkout, and for a job with no project to follow.
+ * the project's sheet again from now on. Refused once the job's sheet has
+ * been fixed at checkout, and for a job with no project to follow.
  */
 export async function followProjectRules(
   jobId: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const job = await db.job.findUnique({
     where: { id: jobId },
-    select: { projectId: true, lifecycle: true },
+    select: { projectId: true },
   });
   if (!job) return { ok: false, error: "Job not found." };
   if (!job.projectId) {
     return { ok: false, error: "This job has no project to follow." };
   }
-  if (!FOLLOWING_LIFECYCLES.includes(job.lifecycle)) {
+
+  // Both in one statement each, and both only while the job is not fixed, so
+  // a checkout landing in between cannot be left with no sheet at all.
+  const released = await db.job.updateMany({
+    where: { id: jobId, deliverablesFrozenAt: null },
+    data: { deliverablesOwn: false },
+  });
+  if (released.count === 0) {
     return {
       ok: false,
       error:
         "This job has been checked out; it keeps what it was checked out against.",
     };
   }
-  await db.deliverableRequirement.deleteMany({ where: { jobId } });
+  await db.deliverableRequirement.deleteMany({
+    where: { jobId, job: { deliverablesFrozenAt: null } },
+  });
   return { ok: true };
 }
 

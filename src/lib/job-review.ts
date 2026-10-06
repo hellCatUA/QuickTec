@@ -204,7 +204,7 @@ export function reviewDeliverables(input: DeliverablesInput): ReviewFlag[] {
   if (missing.length > 0) {
     flags.push({
       level: "warn",
-      text: `Still needed: ${missing.join(", ")}.`,
+      text: `Still needed: ${missing.join("; ")}.`,
     });
   }
 

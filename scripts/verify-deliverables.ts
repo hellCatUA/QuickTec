@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { inflateRawSync } from "node:zlib";
 import { encode } from "@auth/core/jwt";
 import { chromium, type Page } from "playwright";
 import { db } from "@/lib/db";
@@ -28,18 +29,25 @@ function check(label: string, actual: unknown, expected: unknown) {
   );
 }
 
-/** The paths inside a zip, read from its central directory. */
-function zipEntryNames(zip: Buffer): string[] {
-  const names: string[] = [];
+/** Every file in a zip, by name, read from its central directory. */
+function zipEntries(zip: Buffer): Map<string, Buffer> {
+  const out = new Map<string, Buffer>();
   for (let at = 0; at + 46 <= zip.length; at++) {
     if (zip.readUInt32LE(at) !== 0x02014b50) continue;
+    const method = zip.readUInt16LE(at + 10);
+    const compressed = zip.readUInt32LE(at + 20);
     const nameLength = zip.readUInt16LE(at + 28);
     const extraLength = zip.readUInt16LE(at + 30);
     const commentLength = zip.readUInt16LE(at + 32);
-    names.push(zip.subarray(at + 46, at + 46 + nameLength).toString("utf8"));
+    const local = zip.readUInt32LE(at + 42);
+    const name = zip.subarray(at + 46, at + 46 + nameLength).toString("utf8");
+    const start =
+      local + 30 + zip.readUInt16LE(local + 26) + zip.readUInt16LE(local + 28);
+    const data = zip.subarray(start, start + compressed);
+    out.set(name, method === 8 ? inflateRawSync(data) : Buffer.from(data));
     at += 45 + nameLength + extraLength + commentLength;
   }
-  return names;
+  return out;
 }
 
 async function openDeliverables(page: Page, url: string) {
@@ -733,13 +741,161 @@ async function main() {
   );
   await db.deliverableRequirement.deleteMany({ where: { projectId, jobId: null } });
 
-  // The archive keeps each room's photos together.
-  const zip = await planner.request.get(`${BASE}/api/jobs/${jobId}/export/zip`);
+  // --- moving photos about, and the export following them -------------------
+  // Field, location, photo: Pre-Install/MDF/001.jpg. After every move the
+  // archive is opened and each numbered file traced back to the photo it is,
+  // through the photo index written beside them.
+  await db.deliverableItem.deleteMany({ where: { jobId } });
+  await db.deliverableRequirement.deleteMany({ where: { jobId } });
+  await db.deliverableRequirement.createMany({
+    data: [
+      { jobId, category: "PRE_INSTALL", enabled: true, required: true, requiresPhoto: true, perLocation: true, order: 0 },
+      { jobId, category: "POST_INSTALL", enabled: true, required: true, requiresPhoto: true, order: 1 },
+    ],
+  });
+  await db.job.update({ where: { id: jobId }, data: { deliverablesOwn: true } });
+
+  const { storeFile } = await import("@/lib/storage");
+  async function seedUpload(
+    category: "PRE_INSTALL" | "POST_INSTALL",
+    locationId: string | null,
+    shots: { name: string; colour: string; minute: number }[],
+  ) {
+    const item = await db.deliverableItem.create({
+      data: { jobId, assignmentId: assignment.id, category, locationId },
+    });
+    for (const shot of shots) {
+      const stored = await storeFile(jobId, await photo(shot.colour), "image/jpeg");
+      await db.attachment.create({
+        data: {
+          storagePath: stored.storagePath,
+          originalName: shot.name,
+          mimeType: "image/jpeg",
+          sizeBytes: stored.sizeBytes,
+          uploadedById: tech.id,
+          deliverableItemId: item.id,
+          createdAt: new Date(Date.UTC(2026, 6, 28, 15, shot.minute)),
+        },
+      });
+    }
+  }
+  await seedUpload("PRE_INSTALL", mdf.id, [
+    { name: "p1.jpg", colour: "#203040", minute: 1 },
+    { name: "p2.jpg", colour: "#304050", minute: 2 },
+  ]);
+  await seedUpload("PRE_INSTALL", idf.id, [{ name: "p3.jpg", colour: "#405060", minute: 3 }]);
+  await seedUpload("POST_INSTALL", null, [{ name: "p4.jpg", colour: "#506070", minute: 4 }]);
+
+  /** "path=photo" for every deliverable photo in the archive, as it is now. */
+  async function exported(): Promise<string> {
+    const zip = await planner.request.get(`${BASE}/api/jobs/${jobId}/export/zip`);
+    const entries = zipEntries(await zip.body());
+    const index = (entries.get("Photo index.csv")?.toString("utf8") ?? "")
+      .split("\r\n")
+      .slice(1)
+      .filter(Boolean)
+      .map((row) => row.split(","));
+    const lines = index.map((row) => {
+      const path = row[0];
+      // The index says which file is which; the file has to be there too.
+      return `${path}=${row[row.length - 1]}${entries.has(path) ? "" : " (MISSING)"}`;
+    });
+    return lines.sort().join(" ");
+  }
+
+  async function emptyUploads(): Promise<number> {
+    return db.deliverableItem.count({
+      where: { jobId, attachments: { none: {} }, OR: [{ textValue: null }, { textValue: "" }] },
+    });
+  }
+
+  async function movePhoto(name: string, field: string, locationId?: string) {
+    await openDeliverables(planner, url);
+    // A laptop keeps several open: open every folded one, one at a time, as
+    // the list of folded ones shrinks with each.
+    const folded = planner.locator('[data-deliverable] > button[aria-expanded="false"]');
+    while ((await folded.count()) > 0) {
+      await folded.first().click();
+      await planner.waitForTimeout(100);
+    }
+    await planner.locator(`button:has(img[alt="${name}"])`).first().click();
+    const window = planner.getByRole("dialog");
+    await window.getByRole("button", { name: "Options for this photo" }).click();
+    await window
+      .getByRole("menuitem", { name: "Move to another field or location" })
+      .click();
+    await window.getByRole("combobox", { name: "Field" }).selectOption(field);
+    if (locationId) {
+      await window.getByRole("combobox", { name: "Location" }).selectOption(locationId);
+    }
+    await window.getByRole("button", { name: "Move", exact: true }).click();
+    await planner.waitForTimeout(1500);
+    await planner.keyboard.press("Escape");
+  }
+
   check(
-    "the export files photos by section, then location",
-    zipEntryNames(await zip.body()).some((name) =>
-      name.startsWith("Pre-Install/MDF/"),
-    ),
+    "the export is field, location, then a numbered photo",
+    await exported(),
+    "Post Install/001.jpg=p4.jpg Pre-Install/IDF/001.jpg=p3.jpg Pre-Install/MDF/001.jpg=p1.jpg Pre-Install/MDF/002.jpg=p2.jpg",
+  );
+  check(
+    "with no folder per tech any more",
+    [...zipEntries(
+      await (await planner.request.get(`${BASE}/api/jobs/${jobId}/export/zip`)).body(),
+    ).keys()].some((name) => name.includes("Terry Tech")),
+    false,
+  );
+
+  await movePhoto("p2.jpg", "PRE_INSTALL", idf.id);
+  check(
+    "moved to another location, it is numbered there by when it was taken",
+    await exported(),
+    "Post Install/001.jpg=p4.jpg Pre-Install/IDF/001.jpg=p2.jpg Pre-Install/IDF/002.jpg=p3.jpg Pre-Install/MDF/001.jpg=p1.jpg",
+  );
+
+  await movePhoto("p3.jpg", "POST_INSTALL");
+  check(
+    "moved to a field with no locations, it loses its location folder",
+    await exported(),
+    "Post Install/001.jpg=p3.jpg Post Install/002.jpg=p4.jpg Pre-Install/IDF/001.jpg=p2.jpg Pre-Install/MDF/001.jpg=p1.jpg",
+  );
+  check(
+    "and in the database too",
+    (
+      await db.attachment.findFirstOrThrow({
+        where: { originalName: "p3.jpg", deliverableItem: { jobId } },
+        select: { deliverableItem: { select: { category: true, locationId: true } } },
+      })
+    ).deliverableItem?.locationId ?? "none",
+    "none",
+  );
+
+  await movePhoto("p3.jpg", "PRE_INSTALL", mdf.id);
+  check(
+    "moved back, it takes its place among the others",
+    await exported(),
+    "Post Install/001.jpg=p4.jpg Pre-Install/IDF/001.jpg=p2.jpg Pre-Install/MDF/001.jpg=p1.jpg Pre-Install/MDF/002.jpg=p3.jpg",
+  );
+
+  await movePhoto("p1.jpg", "PRE_INSTALL", idf.id);
+  check(
+    "and after the last of a location's photos moves, the numbers close up",
+    await exported(),
+    "Post Install/001.jpg=p4.jpg Pre-Install/IDF/001.jpg=p1.jpg Pre-Install/IDF/002.jpg=p2.jpg Pre-Install/MDF/001.jpg=p3.jpg",
+  );
+  check("no upload is left empty after all that", await emptyUploads(), 0);
+  check(
+    "and every photo is still on disk",
+    (
+      await Promise.all(
+        (
+          await db.attachment.findMany({
+            where: { deliverableItem: { jobId } },
+            select: { storagePath: true },
+          })
+        ).map(async (one) => (await import("@/lib/storage")).fileExists(one.storagePath)),
+      )
+    ).every(Boolean),
     true,
   );
 

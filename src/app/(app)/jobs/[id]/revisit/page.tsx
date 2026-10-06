@@ -46,7 +46,9 @@ export default async function RevisitPage({
       payRate: true,
       breakPaid: true,
       extraTickets: { orderBy: { order: "asc" }, select: { number: true } },
-      _count: { select: { deliverableRules: true, dispatchContacts: true } },
+      _count: { select: { dispatchContacts: true, locations: true } },
+      deliverablesOwn: true,
+      deliverableRules: { where: { enabled: true }, select: { id: true } },
       documents: {
         where: { jobDocumentKind: "SIGN_OFF", sourceTemplateId: { not: null } },
         select: { id: true },
@@ -110,7 +112,10 @@ export default async function RevisitPage({
             }))}
             source={{
               scope: Boolean(job.scopeOfWork?.trim()),
-              deliverables: job._count.deliverableRules,
+              deliverables: job.deliverablesOwn
+                ? job.deliverableRules.length
+                : 0,
+              locations: job._count.locations,
               tickets: [
                 job.ticketNumber,
                 ...job.extraTickets.map((row) => row.number),

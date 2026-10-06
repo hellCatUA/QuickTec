@@ -6,7 +6,7 @@ import { recordAudit } from "@/lib/audit";
 import { getCompanySettings } from "@/lib/company";
 import { isoDateInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
-import { deliverableLabel, MAX_LOCATION_NAME } from "@/lib/deliverables";
+import { deliverableLabel, MAX_LOCATION_NAME, ruleKey } from "@/lib/deliverables";
 import { isLocationIcon } from "@/lib/location-icons";
 import {
   isPdf,
@@ -16,6 +16,7 @@ import {
   watermarkText,
 } from "@/lib/images";
 import { DOCUMENT_LABELS, storeDocument } from "@/lib/job-documents";
+import { jobRuleSheet } from "@/lib/job-deliverables";
 import { canOnJob } from "@/lib/scope";
 import { getSessionUser, type SessionUser } from "@/lib/session";
 import { deleteFile, storeFile, storageErrorMessage } from "@/lib/storage";
@@ -25,10 +26,20 @@ import {
   SignatureKind,
 } from "@prisma-client";
 
-export type ActionResult = { ok: true; id?: string } | { ok: false; error: string };
+export type ActionResult =
+  | { ok: true; id?: string }
+  /** `id` when part of the work landed: the upload to carry on in. */
+  | { ok: false; error: string; id?: string };
 
 const ok = (id?: string): ActionResult => ({ ok: true, id });
-const fail = (error: string): ActionResult => ({ ok: false, error });
+const fail = (error: string, id?: string): ActionResult => ({ ok: false, error, id });
+
+/** Prisma's code for a failed foreign key or a broken unique index. */
+function prismaCode(error: unknown): string | null {
+  return typeof error === "object" && error !== null && "code" in error
+    ? String((error as { code: unknown }).code)
+    : null;
+}
 
 /** 20 MB. A 48-megapixel HEIC is about 5 MB, so this leaves plenty of room. */
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
@@ -148,7 +159,7 @@ async function storeUpload(
   user: SessionUser,
   file: File,
   options: { watermark: boolean; exif?: Buffer | null },
-): Promise<{ attachmentId: string } | { error: string }> {
+): Promise<{ attachmentId: string; storagePath: string } | { error: string }> {
   if (file.size === 0) return { error: "That file is empty." };
   if (file.size > MAX_UPLOAD_BYTES) {
     return { error: "That file is larger than 20 MB." };
@@ -220,7 +231,7 @@ async function storeUpload(
     select: { id: true },
   });
 
-  return { attachmentId: attachment.id };
+  return { attachmentId: attachment.id, storagePath: stored.storagePath };
 }
 
 function touch(jobId: string) {
@@ -257,19 +268,52 @@ const deliverableSchema = z.object({
 });
 
 /**
- * The location, if it is one of this job's. The id comes from the browser, and
- * a location on somebody else's job is not somewhere this job's photos go.
+ * Where a photo is going, as the job asks for it now.
+ *
+ * The field has to be one the job has switched on — a photo filed under a
+ * field nobody is shown vanishes from the job page and from the counts while
+ * still going out in the export. And the location follows the field, not the
+ * request: none for a field that is not photographed per location, and one of
+ * this job's for a field that is, once the job has any.
  */
-async function jobLocation(
+async function placeFor(
   jobId: string,
+  category: DeliverableCategory,
+  customLabel: string | null,
   locationId: string | undefined,
-): Promise<{ id: string; name: string } | null | "unknown"> {
-  if (!locationId) return null;
-  const location = await db.jobLocation.findFirst({
-    where: { id: locationId, jobId },
+  needsPhoto: boolean,
+): Promise<
+  | { label: string; location: { id: string; name: string } | null }
+  | { error: string }
+> {
+  const sheet = (await jobRuleSheet(jobId)) ?? [];
+  const rule = sheet.find(
+    (one) =>
+      one.enabled &&
+      one.category === category &&
+      (category !== "CUSTOM" || one.customLabel === customLabel),
+  );
+  const label = deliverableLabel(category, customLabel);
+  if (!rule) return { error: `${label} is not a field on this job any more.` };
+  if (needsPhoto && !rule.requiresPhoto) {
+    return { error: `${label} does not take photos.` };
+  }
+  if (!rule.perLocation) return { label, location: null };
+
+  const locations = await db.jobLocation.findMany({
+    where: { jobId },
     select: { id: true, name: true },
   });
-  return location ?? "unknown";
+  if (locations.length === 0) return { label, location: null };
+  const location = locations.find((one) => one.id === locationId);
+  if (!location) {
+    return {
+      error: locationId
+        ? "That location is no longer on this job."
+        : `Say which location in ${label} this goes to.`,
+    };
+  }
+  return { label, location };
 }
 
 export async function saveDeliverable(
@@ -290,12 +334,8 @@ export async function saveDeliverable(
   if ("error" in context) return fail(context.error);
   const { user, job } = context;
 
-  const location = await jobLocation(job.id, parsed.data.locationId);
-  if (location === "unknown") {
-    return fail("That location is no longer on this job.");
-  }
-
-  const { category, customLabel, textValue } = parsed.data;
+  const { category, textValue } = parsed.data;
+  const customLabel = category === "CUSTOM" ? (parsed.data.customLabel ?? null) : null;
   if (category === "CUSTOM" && !customLabel) {
     return fail("Give the custom section a name.");
   }
@@ -307,6 +347,16 @@ export async function saveDeliverable(
   if (files.length === 0 && !textValue) {
     return fail("Add a photo or some text.");
   }
+
+  const place = await placeFor(
+    job.id,
+    category,
+    customLabel,
+    parsed.data.locationId,
+    files.length > 0,
+  );
+  if ("error" in place) return fail(place.error);
+  const { location } = place;
 
   if (files.length > 0) {
     const company = await getCompanySettings();
@@ -325,30 +375,42 @@ export async function saveDeliverable(
     select: { id: true },
   });
 
-  // Deliverables are attributed per tech so the ZIP can be foldered by
-  // category and then by who took the photos.
-  //
-  // Scoped to the job when it is being joined rather than made: the id comes
-  // from the browser, and a section on somebody else's job is not this
-  // caller's to add to.
-  const item = parsed.data.itemId
-    ? await db.deliverableItem.findFirst({
-        where: { id: parsed.data.itemId, jobId: job.id },
-        select: { id: true },
-      })
-    : await db.deliverableItem.create({
-        data: {
-          jobId: job.id,
-          assignmentId: assignment?.id ?? null,
-          category,
-          customLabel: customLabel || null,
-          textValue: textValue || null,
-          locationId: location?.id ?? null,
-        },
-        select: { id: true },
-      });
+  // An upload is made by its first request and joined by the rest. Joining is
+  // scoped to what this caller would have made: their own upload, in the same
+  // field at the same place. The id comes from the browser, and somebody
+  // else's upload — or one since moved elsewhere — is not this one.
+  const where = {
+    jobId: job.id,
+    assignmentId: assignment?.id ?? null,
+    category,
+    customLabel,
+    locationId: location?.id ?? null,
+  };
+  let item: { id: string } | null;
+  try {
+    item = parsed.data.itemId
+      ? await db.deliverableItem.findFirst({
+          where: { id: parsed.data.itemId, ...where },
+          select: { id: true },
+        })
+      : await db.deliverableItem.create({
+          data: { ...where, textValue: textValue || null },
+          select: { id: true },
+        });
+  } catch (error) {
+    // The location was taken off the job between the check and the write.
+    if (prismaCode(error) === "P2003") {
+      return fail("That location is no longer on this job.");
+    }
+    throw error;
+  }
 
-  if (!item) return fail("That section is no longer on this job.");
+  if (!item) {
+    return fail(
+      "Those photos were moved or removed while these were on their way. Add them again.",
+    );
+  }
+  const made = !parsed.data.itemId;
 
   // Sent only when the phone shrank the photo itself, and then only for the
   // one photo in this request.
@@ -368,25 +430,42 @@ export async function saveDeliverable(
       failures.push(`${files[index].name}: ${result.error}`);
       continue;
     }
-    await db.attachment.update({
-      where: { id: result.attachmentId },
-      data: { deliverableItemId: item.id },
-    });
+    try {
+      await db.attachment.update({
+        where: { id: result.attachmentId },
+        data: { deliverableItemId: item.id },
+      });
+    } catch (error) {
+      // The upload it was joining was emptied and dropped in the meantime —
+      // its last photo moved or deleted from the viewer. Not left behind as a
+      // file on disk and a row that belongs to nothing.
+      if (prismaCode(error) !== "P2003" && prismaCode(error) !== "P2025") {
+        throw error;
+      }
+      await db.attachment.delete({ where: { id: result.attachmentId } });
+      await deleteFile(result.storagePath);
+      failures.push(
+        `${files[index].name}: the photos it was going with were moved or removed. Add it again.`,
+      );
+    }
   }
 
-  // An item with neither photos nor text is noise; drop it rather than leave
-  // an empty row in the report.
-  const stored = await db.attachment.count({
-    where: { deliverableItemId: item.id },
-  });
-  if (stored === 0 && !textValue) {
-    await db.deliverableItem.delete({ where: { id: item.id } });
-    return fail(failures.join("; ") || "Nothing was saved.");
+  // An upload this request made and nothing landed in is noise; drop it
+  // rather than leave an empty row in the report. One it joined is left as it
+  // is: it already holds what earlier requests put there, text included.
+  if (made) {
+    const stored = await db.attachment.count({
+      where: { deliverableItemId: item.id },
+    });
+    if (stored === 0 && !textValue) {
+      await db.deliverableItem.delete({ where: { id: item.id } });
+      return fail(failures.join("; ") || "Nothing was saved.");
+    }
   }
 
   // Once per section, not once per photo: a tech saving ten of them made one
   // entry on the timeline before this went photo-at-a-time, and should still.
-  if (!parsed.data.itemId) {
+  if (made) {
     await recordAudit({
       actorId: user.id,
       entityType: "DeliverableItem",
@@ -402,7 +481,10 @@ export async function saveDeliverable(
   }
 
   touch(job.id);
-  return failures.length > 0 ? fail(failures.join("; ")) : ok(item.id);
+  // The id goes back with a failure as well: the text and any photo that did
+  // land are saved, and trying again carries on in this upload rather than
+  // saving the same tracking numbers a second time.
+  return failures.length > 0 ? fail(failures.join("; "), item.id) : ok(item.id);
 }
 
 // ---------------------------------------------------------------------------
@@ -934,10 +1016,17 @@ export async function moveDeliverablePhoto(
   if ("error" in context) return fail(context.error);
   const { user, item } = context;
 
-  const location = await jobLocation(item.jobId, parsed.data.locationId);
-  if (location === "unknown") {
-    return fail("That location is no longer on this job.");
-  }
+  // Only into a field the job asks for and that takes photos, and with a
+  // location exactly when that field is photographed per location.
+  const place = await placeFor(
+    item.jobId,
+    category,
+    customLabel ?? null,
+    parsed.data.locationId,
+    true,
+  );
+  if ("error" in place) return fail(place.error);
+  const { location } = place;
 
   const from = placeLabel(item.category, item.customLabel, item.location);
   const to = placeLabel(category, customLabel ?? null, location);
@@ -1084,7 +1173,10 @@ const locationSchema = z.object({
       z
         .string()
         .min(1, "Name the location.")
-        .max(MAX_LOCATION_NAME, `Keep it to ${MAX_LOCATION_NAME} characters.`),
+        .max(MAX_LOCATION_NAME, `Keep it to ${MAX_LOCATION_NAME} characters.`)
+        // It becomes a folder in the export: a name of dots or dashes alone
+        // is no name, and ".." would climb out of the folder when unpacked.
+        .regex(/[\p{L}\p{N}]/u, "Give the location a name with a letter or a number in it."),
     ),
 });
 
@@ -1138,16 +1230,30 @@ export async function addJobLocation(
     return fail(`There is already a location called ${name}.`);
   }
 
-  const location = await db.jobLocation.create({
-    data: {
-      jobId: job.id,
-      name,
-      icon,
-      order: Math.max(-1, ...existing.map((one) => one.order)) + 1,
-      createdById: user.id,
-    },
-    select: { id: true },
-  });
+  let location: { id: string };
+  try {
+    location = await db.jobLocation.create({
+      data: {
+        jobId: job.id,
+        name,
+        icon,
+        order: Math.max(-1, ...existing.map((one) => one.order)) + 1,
+        createdById: user.id,
+      },
+      select: { id: true },
+    });
+  } catch (error) {
+    // Two people naming the same room at once. The second one wanted the
+    // room, and the room is there: that is not a failure.
+    if (prismaCode(error) !== "P2002") throw error;
+    const there = await db.jobLocation.findFirst({
+      where: { jobId: job.id, name: { equals: name, mode: "insensitive" } },
+      select: { id: true },
+    });
+    if (!there) throw error;
+    touch(job.id);
+    return ok(there.id);
+  }
 
   await recordAudit({
     actorId: user.id,
@@ -1179,7 +1285,6 @@ export async function removeJobLocation(
       id: true,
       jobId: true,
       name: true,
-      _count: { select: { items: true } },
     },
   });
   if (!location) return fail("That location is already gone.");
@@ -1200,10 +1305,29 @@ export async function removeJobLocation(
     return fail("Only a supervisor or the job's lead can remove a location.");
   }
 
-  if (location._count.items > 0) {
+  // Only what is filed under it in a field photographed per location keeps it.
+  // A photo that still carries it from before its field stopped being
+  // photographed per location is not "at" it any more — the job page and the
+  // export both ignore it there — and is let go rather than holding on to a
+  // location nobody can see the photos of.
+  const sheet = (await jobRuleSheet(job.id)) ?? [];
+  const perLocation = new Set(
+    sheet.filter((rule) => rule.enabled && rule.perLocation).map((rule) => ruleKey(rule)),
+  );
+  const using = await db.deliverableItem.findMany({
+    where: { locationId: location.id },
+    select: { id: true, category: true, customLabel: true },
+  });
+  if (using.some((item) => perLocation.has(ruleKey(item)))) {
     return fail(
       `${location.name} still has photos in it. Move or delete them first.`,
     );
+  }
+  if (using.length > 0) {
+    await db.deliverableItem.updateMany({
+      where: { id: { in: using.map((item) => item.id) }, locationId: location.id },
+      data: { locationId: null },
+    });
   }
 
   // Asked again in the delete itself, so a photo landing in between is not
