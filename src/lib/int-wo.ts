@@ -1,4 +1,4 @@
-import { formatIntWo, NO_PROJECT_REF } from "@/lib/int-wo-format";
+import { formatIntWo, NO_PROJECT_REF, projectRefOf } from "@/lib/int-wo-format";
 import { zonedParts } from "@/lib/datetime";
 import type { Prisma } from "@prisma-client";
 
@@ -15,7 +15,7 @@ import type { Prisma } from "@prisma-client";
  *   actually happens in.
  */
 
-export { formatIntWo, NO_PROJECT_REF };
+export { formatIntWo, NO_PROJECT_REF, projectRefOf };
 export type { IntWoParts } from "@/lib/int-wo-format";
 
 /**
@@ -62,8 +62,8 @@ async function nextSequence(
 export type AllocateIntWoInput = {
   /** Null for jobs with no project. */
   projectId: string | null;
-  /** The client's project ID; null renders as 0000. */
-  externalProjectId: string | null;
+  /** Our project ID (Project.code); null — no project — renders as 0000. */
+  projectCode: string | null;
   /** Scheduled date if known, otherwise now. Decides the YYYY-MM. */
   effectiveDate: Date;
   timeZone: string;
@@ -75,17 +75,26 @@ export async function allocateIntWo(
   input: AllocateIntWoInput,
 ): Promise<{ intWoId: string; sequence: number }> {
   const { year, month } = zonedParts(input.effectiveDate, input.timeZone);
-  const sequence = await nextSequence(tx, input.projectId, year);
 
-  return {
-    sequence,
-    intWoId: formatIntWo({
+  // A number taken already is skipped rather than issued twice. Project IDs
+  // are unique now, but jobs numbered before they were carried the paying
+  // company's ID or 0000, and one of those can still sit where a fresh number
+  // lands — a job with no project in a month an old project job used.
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const sequence = await nextSequence(tx, input.projectId, year);
+    const intWoId = formatIntWo({
       year,
       month,
-      projectRef: input.externalProjectId || NO_PROJECT_REF,
+      projectRef: input.projectCode || NO_PROJECT_REF,
       sequence,
-    }),
-  };
+    });
+    const taken = await tx.job.findUnique({
+      where: { intWoId },
+      select: { id: true },
+    });
+    if (!taken) return { sequence, intWoId };
+  }
+  throw new Error("No free INT WO number after 50 tries");
 }
 
 /**
@@ -103,10 +112,11 @@ export async function allocateRevisitIntWo(
   const parent = await tx.job.findUnique({
     where: { id: input.parentJobId },
     select: {
+      intWoId: true,
       intWoSequence: true,
       revisitNumber: true,
       parentJobId: true,
-      project: { select: { externalProjectId: true } },
+      project: { select: { code: true } },
     },
   });
 
@@ -130,7 +140,10 @@ export async function allocateRevisitIntWo(
     intWoId: formatIntWo({
       year,
       month,
-      projectRef: parent.project?.externalProjectId || NO_PROJECT_REF,
+      // What the original's number says, so R1 reads as the same job even
+      // when the project's ID is not the one it was numbered under.
+      projectRef:
+        projectRefOf(parent.intWoId) ?? parent.project?.code ?? NO_PROJECT_REF,
       sequence: parent.intWoSequence,
       revisitNumber,
     }),

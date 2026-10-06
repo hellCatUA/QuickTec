@@ -173,6 +173,7 @@ async function main() {
   project ??= await db.project.create({
     data: {
       name: "Mettel elevator lines",
+      code: "P-9",
       externalProjectId: "P-9",
       clientId: client.id,
       managerId: boss.id,
@@ -191,7 +192,7 @@ async function main() {
     const allocated = await db.$transaction((tx) =>
       allocateIntWo(tx, {
         projectId: project!.id,
-        externalProjectId: project!.externalProjectId,
+        projectCode: project!.code,
         effectiveDate: new Date("2026-06-25T15:00:00Z"),
         timeZone: TZ,
       }),

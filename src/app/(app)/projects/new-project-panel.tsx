@@ -13,12 +13,14 @@ export function NewProjectPanel({
   customers,
   managers,
   contacts,
+  suggestedCode,
 }: {
   clients: Option[];
   repCompanies: Option[];
   customers: Option[];
   managers: Option[];
   contacts: ContactOption[];
+  suggestedCode: string;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -51,6 +53,7 @@ export function NewProjectPanel({
           customers={customers}
           managers={managers}
           contacts={contacts}
+          suggestedCode={suggestedCode}
           redirectOnCreate
         />
         <Button

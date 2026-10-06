@@ -816,7 +816,9 @@ async function main() {
       name: "PM handover project",
       clientId: client.id,
       repCompanyId: null,
-      externalProjectId: "VPM",
+      code: "VPM",
+      externalProjectId: null,
+      clientProjectName: null,
       defaultJobTitle: null,
       defaultPayType: null,
       defaultPayRate: null,
@@ -826,7 +828,7 @@ async function main() {
       name: "PM handover project",
       clientId: client.id,
       managerId: null,
-      externalProjectId: "VPM",
+      code: "VPM",
     },
   });
   await db.job.deleteMany({ where: { projectId: project.id } });
@@ -1074,9 +1076,9 @@ async function main() {
   await managerPage.waitForTimeout(1000);
 
   check(
-    "there is a block for how its jobs are filled in",
+    "there is a block for how its jobs are filled in, called Job Settings",
     await managerPage
-      .getByRole("heading", { name: "In Project Jobs Settings" })
+      .getByRole("heading", { name: "Job Settings" })
       .isVisible(),
     true,
   );
@@ -1149,8 +1151,35 @@ async function main() {
   );
   await managerPage.locator('select[name="repCompanyId"]').selectOption(repCompany.id);
   await managerPage.locator('select[name="clientId"]').selectOption(otherClient.id);
+  // Theirs: optional, folded away, and kept apart from ours.
+  await managerPage.getByText("Their name and ID for it (optional)").click();
+  await managerPage.locator('input[name="clientProjectName"]').fill("Refresh 2026");
+  await managerPage.locator('input[name="externalProjectId"]').fill("MT-4471");
+  await managerPage.locator('input[name="repProjectId"]').fill("RC-88");
   await managerPage.getByRole("button", { name: "Save project" }).click();
   await managerPage.waitForTimeout(2500);
+  check(
+    "their names and IDs for the project are stored beside ours",
+    JSON.stringify(
+      await db.project.findUniqueOrThrow({
+        where: { id: project.id },
+        select: {
+          code: true,
+          clientProjectName: true,
+          externalProjectId: true,
+          repProjectName: true,
+          repProjectId: true,
+        },
+      }),
+    ),
+    JSON.stringify({
+      code: "VPM",
+      clientProjectName: "Refresh 2026",
+      externalProjectId: "MT-4471",
+      repProjectName: null,
+      repProjectId: "RC-88",
+    }),
+  );
 
   const companies = await db.project.findUniqueOrThrow({
     where: { id: project.id },
@@ -1260,6 +1289,34 @@ async function main() {
     true,
   );
 
+  // Ours is what the app shows; theirs only where they are asked about.
+  await managerPage.goto(`${BASE}/projects/${project.id}`, { waitUntil: "load" });
+  check(
+    "the overview gives our project ID",
+    await managerPage.getByText("VPM", { exact: true }).first().isVisible(),
+    true,
+  );
+  check(
+    "and the paying company's own name and ID for it",
+    await managerPage.getByText("Refresh 2026 · MT-4471").isVisible(),
+    true,
+  );
+  check(
+    "a job raised under it is numbered with our ID",
+    /^\d{4}-VPM-\d{4}$/.test(
+      (await db.job.findUniqueOrThrow({ where: { id: raised!.id } })).intWoId,
+    ),
+    true,
+  );
+  await managerPage.goto(`${BASE}/projects/${project.id}/settings`, {
+    waitUntil: "load",
+  });
+  check(
+    "once it has jobs, the project ID cannot be changed",
+    (await managerPage.locator('input[name="code"]').getAttribute("readonly")) !== null,
+    true,
+  );
+
   // --- a supervisor runs the projects they are on, and only those -----------
   // Checking only "manages projects" let a supervisor open, change and join
   // any project there was. And the project's pay is not theirs to see or set.
@@ -1270,10 +1327,28 @@ async function main() {
       id: "verify-other-project",
       name: "Somebody else's project",
       clientId: client.id,
-      externalProjectId: "VOP",
+      code: "VOP",
     },
   });
   await db.projectMember.deleteMany({ where: { projectId: elsewhere.id } });
+
+  // Two projects cannot share an ID: their numbers would be the same.
+  await managerPage.goto(`${BASE}/projects/${elsewhere.id}/settings`, {
+    waitUntil: "load",
+  });
+  await managerPage.locator('input[name="code"]').fill("vpm");
+  await managerPage.getByRole("button", { name: "Save project" }).click();
+  await managerPage.waitForTimeout(2000);
+  check(
+    "a project ID already taken is refused, by name",
+    await managerPage.getByText("VPM is already the ID of PM handover project").isVisible(),
+    true,
+  );
+  check(
+    "and the project keeps its own",
+    (await db.project.findUniqueOrThrow({ where: { id: elsewhere.id } })).code,
+    "VOP",
+  );
   const supProjects = await pageFor(sup.token);
   await supProjects.goto(`${BASE}/projects/${elsewhere.id}/settings`, {
     waitUntil: "load",
@@ -1297,7 +1372,7 @@ async function main() {
   await supProjects.waitForTimeout(1000);
   check(
     "on their own project they can",
-    await supProjects.getByRole("heading", { name: "In Project Jobs Settings" }).isVisible(),
+    await supProjects.getByRole("heading", { name: "Job Settings" }).isVisible(),
     true,
   );
   check(

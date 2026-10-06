@@ -199,7 +199,7 @@ export default async function JobPage({
         select: {
           id: true,
           name: true,
-          externalProjectId: true,
+          code: true,
           // Who runs the project answers for what it pays, so the settings
           // menu opens for them whatever their rank elsewhere.
           managerId: true,
@@ -963,10 +963,7 @@ export default async function JobPage({
                             href={`/projects/${job.project.id}`}
                             className="text-primary underline-offset-4 hover:underline"
                           >
-                            {job.project.name}
-                            {job.project.externalProjectId
-                              ? ` (${job.project.externalProjectId})`
-                              : ""}
+                            {job.project.name} ({job.project.code})
                           </Link>
                         </div>
                       ) : null}

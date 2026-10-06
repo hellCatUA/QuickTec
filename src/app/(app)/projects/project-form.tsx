@@ -16,7 +16,13 @@ export type Option = { id: string; label: string };
 export type ProjectFormValues = {
   id: string;
   name: string;
+  code: string;
+  /** Its jobs' numbers carry the ID, so it can no longer change. */
+  codeLocked: boolean;
+  clientProjectName: string | null;
   externalProjectId: string | null;
+  repProjectName: string | null;
+  repProjectId: string | null;
   clientId: string;
   repCompanyId: string | null;
   customerId: string | null;
@@ -29,7 +35,7 @@ export type ProjectFormValues = {
 /**
  * What the project is: who it belongs to, who runs it, what it covers.
  *
- * Everything about how its jobs are filled in lives in Job settings instead —
+ * Everything about how its jobs are filled in lives in Job Settings instead —
  * this form is the identity of the project, and it is edited once and then
  * rarely.
  */
@@ -41,8 +47,11 @@ export function ProjectForm({
   managers,
   contacts,
   redirectOnCreate,
+  suggestedCode,
 }: {
   project?: ProjectFormValues;
+  /** The next free ID, offered on a new project. */
+  suggestedCode?: string;
   clients: Option[];
   repCompanies: Option[];
   customers: Option[];
@@ -74,7 +83,11 @@ export function ProjectForm({
       {project ? <input type="hidden" name="id" value={project.id} /> : null}
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Project name" htmlFor={`pname-${key}`}>
+        <Field
+          label="Project name"
+          htmlFor={`pname-${key}`}
+          hint="Ours — what the app calls it everywhere."
+        >
           <Input
             id={`pname-${key}`}
             name="name"
@@ -85,16 +98,23 @@ export function ProjectForm({
         </Field>
 
         <Field
-          label="Their project ID"
-          htmlFor={`pext-${key}`}
-          hint="The client's own ID. Goes into the internal WO number; blank becomes 0000."
+          label="Project ID"
+          htmlFor={`pcode-${key}`}
+          hint={
+            project?.codeLocked
+              ? "Ours, and in the work order number of every job here, so it is fixed now."
+              : "Ours, unique. Goes into the work order number of every job here: YYMM-ID-0001."
+          }
         >
           <Input
-            id={`pext-${key}`}
-            name="externalProjectId"
-            defaultValue={project?.externalProjectId ?? ""}
-            placeholder="PRJ12"
+            id={`pcode-${key}`}
+            name="code"
+            defaultValue={project?.code ?? suggestedCode ?? ""}
+            readOnly={project?.codeLocked}
+            required
+            maxLength={20}
             autoComplete="off"
+            className="uppercase"
           />
         </Field>
 
@@ -141,6 +161,57 @@ export function ProjectForm({
             ))}
           </Select>
         </Field>
+
+        {/* Their names for the same work. Shown nowhere but here and the
+            overview; ours is what the app goes by. Open when any is filled,
+            so a value somebody entered is never hidden behind a fold. */}
+        <details
+          className="group sm:col-span-2"
+          open={Boolean(
+            project?.clientProjectName ||
+              project?.externalProjectId ||
+              project?.repProjectName ||
+              project?.repProjectId,
+          )}
+        >
+          <summary className="cursor-pointer text-sm font-medium text-muted-foreground">
+            Their name and ID for it (optional)
+          </summary>
+          <div className="mt-3 grid gap-4 sm:grid-cols-2">
+            <Field label="Paying company project name" htmlFor={`pcname-${key}`}>
+              <Input
+                id={`pcname-${key}`}
+                name="clientProjectName"
+                defaultValue={project?.clientProjectName ?? ""}
+                autoComplete="off"
+              />
+            </Field>
+            <Field label="Paying company project ID" htmlFor={`pext-${key}`}>
+              <Input
+                id={`pext-${key}`}
+                name="externalProjectId"
+                defaultValue={project?.externalProjectId ?? ""}
+                autoComplete="off"
+              />
+            </Field>
+            <Field label="Rep company project name" htmlFor={`prname-${key}`}>
+              <Input
+                id={`prname-${key}`}
+                name="repProjectName"
+                defaultValue={project?.repProjectName ?? ""}
+                autoComplete="off"
+              />
+            </Field>
+            <Field label="Rep company project ID" htmlFor={`prid-${key}`}>
+              <Input
+                id={`prid-${key}`}
+                name="repProjectId"
+                defaultValue={project?.repProjectId ?? ""}
+                autoComplete="off"
+              />
+            </Field>
+          </div>
+        </details>
 
         <Field
           label="Customer"

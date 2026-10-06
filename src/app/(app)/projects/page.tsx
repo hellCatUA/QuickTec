@@ -5,9 +5,9 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState, PageHeader } from "@/components/ui/page-header";
 import { db } from "@/lib/db";
-import { NO_PROJECT_REF } from "@/lib/int-wo";
 import { can, getSessionUser, permissionScope } from "@/lib/session";
 import type { Prisma } from "@prisma-client";
+import { nextProjectCode } from "@/lib/project-code";
 import { NewProjectPanel } from "./new-project-panel";
 
 export const metadata = { title: "Projects" };
@@ -40,7 +40,7 @@ export default async function ProjectsPage() {
           ],
         };
 
-  const [projects, clients, repCompanies, customers, managers, contacts] =
+  const [projects, clients, repCompanies, customers, managers, contacts, suggestedCode] =
     await Promise.all([
     db.project.findMany({
       where: visibility,
@@ -48,7 +48,7 @@ export default async function ProjectsPage() {
       select: {
         id: true,
         name: true,
-        externalProjectId: true,
+        code: true,
         status: true,
         intWoCounter: true,
         client: { select: { name: true } },
@@ -89,6 +89,7 @@ export default async function ProjectsPage() {
         clientId: true,
       },
     }),
+    nextProjectCode(),
   ]);
 
   return (
@@ -117,6 +118,7 @@ export default async function ProjectsPage() {
             label: `${manager.name} · ${manager.baseRole}`,
           }))}
           contacts={contacts}
+          suggestedCode={suggestedCode}
         />
       ) : null}
 
@@ -144,7 +146,7 @@ export default async function ProjectsPage() {
                   <div className="mt-0.5 truncate text-xs text-muted-foreground">
                     {project.client.name}
                     {project.customer ? ` · ${project.customer.code}` : ""} ·
-                    ID {project.externalProjectId || NO_PROJECT_REF} ·{" "}
+                    ID {project.code} ·{" "}
                     {project._count.jobs} job
                     {project._count.jobs === 1 ? "" : "s"} · next WO #
                     {String(project.intWoCounter + 1).padStart(4, "0")}

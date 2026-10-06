@@ -83,7 +83,11 @@ export default async function ProjectPage({
     select: {
       id: true,
       name: true,
+      code: true,
+      clientProjectName: true,
       externalProjectId: true,
+      repProjectName: true,
+      repProjectId: true,
       status: true,
       intWoCounter: true,
       generalScopeOfWork: true,
@@ -184,7 +188,7 @@ export default async function ProjectPage({
       <PageHeader
         title={project.name}
         backHref="/projects"
-        description={`Next work order in this project: #${String(project.intWoCounter + 1).padStart(4, "0")}`}
+        description={`${project.code} · next work order #${String(project.intWoCounter + 1).padStart(4, "0")}`}
         actions={
           <>
             <Link
@@ -218,11 +222,24 @@ export default async function ProjectPage({
                 : "Any"
             }
           />
-          <Fact
-            label="Their project ID"
-            value={project.externalProjectId ?? "0000"}
-            mono
-          />
+          <Fact label="Project ID" value={project.code} mono />
+          {/* Theirs, only when somebody recorded them. */}
+          {project.clientProjectName || project.externalProjectId ? (
+            <Fact
+              label="Paying company's project"
+              value={[project.clientProjectName, project.externalProjectId]
+                .filter(Boolean)
+                .join(" · ")}
+            />
+          ) : null}
+          {project.repProjectName || project.repProjectId ? (
+            <Fact
+              label="Rep company's project"
+              value={[project.repProjectName, project.repProjectId]
+                .filter(Boolean)
+                .join(" · ")}
+            />
+          ) : null}
           <Fact
             label="Status"
             value={
@@ -296,7 +313,7 @@ export default async function ProjectPage({
 
       <Card>
         <CardHeader>
-          <CardTitle>Job defaults</CardTitle>
+          <CardTitle>Job Settings</CardTitle>
           <CardDescription>
             What a job under this project starts as. Change them in Settings.
           </CardDescription>

@@ -89,7 +89,7 @@ export async function buildWorkOrderPdf(data: JobExportData): Promise<Buffer> {
     [
       "Project",
       job.project
-        ? `${job.project.name}${job.project.externalProjectId ? ` (${job.project.externalProjectId})` : ""}`
+        ? `${job.project.name} (${job.project.code})`
         : "None",
     ],
     ["Address", formatAddress(job.site)],

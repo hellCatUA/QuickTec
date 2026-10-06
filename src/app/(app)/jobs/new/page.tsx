@@ -60,7 +60,11 @@ export default async function NewJobPage({
       select: {
         id: true,
         name: true,
+        code: true,
+        clientProjectName: true,
         externalProjectId: true,
+        repProjectName: true,
+        repProjectId: true,
         clientId: true,
         client: { select: { name: true } },
         repCompanyId: true,
@@ -175,7 +179,15 @@ export default async function NewJobPage({
         projects={projects.map((project) => ({
           id: project.id,
           name: project.name,
-          externalProjectId: project.externalProjectId,
+          code: project.code,
+          theirRefs: [
+            project.clientProjectName,
+            project.externalProjectId,
+            project.repProjectName,
+            project.repProjectId,
+          ]
+            .filter(Boolean)
+            .join(" "),
           clientId: project.clientId,
           clientName: project.client.name,
           repCompanyId: project.repCompanyId,

@@ -37,7 +37,10 @@ type Customer = { id: string; code: string; name: string };
 type Project = {
   id: string;
   name: string;
-  externalProjectId: string | null;
+  /** Ours: what the work order number carries. */
+  code: string;
+  /** The paying and rep company's names and IDs for it, to search by. */
+  theirRefs: string;
   clientId: string;
   clientName: string;
   repCompanyId: string | null;
@@ -325,7 +328,7 @@ export function JobForm({
     return formatIntWo({
       year: date.getFullYear(),
       month: date.getMonth() + 1,
-      projectRef: selectedProject?.externalProjectId || "",
+      projectRef: selectedProject?.code || "",
       sequence: selectedProject
         ? selectedProject.intWoCounter + 1
         : globalNextSequence + 1,
@@ -608,10 +611,10 @@ export function JobForm({
             options={availableProjects.map((project) => ({
               value: project.id,
               label: project.name,
-              hint: project.externalProjectId
-                ? `${project.clientName} · ${project.externalProjectId}`
-                : project.clientName,
-              keywords: project.clientName,
+              hint: `${project.code} · ${project.clientName}`,
+              // Found by our ID, and by whatever the paying or rep company
+              // calls it — that is often what is on the email.
+              keywords: [project.code, project.clientName, project.theirRefs].join(" "),
             }))}
           />
         </Field>

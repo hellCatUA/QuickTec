@@ -60,7 +60,7 @@ export function JobSettingsForm({
 
       <div className="border-t border-border pt-4">
         <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          Job prefill
+          On each new job
         </div>
         <p className="mb-3 text-xs text-muted-foreground">
           Filled in when a job is raised under this project. Every one of these

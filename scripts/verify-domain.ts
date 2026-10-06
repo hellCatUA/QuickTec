@@ -1,9 +1,11 @@
 import "dotenv/config";
 import { readFile } from "node:fs/promises";
 import { db } from "@/lib/db";
+import { normaliseProjectCode, projectCodeError } from "@/lib/project-code";
 import {
   allocateIntWo,
   allocateRevisitIntWo,
+  projectRefOf,
   revisitAssignmentId,
 } from "@/lib/int-wo";
 import {
@@ -319,6 +321,7 @@ async function main() {
     create: {
       id: "seed-project-prj12",
       name: "Register Refresh",
+      code: "PRJ12",
       externalProjectId: "PRJ12",
       clientId: client.id,
       managerId: sup.id,
@@ -343,7 +346,7 @@ async function main() {
     const job = await db.$transaction(async (tx) => {
       const { intWoId, sequence } = await allocateIntWo(tx, {
         projectId: null,
-        externalProjectId: null,
+        projectCode: null,
         effectiveDate: july,
         timeZone: TZ,
       });
@@ -361,7 +364,7 @@ async function main() {
   const decJob = await db.$transaction(async (tx) => {
     const { intWoId, sequence } = await allocateIntWo(tx, {
       projectId: null,
-      externalProjectId: null,
+      projectCode: null,
       effectiveDate: december,
       timeZone: TZ,
     });
@@ -376,7 +379,7 @@ async function main() {
   const nyJob = await db.$transaction(async (tx) => {
     const { intWoId, sequence } = await allocateIntWo(tx, {
       projectId: null,
-      externalProjectId: null,
+      projectCode: null,
       effectiveDate: nextYear,
       timeZone: TZ,
     });
@@ -392,7 +395,7 @@ async function main() {
     const job = await db.$transaction(async (tx) => {
       const { intWoId, sequence } = await allocateIntWo(tx, {
         projectId: project.id,
-        externalProjectId: project.externalProjectId,
+        projectCode: project.code,
         effectiveDate: july,
         timeZone: TZ,
       });
@@ -478,7 +481,7 @@ async function main() {
   const tzJob = await db.$transaction(async (tx) => {
     const { intWoId, sequence } = await allocateIntWo(tx, {
       projectId: project.id,
-      externalProjectId: project.externalProjectId,
+      projectCode: project.code,
       effectiveDate: lateJuly,
       timeZone: TZ,
     });
@@ -494,7 +497,7 @@ async function main() {
       db.$transaction(async (tx) => {
         const { intWoId, sequence } = await allocateIntWo(tx, {
           projectId: null,
-          externalProjectId: null,
+          projectCode: null,
           effectiveDate: july,
           timeZone: TZ,
         });
@@ -509,6 +512,93 @@ async function main() {
     new Set(concurrent.map((job) => job.intWoId)).size,
     10,
   );
+
+  // --- our project ID -----------------------------------------------------
+  // The number used to carry the paying company's project ID, or 0000 when
+  // there was none — so two projects without one, each counting from 1,
+  // issued the same numbers and the second job could not be created.
+  check("a project ID is read in upper case", normaliseProjectCode(" prj-7 "), "PRJ-7");
+  check("an empty one is refused", projectCodeError("") !== null, true);
+  check("0000 is left to jobs with no project", projectCodeError("0000") !== null, true);
+  check("spaces and slashes are refused", projectCodeError("A B/C") !== null, true);
+  check("letters, digits and dashes are fine", projectCodeError("PRJ-12"), null);
+
+  const secondProject = await db.project.upsert({
+    where: { id: "seed-project-second" },
+    update: { intWoCounter: 0 },
+    create: {
+      id: "seed-project-second",
+      name: "Second project, no paying company ID",
+      code: "SECOND",
+      clientId: client.id,
+    },
+  });
+  const firstOfSecond = await db.$transaction(async (tx) => {
+    const { intWoId, sequence } = await allocateIntWo(tx, {
+      projectId: secondProject.id,
+      projectCode: secondProject.code,
+      effectiveDate: july,
+      timeZone: TZ,
+    });
+    return tx.job.create({
+      data: { ...base, projectId: secondProject.id, intWoId, intWoSequence: sequence },
+    });
+  });
+  check(
+    "a second project counting from 1 cannot take the first one's numbers",
+    firstOfSecond.intWoId,
+    "2607-SECOND-0001",
+  );
+
+  // A number somebody already has is skipped, not issued again: jobs from
+  // before project IDs can sit where a fresh number lands.
+  const globalNow =
+    (await db.intWoCounter.findUniqueOrThrow({ where: { scope: "global:2026" } })).value;
+  const squatter = `2607-0000-${String(globalNow + 1).padStart(4, "0")}`;
+  await db.job.create({
+    data: { ...base, intWoId: squatter, intWoSequence: globalNow + 1 },
+  });
+  const pastSquatter = await db.$transaction(async (tx) =>
+    allocateIntWo(tx, {
+      projectId: null,
+      projectCode: null,
+      effectiveDate: july,
+      timeZone: TZ,
+    }),
+  );
+  check(
+    "a number already taken is skipped",
+    pastSquatter.intWoId,
+    `2607-0000-${String(globalNow + 2).padStart(4, "0")}`,
+  );
+
+  // A revisit reads as the same job: it keeps what the original's number
+  // says, even when the project's ID is not the one it was numbered under.
+  check("the project part of a number", projectRefOf("2607-PRJ12-0042-R1"), "PRJ12");
+  check("with dashes in it", projectRefOf("2606-P-9-0006"), "P-9");
+  check("and nothing from a number of another shape", projectRefOf("WO-1"), null);
+  const numberedUnderOld = await db.job.create({
+    data: {
+      ...base,
+      projectId: secondProject.id,
+      intWoId: "2605-THEIRS7-0009",
+      intWoSequence: 9,
+    },
+  });
+  const revisitOfOld = await db.$transaction(async (tx) =>
+    allocateRevisitIntWo(tx, {
+      parentJobId: numberedUnderOld.id,
+      effectiveDate: august,
+      timeZone: TZ,
+    }),
+  );
+  check(
+    "a revisit of a job numbered before project IDs keeps the original's",
+    revisitOfOld.intWoId,
+    "2608-THEIRS7-0009-R1",
+  );
+  await db.job.deleteMany({ where: { projectId: secondProject.id } });
+  await db.project.delete({ where: { id: secondProject.id } });
 
   // --- date helpers -------------------------------------------------------
   check(

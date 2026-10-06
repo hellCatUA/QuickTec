@@ -175,9 +175,14 @@ function context(signaturePath: string | null): FormFillContext {
       },
       project: {
         name: "Mettel elevator lines",
+        code: "MEL",
+        clientProjectName: "Elevator emergency lines",
         externalProjectId: "P-9",
+        repProjectName: null,
+        repProjectId: "R-12",
         generalScopeOfWork: null,
       },
+      repCompany: { name: "Northstar Reps" },
       pointsOfContact: [
         { id: "c1", type: "MOD", name: "Grigorij Dolganov" },
         { id: "c2", type: "NOC", name: "Night desk" },
@@ -298,6 +303,16 @@ async function main() {
   check("MOD", formSource("contact.mod")?.resolve?.(ctx, 0), "Grigorij Dolganov");
   check("Paying company PM/PC", formSource("contact.pm")?.resolve?.(ctx, 0), "Bryant Ellis");
   check("city, state ZIP", formSource("site.cityStateZip")?.resolve?.(ctx, 0), "Covina, CA 91723");
+  // Ours, and theirs for the blanks that ask for theirs.
+  check("our project ID", formSource("project.code")?.resolve?.(ctx, 0), "MEL");
+  check(
+    "the paying company's project name and ID",
+    `${formSource("project.clientName")?.resolve?.(ctx, 0)} / ${formSource("project.clientId")?.resolve?.(ctx, 0)}`,
+    "Elevator emergency lines / P-9",
+  );
+  check("the rep company's project ID", formSource("project.repId")?.resolve?.(ctx, 0), "R-12");
+  check("one nobody recorded is left empty", formSource("project.repName")?.resolve?.(ctx, 0), null);
+  check("and the rep company", formSource("repCompany.name")?.resolve?.(ctx, 0), "Northstar Reps");
   check("visit row 0 hours", formSource("visit.hours")?.resolve?.(ctx, 0), "3.83 hrs");
   check("visit row 0 break", formSource("visit.break")?.resolve?.(ctx, 0), "0.50 hrs");
   check("visit row 1 is the second trip", formSource("visit.in")?.resolve?.(ctx, 1), "2:00 PM");

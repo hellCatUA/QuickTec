@@ -113,7 +113,7 @@ export default async function DashboardPage() {
       select: {
         id: true,
         name: true,
-        externalProjectId: true,
+        code: true,
         client: { select: { name: true } },
         manager: { select: { id: true } },
         _count: { select: { jobs: true } },
@@ -360,10 +360,7 @@ export default async function DashboardPage() {
                       {project.name}
                     </span>
                     <span className="block truncate text-xs text-muted-foreground">
-                      {project.client.name}
-                      {project.externalProjectId
-                        ? ` · ${project.externalProjectId}`
-                        : ""}
+                      {project.code} · {project.client.name}
                     </span>
                   </span>
                   {project.manager?.id === user.id ? (

@@ -624,11 +624,24 @@ enum ProjectRole {
 
 model Project {
   id   String @id @default(cuid())
+  /// Our name for the work — what the app shows everywhere.
   name String
 
-  /// Project ID as given by the client. Used verbatim in the INT WO ID.
-  /// Null renders as "0000".
+  /// Our own project ID, and the one the app shows. Unique, upper case, and
+  /// what the INT WO numbers of its jobs carry: YYMM-<code>-NNNN. Fixed once
+  /// the project has jobs, because their numbers already say it.
+  code String @unique
+
+  /// The paying company's own name and ID for this work. Optional: only some
+  /// of them have one, and it is theirs, not how we refer to it.
+  clientProjectName String?
+  /// Was "their project ID" and went into the INT WO number, until two
+  /// projects without one were numbered the same. Kept as their reference.
   externalProjectId String?
+
+  /// The rep company's own name and ID for it, likewise optional.
+  repProjectName String?
+  repProjectId   String?
 
   clientId   String
   client     Client    @relation(fields: [clientId], references: [id])

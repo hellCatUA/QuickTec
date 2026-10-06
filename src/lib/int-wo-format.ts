@@ -9,7 +9,9 @@ import { pad } from "@/lib/datetime";
  * - YYMM is the last two digits of the year and the month, run together: the
  *   number is read off a phone screen and written onto paper forms, and the
  *   century has never been the part anybody needed.
- * - PRJID is the client's own project ID, or 0000 when the job has no project.
+ * - PRJID is our own project ID (Project.code), or 0000 when the job has no
+ *   project. Jobs numbered before it existed carry the paying company's ID
+ *   there instead, and their revisits keep whatever their number says.
  * - A revisit keeps its parent's sequence and project, and takes the month it
  *   actually happens in — so August's revisit of a July job reads 2608-…-R1.
  *
@@ -41,4 +43,16 @@ export function formatIntWo(parts: IntWoParts): string {
   ].join("-");
 
   return parts.revisitNumber ? `${base}-R${parts.revisitNumber}` : base;
+}
+
+/**
+ * The project part of a number already issued: "PRJ12" from 2607-PRJ12-0042-R1.
+ *
+ * A revisit is numbered off its original, and the original may predate the
+ * project's current ID — so the reference comes from the number itself, not
+ * from the project as it stands. Null when the number is not in this shape.
+ */
+export function projectRefOf(intWoId: string): string | null {
+  const match = /^\d{4}-(.+)-\d{4,}(?:-R\d+)?$/.exec(intWoId);
+  return match ? match[1] : null;
 }

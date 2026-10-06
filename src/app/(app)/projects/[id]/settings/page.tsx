@@ -57,7 +57,12 @@ export default async function ProjectSettingsPage({
         select: {
           id: true,
           name: true,
+          code: true,
+          clientProjectName: true,
           externalProjectId: true,
+          repProjectName: true,
+          repProjectId: true,
+          _count: { select: { jobs: true } },
           clientId: true,
           client: { select: { name: true } },
           repCompanyId: true,
@@ -160,7 +165,12 @@ export default async function ProjectSettingsPage({
             project={{
               id: project.id,
               name: project.name,
+              code: project.code,
+              codeLocked: project._count.jobs > 0,
+              clientProjectName: project.clientProjectName,
               externalProjectId: project.externalProjectId,
+              repProjectName: project.repProjectName,
+              repProjectId: project.repProjectId,
               clientId: project.clientId,
               repCompanyId: project.repCompanyId,
               customerId: project.customerId,
@@ -234,7 +244,7 @@ export default async function ProjectSettingsPage({
 
       <Card>
         <CardHeader>
-          <CardTitle>In Project Jobs Settings</CardTitle>
+          <CardTitle>Job Settings</CardTitle>
           <CardDescription>
             How every job raised under this project starts out. All of it stays
             editable on the job itself.

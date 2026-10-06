@@ -13,6 +13,7 @@ import {
 import { normaliseRuleSettings, PROJECT_DEFAULT_RULES } from "@/lib/deliverables";
 import { materialiseProjectRules } from "@/lib/job-deliverables";
 import { notify } from "@/lib/notifications";
+import { normaliseProjectCode, projectCodeError } from "@/lib/project-code";
 import { canOnProject } from "@/lib/scope";
 import {
   can,
@@ -49,6 +50,21 @@ async function projectActor(projectId: string): Promise<SessionUser | null> {
  */
 const PROJECT_PAY_TYPES = ["HOURLY", "FLAT", "NON_BILLABLE"] as const;
 
+/** Somebody else saved the same project ID a moment ago. */
+function takenCode(error: unknown): boolean {
+  return (
+    (error as { code?: string })?.code === "P2002" &&
+    JSON.stringify((error as { meta?: unknown }).meta ?? "").includes("code")
+  );
+}
+
+function codeTaken(code: string): ActionResult {
+  return {
+    ok: false,
+    error: `${code} was just taken by another project. Each project needs its own ID.`,
+  };
+}
+
 /** How a membership role reads in a message. */
 const ROLE_WORDING: Record<ProjectRole, string> = {
   PROJECT_MANAGER: "As the project manager",
@@ -63,7 +79,13 @@ const ROLE_WORDING: Record<ProjectRole, string> = {
  */
 const projectSchema = z.object({
   name: z.string().trim().min(1, "Name is required"),
+  code: z.string().transform(normaliseProjectCode),
+  // Theirs, all optional: the paying company's and the rep company's own
+  // name and ID for the same work.
+  clientProjectName: optionalText,
   externalProjectId: optionalText,
+  repProjectName: optionalText,
+  repProjectId: optionalText,
   clientId: z.string().min(1, "Pick a paying company"),
   repCompanyId: optionalText,
   customerId: optionalText,
@@ -87,6 +109,19 @@ export async function saveProject(
   }
 
   const data = parsed.data;
+
+  const codeError = projectCodeError(data.code);
+  if (codeError) return { ok: false, error: codeError };
+  const sameCode = await db.project.findUnique({
+    where: { code: data.code },
+    select: { id: true, name: true },
+  });
+  if (sameCode && sameCode.id !== id) {
+    return {
+      ok: false,
+      error: `${data.code} is already the ID of ${sameCode.name}. Each project needs its own.`,
+    };
+  }
 
   // Both are picked from lists, but what arrives is whatever was posted.
   const [client, repCompany] = await Promise.all([
@@ -114,11 +149,30 @@ export async function saveProject(
         client: { select: { name: true } },
         repCompanyId: true,
         repCompany: { select: { name: true } },
+        code: true,
+        _count: { select: { jobs: true } },
       },
     });
     if (!before) return { ok: false, error: "Project not found." };
 
-    const project = await db.project.update({ where: { id }, data });
+    // Its jobs' numbers already carry it. Changing it would split one
+    // project's work across two IDs — and free the old one for another
+    // project, whose counter starting again at 1 would issue numbers its
+    // jobs already have.
+    if (before.code !== data.code && before._count.jobs > 0) {
+      return {
+        ok: false,
+        error: `The project ID is in the work order numbers of its ${before._count.jobs} job${before._count.jobs === 1 ? "" : "s"}, so it stays ${before.code}.`,
+      };
+    }
+
+    let project;
+    try {
+      project = await db.project.update({ where: { id }, data });
+    } catch (error) {
+      if (takenCode(error)) return codeTaken(data.code);
+      throw error;
+    }
 
     // Who the work belongs to is not a detail to bury under "details
     // updated": the jobs raised from now on go to the new company, and the
@@ -200,39 +254,45 @@ export async function saveProject(
 
   // A new project starts with the standard deliverable rules so a planner has
   // something to switch on rather than a blank list.
-  const project = await db.project.create({
-    data: {
-      ...data,
-      deliverableRules: {
-        create: PROJECT_DEFAULT_RULES.map((rule) => ({
-          category: rule.category,
-          enabled: rule.enabled,
-          required: rule.required,
-          requiresPhoto: rule.requiresPhoto,
-          requiresText: rule.requiresText,
-          minPhotos: rule.minPhotos,
-          perLocation: rule.perLocation,
-          note: rule.note,
-          order: rule.order,
-        })),
+  let project;
+  try {
+    project = await db.project.create({
+      data: {
+        ...data,
+        deliverableRules: {
+          create: PROJECT_DEFAULT_RULES.map((rule) => ({
+            category: rule.category,
+            enabled: rule.enabled,
+            required: rule.required,
+            requiresPhoto: rule.requiresPhoto,
+            requiresText: rule.requiresText,
+            minPhotos: rule.minPhotos,
+            perLocation: rule.perLocation,
+            note: rule.note,
+            order: rule.order,
+          })),
+        },
+        // The project manager is a member by definition; leaving them out would
+        // hide their own project from their PROJECT-scoped queries. So is
+        // whoever made it when they can only manage the projects they are on —
+        // otherwise the project they just created is one they cannot open.
+        members: {
+          create: [
+            ...(data.managerId
+              ? [{ userId: data.managerId, role: "PROJECT_MANAGER" as const }]
+              : []),
+            ...(!can(actor, "project.manage", { minScope: "ALL" }) &&
+            data.managerId !== actor.id
+              ? [{ userId: actor.id, role: "SUPERVISOR" as const }]
+              : []),
+          ],
+        },
       },
-      // The project manager is a member by definition; leaving them out would
-      // hide their own project from their PROJECT-scoped queries. So is
-      // whoever made it when they can only manage the projects they are on —
-      // otherwise the project they just created is one they cannot open.
-      members: {
-        create: [
-          ...(data.managerId
-            ? [{ userId: data.managerId, role: "PROJECT_MANAGER" as const }]
-            : []),
-          ...(!can(actor, "project.manage", { minScope: "ALL" }) &&
-          data.managerId !== actor.id
-            ? [{ userId: actor.id, role: "SUPERVISOR" as const }]
-            : []),
-        ],
-      },
-    },
-  });
+    });
+  } catch (error) {
+    if (takenCode(error)) return codeTaken(data.code);
+    throw error;
+  }
 
   await recordAudit({
     actorId: actor.id,

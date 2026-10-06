@@ -81,7 +81,7 @@ export async function createJob(
         where: { id: input.projectId },
         select: {
           id: true,
-          externalProjectId: true,
+          code: true,
           clientId: true,
           repCompanyId: true,
           breakPaid: true,
@@ -250,7 +250,7 @@ export async function createJob(
   const job = await db.$transaction(async (tx) => {
     const { intWoId, sequence } = await allocateIntWo(tx, {
       projectId: project?.id ?? null,
-      externalProjectId: project?.externalProjectId ?? null,
+      projectCode: project?.code ?? null,
       effectiveDate: scheduledStart ?? new Date(),
       timeZone,
     });

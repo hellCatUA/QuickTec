@@ -40,6 +40,7 @@ export async function loadJobForExport(jobId: string) {
       revisitNumber: true,
       createdAt: true,
       client: { select: { name: true } },
+      repCompany: { select: { name: true } },
       customer: { select: { name: true, code: true } },
       site: {
         select: {
@@ -57,7 +58,11 @@ export async function loadJobForExport(jobId: string) {
       project: {
         select: {
           name: true,
+          code: true,
+          clientProjectName: true,
           externalProjectId: true,
+          repProjectName: true,
+          repProjectId: true,
           generalScopeOfWork: true,
           deliverableRules: { where: { jobId: null }, select: RULE_SELECT },
         },
