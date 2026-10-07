@@ -2724,6 +2724,175 @@ async function main() {
     "0 of 6",
   );
 
+  // --- where each room is photographed, and how much ------------------------
+  // A room found in Post-Install has no "before"; one the crew found on site
+  // owes nothing until somebody planning the job says it does; and one room
+  // can ask for more, or fewer, than its field.
+  const {
+    fieldsForAddedLocation,
+    locationCounts,
+    locationInField,
+    locationNeed,
+  } = await import("@/lib/deliverables");
+  const { readLocationPlan, fieldsDropped } = await import("@/lib/location-plan");
+  const prePost = [
+    section({ minPhotos: 2, perLocation: true }),
+    section({ category: "POST_INSTALL", minPhotos: 2, perLocation: true }),
+  ];
+  const planned = [
+    { id: "mdf", name: "MDF", fields: [], counted: true, minPhotos: {} },
+    { id: "closet", name: "Closet", fields: ["POST_INSTALL"], counted: true, minPhotos: {} },
+  ];
+  check(
+    "a room in Post-Install alone is not asked for in Pre-Install",
+    fieldProgress(prePost, [], planned)
+      .map((field) => `${field.key}:${field.locations?.map((one) => one.name).join("+")}`)
+      .join(" "),
+    "PRE_INSTALL:MDF POST_INSTALL:MDF+Closet",
+  );
+  check(
+    "…and checkout asks for it only where it is",
+    missingDeliverables(fieldProgress(prePost, [], planned)).join(" | "),
+    "Pre-Install at MDF (0 of 2) | Post Install at both locations",
+  );
+  check(
+    "a room added from Pre-Install is in every per-location field",
+    JSON.stringify(fieldsForAddedLocation("PRE_INSTALL")),
+    "[]",
+  );
+  check(
+    "a room added from Post-Install is in Post-Install alone",
+    JSON.stringify(fieldsForAddedLocation("POST_INSTALL")),
+    '["POST_INSTALL"]',
+  );
+  check(
+    "a room added from a custom field is in that field alone",
+    JSON.stringify(fieldsForAddedLocation("CUSTOM:Rack")),
+    '["CUSTOM:Rack"]',
+  );
+  check(
+    "a room with no fields of its own is in every one",
+    [locationInField({ fields: [] }, "POST_INSTALL"), locationInField({}, "X")].join(","),
+    "true,true",
+  );
+
+  const found = [
+    { id: "mdf", name: "MDF", fields: [], counted: true, minPhotos: {} },
+    { id: "idf2", name: "IDF 2", fields: [], counted: false, minPhotos: {} },
+  ];
+  check(
+    "a room the crew found on site owes no photos",
+    fieldProgress([perRoom], [upload({ locationId: "mdf", fileCount: 2 })], found)[0]
+      .locations?.map((one) => `${one.name}:${one.needed}`)
+      .join(" "),
+    "MDF:2 IDF 2:0",
+  );
+  check(
+    "…so the field is done once the planned rooms are",
+    fieldProgress([perRoom], [upload({ locationId: "mdf", fileCount: 2 })], found)[0]
+      .state,
+    "done",
+  );
+  check(
+    "…and \"both locations\" is not said when one of the two owes nothing",
+    missingDeliverables(fieldProgress([perRoom], [], found)).join(" | "),
+    "Pre-Install at MDF (0 of 2)",
+  );
+  const onlyFound = [{ id: "idf2", name: "IDF 2", fields: [], counted: false, minPhotos: {} }];
+  check(
+    "a required field whose only rooms were found on site still needs its photos, at any of them",
+    missingDeliverables(fieldProgress([perRoom], [], onlyFound)).join(" | "),
+    "Pre-Install (0 of 2)",
+  );
+  check(
+    "…and is done by them wherever they are filed",
+    fieldProgress([perRoom], [upload({ locationId: "idf2", fileCount: 2 })], onlyFound)[0]
+      .state,
+    "done",
+  );
+
+  const ownCounts = [
+    { id: "mdf", name: "MDF", fields: [], counted: true, minPhotos: { PRE_INSTALL: 4 } },
+    { id: "pt", name: "Install point", fields: [], counted: true, minPhotos: { PRE_INSTALL: 0 } },
+    { id: "idf2", name: "IDF 2", fields: [], counted: false, minPhotos: { PRE_INSTALL: 1 } },
+  ];
+  check(
+    "a room's own count wins over the field's, 0 included, and counts a found room",
+    fieldProgress([perRoom], [], ownCounts)[0]
+      .locations?.map((one) => `${one.name}:${one.needed}`)
+      .join(" "),
+    "MDF:4 Install point:0 IDF 2:1",
+  );
+  check(
+    "…and the total is theirs added up",
+    fieldProgress([perRoom], [], ownCounts)[0].needed,
+    5,
+  );
+  check(
+    "rooms the planner set to 0 need nothing, the field included",
+    fieldProgress(
+      [perRoom],
+      [],
+      [
+        { id: "mdf", name: "MDF", fields: [], counted: true, minPhotos: { PRE_INSTALL: 0 } },
+        { id: "idf2", name: "IDF 2", fields: [], counted: false, minPhotos: {} },
+      ],
+    ).map((field) => `${field.state} ${field.gap} "${progressCount(field)}"`)[0],
+    'done null ""',
+  );
+  check(
+    "a count set for one field does not reach another",
+    locationNeed(ownCounts[0], { category: "POST_INSTALL", minPhotos: 2 }),
+    2,
+  );
+  check(
+    "a stored count out of range is not trusted",
+    JSON.stringify(locationCounts({ A: 3, B: -1, C: 2.5, D: "4", E: 99 })),
+    '{"A":3}',
+  );
+  check(
+    "a photo at a room not in its field counts as not at a location",
+    fieldProgress(
+      prePost,
+      [upload({ locationId: "closet", fileCount: 3 })],
+      planned,
+    )[0].unfiled,
+    3,
+  );
+
+  const planForm = (fields: unknown, minPhotos: unknown) => {
+    const form = new FormData();
+    form.set("fields", JSON.stringify(fields));
+    form.set("minPhotos", JSON.stringify(minPhotos));
+    return form;
+  };
+  const both = ["PRE_INSTALL", "POST_INSTALL"];
+  check(
+    "ticked into every field is stored as all of them",
+    JSON.stringify(readLocationPlan(planForm(both, {}), both, "MDF")),
+    '{"plan":{"fields":[],"minPhotos":{}}}',
+  );
+  check(
+    "ticked into one is stored as that one",
+    JSON.stringify(readLocationPlan(planForm(["POST_INSTALL"], { POST_INSTALL: 3 }), both, "MDF")),
+    '{"plan":{"fields":["POST_INSTALL"],"minPhotos":{"POST_INSTALL":3}}}',
+  );
+  check(
+    "ticked into none is refused",
+    "error" in readLocationPlan(planForm(["CUSTOM:Gone"], {}), both, "MDF"),
+    true,
+  );
+  check(
+    "a count past the limit is refused",
+    "error" in readLocationPlan(planForm([], { PRE_INSTALL: 500 }), both, "MDF"),
+    true,
+  );
+  check(
+    "unticking a field is seen as dropping it",
+    fieldsDropped({ fields: [] }, { fields: ["POST_INSTALL"] }, both).join(","),
+    "PRE_INSTALL",
+  );
+
   check(
     "two custom sections are counted apart — the bug this replaces",
     missingDeliverables(

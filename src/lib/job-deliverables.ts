@@ -3,6 +3,7 @@ import {
   effectiveRules,
   type FieldProgress,
   fieldProgress,
+  LOCATION_PLAN_SELECT,
   missingDeliverables,
   type ProgressItem,
   RULE_SELECT,
@@ -312,7 +313,7 @@ export async function jobDeliverableProgress(
       deliverables: { select: PROGRESS_ITEM_SELECT },
       locations: {
         orderBy: [{ order: "asc" }, { createdAt: "asc" }],
-        select: { id: true, name: true },
+        select: { id: true, name: true, ...LOCATION_PLAN_SELECT },
       },
     },
   });

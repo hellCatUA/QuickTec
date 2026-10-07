@@ -11,10 +11,15 @@ import {
   ruleNoteField,
 } from "@/lib/deliverable-settings";
 import {
+  deliverableLabel,
+  effectiveRules,
   MAX_LOCATION_NAME,
   normaliseRuleSettings,
   PROJECT_DEFAULT_RULES,
+  RULE_SELECT,
+  ruleKey,
 } from "@/lib/deliverables";
+import { readLocationPlan } from "@/lib/location-plan";
 import { isLocationIcon } from "@/lib/location-icons";
 import { materialiseProjectRules } from "@/lib/job-deliverables";
 import { OPEN_LIFECYCLES } from "@/lib/job-status";
@@ -1072,6 +1077,67 @@ export async function removeProjectLocation(formData: FormData): Promise<ActionR
 
   revalidatePath(`/projects/${projectId}/settings`);
   revalidatePath("/jobs/new");
+  return { ok: true };
+}
+
+/**
+ * Where one of the project's rooms is photographed on each job, and how many
+ * photos it owes there — copied onto the job with the room, where it can
+ * still be changed.
+ */
+export async function saveProjectLocationPlan(formData: FormData): Promise<ActionResult> {
+  const projectId = String(formData.get("projectId") ?? "");
+  const id = String(formData.get("id") ?? "");
+  const actor = await projectActor(projectId);
+  if (!actor) return NOT_YOURS;
+
+  const [location, stored] = await Promise.all([
+    db.projectLocation.findFirst({
+      where: { id, projectId },
+      select: { name: true },
+    }),
+    db.deliverableRequirement.findMany({
+      where: { projectId, jobId: null },
+      select: RULE_SELECT,
+    }),
+  ]);
+  if (!location) return { ok: false, error: "That location is not on this project." };
+
+  const rules = effectiveRules([], stored).filter(
+    (rule) => rule.enabled && rule.perLocation && rule.requiresPhoto,
+  );
+  const read = readLocationPlan(
+    formData,
+    rules.map((rule) => ruleKey(rule)),
+    location.name,
+  );
+  if ("error" in read) return { ok: false, error: read.error };
+  const { plan } = read;
+
+  await db.projectLocation.update({
+    where: { id },
+    data: { fields: plan.fields, minPhotos: plan.minPhotos },
+  });
+
+  await recordAudit({
+    actorId: actor.id,
+    entityType: "Project",
+    entityId: projectId,
+    projectId,
+    action: "project_job_settings_updated",
+    detail: {
+      fields: `Locations — ${location.name}`,
+      to:
+        plan.fields.length === 0
+          ? "every field"
+          : rules
+              .filter((rule) => plan.fields.includes(ruleKey(rule)))
+              .map((rule) => deliverableLabel(rule.category, rule.customLabel))
+              .join(", "),
+    },
+  });
+
+  revalidatePath(`/projects/${projectId}/settings`);
   return { ok: true };
 }
 

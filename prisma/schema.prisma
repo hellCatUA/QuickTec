@@ -1459,6 +1459,19 @@ model JobLocation {
   icon  String?
   order Int    @default(0)
 
+  /// The fields photographed per location it is photographed in, by field
+  /// key (PRE_INSTALL, CUSTOM:Rack). Empty is every one of them. A room the
+  /// crew first sees after the work is not a room anybody can photograph
+  /// before it, so one added in Post-Install is in Post-Install alone.
+  fields    String[] @default([])
+  /// Whether it owes each field the photos the field asks for. A room the
+  /// crew finds on the day is somewhere photos can go, not something the job
+  /// planned to have photographed: one added from the photos starts without.
+  counted   Boolean  @default(true)
+  /// Photos needed here, by field key, where this location asks for a
+  /// different number than its field does. 0 is none needed here.
+  minPhotos Json     @default("{}")
+
   createdById String?
   createdAt   DateTime @default(now())
 
@@ -1481,6 +1494,10 @@ model ProjectLocation {
   /// As on JobLocation: the dictionary's icon when picked from there.
   icon  String?
   order Int     @default(0)
+
+  /// As on JobLocation, and copied onto each job with the room.
+  fields    String[] @default([])
+  minPhotos Json     @default("{}")
 
   createdAt DateTime @default(now())
 

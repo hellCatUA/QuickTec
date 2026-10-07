@@ -6,6 +6,7 @@ import {
   effectiveRules,
   fieldProgress,
   itemMatchesRule,
+  LOCATION_PLAN_SELECT,
   RULE_SELECT,
 } from "@/lib/deliverables";
 import {
@@ -194,7 +195,7 @@ export async function loadReview(jobId: string): Promise<LoadedReview | null> {
       },
       locations: {
         orderBy: [{ order: "asc" }, { createdAt: "asc" }],
-        select: { id: true, name: true },
+        select: { id: true, name: true, ...LOCATION_PLAN_SELECT },
       },
       reimbursements: {
         select: {

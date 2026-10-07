@@ -143,6 +143,7 @@ export const TIMELINE_META: Record<string, TimelineMeta> = {
   deliverable_moved: { label: "Photo moved to another section", icon: ArrowRightLeft, tone: "neutral", groups: true },
   location_added: { label: "Location added", icon: FilePlus2, tone: "neutral" },
   location_removed: { label: "Location removed", icon: Ban, tone: "warning" },
+  location_changed: { label: "Location changed", icon: Pencil, tone: "neutral" },
   signature_captured: { label: "Signature captured", icon: Pencil, tone: "success" },
   change_requested: { label: "Change suggested", icon: Pencil, tone: "warning" },
   change_approved: { label: "Change approved", icon: CircleCheck, tone: "success" },

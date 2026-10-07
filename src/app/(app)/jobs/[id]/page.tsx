@@ -22,6 +22,9 @@ import { db } from "@/lib/db";
 import {
   effectiveRules,
   fieldProgress,
+  locationCounts,
+  locationInField,
+  LOCATION_PLAN_SELECT,
   missingDeliverables,
   RULE_SELECT,
   ruleKey,
@@ -285,6 +288,7 @@ export default async function JobPage({
           id: true,
           name: true,
           icon: true,
+          ...LOCATION_PLAN_SELECT,
         },
       },
       reimbursements: {
@@ -468,8 +472,9 @@ export default async function JobPage({
   const knownIcon = new Map(
     knownLocations.map((entry) => [entry.label.toLowerCase(), entry.icon]),
   );
-  // A location is in use while a field photographed per location has
-  // something filed under it — the same test removing it applies.
+  // A location is in use while a field photographed per location, and
+  // photographed there, has something filed under it — the same test
+  // removing it applies.
   const perLocationFields = new Set(
     rules.filter((rule) => rule.perLocation).map((rule) => ruleKey(rule)),
   );
@@ -477,9 +482,14 @@ export default async function JobPage({
     id: location.id,
     name: location.name,
     icon: location.icon ?? knownIcon.get(location.name.toLowerCase()) ?? null,
+    fields: location.fields,
+    counted: location.counted,
+    minPhotos: locationCounts(location.minPhotos),
     inUse: job.deliverables.some(
       (item) =>
-        item.locationId === location.id && perLocationFields.has(ruleKey(item)),
+        item.locationId === location.id &&
+        perLocationFields.has(ruleKey(item)) &&
+        locationInField(location, ruleKey(item)),
     ),
   }));
 
@@ -1382,6 +1392,7 @@ export default async function JobPage({
                     rules={sections}
                     canRequire={canManageJob}
                     locations={jobLocations}
+                    known={knownLocations}
                     source={
                       job.deliverablesFrozenAt
                         ? "checkout"

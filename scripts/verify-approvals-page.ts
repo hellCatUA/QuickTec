@@ -1550,6 +1550,37 @@ async function main() {
     "MDF (icon)",
   );
 
+  // Photographed at each room before and after — but this one after the
+  // work only, and three photos of it rather than the field's one.
+  for (const field of ["Pre-Install", "Post Install"]) {
+    await managerPage.getByRole("button", { name: `Set up ${field}` }).click();
+    await managerPage
+      .getByRole("checkbox", { name: "Separately at each location" })
+      .check();
+    await managerPage.waitForTimeout(1500);
+    await managerPage.getByRole("button", { name: `Done with ${field}` }).click();
+  }
+  await managerPage.reload({ waitUntil: "load" });
+  await managerPage
+    .getByRole("checkbox", { name: "Photograph MDF in Pre-Install" })
+    .click();
+  await managerPage.waitForTimeout(1500);
+  const mdfCount = managerPage.getByRole("spinbutton", {
+    name: "Photos needed in Post Install at MDF",
+  });
+  await mdfCount.fill("3");
+  await mdfCount.press("Enter");
+  await managerPage.waitForTimeout(1500);
+  const mdfPlan = await db.projectLocation.findFirstOrThrow({
+    where: { projectId: project.id, name: "MDF" },
+    select: { fields: true, minPhotos: true },
+  });
+  check(
+    "a project's room says which fields it is photographed in, and how much",
+    `${mdfPlan.fields.join()} ${JSON.stringify(mdfPlan.minPhotos)}`,
+    'POST_INSTALL {"POST_INSTALL":3}',
+  );
+
   // The company's usual blank, turned down for this project's jobs.
   await managerPage.getByText("These, for this project").click();
   await managerPage.locator('input[name="templateIds"]').uncheck();
@@ -1608,7 +1639,9 @@ async function main() {
       payRate: true,
       budgetType: true,
       budgetHourly: true,
-      locations: { select: { name: true } },
+      locations: {
+        select: { name: true, fields: true, counted: true, minPhotos: true },
+      },
       _count: { select: { documents: true } },
     },
   });
@@ -1627,6 +1660,21 @@ async function main() {
     bySup?.locations.map((one) => one.name).join(),
     "MDF",
   );
+  check(
+    "each photographed where the project says, owing what it says",
+    bySup?.locations
+      .map(
+        (one) =>
+          `${one.fields.join()} ${JSON.stringify(one.minPhotos)} ${one.counted}`,
+      )
+      .join(),
+    'POST_INSTALL {"POST_INSTALL":3} true',
+  );
+  // Back to the sections the rest of this suite expects of the project.
+  await db.deliverableRequirement.updateMany({
+    where: { projectId: project.id, jobId: null },
+    data: { perLocation: false },
+  });
   check("and no blank, as the project chose", bySup?._count.documents, 0);
 
   // --- a company change, carried to the jobs still open ----------------------

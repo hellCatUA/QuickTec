@@ -2,10 +2,14 @@
 
 import { ChevronDown, Link2, Loader2, SlidersHorizontal } from "lucide-react";
 import * as React from "react";
+import type { KnownLocationOption } from "@/components/add-location";
 import { DeliverableRules, type EditableRule } from "@/components/deliverable-rules";
+import type { PlanLocation } from "@/components/location-plan";
 import { Button } from "@/components/ui/button";
+import { deliverableLabel, ruleKey } from "@/lib/deliverables";
 import { cn } from "@/lib/utils";
 import { returnToProjectDeliverables, saveJobDeliverableRule } from "./actions";
+import { JobLocations } from "./job-locations";
 
 /**
  * Where the job's sheet comes from: its project's, live; its own, since
@@ -15,17 +19,20 @@ import { returnToProjectDeliverables, saveJobDeliverableRule } from "./actions";
 export type SectionsSource = "project" | "own" | "checkout" | "defaults";
 
 /**
- * Which sections this job asks for, changed from the job itself.
+ * Which sections this job asks for, and the rooms it is photographed at,
+ * changed from the job itself.
  *
  * Folded away by default: on most jobs the answer came from the project and
  * nobody needs to see it, but the ones where a customer wants serials recorded
- * or waives the post-install photos are decided after the job exists.
+ * or waives the post-install photos are decided after the job exists — and
+ * the rooms are best named before anybody is on site.
  */
 export function DeliverableSections({
   jobId,
   rules,
   canRequire = true,
   locations = [],
+  known = [],
   source,
   hasProject,
 }: {
@@ -34,8 +41,10 @@ export function DeliverableSections({
   source: SectionsSource;
   /** Whether there is a project's sheet to go back to. */
   hasProject: boolean;
-  /** The job's locations, shown under a section photographed at each. */
-  locations?: { name: string; icon: string | null }[];
+  /** The job's rooms: shown under a section photographed at each, and planned. */
+  locations?: PlanLocation[];
+  /** The rooms offered by name when one is added. */
+  known?: KnownLocationOption[];
   /**
    * Whether this person may also demand a section, or take one away.
    *
@@ -52,6 +61,14 @@ export function DeliverableSections({
 
   const on = rules.filter((rule) => rule.enabled).length;
   const required = rules.filter((rule) => rule.enabled && rule.required).length;
+  const perLocation = rules
+    .filter((rule) => rule.enabled && rule.perLocation && rule.requiresPhoto)
+    .map((rule) => ({
+      key: ruleKey(rule),
+      label: deliverableLabel(rule.category, rule.customLabel),
+      minPhotos: rule.minPhotos,
+      required: rule.required,
+    }));
 
   return (
     <div className="flex flex-col gap-3">
@@ -64,9 +81,12 @@ export function DeliverableSections({
         onClick={() => setOpen((was) => !was)}
       >
         <SlidersHorizontal />
-        Sections
+        Sections &amp; locations
         <span className="text-muted-foreground">
           {on} on, {required} required
+          {locations.length > 0
+            ? ` · ${locations.length} location${locations.length === 1 ? "" : "s"}`
+            : ""}
         </span>
         <ChevronDown className={cn("transition-transform", open && "rotate-180")} />
       </Button>
@@ -123,6 +143,22 @@ export function DeliverableSections({
           canRequire={canRequire}
           locations={locations}
         />
+      ) : null}
+
+      {/* Where the per-location fields are photographed, and how much at
+          each: planning, so whoever may demand a section. */}
+      {open && canRequire ? (
+        <div className="flex flex-col gap-2 border-t border-border pt-3">
+          <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Locations
+          </div>
+          <JobLocations
+            jobId={jobId}
+            locations={locations}
+            fields={perLocation}
+            known={known}
+          />
+        </div>
       ) : null}
     </div>
   );

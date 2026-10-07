@@ -6,7 +6,13 @@ import { recordAudit } from "@/lib/audit";
 import { getCompanySettings } from "@/lib/company";
 import { isoDateInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
-import { deliverableLabel, MAX_LOCATION_NAME, ruleKey } from "@/lib/deliverables";
+import {
+  deliverableLabel,
+  fieldsForAddedLocation,
+  locationInField,
+  MAX_LOCATION_NAME,
+  ruleKey,
+} from "@/lib/deliverables";
 import { isLocationIcon } from "@/lib/location-icons";
 import {
   isPdf,
@@ -17,6 +23,7 @@ import {
 } from "@/lib/images";
 import { DOCUMENT_LABELS, storeDocument } from "@/lib/job-documents";
 import { jobRuleSheet } from "@/lib/job-deliverables";
+import { fieldsDropped, readLocationPlan } from "@/lib/location-plan";
 import { canOnJob } from "@/lib/scope";
 import { getSessionUser, type SessionUser } from "@/lib/session";
 import { deleteFile, storeFile, storageErrorMessage } from "@/lib/storage";
@@ -274,7 +281,7 @@ const deliverableSchema = z.object({
  * field nobody is shown vanishes from the job page and from the counts while
  * still going out in the export. And the location follows the field, not the
  * request: none for a field that is not photographed per location, and one of
- * this job's for a field that is, once the job has any.
+ * the job's rooms photographed in that field, once it has any.
  */
 async function placeFor(
   jobId: string,
@@ -302,18 +309,23 @@ async function placeFor(
 
   const locations = await db.jobLocation.findMany({
     where: { jobId },
-    select: { id: true, name: true },
+    select: { id: true, name: true, fields: true },
   });
-  if (locations.length === 0) return { label, location: null };
-  const location = locations.find((one) => one.id === locationId);
+  const key = ruleKey(rule);
+  const here = locations.filter((one) => locationInField(one, key));
+  if (here.length === 0) return { label, location: null };
+  const location = here.find((one) => one.id === locationId);
   if (!location) {
+    const elsewhere = locations.find((one) => one.id === locationId);
     return {
-      error: locationId
-        ? "That location is no longer on this job."
-        : `Say which location in ${label} this goes to.`,
+      error: elsewhere
+        ? `${elsewhere.name} is not photographed in ${label}.`
+        : locationId
+          ? "That location is no longer on this job."
+          : `Say which location in ${label} this goes to.`,
     };
   }
-  return { label, location };
+  return { label, location: { id: location.id, name: location.name } };
 }
 
 export async function saveDeliverable(
@@ -1181,10 +1193,44 @@ const locationSchema = z.object({
 });
 
 /**
+ * A room's name and icon as the job keeps them: the dictionary's when it
+ * knows the name; otherwise as typed, with the icon the picker suggested from
+ * the words if it is one of ours.
+ */
+async function namedLocation(
+  typed: string,
+  offered: FormDataEntryValue | null,
+): Promise<{ name: string; icon: string | null }> {
+  const known = await db.knownLocation.findFirst({
+    where: { label: { equals: typed, mode: "insensitive" } },
+    select: { label: true, icon: true },
+  });
+  return {
+    name: known?.label ?? typed,
+    icon: known
+      ? isLocationIcon(known.icon)
+        ? known.icon
+        : null
+      : typeof offered === "string" && isLocationIcon(offered)
+        ? offered
+        : null,
+  };
+}
+
+/**
  * A place on site found on the day — the second IDF nobody mentioned.
  *
  * Anyone who can add photos to the job can add one: they are the person
  * standing in it. Taking one away is a supervisor's, below.
+ *
+ * It is added from a field, and is photographed where that field says: found
+ * in Pre-Install, before and after; found in Post-Install, after alone — see
+ * fieldsForAddedLocation. And it owes no field a photo count: whoever planned
+ * the job did not plan it, and the crew decide what it needs. A planner who
+ * wants it counted sets a number on it under the job's locations.
+ *
+ * A room the job already has, but not in this field, is the same room: it is
+ * added to this field rather than refused as a duplicate.
  *
  * A name that is in the dictionary takes the dictionary's spelling and icon,
  * so "mdf" typed in a hurry still reads MDF with its rack. Anything else is
@@ -1205,30 +1251,60 @@ export async function addJobLocation(
   if ("error" in context) return fail(context.error);
   const { user, job } = context;
 
-  const known = await db.knownLocation.findFirst({
-    where: { label: { equals: parsed.data.name, mode: "insensitive" } },
-    select: { label: true, icon: true },
-  });
-  const name = known?.label ?? parsed.data.name;
-  // The dictionary's icon for a name it knows; for one it does not, the one
-  // the picker suggested from the words, if it is one of ours.
-  const offered = formData.get("icon");
-  const icon = known
-    ? isLocationIcon(known.icon)
-      ? known.icon
-      : null
-    : typeof offered === "string" && isLocationIcon(offered)
-      ? offered
-      : null;
+  // The field it was added from, when that is one the job photographs per
+  // location. Without one — an older page — it is in every field, as before.
+  const asked = String(formData.get("field") ?? "");
+  const sheet = asked ? ((await jobRuleSheet(job.id)) ?? []) : [];
+  const from = sheet.find(
+    (rule) => rule.enabled && rule.perLocation && ruleKey(rule) === asked,
+  );
+  const fields = from ? fieldsForAddedLocation(asked) : [];
+  const fieldLabel = from ? deliverableLabel(from.category, from.customLabel) : null;
+
+  /**
+   * The room is on the job already. In this field too, and there is nothing
+   * to add; in another one only, and it is added to this one.
+   */
+  async function join(
+    there: { id: string; name: string; fields: string[] },
+    raced: boolean,
+  ): Promise<ActionResult> {
+    if (!from || locationInField(there, asked)) {
+      if (raced) touch(job.id);
+      return raced
+        ? ok(there.id)
+        : fail(
+            fieldLabel
+              ? `${there.name} is already in ${fieldLabel}.`
+              : `There is already a location called ${there.name}.`,
+          );
+    }
+    const widened = fields.length === 0 ? [] : [...there.fields, asked];
+    await db.jobLocation.update({
+      where: { id: there.id },
+      data: { fields: widened },
+    });
+    await recordAudit({
+      actorId: user.id,
+      entityType: "JobLocation",
+      entityId: there.id,
+      jobId: job.id,
+      action: "location_changed",
+      detail: { name: there.name, field: fieldLabel, to: "photographed here too" },
+    });
+    touch(job.id);
+    return ok(there.id);
+  }
+
+  const { name, icon } = await namedLocation(parsed.data.name, formData.get("icon"));
 
   const existing = await db.jobLocation.findMany({
     where: { jobId: job.id },
-    select: { name: true, order: true },
+    select: { id: true, name: true, order: true, fields: true },
   });
   // "MDF" and "mdf" are one room, and two pills for it split its photos.
-  if (existing.some((one) => one.name.toLowerCase() === name.toLowerCase())) {
-    return fail(`There is already a location called ${name}.`);
-  }
+  const same = existing.find((one) => one.name.toLowerCase() === name.toLowerCase());
+  if (same) return join(same, false);
 
   let location: { id: string };
   try {
@@ -1238,6 +1314,8 @@ export async function addJobLocation(
         name,
         icon,
         order: Math.max(-1, ...existing.map((one) => one.order)) + 1,
+        fields,
+        counted: false,
         createdById: user.id,
       },
       select: { id: true },
@@ -1248,11 +1326,10 @@ export async function addJobLocation(
     if (prismaCode(error) !== "P2002") throw error;
     const there = await db.jobLocation.findFirst({
       where: { jobId: job.id, name: { equals: name, mode: "insensitive" } },
-      select: { id: true },
+      select: { id: true, name: true, fields: true },
     });
     if (!there) throw error;
-    touch(job.id);
-    return ok(there.id);
+    return join(there, true);
   }
 
   await recordAudit({
@@ -1261,7 +1338,7 @@ export async function addJobLocation(
     entityId: location.id,
     jobId: job.id,
     action: "location_added",
-    detail: { name },
+    detail: { name, ...(fieldLabel ? { field: fieldLabel } : {}) },
   });
 
   touch(job.id);
@@ -1285,6 +1362,7 @@ export async function removeJobLocation(
       id: true,
       jobId: true,
       name: true,
+      fields: true,
     },
   });
   if (!location) return fail("That location is already gone.");
@@ -1305,11 +1383,12 @@ export async function removeJobLocation(
     return fail("Only a supervisor or the job's lead can remove a location.");
   }
 
-  // Only what is filed under it in a field photographed per location keeps it.
-  // A photo that still carries it from before its field stopped being
-  // photographed per location is not "at" it any more — the job page and the
-  // export both ignore it there — and is let go rather than holding on to a
-  // location nobody can see the photos of.
+  // Only what is filed under it in a field photographed per location, and
+  // photographed there, keeps it. A photo that still carries it from before
+  // its field stopped being photographed per location — or at this room — is
+  // not "at" it any more: the job page and the export both ignore it there,
+  // and it is let go rather than holding on to a location nobody can see the
+  // photos of.
   const sheet = (await jobRuleSheet(job.id)) ?? [];
   const perLocation = new Set(
     sheet.filter((rule) => rule.enabled && rule.perLocation).map((rule) => ruleKey(rule)),
@@ -1318,7 +1397,12 @@ export async function removeJobLocation(
     where: { locationId: location.id },
     select: { id: true, category: true, customLabel: true },
   });
-  if (using.some((item) => perLocation.has(ruleKey(item)))) {
+  if (
+    using.some(
+      (item) =>
+        perLocation.has(ruleKey(item)) && locationInField(location, ruleKey(item)),
+    )
+  ) {
     return fail(
       `${location.name} still has photos in it. Move or delete them first.`,
     );
@@ -1352,4 +1436,187 @@ export async function removeJobLocation(
 
   touch(job.id);
   return ok();
+}
+
+// ---------------------------------------------------------------------------
+// Planning the rooms
+// ---------------------------------------------------------------------------
+
+/**
+ * Who plans a job's rooms: a supervisor over it, or the person leading it —
+ * whoever decides what checkout refuses, which is what a room's count is.
+ */
+async function requirePlanner(
+  jobId: string,
+): Promise<{ user: SessionUser; job: JobForUpload } | { error: string }> {
+  const user = await getSessionUser();
+  if (!user) return { error: "Not signed in." };
+
+  const job = await loadJob(jobId);
+  if (!job) return { error: "Job not found." };
+
+  const lead = await db.jobAssignment.findFirst({
+    where: { jobId: job.id, userId: user.id, isLead: true },
+    select: { id: true },
+  });
+  if (!lead && !(await canOnJob(user, "job.edit_planned_fields", job))) {
+    return { error: "Only a supervisor or the job's lead can plan its locations." };
+  }
+  return { user, job };
+}
+
+/** The fields on the job's sheet that are photographed per location. */
+async function perLocationRules(jobId: string) {
+  const sheet = (await jobRuleSheet(jobId)) ?? [];
+  return sheet.filter(
+    (rule) => rule.enabled && rule.perLocation && rule.requiresPhoto,
+  );
+}
+
+/**
+ * A room named before anybody is on site, from the job's own settings.
+ *
+ * Planned rather than found, so it is photographed in every field
+ * photographed per location and owes each its count — until it is set
+ * otherwise, which is the next action.
+ */
+export async function planJobLocation(
+  formData: FormData,
+): Promise<ActionResult> {
+  const parsed = locationSchema.safeParse({
+    jobId: formData.get("jobId"),
+    name: formData.get("name") ?? "",
+  });
+  if (!parsed.success) return fail(z.prettifyError(parsed.error));
+
+  const context = await requirePlanner(parsed.data.jobId);
+  if ("error" in context) return fail(context.error);
+  const { user, job } = context;
+
+  const { name, icon } = await namedLocation(parsed.data.name, formData.get("icon"));
+
+  const existing = await db.jobLocation.findMany({
+    where: { jobId: job.id },
+    select: { name: true, order: true },
+  });
+  if (existing.some((one) => one.name.toLowerCase() === name.toLowerCase())) {
+    return fail(`There is already a location called ${name}.`);
+  }
+
+  let location: { id: string };
+  try {
+    location = await db.jobLocation.create({
+      data: {
+        jobId: job.id,
+        name,
+        icon,
+        order: Math.max(-1, ...existing.map((one) => one.order)) + 1,
+        createdById: user.id,
+      },
+      select: { id: true },
+    });
+  } catch (error) {
+    if (prismaCode(error) !== "P2002") throw error;
+    const there = await db.jobLocation.findFirst({
+      where: { jobId: job.id, name: { equals: name, mode: "insensitive" } },
+      select: { id: true },
+    });
+    if (!there) throw error;
+    touch(job.id);
+    return ok(there.id);
+  }
+
+  await recordAudit({
+    actorId: user.id,
+    entityType: "JobLocation",
+    entityId: location.id,
+    jobId: job.id,
+    action: "location_added",
+    detail: { name },
+  });
+
+  touch(job.id);
+  return ok(location.id);
+}
+
+/**
+ * Where a room is photographed, and how many photos it owes: in Pre-Install
+ * and Post-Install, or in Post-Install alone; the field's count, a number of
+ * its own, or none.
+ *
+ * A field it has photos in is not taken away from it: those photos are where
+ * they were taken, and would drop out of what checkout counts.
+ */
+export async function saveJobLocationPlan(
+  formData: FormData,
+): Promise<ActionResult> {
+  const locationId = String(formData.get("locationId") ?? "");
+  const location = await db.jobLocation.findUnique({
+    where: { id: locationId },
+    select: {
+      id: true,
+      jobId: true,
+      name: true,
+      fields: true,
+      counted: true,
+    },
+  });
+  if (!location) return fail("That location is no longer on this job.");
+
+  const context = await requirePlanner(location.jobId);
+  if ("error" in context) return fail(context.error);
+  const { user, job } = context;
+
+  const rules = await perLocationRules(job.id);
+  const keys = rules.map((rule) => ruleKey(rule));
+  const read = readLocationPlan(formData, keys, location.name);
+  if ("error" in read) return fail(read.error);
+  const { plan } = read;
+  const asked = formData.get("counted");
+  const counted = asked === null ? location.counted : asked === "true";
+
+  const dropped = fieldsDropped(location, plan, keys);
+  if (dropped.length > 0) {
+    const filed = await db.deliverableItem.findMany({
+      where: { locationId: location.id },
+      select: { category: true, customLabel: true },
+    });
+    const holding = rules.find(
+      (rule) =>
+        dropped.includes(ruleKey(rule)) &&
+        filed.some((item) => ruleKey(item) === ruleKey(rule)),
+    );
+    if (holding) {
+      return fail(
+        `${location.name} has photos in ${deliverableLabel(holding.category, holding.customLabel)}. Move or delete them first.`,
+      );
+    }
+  }
+
+  await db.jobLocation.update({
+    where: { id: location.id },
+    data: { fields: plan.fields, minPhotos: plan.minPhotos, counted },
+  });
+
+  await recordAudit({
+    actorId: user.id,
+    entityType: "JobLocation",
+    entityId: location.id,
+    jobId: job.id,
+    action: "location_changed",
+    detail: {
+      name: location.name,
+      fields:
+        plan.fields.length === 0
+          ? "every field"
+          : rules
+              .filter((rule) => plan.fields.includes(ruleKey(rule)))
+              .map((rule) => deliverableLabel(rule.category, rule.customLabel)),
+      minPhotos: plan.minPhotos,
+      counted,
+    },
+  });
+
+  touch(job.id);
+  return ok(location.id);
 }

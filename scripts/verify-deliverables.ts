@@ -395,16 +395,22 @@ async function main() {
   check("anyone on the job can add a location", Boolean(added), true);
   check("and it comes with the list's icon", added?.icon, "locate-fixed");
   check(
-    "and it is asked for at once",
+    "found on site, it owes no photos the planner did not ask for",
     (await banner.textContent())?.includes("Install point"),
+    false,
+  );
+  check(
+    "and the upload opens on it, since it was named to be photographed",
+    await page.getByText("Adding to Pre-Install at Install point").isVisible(),
     true,
   );
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
 
   await page.getByRole("button", { name: "Add a location" }).first().click();
   await where.fill("mdf");
   check(
     "the same room twice is not offered, whatever the case",
-    await page.getByText("“mdf” is already on this job.").isVisible(),
+    await page.getByText("“mdf” is already in Pre-Install.").isVisible(),
     true,
   );
   check(
@@ -448,9 +454,9 @@ async function main() {
     true,
   );
   check(
-    "but does not count towards any room",
+    "but does not count towards any room — and the room found on site is not asked for",
     (await missingRequiredDeliverables(jobId))[0],
-    "Pre-Install at all 3 locations",
+    "Pre-Install at MDF (0 of 2) · IDF (0 of 2)",
   );
   await db.deliverableItem.updateMany({
     where: { jobId, category: "PRE_INSTALL", locationId: null },
@@ -478,6 +484,11 @@ async function main() {
       .getByRole("checkbox", { name: "Photo", exact: true })
       .isDisabled(),
     true,
+  );
+  check(
+    "or plan the rooms and what each owes",
+    await page.locator("[data-location-plan]").count(),
+    0,
   );
 
   // --- the planner's side ----------------------------------------------------
@@ -587,6 +598,183 @@ async function main() {
     await planner.getByRole("button", { name: "One more photo" }).count(),
     0,
   );
+
+  // --- where each room is photographed, and how much -------------------------
+  // Before the work and after it. A room first seen during Post-Install has no
+  // "before"; one the crew found owes nothing until the planner says so; and a
+  // room can ask for more, or fewer, than its field.
+  const { jobDeliverableProgress } = await import("@/lib/job-deliverables");
+  const roomsIn = async (key: string) =>
+    (await jobDeliverableProgress(jobId))
+      ?.find((field) => field.key === key)
+      ?.locations?.map((location) => location.name)
+      .join(",");
+  await db.deliverableRequirement.updateMany({
+    where: { jobId, category: "POST_INSTALL" },
+    data: { perLocation: true, minPhotos: 1 },
+  });
+  await openDeliverables(page, url);
+  const postSection = page.locator('[data-deliverable="POST_INSTALL"]');
+  await page.locator('[data-deliverable="POST_INSTALL"] > button').first().click();
+  await page.waitForTimeout(300);
+  await postSection.getByRole("button", { name: "Add a location" }).click();
+  await page.getByRole("textbox", { name: "Name of the location" }).fill("Closet");
+  await page.getByRole("button", { name: /^Add “Closet”/ }).click();
+  await page.waitForTimeout(1500);
+  const closet = await db.jobLocation.findFirstOrThrow({
+    where: { jobId, name: "Closet" },
+    select: { id: true, fields: true, counted: true },
+  });
+  check(
+    "a room found during Post-Install is photographed there alone",
+    closet.fields.join(),
+    "POST_INSTALL",
+  );
+  check("and owes no photos — nobody planned it", closet.counted, false);
+  check("Post-Install has it", await roomsIn("POST_INSTALL"), "MDF,IDF,Closet");
+  check("Pre-Install does not", await roomsIn("PRE_INSTALL"), "MDF,IDF");
+  check(
+    "the upload opens on it there",
+    await page.getByText("Adding to Post Install at Closet").isVisible(),
+    true,
+  );
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+
+  // The same room found again from Pre-Install: it was there before the work
+  // after all, and is photographed before and after — one room, not two.
+  const preSection = page.locator('[data-deliverable="PRE_INSTALL"]');
+  await page.locator('[data-deliverable="PRE_INSTALL"] > button').first().click();
+  await page.waitForTimeout(300);
+  await preSection.getByRole("button", { name: "Add a location" }).click();
+  await page.getByRole("textbox", { name: "Name of the location" }).fill("Closet");
+  check(
+    "in Pre-Install, a room the job has only after the work is still offered",
+    await page.getByRole("button", { name: /^Add “Closet”/ }).isVisible(),
+    true,
+  );
+  await page.getByRole("button", { name: /^Add “Closet”/ }).click();
+  await page.waitForTimeout(1500);
+  check(
+    "and joins Pre-Install, so it is in both",
+    `${await db.jobLocation.count({ where: { jobId, name: "Closet" } })} ${(
+      await db.jobLocation.findUniqueOrThrow({ where: { id: closet.id } })
+    ).fields.join()}`,
+    "1 ",
+  );
+  check("Pre-Install has it now", await roomsIn("PRE_INSTALL"), "MDF,IDF,Closet");
+
+  // The planner's side: the rooms in the job's settings.
+  await openDeliverables(planner, url);
+  await planner.getByRole("button", { name: /Sections/ }).click();
+  const plan = planner.locator("[data-location-plan]");
+  const closetRow = plan.locator('[data-location="Closet"]');
+  check(
+    "the planner sees which rooms were found on site",
+    await closetRow.getByText("Added on site — photos optional").isVisible(),
+    true,
+  );
+  const closetPost = closetRow.getByRole("spinbutton", {
+    name: "Photos needed in Post Install at Closet",
+  });
+  check(
+    "a found room's count is 0 until one is set",
+    await closetPost.getAttribute("placeholder"),
+    "0",
+  );
+  await closetPost.fill("3");
+  await closetPost.press("Enter");
+  await planner.waitForTimeout(1500);
+  check(
+    "a room can be given a count of its own",
+    JSON.stringify(
+      (await db.jobLocation.findUniqueOrThrow({ where: { id: closet.id } })).minPhotos,
+    ),
+    '{"POST_INSTALL":3}',
+  );
+  check(
+    "and checkout asks for that many there",
+    (await jobDeliverableProgress(jobId))
+      ?.find((field) => field.key === "POST_INSTALL")
+      ?.locations?.map((location) => `${location.name}:${location.needed}`)
+      .join(" "),
+    "MDF:1 IDF:1 Closet:3",
+  );
+
+  const mdfRow = plan.locator('[data-location="MDF"]');
+  check(
+    "a planned room shows the field's count",
+    await mdfRow
+      .getByRole("spinbutton", { name: "Photos needed in Pre-Install at MDF" })
+      .getAttribute("placeholder"),
+    "3",
+  );
+  await mdfRow.getByRole("checkbox", { name: "Photograph MDF in Pre-Install" }).click();
+  await planner.waitForTimeout(1500);
+  check(
+    "a field a room has photos in is not taken from it",
+    await planner
+      .getByText("MDF has photos in Pre-Install. Move or delete them first.")
+      .isVisible(),
+    true,
+  );
+  check(
+    "and it stays",
+    (await db.jobLocation.findUniqueOrThrow({ where: { id: mdf.id } })).fields.length,
+    0,
+  );
+  await plan
+    .locator('[data-location="IDF"]')
+    .getByRole("checkbox", { name: "Photograph IDF in Pre-Install" })
+    .click();
+  await planner.waitForTimeout(1500);
+  check(
+    "an empty one can be photographed after the work alone",
+    (await db.jobLocation.findUniqueOrThrow({ where: { id: idf.id } })).fields.join(),
+    "POST_INSTALL",
+  );
+  check("and Pre-Install stops asking for it", await roomsIn("PRE_INSTALL"), "MDF,Closet");
+  const mdfPre = mdfRow.getByRole("spinbutton", { name: "Photos needed in Pre-Install at MDF" });
+  await mdfPre.fill("0");
+  await mdfPre.press("Tab");
+  await planner.waitForTimeout(1500);
+  check(
+    "0 lets a planned room go without photos in a field",
+    (await missingRequiredDeliverables(jobId)).some((gap) => gap.includes("Pre-Install")),
+    false,
+  );
+
+  await plan.getByRole("button", { name: "Add a location" }).click();
+  await plan.getByRole("textbox", { name: "Name of the location" }).fill("Verify room 7");
+  await plan.getByRole("button", { name: /^Add “Verify room 7”/ }).click();
+  await planner.waitForTimeout(1500);
+  const roomSeven = await db.jobLocation.findFirst({
+    where: { jobId, name: "Verify room 7" },
+    select: { fields: true, counted: true },
+  });
+  check(
+    "a room named in the job's settings is planned: in every field, and counted",
+    `${roomSeven?.fields.length} ${roomSeven?.counted}`,
+    "0 true",
+  );
+  check(
+    "so checkout asks for it at once",
+    (await missingRequiredDeliverables(jobId)).some((gap) => gap.includes("Verify room 7")),
+    true,
+  );
+
+  // As the rest of the suite expects the rooms: two, photographed everywhere,
+  // Post-Install counted as a whole.
+  await db.jobLocation.deleteMany({
+    where: { jobId, id: { notIn: [mdf.id, idf.id] } },
+  });
+  await db.jobLocation.updateMany({
+    where: { jobId },
+    data: { fields: [], counted: true, minPhotos: {} },
+  });
+  await db.deliverableRequirement.updateMany({
+    where: { jobId, category: "POST_INSTALL" },
+    data: { perLocation: false },
+  });
 
   // --- the dictionary in settings ----------------------------------------------
   await planner.goto(`${BASE}/settings/company`, { waitUntil: "load" });

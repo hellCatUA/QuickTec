@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/field";
 import {
   DELIVERABLE_META,
+  locationInField,
+  locationNeed,
   MAX_MIN_PHOTOS,
   MAX_RULE_NOTE,
   ruleKey,
@@ -43,11 +45,22 @@ export type EditableRule = {
 const plural = (count: number, one: string, many = `${one}s`) =>
   `${count} ${count === 1 ? one : many}`;
 
+/** A job's room, as the field list names it. */
+type RuleLocation = {
+  name: string;
+  icon: string | null;
+  /** The fields it is photographed in, by key; empty or absent is all. */
+  fields?: string[];
+  counted?: boolean;
+  minPhotos?: Record<string, number>;
+};
+
 /**
  * A folded section, in one line: what it asks for and what the crew is told.
  * "2 photos at each of 3 locations · no note".
  */
-function summary(rule: EditableRule, locations: unknown[]): string {
+function summary(rule: EditableRule, all: RuleLocation[]): string {
+  const locations = all.filter((location) => locationInField(location, ruleKey(rule)));
   const takes = [
     rule.requiresPhoto ? "photos" : null,
     rule.requiresText ? "text" : null,
@@ -95,9 +108,10 @@ export function DeliverableRules({
   canRequire?: boolean;
   /**
    * The job's locations, named on the pills under "Separately at each
-   * location". A project has none of its own yet, and shows none.
+   * location" — each field the rooms photographed in it. A project's are
+   * planned in their own list, and show none here.
    */
-  locations?: { name: string; icon: string | null }[];
+  locations?: RuleLocation[];
 }) {
   const [saving, setSaving] = React.useState<string | null>(null);
   const [editing, setEditing] = React.useState<string | null>(null);
@@ -392,7 +406,7 @@ function RuleSettings({
   onChange,
 }: {
   rule: EditableRule;
-  locations: { name: string; icon: string | null }[];
+  locations: RuleLocation[];
   canEdit: boolean;
   canRequire: boolean;
   onChange: (patch: Partial<EditableRule>) => void;
@@ -419,6 +433,7 @@ function RuleSettings({
   }
 
   const count = Math.max(1, rule.minPhotos);
+  const here = locations.filter((location) => locationInField(location, ruleKey(rule)));
 
   return (
     <div className="flex flex-col gap-3.5">
@@ -527,9 +542,9 @@ function RuleSettings({
             Separately at each location
           </label>
           {rule.perLocation ? (
-            locations.length > 0 ? (
+            here.length > 0 ? (
               <div className="flex flex-wrap gap-1.5 pl-6">
-                {locations.map((location) => (
+                {here.map((location) => (
                   <span
                     key={location.name}
                     className="flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ring-border"
@@ -539,13 +554,19 @@ function RuleSettings({
                       className="size-3.5 text-muted-foreground"
                     />
                     {location.name}
+                    {rule.required ? (
+                      <span className="tabular font-normal text-muted-foreground">
+                        {locationNeed(location, rule)}
+                      </span>
+                    ) : null}
                   </span>
                 ))}
               </div>
             ) : (
               <span className="pl-6 text-xs text-muted-foreground">
                 The crew names the locations on the job — MDF, IDF, the
-                install point — and photographs each one.
+                install point — and photographs each one. Rooms known in
+                advance can be named under Locations.
               </span>
             )
           ) : null}

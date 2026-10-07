@@ -58,7 +58,11 @@ export type MoveTarget = {
   label: string;
   category: DeliverableCategory;
   customLabel: string | null;
-  perLocation: boolean;
+  /**
+   * The rooms the field is photographed at, in the job's order. Empty for a
+   * field not photographed per location, or one with no rooms in it yet.
+   */
+  locationIds: string[];
 };
 
 const isPdf = (photo: { mimeType: string }) =>
@@ -627,7 +631,8 @@ export function PhotoViewer({
  * Where the photo goes: another section, another location, or both.
  *
  * The location is only asked for when the section is photographed per
- * location and the job has some — anywhere else the photo has no location.
+ * location and has rooms in it, and only those rooms are offered — anywhere
+ * else the photo has no location.
  */
 function MovePhoto({
   photo,
@@ -646,10 +651,14 @@ function MovePhoto({
 }) {
   const [key, setKey] = React.useState(current);
   const target = targets.find((one) => one.key === key) ?? targets[0];
-  const asks = Boolean(target?.perLocation) && locations.length > 0;
-  const [locationId, setLocationId] = React.useState(
-    photo.locationId ?? locations[0]?.id ?? "",
-  );
+  const offered = locations.filter((one) => target?.locationIds.includes(one.id));
+  const asks = offered.length > 0;
+  const [picked, setPicked] = React.useState(photo.locationId ?? "");
+  // The room picked, while the field is photographed there; otherwise the
+  // field's first, so changing field never leaves a room it does not have.
+  const locationId = offered.some((one) => one.id === picked)
+    ? picked
+    : (offered[0]?.id ?? "");
   const [pending, startTransition] = React.useTransition();
 
   const same =
@@ -691,9 +700,9 @@ function MovePhoto({
           aria-label="Location"
           value={locationId}
           disabled={pending}
-          onChange={(event) => setLocationId(event.target.value)}
+          onChange={(event) => setPicked(event.target.value)}
         >
-          {locations.map((one) => (
+          {offered.map((one) => (
             <option key={one.id} value={one.id}>
               {one.name}
             </option>

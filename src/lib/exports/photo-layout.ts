@@ -1,5 +1,5 @@
 import type { DeliverableCategory } from "@prisma-client";
-import { deliverableLabel, ruleKey } from "@/lib/deliverables";
+import { deliverableLabel, locationInField, ruleKey } from "@/lib/deliverables";
 
 /**
  * Where each deliverable photo goes in the export.
@@ -31,7 +31,8 @@ export type LayoutRule = {
   perLocation: boolean;
 };
 
-export type LayoutLocation = { id: string; name: string };
+/** Fields it is photographed in, by key; empty or absent is all of them. */
+export type LayoutLocation = { id: string; name: string; fields?: string[] };
 
 export type LayoutAttachment = {
   id: string;
@@ -156,14 +157,22 @@ export function planDeliverableExport(
     const first = mine[0];
     const label = deliverableLabel(first.category, first.customLabel);
     const folder = uniqueSegment(safeSegment(label), rootTaken);
-    const byLocation = Boolean(ruleByKey.get(key)?.perLocation) && locations.length > 0;
+    // Foldered by the rooms photographed in this field, as the job page
+    // shows it: a photo still carrying a room the field is not taken at is
+    // with the field's unfiled ones there, and here.
+    const inField = new Set(
+      locations
+        .filter((location) => locationInField(location, key))
+        .map((location) => location.id),
+    );
+    const byLocation = Boolean(ruleByKey.get(key)?.perLocation) && inField.size > 0;
 
     type Placed = LayoutAttachment & { locationId: string | null };
     const placed: Placed[] = mine.flatMap((item) =>
       item.attachments.map((attachment) => ({
         ...attachment,
         locationId:
-          byLocation && item.locationId && locationName.has(item.locationId)
+          byLocation && item.locationId && inField.has(item.locationId)
             ? item.locationId
             : null,
       })),
@@ -222,7 +231,9 @@ export function planDeliverableExport(
           typed
             .map((item) => {
               const where =
-                byLocation && item.locationId ? locationName.get(item.locationId) : null;
+                byLocation && item.locationId && inField.has(item.locationId)
+                  ? locationName.get(item.locationId)
+                  : null;
               const text = item.textValue!.trim();
               return where ? `[${where}]\n${text}` : text;
             })

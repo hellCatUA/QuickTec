@@ -115,7 +115,7 @@ export async function loadJobForExport(jobId: string) {
       },
       locations: {
         orderBy: [{ order: "asc" }, { createdAt: "asc" }],
-        select: { id: true, name: true },
+        select: { id: true, name: true, fields: true },
       },
       deliverableRules: { where: { projectId: null }, select: RULE_SELECT },
       /// The paying company's paperwork: their work order, and the sign-off

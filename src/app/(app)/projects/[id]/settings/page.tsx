@@ -9,7 +9,13 @@ import {
 import { DeliverableRules } from "@/components/deliverable-rules";
 import { PageHeader } from "@/components/ui/page-header";
 import { db } from "@/lib/db";
-import { effectiveRules, RULE_SELECT } from "@/lib/deliverables";
+import {
+  deliverableLabel,
+  effectiveRules,
+  locationCounts,
+  RULE_SELECT,
+  ruleKey,
+} from "@/lib/deliverables";
 import { OPEN_LIFECYCLES } from "@/lib/job-status";
 import { jobsNumberedWith } from "@/lib/project-code";
 import { canOnProject } from "@/lib/scope";
@@ -89,7 +95,7 @@ export default async function ProjectSettingsPage({
           templates: { select: { id: true } },
           locations: {
             orderBy: [{ order: "asc" }, { createdAt: "asc" }],
-            select: { id: true, name: true, icon: true },
+            select: { id: true, name: true, icon: true, fields: true, minPhotos: true },
           },
           status: true,
           members: {
@@ -311,21 +317,6 @@ export default async function ProjectSettingsPage({
 
           <div className="border-t border-border pt-4">
             <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Locations
-            </div>
-            <p className="mb-3 text-xs text-muted-foreground">
-              The rooms every job here starts with, so the crew does not name
-              them again at every site. Jobs already raised keep their own.
-            </p>
-            <ProjectLocations
-              projectId={project.id}
-              locations={project.locations}
-              known={known}
-            />
-          </div>
-
-          <div className="border-t border-border pt-4">
-            <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Paperwork
             </div>
             <p className="mb-3 text-xs text-muted-foreground">
@@ -374,6 +365,39 @@ export default async function ProjectSettingsPage({
               owner={{ field: "projectId", id: project.id }}
               rules={rules}
               save={saveDeliverableRule}
+            />
+          </div>
+
+          <div className="border-t border-border pt-4">
+            <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Locations
+            </div>
+            <p className="mb-3 text-xs text-muted-foreground">
+              The rooms every job here starts with, so the crew does not name
+              them again at every site — which fields each is photographed in,
+              and how many photos it needs if not the field&rsquo;s number.
+              Jobs already raised keep their own.
+            </p>
+            <ProjectLocations
+              projectId={project.id}
+              locations={project.locations.map((location) => ({
+                id: location.id,
+                name: location.name,
+                icon: location.icon,
+                fields: location.fields,
+                minPhotos: locationCounts(location.minPhotos),
+              }))}
+              fields={rules
+                .filter(
+                  (rule) => rule.enabled && rule.perLocation && rule.requiresPhoto,
+                )
+                .map((rule) => ({
+                  key: ruleKey(rule),
+                  label: deliverableLabel(rule.category, rule.customLabel),
+                  minPhotos: rule.minPhotos,
+                  required: rule.required,
+                }))}
+              known={known}
             />
           </div>
         </CardContent>

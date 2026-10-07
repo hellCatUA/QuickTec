@@ -101,7 +101,13 @@ export async function createJob(
           defaultBudgetSplit: true,
           locations: {
             orderBy: [{ order: "asc" }, { createdAt: "asc" }],
-            select: { name: true, icon: true, order: true },
+            select: {
+              name: true,
+              icon: true,
+              order: true,
+              fields: true,
+              minPhotos: true,
+            },
           },
           pmContactId: true,
           deliverableRules: {
@@ -340,7 +346,8 @@ export async function createJob(
         budgetSplit: project?.defaultBudgetType ? project.defaultBudgetSplit : "EVEN",
         // The project's rooms, copied so the crew does not name the MDF
         // again on every store — and so a later change to the project's list
-        // leaves this job's alone.
+        // leaves this job's alone. Planned rooms, so each owes its fields
+        // their count, or the number set for it.
         locations:
           project && project.locations.length > 0
             ? {
@@ -348,6 +355,8 @@ export async function createJob(
                   name: location.name,
                   icon: location.icon,
                   order: location.order,
+                  fields: location.fields,
+                  minPhotos: location.minPhotos ?? {},
                   createdById: actor.id,
                 })),
               }
@@ -602,7 +611,14 @@ export async function createRevisit(
       deliverablesOwn: true,
       locations: {
         orderBy: { order: "asc" },
-        select: { name: true, icon: true, order: true },
+        select: {
+          name: true,
+          icon: true,
+          order: true,
+          fields: true,
+          counted: true,
+          minPhotos: true,
+        },
       },
     },
   });
@@ -810,7 +826,8 @@ export async function createRevisit(
             : undefined,
         deliverablesOwn: carriesOwnSheet,
         // Same site, so the same rooms: the MDF is still where it was, and
-        // the crew going back should not have to name it again.
+        // the crew going back should not have to name it again — photographed
+        // where it was, and owing what it owed.
         locations:
           parent.locations.length > 0
             ? {
@@ -818,6 +835,9 @@ export async function createRevisit(
                   name: location.name,
                   icon: location.icon,
                   order: location.order,
+                  fields: location.fields,
+                  counted: location.counted,
+                  minPhotos: location.minPhotos ?? {},
                   createdById: actor.id,
                 })),
               }

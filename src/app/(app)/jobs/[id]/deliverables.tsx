@@ -81,6 +81,12 @@ export type LocationView = {
   name: string;
   /** A key from the icon collection; null draws the plain pin. */
   icon: string | null;
+  /** The fields it is photographed in, by key; empty is all of them. */
+  fields: string[];
+  /** False for a room added on site: it owes no field its photo count. */
+  counted: boolean;
+  /** Counts set for it alone, by field key. */
+  minPhotos: Record<string, number>;
   /** Anything filed under it, in any section. A location in use stays. */
   inUse: boolean;
 };
@@ -270,7 +276,7 @@ export function Deliverables({
       label: field.label,
       category: field.rule.category,
       customLabel: field.rule.customLabel,
-      perLocation: field.rule.perLocation,
+      locationIds: field.locations?.map((location) => location.id) ?? [],
     }));
 
   const viewed = viewing
@@ -892,6 +898,18 @@ function Opened({
             );
           })}
 
+          {/* Every room here was found on site and owes nothing of its own,
+              but the field still wants its photos: at any of them. */}
+          {canUpload &&
+          field.needed !== null &&
+          field.files < field.needed &&
+          field.locations.every((location) => location.needed === 0) ? (
+            <p className="text-xs font-semibold text-warning">
+              {plural(field.needed - field.files, "more photo")} needed here, at
+              any location.
+            </p>
+          ) : null}
+
           {/* Taken before the locations were named, or filed under one this
               section no longer counts. Not lost: moved from the photo. */}
           {photos.some((photo) => photo.locationName === null) ? (
@@ -913,12 +931,15 @@ function Opened({
             </div>
           ) : null}
 
-          {canUpload ? <AddLocation
+          {canUpload ? (
+            <AddLocation
               jobId={jobId}
+              field={field}
               known={known}
-              onJob={locations}
+              onAdded={onAdd}
               onError={onError}
-            /> : null}
+            />
+          ) : null}
         </>
       ) : (
         <>
@@ -948,8 +969,9 @@ function Opened({
           {canUpload && rule.perLocation ? (
             <AddLocation
               jobId={jobId}
+              field={field}
               known={known}
-              onJob={locations}
+              onAdded={onAdd}
               onError={onError}
             />
           ) : null}
@@ -1036,33 +1058,43 @@ function TypedEntry({
  * A room found on the day — the second IDF nobody mentioned.
  *
  * Picked from the list in Settings → Company, which carries the icon with it,
- * or typed when the room is not there. What is already on the job is left off
- * the list, so the same room cannot be added twice by picking it twice.
+ * or typed when the room is not there. What is already in this field is left
+ * off the list, so the same room cannot be added twice by picking it twice; a
+ * room the job has in another field only is offered, and joins this one.
+ *
+ * Added here, it is photographed in this field — and, from Pre-Install, in
+ * the ones after it — and the upload opens on it, since a room is named to
+ * photograph it. It owes no photo count: nobody planned it.
  */
 function AddLocation({
   jobId,
+  field,
   known,
-  onJob,
+  onAdded,
   onError,
 }: {
   jobId: string;
+  field: FieldProgress;
   known: KnownLocationView[];
-  onJob: LocationView[];
+  onAdded: (locationId: string) => void;
   onError: (message: string | null) => void;
 }) {
   return (
     <SharedAddLocation
       known={known}
-      taken={onJob.map((location) => location.name)}
-      where="this job"
+      taken={(field.locations ?? []).map((location) => location.name)}
+      where={`in ${field.label}`}
       onError={onError}
       onAdd={async (name, icon) => {
         const formData = new FormData();
         formData.set("jobId", jobId);
         formData.set("name", name);
+        formData.set("field", field.key);
         if (icon) formData.set("icon", icon);
         const result = await addJobLocation(formData);
-        return result.ok ? null : result.error;
+        if (!result.ok) return result.error;
+        if (result.id) onAdded(result.id);
+        return null;
       }}
     />
   );

@@ -27,7 +27,7 @@ export function AddLocation({
   known: KnownLocationOption[];
   /** Names already there, which are not offered again. */
   taken: string[];
-  /** "this job", "this project" — said when a name is already there. */
+  /** "on this project", "in Pre-Install" — said when a name is already there. */
   where: string;
   /** Resolves to an error message, or null when it was added. */
   onAdd: (name: string, icon: string | null) => Promise<string | null>;
@@ -126,7 +126,7 @@ export function AddLocation({
       <div className="flex max-h-64 flex-col overflow-y-auto">
         {already ? (
           <p className="px-2.5 py-2 text-sm text-muted-foreground">
-            “{already}” is already on {where}.
+            “{already}” is already {where}.
           </p>
         ) : null}
         {offered.map((entry) => (
@@ -155,7 +155,7 @@ export function AddLocation({
         ) : null}
         {offered.length === 0 && !custom && !already ? (
           <p className="px-2.5 py-2 text-sm text-muted-foreground">
-            Everything on the list is on {where}. Type a name to add another.
+            Everything on the list is {where}. Type a name to add another.
           </p>
         ) : null}
       </div>
