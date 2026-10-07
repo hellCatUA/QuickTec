@@ -1417,6 +1417,36 @@ async function main() {
     (await db.project.findUniqueOrThrow({ where: { id: elsewhere.id } })).code,
     "VOP",
   );
+
+  // A project that got its ID from the migration has jobs numbered the old
+  // way — 0000, or the paying company's ID — and none with its new one, so
+  // the ID it was given can still be replaced until a job carries it.
+  await db.job.create({
+    data: {
+      ...base,
+      projectId: elsewhere.id,
+      intWoId: `2609-0000-${stamp + 40}`,
+      intWoSequence: stamp + 40,
+      title: "Numbered before project IDs",
+      createdById: boss.user.id,
+    },
+  });
+  await managerPage.goto(`${BASE}/projects/${elsewhere.id}/settings`, {
+    waitUntil: "load",
+  });
+  check(
+    "a project whose jobs predate its ID can still change it",
+    await managerPage.locator('input[name="code"]').getAttribute("readonly"),
+    null,
+  );
+  await managerPage.locator('input[name="code"]').fill("vop-2");
+  await managerPage.getByRole("button", { name: "Save project" }).click();
+  await managerPage.waitForTimeout(2000);
+  check(
+    "and the new one is saved",
+    (await db.project.findUniqueOrThrow({ where: { id: elsewhere.id } })).code,
+    "VOP-2",
+  );
   const supProjects = await pageFor(sup.token);
   await supProjects.goto(`${BASE}/projects/${elsewhere.id}/settings`, {
     waitUntil: "load",

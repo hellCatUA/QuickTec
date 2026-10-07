@@ -11,6 +11,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { db } from "@/lib/db";
 import { effectiveRules, RULE_SELECT } from "@/lib/deliverables";
 import { OPEN_LIFECYCLES } from "@/lib/job-status";
+import { jobsNumberedWith } from "@/lib/project-code";
 import { canOnProject } from "@/lib/scope";
 import { can, getSessionUser } from "@/lib/session";
 import { ProjectForm } from "../../project-form";
@@ -65,7 +66,7 @@ export default async function ProjectSettingsPage({
           externalProjectId: true,
           repProjectName: true,
           repProjectId: true,
-          _count: { select: { jobs: true } },
+
           clientId: true,
           client: { select: { name: true } },
           repCompanyId: true,
@@ -201,7 +202,7 @@ export default async function ProjectSettingsPage({
               id: project.id,
               name: project.name,
               code: project.code,
-              codeLocked: project._count.jobs > 0,
+              codeLocked: (await jobsNumberedWith(project.id, project.code)) > 0,
               openJobs,
               clientProjectName: project.clientProjectName,
               externalProjectId: project.externalProjectId,

@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
-import { NO_PROJECT_REF } from "@/lib/int-wo-format";
+import { NO_PROJECT_REF, projectRefOf } from "@/lib/int-wo-format";
+import type { Prisma } from "@prisma-client";
 
 /**
  * Our own project ID — the one the app shows, and the one in the middle of
@@ -29,6 +30,28 @@ export function projectCodeError(code: string): string | null {
     return "A project ID is up to 20 letters, digits and dashes, starting with a letter or digit.";
   }
   return null;
+}
+
+/**
+ * How many of a project's jobs carry this ID in their work order numbers.
+ *
+ * The ID is fixed once any do: changing it then would split one project's
+ * work across two IDs, and free the old one for another project whose
+ * counter would reissue those numbers. A project given its first ID by the
+ * migration has jobs numbered 0000 or with the paying company's old ID — none
+ * with the new one — so it can still be renamed until a job is numbered with
+ * it.
+ */
+export async function jobsNumberedWith(
+  projectId: string,
+  code: string,
+  client: Prisma.TransactionClient | typeof db = db,
+): Promise<number> {
+  const jobs = await client.job.findMany({
+    where: { projectId, intWoId: { contains: `-${code}-` } },
+    select: { intWoId: true },
+  });
+  return jobs.filter((job) => projectRefOf(job.intWoId) === code).length;
 }
 
 /**

@@ -20,7 +20,11 @@ import { materialiseProjectRules } from "@/lib/job-deliverables";
 import { OPEN_LIFECYCLES } from "@/lib/job-status";
 import { notify } from "@/lib/notifications";
 import { budgetColumns, jobTerms, normaliseTerms, termsError } from "@/lib/budget";
-import { normaliseProjectCode, projectCodeError } from "@/lib/project-code";
+import {
+  jobsNumberedWith,
+  normaliseProjectCode,
+  projectCodeError,
+} from "@/lib/project-code";
 import { canOnProject } from "@/lib/scope";
 import {
   can,
@@ -344,21 +348,18 @@ export async function saveProject(
         repCompanyId: true,
         repCompany: { select: { name: true } },
         code: true,
-        _count: { select: { jobs: true } },
       },
     });
     if (!before) return { ok: false, error: "Project not found." };
 
-    // Its jobs' numbers already carry it. Changing it would split one
-    // project's work across two IDs — and free the old one for another
-    // project, whose counter starting again at 1 would issue numbers its
-    // jobs already have.
-    const lockedOut = (jobs: number) => ({
+    // Fixed once its jobs' numbers carry it — see jobsNumberedWith.
+    const lockedOut = (jobs: number, code: string) => ({
       ok: false as const,
-      error: `The project ID is in the work order numbers of its ${jobs} job${jobs === 1 ? "" : "s"}, so it stays ${before.code}.`,
+      error: `The project ID is in the work order numbers of ${jobs} job${jobs === 1 ? "" : "s"}, so it stays ${code}.`,
     });
-    if (before.code !== data.code && before._count.jobs > 0) {
-      return lockedOut(before._count.jobs);
+    if (before.code !== data.code) {
+      const numbered = await jobsNumberedWith(id, before.code);
+      if (numbered > 0) return lockedOut(numbered, before.code);
     }
 
     let project;
@@ -373,12 +374,16 @@ export async function saveProject(
           SELECT "code" FROM "Project" WHERE "id" = ${id} FOR UPDATE
         `;
         if (locked && locked.code !== data.code) {
-          const jobs = await tx.job.count({ where: { projectId: id } });
-          if (jobs > 0) return { locked: jobs, project: null };
+          const jobs = await jobsNumberedWith(id, locked.code, tx);
+          if (jobs > 0) return { locked: jobs, code: locked.code, project: null };
         }
-        return { locked: 0, project: await tx.project.update({ where: { id }, data }) };
+        return {
+          locked: 0,
+          code: data.code,
+          project: await tx.project.update({ where: { id }, data }),
+        };
       });
-      if (!saved.project) return lockedOut(saved.locked);
+      if (!saved.project) return lockedOut(saved.locked, saved.code);
       project = saved.project;
     } catch (error) {
       if (takenCode(error)) return codeTaken(data.code);

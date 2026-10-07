@@ -125,7 +125,7 @@ export function ProjectForm({
           hint={
             project?.codeLocked
               ? "Ours, and in the work order number of every job here, so it is fixed now."
-              : "Ours, unique. Goes into the work order number of every job here: YYMM-ID-0001."
+              : "Ours, unique. Goes into the work order number of every job raised here from now on: YYMM-ID-0001. Fixed once a job carries it."
           }
         >
           <Input
