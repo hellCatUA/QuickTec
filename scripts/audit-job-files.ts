@@ -47,6 +47,8 @@ async function auditJob(jobId: string): Promise<{
             select: {
               id: true,
               storagePath: true,
+              basePath: true,
+              label: true,
               originalName: true,
               sizeBytes: true,
               createdAt: true,
@@ -100,6 +102,16 @@ async function auditJob(jobId: string): Promise<{
           kind: "file gone from disk",
           detail: `${section} / ${who} / ${attachment.originalName} → ${absolutePath(
             attachment.storagePath,
+          )}`,
+        });
+      }
+      // The photo before its label, kept so the label can be changed.
+      if (attachment.basePath && !(await fileExists(attachment.basePath))) {
+        problems.push({
+          job: label,
+          kind: "unlabelled copy gone from disk",
+          detail: `${section} / ${who} / ${attachment.label ?? attachment.originalName} → ${absolutePath(
+            attachment.basePath,
           )}`,
         });
       }
@@ -227,6 +239,8 @@ async function main() {
             "deliverable_removed",
             "deliverable_moved",
             "deliverable_updated",
+            "photo_labelled",
+            "photo_unlabelled",
           ],
         },
       },

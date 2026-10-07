@@ -33,6 +33,7 @@ import { getSessionUser, type SessionUser } from "@/lib/session";
 import {
   absolutePath,
   deleteFile,
+  dropThumbnails,
   storeFile,
   storageErrorMessage,
 } from "@/lib/storage";
@@ -391,8 +392,10 @@ export async function saveDeliverable(
     return fail("Add a photo or some text.");
   }
 
-  // One label for the photos in this upload, written on each of them.
-  const labelled = readPhotoLabel(formData.get("label"));
+  // One label for the photos in this upload, written on each of them. Text
+  // saved on its own has no photo to carry one.
+  const labelled =
+    files.length > 0 ? readPhotoLabel(formData.get("label")) : { label: null };
   if ("error" in labelled) return fail(labelled.error);
 
   const place = await placeFor(
@@ -524,6 +527,7 @@ export async function saveDeliverable(
         category,
         label: deliverableLabel(category, customLabel),
         ...(location ? { location: location.name } : {}),
+        ...(labelled.label ? { photoLabel: labelled.label } : {}),
       },
     });
   }
@@ -1126,9 +1130,21 @@ export async function deleteDeliverablePhoto(
   if ("error" in context) return fail(context.error);
   const { user, attachment, item } = context;
 
-  await db.attachment.delete({ where: { id: attachment.id } });
-  await deleteFile(attachment.storagePath);
-  if (attachment.basePath) await deleteFile(attachment.basePath);
+  // The files are the ones the row held as it went, not as it was read: a
+  // label saved in between draws a new one, which would otherwise stay.
+  let removed: { storagePath: string; basePath: string | null };
+  try {
+    removed = await db.attachment.delete({
+      where: { id: attachment.id },
+      select: { storagePath: true, basePath: true },
+    });
+  } catch (error) {
+    if (prismaCode(error) === "P2025") return ok();
+    throw error;
+  }
+  await deleteFile(removed.storagePath);
+  await dropThumbnails(removed.storagePath);
+  if (removed.basePath) await deleteFile(removed.basePath);
   await dropIfEmpty(item.id);
 
   await recordAudit({
@@ -1177,7 +1193,7 @@ export async function labelDeliverablePhoto(
   if ("error" in context) return fail(context.error);
   const { user, item } = context;
 
-  const photo = await db.attachment.findUniqueOrThrow({
+  const photo = await db.attachment.findUnique({
     where: { id: attachmentId },
     select: {
       storagePath: true,
@@ -1189,26 +1205,48 @@ export async function labelDeliverablePhoto(
       createdAt: true,
     },
   });
-  if ((photo.label ?? null) === label) return ok();
+  if (!photo) return fail("That photo is no longer on the job.");
+  const image = photo.mimeType.startsWith("image/");
+  // The same label, already on it. An image labelled with no copy kept was
+  // never drawn on — text could not be drawn at the time — and saving it
+  // again draws it now.
+  if ((photo.label ?? null) === label && (!image || !label || photo.basePath)) {
+    return ok();
+  }
 
   // Only if the photo is still the one read: two labels saved at once would
   // otherwise each draw on it, and one drawing would be left behind on disk.
-  const unchanged = { id: attachmentId, storagePath: photo.storagePath };
+  const unchanged = {
+    id: attachmentId,
+    storagePath: photo.storagePath,
+    label: photo.label,
+  };
   const changedMeanwhile = "The photo changed while this was being saved. Try again.";
+  const fileGone =
+    "This photo's file is missing from the server, so the label cannot be drawn on it.";
 
-  if (!photo.mimeType.startsWith("image/")) {
-    await db.attachment.update({ where: { id: attachmentId }, data: { label } });
+  if (!image) {
+    // A PDF has nothing to draw on: the label is its name.
+    const put = await db.attachment.updateMany({ where: unchanged, data: { label } });
+    if (put.count === 0) return fail(changedMeanwhile);
   } else if (label === null) {
     if (photo.basePath) {
-      const { size } = await stat(absolutePath(photo.basePath));
+      let size: number;
+      try {
+        size = (await stat(absolutePath(photo.basePath))).size;
+      } catch {
+        return fail(fileGone);
+      }
       const put = await db.attachment.updateMany({
         where: unchanged,
         data: { storagePath: photo.basePath, basePath: null, label: null, sizeBytes: size },
       });
       if (put.count === 0) return fail(changedMeanwhile);
       await deleteFile(photo.storagePath);
+      await dropThumbnails(photo.storagePath);
     } else {
-      await db.attachment.update({ where: { id: attachmentId }, data: { label: null } });
+      const put = await db.attachment.updateMany({ where: unchanged, data: { label: null } });
+      if (put.count === 0) return fail(changedMeanwhile);
     }
   } else {
     const basePath = photo.basePath ?? photo.storagePath;
@@ -1229,10 +1267,16 @@ export async function labelDeliverablePhoto(
           : null;
       }
     }
-    const drawn = await labelPhoto(await readFile(absolutePath(basePath)), main, label);
+    let base: Buffer;
+    try {
+      base = await readFile(absolutePath(basePath));
+    } catch {
+      return fail(fileGone);
+    }
+    const drawn = await labelPhoto(base, main, label);
     if (!drawn) {
       return fail(
-        "The label could not be drawn on the photo. Check Photo pipeline under Settings → Integrations.",
+        "The label could not be drawn on the photo. Tell whoever runs the server — it shows under Photo pipeline in Settings → Integrations.",
       );
     }
     let stored;
@@ -1242,21 +1286,32 @@ export async function labelDeliverablePhoto(
       console.error("[label] storing a labelled photo failed", error);
       return fail(storageErrorMessage(error));
     }
-    const put = await db.attachment.updateMany({
-      where: unchanged,
-      data: {
-        storagePath: stored.storagePath,
-        basePath,
-        label,
-        sizeBytes: stored.sizeBytes,
-      },
-    });
+    let put;
+    try {
+      put = await db.attachment.updateMany({
+        where: unchanged,
+        data: {
+          storagePath: stored.storagePath,
+          basePath,
+          label,
+          // What it is now, whatever it was sent as.
+          mimeType: "image/jpeg",
+          sizeBytes: stored.sizeBytes,
+        },
+      });
+    } catch (error) {
+      await deleteFile(stored.storagePath);
+      throw error;
+    }
     if (put.count === 0) {
       await deleteFile(stored.storagePath);
       return fail(changedMeanwhile);
     }
     // The last drawing goes; the photo it was drawn on stays.
-    if (photo.basePath) await deleteFile(photo.storagePath);
+    if (photo.basePath) {
+      await deleteFile(photo.storagePath);
+      await dropThumbnails(photo.storagePath);
+    }
   }
 
   await recordAudit({
@@ -1264,7 +1319,7 @@ export async function labelDeliverablePhoto(
     entityType: "DeliverableItem",
     entityId: item.id,
     jobId: item.jobId,
-    action: "photo_labelled",
+    action: label === null ? "photo_unlabelled" : "photo_labelled",
     detail: {
       field: placeLabel(item.category, item.customLabel, item.location),
       from: photo.label,

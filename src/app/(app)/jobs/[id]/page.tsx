@@ -282,6 +282,7 @@ export default async function JobPage({
               uploadedBy: { select: { name: true } },
               label: true,
               storagePath: true,
+              basePath: true,
             },
           },
         },
@@ -1485,7 +1486,13 @@ export default async function JobPage({
                           canDelete:
                             canDeleteUploads && (mine || canApproveJob),
                           label: attachment.label,
-                          version: fileVersion(attachment.storagePath),
+                          version: fileVersion(attachment.storagePath, attachment.label),
+                          // A label on an image with no copy kept was never
+                          // drawn on it — the pipeline could not draw text.
+                          labelDrawn:
+                            !attachment.label ||
+                            Boolean(attachment.basePath) ||
+                            !attachment.mimeType.startsWith("image/"),
                         };
                       }),
                     };

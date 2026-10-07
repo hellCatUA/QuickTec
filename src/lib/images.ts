@@ -232,6 +232,8 @@ async function plate(
   width: number,
   height: number,
   bottom: number,
+  /** Drawn only where it fits whole: a label is not set over the stamp. */
+  mustFit = false,
 ): Promise<{ layers: StampLayer[]; top: number }> {
   let fontSize = stampSize(width);
   const margin = Math.round(fontSize * 0.9);
@@ -271,8 +273,18 @@ async function plate(
   }
 
   const padding = Math.round(fontSize * 0.6);
-  const boxWidth = Math.min(width, label.info.width + padding * 2);
-  const boxHeight = Math.min(height, label.info.height + padding * 2);
+  // Still too big at the smallest size — a thumbnail of a photo, a narrow
+  // crop. Nothing is drawn rather than a line overhanging the picture, which
+  // sharp refuses, and the upload with it.
+  if (
+    label.info.width + padding * 2 > width ||
+    label.info.height + padding * 2 > height ||
+    (mustFit && bottom - (label.info.height + padding * 2) < 0)
+  ) {
+    return { layers: [], top: bottom };
+  }
+  const boxWidth = label.info.width + padding * 2;
+  const boxHeight = label.info.height + padding * 2;
   const x = Math.max(0, width - boxWidth - margin);
   const y = Math.max(0, bottom - boxHeight);
 
@@ -325,7 +337,9 @@ export async function labelledStampLayers(
     if (!drawn) layers.push(...stamp.layers);
     bottom = stamp.top - Math.round(size * 0.35);
   }
-  if (label) layers.push(...(await plate(label, width, height, bottom)).layers);
+  // Above the stamp only where there is room for it: on a strip of a photo
+  // it would sit on the stamp instead, and the stamp is the one that matters.
+  if (label) layers.push(...(await plate(label, width, height, bottom, Boolean(main))).layers);
   return layers;
 }
 
@@ -394,11 +408,12 @@ export async function processImage(
     : null;
   // Measured against the stamp that was actually drawn: when it could not
   // be, text cannot be drawn at all, and the label goes without saying so.
-  const labelled = label
+  const drawnLabel = label
     ? await layersOrNothing(() =>
         labelledStampLayers(stamp ? watermark! : null, label, width, height, true),
       )
     : null;
+  const labelled = drawnLabel && drawnLabel.length > 0 ? drawnLabel : null;
 
   const image = () => sharp(pixels.data, { raw: { width, height, channels } });
   const layers = [...(stamp ?? []), ...(labelled ?? [])];
@@ -436,13 +451,18 @@ export async function labelPhoto(
   main: string | null,
   label: string,
 ): Promise<Buffer | null> {
-  const { width, height } = await sharp(base).metadata();
-  if (!width || !height) return null;
-  const layers = await layersOrNothing(() =>
-    labelledStampLayers(main, label, width, height, true),
-  );
-  if (!layers || layers.length === 0) return null;
-  return sharp(base).composite(layers).jpeg({ quality: JPEG_QUALITY }).toBuffer();
+  try {
+    const { width, height } = await sharp(base).metadata();
+    if (!width || !height) return null;
+    const layers = await layersOrNothing(() =>
+      labelledStampLayers(main, label, width, height, true),
+    );
+    if (!layers || layers.length === 0) return null;
+    return await sharp(base).composite(layers).jpeg({ quality: JPEG_QUALITY }).toBuffer();
+  } catch (error) {
+    console.error("[images] a label could not be drawn", error);
+    return null;
+  }
 }
 
 /**
@@ -465,7 +485,9 @@ export async function stampOrNothing(
   height: number,
   render: typeof stampLayers = stampLayers,
 ): Promise<StampLayer[] | null> {
-  return layersOrNothing(() => render(text, width, height));
+  const layers = await layersOrNothing(() => render(text, width, height));
+  // Nothing that fits is no stamp, and the photo does not claim one.
+  return layers && layers.length > 0 ? layers : null;
 }
 
 async function layersOrNothing(

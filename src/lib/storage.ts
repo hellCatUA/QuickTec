@@ -53,8 +53,25 @@ export type StoredFile = {
  * drawn again under a new name, and a page that asks for it with this in the
  * address is not handed the old drawing from its cache.
  */
-export function fileVersion(storagePath: string): string {
-  return createHash("sha1").update(storagePath).digest("hex").slice(0, 10);
+export function fileVersion(storagePath: string, label: string | null = null): string {
+  // The label too: a PDF's name follows it without the file changing.
+  return createHash("sha1")
+    .update(`${storagePath}\n${label ?? ""}`)
+    .digest("hex")
+    .slice(0, 10);
+}
+
+/** Where a smaller copy of a stored photo is kept once it has been asked for. */
+export function thumbnailPath(storagePath: string, width: number): string {
+  const key = createHash("sha1").update(`${storagePath}:${width}`).digest("hex");
+  return absolutePath(path.join("cache", `${key}.jpg`));
+}
+
+/** The smaller copies a photo has had made, once the photo itself is gone. */
+export async function dropThumbnails(storagePath: string): Promise<void> {
+  for (const width of [200, 400, 800]) {
+    await rm(thumbnailPath(storagePath, width), { force: true });
+  }
 }
 
 /**

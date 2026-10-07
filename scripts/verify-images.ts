@@ -327,6 +327,19 @@ async function main() {
       ) < 0.01,
   );
 
+  // A sliver of a photo has no room for a label above the stamp, and a
+  // thumbnail none for either: they go without, and the upload goes through.
+  const strip = await labelledStampLayers(text, "Damaged port", 2400, 160);
+  check("on a strip the label is left off rather than laid over the stamp", strip.length, 2);
+  const tiny = await processImage(await photo(30, 30), "image/jpeg", null, null, "Damaged port");
+  check("a tiny image with a label still goes up", tiny.mimeType, "image/jpeg");
+  check("and is not given a copy for a label it does not carry", tiny.base, undefined);
+  check(
+    "Cyrillic is drawn, not left as boxes",
+    (await labelledStampLayers(null, "Пошкоджений порт", 1600, 1200)).length,
+    2,
+  );
+
   console.log("\n--- what must not be stamped ---");
 
   const pdf = Buffer.from("%PDF-1.4\n%stub\n");

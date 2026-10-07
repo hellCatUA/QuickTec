@@ -282,7 +282,7 @@ export async function loadReview(jobId: string): Promise<LoadedReview | null> {
         item.attachments.map((attachment) => ({
           id: attachment.id,
           label: attachment.label,
-          version: fileVersion(attachment.storagePath),
+          version: fileVersion(attachment.storagePath, attachment.label),
         })),
       ),
     };

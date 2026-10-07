@@ -1,3 +1,5 @@
+import { extensionFor, safeSegment } from "@/lib/exports/photo-layout";
+
 /**
  * A label somebody writes on one photo — "Damaged port", "Old switch" — when
  * it needs telling apart from the rest.
@@ -24,6 +26,12 @@ export function readPhotoLabel(
   if (!/[\p{L}\p{N}]/u.test(label)) {
     return { error: "Give the label a letter or a number." };
   }
+  // Invisible characters — a control code, a zero-width space, a mark that
+  // turns the text round — draw as nothing, and in a file name can make
+  // "photo.exe" read as something else.
+  if (/[\p{Cc}\p{Cf}]/u.test(label)) {
+    return { error: "The label has a character in it that cannot be written on a photo." };
+  }
   return { label };
 }
 
@@ -41,7 +49,14 @@ export function jobLabels(labels: (string | null)[]): string[] {
   );
 }
 
-/** The name a labelled photo downloads as: its label, and what it is. */
-export function labelledFileName(label: string | null, original: string, extension: string): string {
-  return label ? `${label}.${extension}` : original;
+/**
+ * The name a photo downloads as: its label, made safe as the export makes it,
+ * and what the file is — or the name it came with.
+ */
+export function labelledFileName(
+  photo: { label: string | null; originalName: string; mimeType: string },
+): string {
+  return photo.label
+    ? `${safeSegment(photo.label)}.${extensionFor(photo.mimeType, photo.originalName)}`
+    : photo.originalName;
 }

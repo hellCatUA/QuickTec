@@ -32,6 +32,7 @@ import { searchIcons } from "@/lib/location-icons";
 import { prepareForUpload } from "@/lib/photo-upload";
 import { cn } from "@/lib/utils";
 import type { DeliverableCategory } from "@prisma-client";
+import { readPhotoLabel } from "@/lib/photo-label";
 import { PhotoLabelInput } from "./photo-label-input";
 import {
   fileUrl,
@@ -697,7 +698,7 @@ function Folded({
             <Thumb
               key={photo.id}
               photo={photo}
-              label={`Open photo ${index + 1} of ${photos.length}`}
+              label={`Open photo ${index + 1} of ${photos.length}${photo.label ? `: ${photo.label}` : ""}`}
               onOpen={() => onView(photo.id)}
               className="size-12"
             />
@@ -783,7 +784,7 @@ function Opened({
 }) {
   const { rule, label } = field;
   const position = (photo: ViewerPhoto) =>
-    `Open photo ${photos.indexOf(photo) + 1} of ${photos.length}`;
+    `Open photo ${photos.indexOf(photo) + 1} of ${photos.length}${photo.label ? `: ${photo.label}` : ""}`;
 
   const form = (locationId: string | null, place: string) =>
     adding && adding.locationId === locationId ? (
@@ -1202,7 +1203,7 @@ function UploadForm({
     formData.set("category", rule.category);
     if (rule.customLabel) formData.set("customLabel", rule.customLabel);
     if (locationId) formData.set("locationId", locationId);
-    if (label.trim()) formData.set("label", label);
+    if (label.trim() && files.length > 0) formData.set("label", label);
     return formData;
   }
 
@@ -1217,6 +1218,10 @@ function UploadForm({
    */
   async function submit() {
     onError(null);
+    // Said before anything goes up, and not as if one of the photos were
+    // the trouble.
+    const checked = files.length > 0 ? readPhotoLabel(label) : { label: null };
+    if ("error" in checked) return onError(checked.error);
     setPending(true);
     setDone(0);
 

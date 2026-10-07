@@ -3181,6 +3181,22 @@ async function main() {
   check("a label of dots alone is no file name", "error" in readPhotoLabel("..."), true);
   check("one in any alphabet is fine", JSON.stringify(readPhotoLabel("Пошкоджений порт")), '{"label":"Пошкоджений порт"}');
   check(
+    "an invisible character is refused — it would disguise a file name",
+    "error" in readPhotoLabel("photo\u202Egpj.exe"),
+    true,
+  );
+  const { labelledFileName } = await import("@/lib/photo-label");
+  check(
+    "a labelled photo downloads under its label, made safe as in the export",
+    labelledFileName({ label: "CON", originalName: "IMG_1.HEIC", mimeType: "image/jpeg" }),
+    "CON_.jpg",
+  );
+  check(
+    "and one with no label under the name it came with",
+    labelledFileName({ label: null, originalName: "IMG_1.HEIC", mimeType: "image/jpeg" }),
+    "IMG_1.HEIC",
+  );
+  check(
     "the job's labels are offered once each, in order",
     jobLabels(["Old switch", null, "damaged port", "Damaged port", "Rack 10", "Rack 2"]).join("|"),
     "damaged port|Old switch|Rack 2|Rack 10",

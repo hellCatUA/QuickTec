@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
@@ -7,9 +6,8 @@ import { attachmentOwner } from "@/lib/attachments";
 import { db } from "@/lib/db";
 import { canOnJob } from "@/lib/scope";
 import { getSessionUser, permissionScope } from "@/lib/session";
-import { extensionFor } from "@/lib/exports/photo-layout";
 import { labelledFileName } from "@/lib/photo-label";
-import { absolutePath, fileExists } from "@/lib/storage";
+import { absolutePath, fileExists, thumbnailPath } from "@/lib/storage";
 
 /**
  * Serves an uploaded file.
@@ -100,11 +98,7 @@ export async function GET(
   // A labelled photo downloads under its label — "Damaged port.jpg" — as it
   // is named in the export. The plain name is for browsers that cannot read
   // the encoded one, and a label is often not plain ASCII.
-  const name = labelledFileName(
-    attachment.label,
-    attachment.originalName,
-    extensionFor(attachment.mimeType, attachment.originalName),
-  );
+  const name = labelledFileName(attachment);
   const plain = name.replace(/[^\w.\-]/g, "_");
 
   return new NextResponse(new Uint8Array(data), {
@@ -127,8 +121,7 @@ export async function GET(
  * thirty 2400px photos is several megabytes over a weak signal otherwise.
  */
 async function thumbnail(storagePath: string, width: number): Promise<Buffer> {
-  const key = createHash("sha1").update(`${storagePath}:${width}`).digest("hex");
-  const cachePath = absolutePath(path.join("cache", `${key}.jpg`));
+  const cachePath = thumbnailPath(storagePath, width);
 
   try {
     return await readFile(cachePath);

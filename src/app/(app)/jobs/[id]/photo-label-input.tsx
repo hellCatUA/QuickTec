@@ -60,7 +60,11 @@ export function PhotoLabelInput({
         }}
       />
       {offered.length > 0 ? (
-        <div className="flex flex-wrap gap-1.5" aria-label="Labels used on this job">
+        <div
+          role="group"
+          aria-label="Labels used on this job"
+          className="flex flex-wrap gap-1.5"
+        >
           {offered.map((label) => (
             <button
               key={label}

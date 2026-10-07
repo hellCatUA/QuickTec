@@ -19,6 +19,7 @@ import { createPortal } from "react-dom";
 import { LocationIcon } from "@/components/icon-picker";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/field";
+import { labelledFileName } from "@/lib/photo-label";
 import { cn } from "@/lib/utils";
 import type { DeliverableCategory } from "@prisma-client";
 import { PhotoLabelInput } from "./photo-label-input";
@@ -57,6 +58,8 @@ export type ViewerPhoto = {
   label: string | null;
   /** Changes when the photo is drawn again, so it is not shown from cache. */
   version: string;
+  /** False for a label the pipeline could not draw on it: saving draws it. */
+  labelDrawn: boolean;
   /** Where it is filed, for a section photographed per location. */
   locationId: string | null;
   locationName: string | null;
@@ -83,11 +86,6 @@ export function fileUrl(photo: { id: string; version: string }, width?: number):
   return `/api/files/${photo.id}?${width ? `w=${width}&` : ""}v=${photo.version}`;
 }
 
-/** What a photo downloads as: its label when it has one. */
-function downloadName(photo: ViewerPhoto): string {
-  if (!photo.label) return photo.originalName;
-  return `${photo.label}.${isPdf(photo) ? "pdf" : "jpg"}`;
-}
 
 function size(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
@@ -171,13 +169,24 @@ export function PhotoViewer({
     [index, photos],
   );
 
-  // Keys on a laptop: Esc folds the window back, the arrows walk the photos.
+  // Keys on a laptop: Esc folds the window back, the arrows walk the photos —
+  // except while something is being typed, where they move the cursor and
+  // Esc puts away what is being typed into.
   React.useEffect(() => {
     function onKey(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      const typing =
+        target?.isContentEditable ||
+        ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName ?? "");
       if (event.key === "Escape") {
         event.preventDefault();
         if (menu) setMenu(false);
-        else onClose();
+        else if (labelling || moving) {
+          setLabelling(false);
+          setMoving(false);
+        } else onClose();
+      } else if (typing) {
+        return;
       } else if (event.key === "ArrowRight") {
         go(1);
       } else if (event.key === "ArrowLeft") {
@@ -186,7 +195,7 @@ export function PhotoViewer({
     }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [go, menu, onClose]);
+  }, [go, menu, labelling, moving, onClose]);
 
   // The page underneath stays where it was, and focus goes back to the
   // thumbnail that opened this when it closes.
@@ -370,7 +379,7 @@ export function PhotoViewer({
                 <button
                   key={one.id}
                   type="button"
-                  aria-label={`Photo ${at}`}
+                  aria-label={`Photo ${at}${one.label ? `: ${one.label}` : ""}`}
                   aria-current={current ? "true" : undefined}
                   onClick={() => go(photos.indexOf(one) - index)}
                   className={cn(
@@ -410,7 +419,7 @@ export function PhotoViewer({
     <div className={cn("flex gap-2", wide && "flex-col")}>
       <a
         href={`${fileUrl(photo)}&download=1`}
-        download={downloadName(photo)}
+        download={labelledFileName(photo)}
         className={cn(
           "flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg",
           "bg-primary text-sm font-semibold text-primary-foreground hover:bg-primary/90",
@@ -595,7 +604,7 @@ export function PhotoViewer({
                 </>
               ) : null}
               <dt className="text-muted-foreground">File</dt>
-              <dd className="[overflow-wrap:anywhere]">{photo.originalName}</dd>
+              <dd className="[overflow-wrap:anywhere]">{labelledFileName(photo)}</dd>
               <dt className="text-muted-foreground">Size</dt>
               <dd>
                 {photo.width && photo.height
@@ -663,7 +672,7 @@ export function PhotoViewer({
               {photo.uploadedBy ?? "Unattributed"} · {photo.taken}
             </span>
             <span className="text-xs text-muted-foreground">
-              {photo.originalName} · {size(photo.sizeBytes)}
+              {labelledFileName(photo)} · {size(photo.sizeBytes)}
             </span>
           </div>
         )}
@@ -828,7 +837,10 @@ function LabelPhoto({
     });
   }
 
-  const same = text.replace(/\s+/g, " ").trim() === (photo.label ?? "");
+  // The same label again is nothing to save — unless it never made it onto
+  // the photo, when saving it draws it.
+  const same =
+    text.replace(/\s+/g, " ").trim() === (photo.label ?? "") && photo.labelDrawn;
 
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface-raised p-3">
@@ -846,8 +858,16 @@ function LabelPhoto({
           if (!same && text.trim()) save(text);
         }}
       />
+      {!photo.labelDrawn ? (
+        <span className="text-xs text-warning">
+          This label could not be drawn on the photo when it was saved. Save it
+          again to draw it.
+        </span>
+      ) : null}
       <span className="text-xs text-muted-foreground">
-        Written on the photo above its stamp, and its file name in the export.
+        {isPdf(photo)
+          ? "Its file name when it is downloaded or exported."
+          : "Written on the photo above its stamp, and its file name when it is downloaded or exported."}
       </span>
       <div className="flex flex-wrap gap-2">
         <Button

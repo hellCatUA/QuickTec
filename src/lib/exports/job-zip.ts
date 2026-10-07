@@ -36,8 +36,13 @@ import { absolutePath, fileExists } from "@/lib/storage";
 
 const safeName = safeSegment;
 
-/** One CSV cell, quoted when it has to be. */
-function csvCell(value: string): string {
+/**
+ * One CSV cell, quoted when it has to be — and kept as text when a
+ * spreadsheet would take it for a formula: a label like "-48V feed" is a
+ * #NAME? in Excel otherwise, and one starting "=" would run.
+ */
+function csvCell(raw: string): string {
+  const value = /^[=+\-@\t\r]/.test(raw) ? `'${raw}` : raw;
   return /[",\n\r]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
 }
 
