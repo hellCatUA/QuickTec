@@ -3,7 +3,7 @@ import PDFDocument from "pdfkit";
 import { formatAddress } from "@/lib/address";
 import { intWoFieldLabel } from "@/lib/company";
 import { usDateTimeInZone, usTimeInZone } from "@/lib/datetime";
-import { deliverableLabel } from "@/lib/deliverables";
+import { deliverableLabel, locationInField, ruleKey } from "@/lib/deliverables";
 import type { JobExportData } from "@/lib/exports/job-data";
 import { workSummary } from "@/lib/exports/text-report";
 import { absolutePath } from "@/lib/storage";
@@ -171,12 +171,23 @@ export async function buildWorkOrderPdf(data: JobExportData): Promise<Buffer> {
 
   if (job.deliverables.length > 0) {
     section(doc, "Deliverables");
+    // A room is named only where the field is photographed at it, as the job
+    // page and the export's folders have it.
+    const perLocation = new Set(
+      data.rules.filter((rule) => rule.perLocation).map((rule) => ruleKey(rule)),
+    );
     for (const item of job.deliverables) {
       const photos = item.attachments.length;
+      const at =
+        item.location &&
+        perLocation.has(ruleKey(item)) &&
+        locationInField(item.location, ruleKey(item))
+          ? item.location
+          : null;
       line(
         doc,
-        item.location
-          ? `${deliverableLabel(item.category, item.customLabel)} at ${item.location.name}`
+        at
+          ? `${deliverableLabel(item.category, item.customLabel)} at ${at.name}`
           : deliverableLabel(item.category, item.customLabel),
         [
           photos > 0 ? `${photos} file${photos === 1 ? "" : "s"}` : null,

@@ -42,8 +42,8 @@ export function JobLocations({
       onSave={async (id, change) => {
         const formData = new FormData();
         formData.set("locationId", id);
-        formData.set("fields", JSON.stringify(change.fields));
-        formData.set("minPhotos", JSON.stringify(change.minPhotos));
+        if (change.fields) formData.set("fields", JSON.stringify(change.fields));
+        if (change.count) formData.set("count", JSON.stringify(change.count));
         if (change.counted !== undefined) {
           formData.set("counted", String(change.counted));
         }

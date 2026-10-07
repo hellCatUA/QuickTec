@@ -9,6 +9,7 @@ import { db } from "@/lib/db";
 import {
   deliverableLabel,
   fieldsForAddedLocation,
+  locationCounts,
   locationInField,
   MAX_LOCATION_NAME,
   ruleKey,
@@ -23,7 +24,7 @@ import {
 } from "@/lib/images";
 import { DOCUMENT_LABELS, storeDocument } from "@/lib/job-documents";
 import { jobRuleSheet } from "@/lib/job-deliverables";
-import { fieldsDropped, readLocationPlan } from "@/lib/location-plan";
+import { describePlan, fieldsDropped, readLocationPlan } from "@/lib/location-plan";
 import { canOnJob } from "@/lib/scope";
 import { getSessionUser, type SessionUser } from "@/lib/session";
 import { deleteFile, storeFile, storageErrorMessage } from "@/lib/storage";
@@ -1225,12 +1226,14 @@ async function namedLocation(
  *
  * It is added from a field, and is photographed where that field says: found
  * in Pre-Install, before and after; found in Post-Install, after alone — see
- * fieldsForAddedLocation. And it owes no field a photo count: whoever planned
- * the job did not plan it, and the crew decide what it needs. A planner who
- * wants it counted sets a number on it under the job's locations.
+ * fieldsForAddedLocation. Found by a tech, it owes no field a photo count:
+ * nobody planned it, and the crew decide what it needs. A planner who wants
+ * it counted sets a number on it under the job's locations. A supervisor
+ * adding one is planning, and it is counted like the rooms they plan there.
  *
- * A room the job already has, but not in this field, is the same room: it is
- * added to this field rather than refused as a duplicate.
+ * A room the job already has, but not in this field, is the same room: it
+ * joins this field — and from Pre-Install, Post-Install too — rather than
+ * being refused as a duplicate, and keeps whatever else was planned for it.
  *
  * A name that is in the dictionary takes the dictionary's spelling and icon,
  * so "mdf" typed in a hurry still reads MDF with its rack. Anything else is
@@ -1250,11 +1253,15 @@ export async function addJobLocation(
   const context = await requireUpload(parsed.data.jobId);
   if ("error" in context) return fail(context.error);
   const { user, job } = context;
+  const planner = await canOnJob(user, "job.edit_planned_fields", job);
 
   // The field it was added from, when that is one the job photographs per
   // location. Without one — an older page — it is in every field, as before.
   const asked = String(formData.get("field") ?? "");
   const sheet = asked ? ((await jobRuleSheet(job.id)) ?? []) : [];
+  const perLocation = sheet
+    .filter((rule) => rule.enabled && rule.perLocation)
+    .map((rule) => ruleKey(rule));
   const from = sheet.find(
     (rule) => rule.enabled && rule.perLocation && ruleKey(rule) === asked,
   );
@@ -1263,7 +1270,11 @@ export async function addJobLocation(
 
   /**
    * The room is on the job already. In this field too, and there is nothing
-   * to add; in another one only, and it is added to this one.
+   * to add; in another one only, and it joins this one.
+   *
+   * Only the fields it is found in are added: the rest of what was planned
+   * for it stands. Joined by a tech, a counted room owes the new fields
+   * nothing, as a room the tech had found would not.
    */
   async function join(
     there: { id: string; name: string; fields: string[] },
@@ -1279,18 +1290,38 @@ export async function addJobLocation(
               : `There is already a location called ${there.name}.`,
           );
     }
-    const widened = fields.length === 0 ? [] : [...there.fields, asked];
-    await db.jobLocation.update({
-      where: { id: there.id },
-      data: { fields: widened },
+    const joining = (
+      asked === "PRE_INSTALL" ? ["PRE_INSTALL", "POST_INSTALL"] : [asked]
+    ).filter((key) => perLocation.includes(key));
+
+    // Read and written under a lock: two people finding the same room in two
+    // fields at once must each add theirs, not write over the other's.
+    await db.$transaction(async (tx) => {
+      const [row] = await tx.$queryRaw<
+        { fields: string[] | null; counted: boolean; minPhotos: unknown }[]
+      >`SELECT "fields", "counted", "minPhotos" FROM "JobLocation" WHERE "id" = ${there.id} FOR UPDATE`;
+      if (!row) return;
+      const now = row.fields ?? [];
+      if (now.length === 0) return;
+      const added = joining.filter((key) => !now.includes(key));
+      if (added.length === 0) return;
+      const counts = locationCounts(row.minPhotos);
+      if (row.counted && !planner) {
+        for (const key of added) counts[key] ??= 0;
+      }
+      await tx.jobLocation.update({
+        where: { id: there.id },
+        data: { fields: [...now, ...added], minPhotos: counts },
+      });
     });
+
     await recordAudit({
       actorId: user.id,
       entityType: "JobLocation",
       entityId: there.id,
       jobId: job.id,
       action: "location_changed",
-      detail: { name: there.name, field: fieldLabel, to: "photographed here too" },
+      detail: { name: there.name, field: `${there.name} — now in ${fieldLabel} too` },
     });
     touch(job.id);
     return ok(there.id);
@@ -1315,7 +1346,7 @@ export async function addJobLocation(
         icon,
         order: Math.max(-1, ...existing.map((one) => one.order)) + 1,
         fields,
-        counted: false,
+        counted: planner,
         createdById: user.id,
       },
       select: { id: true },
@@ -1338,7 +1369,7 @@ export async function addJobLocation(
     entityId: location.id,
     jobId: job.id,
     action: "location_added",
-    detail: { name, ...(fieldLabel ? { field: fieldLabel } : {}) },
+    detail: { name, field: fieldLabel ? `${name} — in ${fieldLabel}` : name },
   });
 
   touch(job.id);
@@ -1431,7 +1462,7 @@ export async function removeJobLocation(
     entityId: location.id,
     jobId: job.id,
     action: "location_removed",
-    detail: { name: location.name },
+    detail: { name: location.name, field: location.name },
   });
 
   touch(job.id);
@@ -1532,7 +1563,7 @@ export async function planJobLocation(
     entityId: location.id,
     jobId: job.id,
     action: "location_added",
-    detail: { name },
+    detail: { name, field: name },
   });
 
   touch(job.id);
@@ -1559,6 +1590,7 @@ export async function saveJobLocationPlan(
       name: true,
       fields: true,
       counted: true,
+      minPhotos: true,
     },
   });
   if (!location) return fail("That location is no longer on this job.");
@@ -1571,33 +1603,54 @@ export async function saveJobLocationPlan(
   const keys = rules.map((rule) => ruleKey(rule));
   const read = readLocationPlan(formData, keys, location.name);
   if ("error" in read) return fail(read.error);
-  const { plan } = read;
+  const { change } = read;
   const asked = formData.get("counted");
   const counted = asked === null ? location.counted : asked === "true";
 
-  const dropped = fieldsDropped(location, plan, keys);
-  if (dropped.length > 0) {
-    const filed = await db.deliverableItem.findMany({
-      where: { locationId: location.id },
-      select: { category: true, customLabel: true },
-    });
-    const holding = rules.find(
-      (rule) =>
-        dropped.includes(ruleKey(rule)) &&
-        filed.some((item) => ruleKey(item) === ruleKey(rule)),
-    );
-    if (holding) {
-      return fail(
-        `${location.name} has photos in ${deliverableLabel(holding.category, holding.customLabel)}. Move or delete them first.`,
+  if (change.fields) {
+    const dropped = fieldsDropped(location, { fields: change.fields }, keys);
+    if (dropped.length > 0) {
+      const filed = await db.deliverableItem.findMany({
+        where: { locationId: location.id },
+        select: { category: true, customLabel: true },
+      });
+      const holding = rules.find(
+        (rule) =>
+          dropped.includes(ruleKey(rule)) &&
+          filed.some((item) => ruleKey(item) === ruleKey(rule)),
       );
+      if (holding) {
+        return fail(
+          `${location.name} has photos or notes in ${deliverableLabel(holding.category, holding.customLabel)}. Move or delete them first.`,
+        );
+      }
     }
   }
 
-  await db.jobLocation.update({
-    where: { id: location.id },
-    data: { fields: plan.fields, minPhotos: plan.minPhotos, counted },
+  await db.$transaction(async (tx) => {
+    if (change.fields || counted !== location.counted) {
+      await tx.jobLocation.update({
+        where: { id: location.id },
+        data: { ...(change.fields ? { fields: change.fields } : {}), counted },
+      });
+    }
+    // One count, merged where it is stored, so a second count saved before
+    // this one came back is not written over.
+    if (change.count && change.count.value === null) {
+      await tx.$executeRaw`UPDATE "JobLocation" SET "minPhotos" = "minPhotos" - ${change.count.key}::text WHERE "id" = ${location.id}`;
+    } else if (change.count) {
+      await tx.$executeRaw`UPDATE "JobLocation" SET "minPhotos" = "minPhotos" || jsonb_build_object(${change.count.key}::text, ${change.count.value}::int) WHERE "id" = ${location.id}`;
+    }
   });
 
+  const after = await db.jobLocation.findUniqueOrThrow({
+    where: { id: location.id },
+    select: { fields: true, counted: true, minPhotos: true },
+  });
+  const labels = rules.map((rule) => ({
+    key: ruleKey(rule),
+    label: deliverableLabel(rule.category, rule.customLabel),
+  }));
   await recordAudit({
     actorId: user.id,
     entityType: "JobLocation",
@@ -1606,14 +1659,9 @@ export async function saveJobLocationPlan(
     action: "location_changed",
     detail: {
       name: location.name,
-      fields:
-        plan.fields.length === 0
-          ? "every field"
-          : rules
-              .filter((rule) => plan.fields.includes(ruleKey(rule)))
-              .map((rule) => deliverableLabel(rule.category, rule.customLabel)),
-      minPhotos: plan.minPhotos,
-      counted,
+      field: location.name,
+      from: describePlan(location, labels),
+      to: describePlan(after, labels),
     },
   });
 

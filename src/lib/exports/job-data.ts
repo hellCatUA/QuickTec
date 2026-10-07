@@ -95,7 +95,7 @@ export async function loadJobForExport(jobId: string) {
           textValue: true,
           createdAt: true,
           locationId: true,
-          location: { select: { name: true } },
+          location: { select: { name: true, fields: true } },
           assignment: { select: { user: { select: { name: true } } } },
           attachments: {
             // In the order they reached the job, which is the order they are

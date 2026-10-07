@@ -19,7 +19,7 @@ import {
   RULE_SELECT,
   ruleKey,
 } from "@/lib/deliverables";
-import { readLocationPlan } from "@/lib/location-plan";
+import { describePlan, readLocationPlan } from "@/lib/location-plan";
 import { isLocationIcon } from "@/lib/location-icons";
 import { materialiseProjectRules } from "@/lib/job-deliverables";
 import { OPEN_LIFECYCLES } from "@/lib/job-status";
@@ -1094,7 +1094,7 @@ export async function saveProjectLocationPlan(formData: FormData): Promise<Actio
   const [location, stored] = await Promise.all([
     db.projectLocation.findFirst({
       where: { id, projectId },
-      select: { name: true },
+      select: { name: true, fields: true, minPhotos: true },
     }),
     db.deliverableRequirement.findMany({
       where: { projectId, jobId: null },
@@ -1112,13 +1112,27 @@ export async function saveProjectLocationPlan(formData: FormData): Promise<Actio
     location.name,
   );
   if ("error" in read) return { ok: false, error: read.error };
-  const { plan } = read;
+  const { change } = read;
 
-  await db.projectLocation.update({
-    where: { id },
-    data: { fields: plan.fields, minPhotos: plan.minPhotos },
+  await db.$transaction(async (tx) => {
+    if (change.fields) {
+      await tx.projectLocation.update({ where: { id }, data: { fields: change.fields } });
+    }
+    if (change.count && change.count.value === null) {
+      await tx.$executeRaw`UPDATE "ProjectLocation" SET "minPhotos" = "minPhotos" - ${change.count.key}::text WHERE "id" = ${id}`;
+    } else if (change.count) {
+      await tx.$executeRaw`UPDATE "ProjectLocation" SET "minPhotos" = "minPhotos" || jsonb_build_object(${change.count.key}::text, ${change.count.value}::int) WHERE "id" = ${id}`;
+    }
   });
 
+  const after = await db.projectLocation.findUniqueOrThrow({
+    where: { id },
+    select: { fields: true, minPhotos: true },
+  });
+  const labels = rules.map((rule) => ({
+    key: ruleKey(rule),
+    label: deliverableLabel(rule.category, rule.customLabel),
+  }));
   await recordAudit({
     actorId: actor.id,
     entityType: "Project",
@@ -1127,13 +1141,8 @@ export async function saveProjectLocationPlan(formData: FormData): Promise<Actio
     action: "project_job_settings_updated",
     detail: {
       fields: `Locations — ${location.name}`,
-      to:
-        plan.fields.length === 0
-          ? "every field"
-          : rules
-              .filter((rule) => plan.fields.includes(ruleKey(rule)))
-              .map((rule) => deliverableLabel(rule.category, rule.customLabel))
-              .join(", "),
+      from: describePlan(location, labels),
+      to: describePlan(after, labels),
     },
   });
 

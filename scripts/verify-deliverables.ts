@@ -659,7 +659,7 @@ async function main() {
     `${await db.jobLocation.count({ where: { jobId, name: "Closet" } })} ${(
       await db.jobLocation.findUniqueOrThrow({ where: { id: closet.id } })
     ).fields.join()}`,
-    "1 ",
+    "1 POST_INSTALL,PRE_INSTALL",
   );
   check("Pre-Install has it now", await roomsIn("PRE_INSTALL"), "MDF,IDF,Closet");
 
@@ -670,7 +670,7 @@ async function main() {
   const closetRow = plan.locator('[data-location="Closet"]');
   check(
     "the planner sees which rooms were found on site",
-    await closetRow.getByText("Added on site — photos optional").isVisible(),
+    await closetRow.getByText("Added on site — no count of its own").isVisible(),
     true,
   );
   const closetPost = closetRow.getByRole("spinbutton", {
@@ -713,7 +713,7 @@ async function main() {
   check(
     "a field a room has photos in is not taken from it",
     await planner
-      .getByText("MDF has photos in Pre-Install. Move or delete them first.")
+      .getByText("MDF has photos or notes in Pre-Install. Move or delete them first.")
       .isVisible(),
     true,
   );
@@ -733,6 +733,26 @@ async function main() {
     "POST_INSTALL",
   );
   check("and Pre-Install stops asking for it", await roomsIn("PRE_INSTALL"), "MDF,Closet");
+
+  // A tech who finds it in Pre-Install after all adds it there — and only
+  // there: it is not put back into every field, and owes Pre-Install nothing
+  // the planner did not ask for.
+  await openDeliverables(page, url);
+  await page.locator('[data-deliverable="PRE_INSTALL"] > button').first().click();
+  await page.waitForTimeout(300);
+  await preSection.getByRole("button", { name: "Add a location" }).click();
+  await page.getByRole("textbox", { name: "Name of the location" }).fill("IDF");
+  await page.getByRole("button", { name: "IDF", exact: true }).click();
+  await page.waitForTimeout(1500);
+  const idfAfter = await db.jobLocation.findUniqueOrThrow({
+    where: { id: idf.id },
+    select: { fields: true, minPhotos: true },
+  });
+  check(
+    "a planned room a tech finds in another field joins it, owing it nothing",
+    `${idfAfter.fields.join()} ${JSON.stringify(idfAfter.minPhotos)}`,
+    'POST_INSTALL,PRE_INSTALL {"PRE_INSTALL":0}',
+  );
   const mdfPre = mdfRow.getByRole("spinbutton", { name: "Photos needed in Pre-Install at MDF" });
   await mdfPre.fill("0");
   await mdfPre.press("Tab");

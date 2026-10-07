@@ -28,9 +28,10 @@ export type PlanLocation = {
   minPhotos: Record<string, number>;
 };
 
+/** Only what changed: the ticks, one count (null clears it), or counting. */
 export type PlanChange = {
-  fields: string[];
-  minPhotos: Record<string, number>;
+  fields?: string[];
+  count?: { key: string; value: number | null };
   counted?: boolean;
 };
 
@@ -47,7 +48,8 @@ const inField = (location: PlanLocation, key: string) =>
  * number unless one is set for the room.
  *
  * Saved as it is changed, as the fields above it are: a tick at once, a count
- * when the person leaves the box.
+ * when the person leaves the box — each on its own, so a count saved never
+ * carries ticks the page saw before the last save came back.
  */
 export function LocationPlan({
   locations,
@@ -112,8 +114,9 @@ export function LocationPlan({
 
       {fields.some((field) => field.required) && locations.length > 0 ? (
         <p className="text-xs text-muted-foreground">
-          A blank count is the field&rsquo;s own. 0 lets a room go without photos
-          there; more than the field asks is fine.
+          A blank count follows the field. A room found on site needs nothing of
+          its own until a number is set here. 0 lets a room go without photos in
+          that field.
         </p>
       ) : null}
 
@@ -145,14 +148,10 @@ function PlanRow({
   // What is being typed into a count, until the person leaves the box.
   const [drafts, setDrafts] = React.useState<Record<string, string>>({});
 
-  function save(change: Partial<PlanChange>, done?: () => void) {
+  function save(change: PlanChange, done?: () => void) {
     onError(null);
     startTransition(async () => {
-      const error = await onSave(location.id, {
-        fields: change.fields ?? location.fields,
-        minPhotos: change.minPhotos ?? location.minPhotos,
-        ...(change.counted !== undefined ? { counted: change.counted } : {}),
-      });
+      const error = await onSave(location.id, change);
       if (error) onError(error);
       done?.();
     });
@@ -187,9 +186,7 @@ function PlanRow({
     const typed = text.trim();
     if (typed === "") {
       if (own === undefined) return forget();
-      const rest = { ...location.minPhotos };
-      delete rest[key];
-      return save({ minPhotos: rest }, forget);
+      return save({ count: { key, value: null } }, forget);
     }
     const count = Number(typed);
     if (!Number.isInteger(count) || count < 0 || count > MAX_MIN_PHOTOS) {
@@ -197,8 +194,11 @@ function PlanRow({
       return forget();
     }
     if (count === own) return forget();
-    save({ minPhotos: { ...location.minPhotos, [key]: count } }, forget);
+    save({ count: { key, value: count } }, forget);
   }
+
+  const nowhere =
+    fields.length > 0 && !fields.some((field) => inField(location, field.key));
 
   return (
     <div
@@ -212,7 +212,7 @@ function PlanRow({
         </span>
         {!location.counted ? (
           <span className="text-xs text-muted-foreground">
-            Added on site — photos optional
+            Added on site — no count of its own
           </span>
         ) : null}
         {!location.counted && canEdit ? (
@@ -234,6 +234,7 @@ function PlanRow({
             aria-label={`Take ${location.name} off the list`}
             disabled={pending}
             onClick={() => {
+              if (!window.confirm(`Take ${location.name} off the list?`)) return;
               onError(null);
               startTransition(async () => {
                 const error = await onRemove(location.id);
@@ -246,6 +247,13 @@ function PlanRow({
           </button>
         ) : null}
       </div>
+
+      {nowhere ? (
+        <p className="pl-5.5 text-xs text-warning">
+          In no field photographed at each location now, so the crew does not
+          see it. Tick one, or take it off.
+        </p>
+      ) : null}
 
       {fields.length > 0 ? (
         <div className="flex flex-col gap-1.5 pl-5.5">
@@ -277,7 +285,9 @@ function PlanRow({
                       min={0}
                       max={MAX_MIN_PHOTOS}
                       step={1}
-                      disabled={!canEdit || pending}
+                      // Left usable while a save is out: tabbing from one count
+                      // to the next saves the first, and must not lock the second.
+                      disabled={!canEdit}
                       aria-label={`Photos needed in ${field.label} at ${location.name}`}
                       value={drafts[field.key] ?? (own !== undefined ? String(own) : "")}
                       placeholder={String(fallback)}
@@ -288,10 +298,12 @@ function PlanRow({
                         }))
                       }
                       onBlur={() => commit(field.key)}
+                      // Enter saves by leaving the box, so the blur that follows
+                      // does not save it a second time.
                       onKeyDown={(event) => {
                         if (event.key === "Enter") {
                           event.preventDefault();
-                          commit(field.key);
+                          event.currentTarget.blur();
                         }
                       }}
                       className="h-9 w-16 rounded-lg border border-border bg-input px-2 text-center text-sm tabular placeholder:text-muted-foreground"
@@ -301,7 +313,7 @@ function PlanRow({
                         ? "photos"
                         : location.counted
                           ? "photos, as the field"
-                          : "photos, none needed"}
+                          : "none of its own"}
                     </span>
                   </span>
                 ) : on ? (

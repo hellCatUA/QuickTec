@@ -2841,6 +2841,17 @@ async function main() {
     'done null ""',
   );
   check(
+    "but a 0 on a room the crew found does not let the field off",
+    missingDeliverables(
+      fieldProgress(
+        [perRoom],
+        [],
+        [{ id: "idf2", name: "IDF 2", fields: [], counted: false, minPhotos: { PRE_INSTALL: 0 } }],
+      ),
+    ).join(" | "),
+    "Pre-Install (0 of 2)",
+  );
+  check(
     "a count set for one field does not reach another",
     locationNeed(ownCounts[0], { category: "POST_INSTALL", minPhotos: 2 }),
     2,
@@ -2860,31 +2871,46 @@ async function main() {
     3,
   );
 
-  const planForm = (fields: unknown, minPhotos: unknown) => {
+  const planForm = (parts: Record<string, unknown>) => {
     const form = new FormData();
-    form.set("fields", JSON.stringify(fields));
-    form.set("minPhotos", JSON.stringify(minPhotos));
+    for (const [name, value] of Object.entries(parts)) {
+      form.set(name, JSON.stringify(value));
+    }
     return form;
   };
   const both = ["PRE_INSTALL", "POST_INSTALL"];
   check(
     "ticked into every field is stored as all of them",
-    JSON.stringify(readLocationPlan(planForm(both, {}), both, "MDF")),
-    '{"plan":{"fields":[],"minPhotos":{}}}',
+    JSON.stringify(readLocationPlan(planForm({ fields: both }), both, "MDF")),
+    '{"change":{"fields":[]}}',
   );
   check(
     "ticked into one is stored as that one",
-    JSON.stringify(readLocationPlan(planForm(["POST_INSTALL"], { POST_INSTALL: 3 }), both, "MDF")),
-    '{"plan":{"fields":["POST_INSTALL"],"minPhotos":{"POST_INSTALL":3}}}',
+    JSON.stringify(readLocationPlan(planForm({ fields: ["POST_INSTALL"] }), both, "MDF")),
+    '{"change":{"fields":["POST_INSTALL"]}}',
+  );
+  check(
+    "a count saved on its own leaves the ticks alone",
+    JSON.stringify(
+      readLocationPlan(planForm({ count: { key: "POST_INSTALL", value: 3 } }), both, "MDF"),
+    ),
+    '{"change":{"count":{"key":"POST_INSTALL","value":3}}}',
   );
   check(
     "ticked into none is refused",
-    "error" in readLocationPlan(planForm(["CUSTOM:Gone"], {}), both, "MDF"),
+    "error" in readLocationPlan(planForm({ fields: ["CUSTOM:Gone"] }), both, "MDF"),
     true,
   );
   check(
     "a count past the limit is refused",
-    "error" in readLocationPlan(planForm([], { PRE_INSTALL: 500 }), both, "MDF"),
+    "error" in
+      readLocationPlan(planForm({ count: { key: "PRE_INSTALL", value: 500 } }), both, "MDF"),
+    true,
+  );
+  check(
+    "a count for a field not photographed per location is refused",
+    "error" in
+      readLocationPlan(planForm({ count: { key: "ISSUES", value: 2 } }), both, "MDF"),
     true,
   );
   check(

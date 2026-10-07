@@ -507,15 +507,14 @@ export function fieldProgress(
     const something = files > 0 || hasText;
 
     // Counted at the locations that owe it something — none, when whoever
-    // planned it set 0 at each. Where every room in it was found on site and
-    // nobody has said what they owe, it is counted as a whole below: a
-    // required field is not done with nothing in it because the crew named
-    // the rooms themselves.
+    // planned it set 0 at each planned room. Where no planned room is in it,
+    // and none of the rooms the crew found was given a number, it is counted
+    // as a whole below: a required field is not done with nothing in it
+    // because the crew named the rooms themselves — nor because one of them
+    // was told it needs none.
     const counted = perLocation?.filter((location) => location.needed > 0) ?? [];
     const planned = here.some(
-      (location) =>
-        location.counted !== false ||
-        locationCounts(location.minPhotos)[key] !== undefined,
+      (location) => location.counted !== false || locationNeed(location, rule) > 0,
     );
     if (perLocation && planned) {
       const short = counted.filter((location) => location.short > 0);

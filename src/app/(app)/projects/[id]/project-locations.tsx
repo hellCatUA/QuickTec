@@ -49,8 +49,8 @@ export function ProjectLocations({
         const formData = new FormData();
         formData.set("projectId", projectId);
         formData.set("id", id);
-        formData.set("fields", JSON.stringify(change.fields));
-        formData.set("minPhotos", JSON.stringify(change.minPhotos));
+        if (change.fields) formData.set("fields", JSON.stringify(change.fields));
+        if (change.count) formData.set("count", JSON.stringify(change.count));
         const result = await saveProjectLocationPlan(formData);
         return result.ok ? null : result.error;
       }}

@@ -61,6 +61,10 @@ type RuleLocation = {
  */
 function summary(rule: EditableRule, all: RuleLocation[]): string {
   const locations = all.filter((location) => locationInField(location, ruleKey(rule)));
+  // What the rooms owe between them, when some ask for their own number.
+  const needs = locations.map((location) => locationNeed(location, rule));
+  const total = needs.reduce((sum, need) => sum + need, 0);
+  const even = needs.every((need) => need === Math.max(1, rule.minPhotos));
   const takes = [
     rule.requiresPhoto ? "photos" : null,
     rule.requiresText ? "text" : null,
@@ -70,9 +74,13 @@ function summary(rule: EditableRule, all: RuleLocation[]): string {
     ? ["Optional", takes.join(" and ") || "nothing to fill in"].join(" · ")
     : rule.requiresPhoto
       ? rule.perLocation
-        ? locations.length > 0
-          ? `${plural(rule.minPhotos, "photo")} at each of ${plural(locations.length, "location")}`
-          : `${plural(rule.minPhotos, "photo")} at each location`
+        ? locations.length === 0
+          ? `${plural(rule.minPhotos, "photo")} at each location`
+          : even
+            ? `${plural(rule.minPhotos, "photo")} at each of ${plural(locations.length, "location")}`
+            : total > 0
+              ? `${plural(total, "photo")} across ${plural(locations.length, "location")}`
+              : `${plural(rule.minPhotos, "photo")} at any of ${plural(locations.length, "location")}`
         : plural(rule.minPhotos, "photo")
       : "Text";
 
@@ -554,7 +562,7 @@ function RuleSettings({
                       className="size-3.5 text-muted-foreground"
                     />
                     {location.name}
-                    {rule.required ? (
+                    {rule.required && locationNeed(location, rule) > 0 ? (
                       <span className="tabular font-normal text-muted-foreground">
                         {locationNeed(location, rule)}
                       </span>
