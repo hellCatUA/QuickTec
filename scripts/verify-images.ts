@@ -1,6 +1,8 @@
 import "dotenv/config";
 import sharp from "sharp";
 import {
+  labelledStampLayers,
+  labelPhoto,
   stampOrNothing,
   looksLikeImage,
   probeImagePipeline,
@@ -255,6 +257,74 @@ async function main() {
       ?.toISOString()
       .slice(0, 10),
     "2026-08-09",
+  );
+
+  console.log("\n--- a label over the stamp ---");
+  //
+  // Somebody's own line on one photo — "Damaged port" — drawn as a top line
+  // above the job's, never over it, and taken off again without a trace.
+  const both = await labelledStampLayers(text, "Damaged port", 1600, 1200);
+  check("two plates and two lines", both.length, 4);
+  const [mainPlate, , labelPlate] = both;
+  const labelHeight = (await sharp(labelPlate.input).metadata()).height ?? 0;
+  ok(
+    `the label sits above the stamp (${labelPlate.top + labelHeight} ≤ ${mainPlate.top})`,
+    labelPlate.top + labelHeight <= mainPlate.top,
+  );
+  check(
+    "lined up against the same edge",
+    labelPlate.left + ((await sharp(labelPlate.input).metadata()).width ?? 0) ===
+      mainPlate.left + ((await sharp(mainPlate.input).metadata()).width ?? 0),
+    true,
+  );
+  check(
+    "and on a photo already stamped, only the label is drawn",
+    (await labelledStampLayers(text, "Damaged port", 1600, 1200, true)).length,
+    2,
+  );
+  const alone = await labelledStampLayers(null, "Damaged port", 1600, 1200);
+  check(
+    "with no stamp at all, the label takes the stamp's place",
+    alone[0].top,
+    (await stampLayers("Damaged port", 1600, 1200))[0].top,
+  );
+
+  const labelled = await processImage(
+    await photo(1600, 1200),
+    "image/jpeg",
+    text,
+    null,
+    "Damaged port",
+  );
+  // Just above where the stamp is: light pixels there now.
+  const above = { left: 1600 - 520, top: 1200 - 170, width: 500, height: 60 };
+  ok(
+    `a label given at upload is written above the stamp (${((await whiteFraction(labelled.data, above)) * 100).toFixed(2)}%)`,
+    (await whiteFraction(labelled.data, above)) > 0.01,
+  );
+  ok("the photo before it is kept", Boolean(labelled.base));
+  ok(
+    "and has the stamp but no label",
+    (await whiteFraction(labelled.base!, above)) < 0.001 &&
+      (await whiteFraction(labelled.base!, corner)) > 0.01,
+  );
+  check(
+    "a photo with no label keeps nothing extra",
+    stamped.base,
+    undefined,
+  );
+  const relabelled = await labelPhoto(labelled.base!, text, "Old switch");
+  ok(
+    "a label written later is drawn on the photo before the first",
+    relabelled !== null && (await whiteFraction(relabelled, above)) > 0.01,
+  );
+  ok(
+    "with the stamp left as it was",
+    relabelled !== null &&
+      Math.abs(
+        (await whiteFraction(relabelled, corner)) -
+          (await whiteFraction(labelled.base!, corner)),
+      ) < 0.01,
   );
 
   console.log("\n--- what must not be stamped ---");

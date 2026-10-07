@@ -3163,6 +3163,72 @@ async function main() {
     "Pre-Install/No location/001.jpg Pre-Install/No location (2)/001.jpg",
   );
 
+  // --- a label written on a photo ------------------------------------------------
+  // Drawn on the photo and its name in the export; the job's labels are its
+  // own list, offered for its next photos.
+  const { readPhotoLabel, jobLabels, MAX_PHOTO_LABEL } = await import("@/lib/photo-label");
+  check(
+    "a label is kept as written, spaces tidied",
+    JSON.stringify(readPhotoLabel("  Damaged   port ")),
+    '{"label":"Damaged port"}',
+  );
+  check("nothing written is no label", JSON.stringify(readPhotoLabel("   ")), '{"label":null}');
+  check(
+    "one longer than fits on the photo is refused",
+    "error" in readPhotoLabel("x".repeat(MAX_PHOTO_LABEL + 1)),
+    true,
+  );
+  check("a label of dots alone is no file name", "error" in readPhotoLabel("..."), true);
+  check("one in any alphabet is fine", JSON.stringify(readPhotoLabel("Пошкоджений порт")), '{"label":"Пошкоджений порт"}');
+  check(
+    "the job's labels are offered once each, in order",
+    jobLabels(["Old switch", null, "damaged port", "Damaged port", "Rack 10", "Rack 2"]).join("|"),
+    "damaged port|Old switch|Rack 2|Rack 10",
+  );
+
+  const labelled = (id: string, minutes: number, label: string | null) => ({
+    ...photo(id, minutes),
+    label,
+  });
+  const named = planDeliverableExport(
+    [
+      layoutItem("PRE_INSTALL", "mdf", [
+        labelled("p", 1, null),
+        labelled("q", 2, "Damaged port"),
+        labelled("w", 3, null),
+        labelled("x", 4, "damaged port"),
+        labelled("y", 5, "002"),
+        labelled("z", 6, "Rack/front"),
+      ]),
+    ],
+    fields,
+    places,
+  );
+  const namedPath = (id: string) =>
+    named.photos.find((one) => one.attachmentId === id)?.path ?? "(none)";
+  check(
+    "a labelled photo is named by its label",
+    namedPath("q"),
+    "Pre-Install/MDF/Damaged port.jpg",
+  );
+  check(
+    "and the rest are numbered among themselves",
+    `${namedPath("p")} ${namedPath("w")}`,
+    "Pre-Install/MDF/001.jpg Pre-Install/MDF/002.jpg",
+  );
+  check(
+    "two with one label in a folder are told apart",
+    namedPath("x"),
+    "Pre-Install/MDF/damaged port (2).jpg",
+  );
+  check("a label that reads like a number gives way to it", namedPath("y"), "Pre-Install/MDF/002 (2).jpg");
+  check("a label cannot make a folder", namedPath("z"), "Pre-Install/MDF/Rack-front.jpg");
+  check(
+    "and the index says which label each is",
+    named.photos.find((one) => one.attachmentId === "q")?.label,
+    "Damaged port",
+  );
+
   // --- a job following its project ---------------------------------------------
   const { sameRules } = await import("@/lib/deliverables");
   const projectSheet = [section({}), section({ category: "POST_INSTALL" })];

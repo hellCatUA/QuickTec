@@ -303,8 +303,11 @@ async function main() {
     select: { id: true },
   });
   check(
-    "full size is the original",
-    await viewer.getByRole("link", { name: "Full size" }).getAttribute("href"),
+    "full size is the original, not a thumbnail",
+    (await viewer.getByRole("link", { name: "Full size" }).getAttribute("href"))?.replace(
+      /\?v=\w+$/,
+      "",
+    ),
     `/api/files/${attachments[0].id}`,
   );
   const download = await page.request.get(
@@ -1193,6 +1196,131 @@ async function main() {
     "the photos are where they were",
     await exported(),
     "Post Install/001.jpg=p4.jpg Pre-Install/IDF/001.jpg=p1.jpg Pre-Install/IDF/002.jpg=p2.jpg Pre-Install/MDF/001.jpg=p3.jpg",
+  );
+
+  // --- a label on one photo --------------------------------------------------
+  // Written on the photo above its stamp, its name in the export, and offered
+  // again for the job's next photos.
+  const { fileExists } = await import("@/lib/storage");
+  const attachmentNamed = (name: string) =>
+    db.attachment.findFirstOrThrow({
+      where: { originalName: name, deliverableItem: { jobId } },
+      select: { id: true, storagePath: true, basePath: true, label: true, stampText: true },
+    });
+  async function photoMenu(alt: string) {
+    await openDeliverables(planner, url);
+    const folded = planner.locator('[data-deliverable] > button[aria-expanded="false"]');
+    while ((await folded.count()) > 0) {
+      await folded.first().click();
+      await planner.waitForTimeout(100);
+    }
+    await planner.locator(`button:has(img[alt="${alt}"])`).first().click();
+    const window = planner.getByRole("dialog");
+    await window.getByRole("button", { name: "Options for this photo" }).click();
+    return window;
+  }
+  async function writeLabel(alt: string, item: string, label: string | "pick") {
+    const window = await photoMenu(alt);
+    await window.getByRole("menuitem", { name: item }).click();
+    if (label === "pick") {
+      await window.getByRole("button", { name: "Use the label Damaged port" }).click();
+    } else {
+      await window.getByRole("textbox").fill(label);
+    }
+    await window.getByRole("button", { name: "Save label" }).click();
+    await planner.waitForTimeout(2000);
+    return window;
+  }
+
+  const p1Before = await attachmentNamed("p1.jpg");
+  const labelWindow = await writeLabel("p1.jpg", "Add a label", "Damaged port");
+  const p1 = await attachmentNamed("p1.jpg");
+  check("a photo takes a label", p1.label, "Damaged port");
+  check(
+    "drawn on a copy, with the photo before it kept",
+    `${p1.storagePath !== p1Before.storagePath} ${p1.basePath === p1Before.storagePath}`,
+    "true true",
+  );
+  check(
+    "the window says what it is",
+    await labelWindow.getByText("Damaged port", { exact: true }).first().isVisible(),
+    true,
+  );
+  await planner.keyboard.press("Escape");
+
+  const pickWindow = await photoMenu("p2.jpg");
+  await pickWindow.getByRole("menuitem", { name: "Add a label" }).click();
+  check(
+    "the job's labels are offered for its next photo",
+    await pickWindow.getByRole("button", { name: "Use the label Damaged port" }).isVisible(),
+    true,
+  );
+  await planner.keyboard.press("Escape");
+  await writeLabel("p2.jpg", "Add a label", "pick");
+  check("one tap gives it the same", (await attachmentNamed("p2.jpg")).label, "Damaged port");
+  check(
+    "the export names them by it, the second told apart from the first",
+    await exported(),
+    "Post Install/001.jpg=p4.jpg Pre-Install/IDF/Damaged port (2).jpg=p2.jpg Pre-Install/IDF/Damaged port.jpg=p1.jpg Pre-Install/MDF/001.jpg=p3.jpg",
+  );
+
+  const p3Before = await attachmentNamed("p3.jpg");
+  await writeLabel("p3.jpg", "Add a label", "Panel");
+  const p3Panel = await attachmentNamed("p3.jpg");
+  await writeLabel("Panel", "Change the label", "Old switch");
+  const p3Switch = await attachmentNamed("p3.jpg");
+  check(
+    "a label changed is drawn again on the photo before the first",
+    `${p3Switch.label} ${p3Switch.basePath === p3Before.storagePath}`,
+    "Old switch true",
+  );
+  check(
+    "and the drawing it replaces is gone from disk",
+    await fileExists(p3Panel.storagePath),
+    false,
+  );
+  const labelledDownload = await planner.request.get(
+    `${BASE}/api/files/${p3Switch.id}?download=1`,
+  );
+  check(
+    "a labelled photo downloads under its label",
+    labelledDownload.headers()["content-disposition"]?.includes("filename*=UTF-8''Old%20switch.jpg"),
+    true,
+  );
+  const offWindow = await photoMenu("Old switch");
+  await offWindow.getByRole("menuitem", { name: "Change the label" }).click();
+  await offWindow.getByRole("button", { name: "Take the label off" }).click();
+  await planner.waitForTimeout(2000);
+  const p3After = await attachmentNamed("p3.jpg");
+  check(
+    "taken off, the photo is back as it was",
+    `${p3After.label} ${p3After.storagePath === p3Before.storagePath} ${p3After.basePath}`,
+    "null true null",
+  );
+  check("with no drawing left behind", await fileExists(p3Switch.storagePath), false);
+  await planner.keyboard.press("Escape");
+
+  // Given when the photos go up: written on each as it is stamped.
+  await openDeliverables(page, url);
+  await page.locator('[data-deliverable="POST_INSTALL"] > button').first().click();
+  await page.getByRole("button", { name: "Add photos to Post Install" }).click();
+  check(
+    "the upload offers the job's labels too",
+    await page.getByRole("button", { name: "Use the label Damaged port" }).isVisible(),
+    true,
+  );
+  await page
+    .locator('input[type="file"]:not([id^="doc-"])')
+    .first()
+    .setInputFiles({ name: "labelled.jpg", mimeType: "image/jpeg", buffer: await photo("#607080") });
+  await page.getByLabel("Label (optional)").fill("Patch panel");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await page.getByText("Adding to Post Install").waitFor({ state: "detached", timeout: 60_000 });
+  const uploaded = await attachmentNamed("labelled.jpg");
+  check(
+    "a label given with the upload is on the photo, with the photo before it kept",
+    `${uploaded.label} ${Boolean(uploaded.basePath)} ${Boolean(uploaded.stampText)}`,
+    "Patch panel true true",
   );
 
   for (const document of seededDocuments) {

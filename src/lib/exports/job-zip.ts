@@ -153,7 +153,7 @@ export async function buildJobZip(data: JobExportData) {
   );
 
   const index: string[][] = [
-    ["File", "Field", "Location", "Uploaded by", "Taken", "Original name"],
+    ["File", "Field", "Location", "Label", "Uploaded by", "Taken", "Original name"],
   ];
   for (const photo of photos) {
     const attachment = attachments.get(photo.attachmentId)!;
@@ -161,6 +161,7 @@ export async function buildJobZip(data: JobExportData) {
       photo.path,
       photo.field,
       photo.location ?? "",
+      photo.label ?? "",
       attachment.uploadedBy?.name ?? "",
       usDateTimeInZone(attachment.capturedAt ?? attachment.createdAt, data.timeZone),
       attachment.originalName,

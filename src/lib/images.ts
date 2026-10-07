@@ -36,6 +36,12 @@ export type ProcessedImage = {
   gpsLat: number | null;
   gpsLng: number | null;
   watermarked: boolean;
+  /**
+   * The same photo without its label — the job's stamp on it, if it has one —
+   * when a label was drawn. Kept so the label can be changed or taken off
+   * without drawing over the old one.
+   */
+  base?: Buffer;
 };
 
 /**
@@ -207,19 +213,27 @@ export type StampLayer = {
   left: number;
 };
 
+/** The size a stamp line starts at, before a long one is shrunk to fit. */
+function stampSize(width: number): number {
+  return Math.max(16, Math.round(width / 48));
+}
+
 /**
- * The two layers of the stamp: a dark plate, and the label on top of it.
+ * One plate of the stamp: a dark box, and a line of text on it, against the
+ * right edge with its lower edge at `bottom`.
  *
- * Split because they are rendered by different things. Shapes are geometry and
- * an SVG draws them anywhere; text needs a font, and the only way to be sure
- * which one is to hand the file over rather than name a family and hope.
+ * Split into two layers because they are rendered by different things.
+ * Shapes are geometry and an SVG draws them anywhere; text needs a font, and
+ * the only way to be sure which one is to hand the file over rather than name
+ * a family and hope.
  */
-export async function stampLayers(
+async function plate(
   text: string,
   width: number,
   height: number,
-): Promise<StampLayer[]> {
-  let fontSize = Math.max(16, Math.round(width / 48));
+  bottom: number,
+): Promise<{ layers: StampLayer[]; top: number }> {
+  let fontSize = stampSize(width);
   const margin = Math.round(fontSize * 0.9);
 
   /**
@@ -260,18 +274,59 @@ export async function stampLayers(
   const boxWidth = Math.min(width, label.info.width + padding * 2);
   const boxHeight = Math.min(height, label.info.height + padding * 2);
   const x = Math.max(0, width - boxWidth - margin);
-  const y = Math.max(0, height - boxHeight - margin);
+  const y = Math.max(0, bottom - boxHeight);
 
-  const plate = Buffer.from(
+  const box = Buffer.from(
     `<svg width="${boxWidth}" height="${boxHeight}" xmlns="http://www.w3.org/2000/svg">` +
       `<rect x="0" y="0" width="${boxWidth}" height="${boxHeight}" ` +
       `rx="${Math.round(fontSize * 0.3)}" fill="rgba(0,0,0,0.55)" /></svg>`,
   );
 
-  return [
-    { input: plate, left: x, top: y },
-    { input: label.data, left: x + padding, top: y + padding },
-  ];
+  return {
+    layers: [
+      { input: box, left: x, top: y },
+      { input: label.data, left: x + padding, top: y + padding },
+    ],
+    top: y,
+  };
+}
+
+/** The two layers of the stamp: a dark plate, and the label on top of it. */
+export async function stampLayers(
+  text: string,
+  width: number,
+  height: number,
+): Promise<StampLayer[]> {
+  const margin = Math.round(stampSize(width) * 0.9);
+  return (await plate(text, width, height, height - margin)).layers;
+}
+
+/**
+ * The stamp with a photo's own label over it: "Damaged port" on a plate of
+ * its own, directly above the job's line, as a top line to it.
+ *
+ * `drawn` says the job's line is on the picture already — a photo stamped
+ * when it was uploaded and labelled afterwards. It is measured, to know where
+ * the label goes, and not drawn a second time. With no job line at all — the
+ * stamp is off for the company — the label sits where the stamp would.
+ */
+export async function labelledStampLayers(
+  main: string | null,
+  label: string | null,
+  width: number,
+  height: number,
+  drawn = false,
+): Promise<StampLayer[]> {
+  const size = stampSize(width);
+  const layers: StampLayer[] = [];
+  let bottom = height - Math.round(size * 0.9);
+  if (main) {
+    const stamp = await plate(main, width, height, bottom);
+    if (!drawn) layers.push(...stamp.layers);
+    bottom = stamp.top - Math.round(size * 0.35);
+  }
+  if (label) layers.push(...(await plate(label, width, height, bottom)).layers);
+  return layers;
 }
 
 export async function processImage(
@@ -287,6 +342,8 @@ export async function processImage(
    * reader either way.
    */
   exifSource?: Buffer | null,
+  /** A line of the uploader's own, drawn above the stamp — see labelledStampLayers. */
+  label?: string | null,
 ): Promise<ProcessedImage> {
   // PDFs are documents the client sent us; they pass through untouched.
   if (isPdf(mimeType, input)) {
@@ -335,11 +392,24 @@ export async function processImage(
   const stamp = watermark
     ? await stampOrNothing(watermark, width, height)
     : null;
+  // Measured against the stamp that was actually drawn: when it could not
+  // be, text cannot be drawn at all, and the label goes without saying so.
+  const labelled = label
+    ? await layersOrNothing(() =>
+        labelledStampLayers(stamp ? watermark! : null, label, width, height, true),
+      )
+    : null;
 
-  const image = sharp(pixels.data, { raw: { width, height, channels } });
-  const data = await (stamp ? image.composite(stamp) : image)
+  const image = () => sharp(pixels.data, { raw: { width, height, channels } });
+  const layers = [...(stamp ?? []), ...(labelled ?? [])];
+  const data = await (layers.length > 0 ? image().composite(layers) : image())
     .jpeg({ quality: JPEG_QUALITY })
     .toBuffer();
+  const base = labelled
+    ? await (stamp ? image().composite(stamp) : image())
+        .jpeg({ quality: JPEG_QUALITY })
+        .toBuffer()
+    : undefined;
 
   return {
     data,
@@ -350,7 +420,29 @@ export async function processImage(
     gpsLat: facts.gpsLat,
     gpsLng: facts.gpsLng,
     watermarked: stamp !== null,
+    base,
   };
+}
+
+/**
+ * A stored photo with a label drawn over it.
+ *
+ * `base` is the photo as it was before any label — with the job's stamp on
+ * it already when it has one, whose text `main` is, so the label goes above
+ * it. Null when the label cannot be drawn.
+ */
+export async function labelPhoto(
+  base: Buffer,
+  main: string | null,
+  label: string,
+): Promise<Buffer | null> {
+  const { width, height } = await sharp(base).metadata();
+  if (!width || !height) return null;
+  const layers = await layersOrNothing(() =>
+    labelledStampLayers(main, label, width, height, true),
+  );
+  if (!layers || layers.length === 0) return null;
+  return sharp(base).composite(layers).jpeg({ quality: JPEG_QUALITY }).toBuffer();
 }
 
 /**
@@ -373,8 +465,14 @@ export async function stampOrNothing(
   height: number,
   render: typeof stampLayers = stampLayers,
 ): Promise<StampLayer[] | null> {
+  return layersOrNothing(() => render(text, width, height));
+}
+
+async function layersOrNothing(
+  draw: () => Promise<StampLayer[]>,
+): Promise<StampLayer[] | null> {
   try {
-    return await render(text, width, height);
+    return await draw();
   } catch (error) {
     console.error("[images] the stamp could not be drawn", error);
     return null;

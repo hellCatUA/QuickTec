@@ -1814,6 +1814,17 @@ model Attachment {
   gpsLng     Float?
 
   watermarked Boolean @default(false)
+  /// The job's line drawn on it when it was uploaded — date, assignment id,
+  /// store — kept so a label added later is set above it, not over it.
+  stampText   String?
+
+  /// What somebody wrote on this one photo — "Damaged port". Drawn on the
+  /// photo as a line above the stamp, and its file name in the export. The
+  /// labels used on a job are offered for its next photos; nothing wider.
+  label    String?
+  /// The photo as it was before its label was drawn, kept while it has one so
+  /// the label can be changed or taken off without drawing over the old one.
+  basePath String?
 
   uploadedById String
   uploadedBy   User     @relation(fields: [uploadedById], references: [id])

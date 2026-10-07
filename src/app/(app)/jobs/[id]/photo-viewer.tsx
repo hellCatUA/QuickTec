@@ -9,6 +9,7 @@ import {
   FileText,
   Loader2,
   MoreHorizontal,
+  Tag,
   Trash2,
   Undo2,
   X,
@@ -20,7 +21,12 @@ import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/field";
 import { cn } from "@/lib/utils";
 import type { DeliverableCategory } from "@prisma-client";
-import { deleteDeliverablePhoto, moveDeliverablePhoto } from "./upload-actions";
+import { PhotoLabelInput } from "./photo-label-input";
+import {
+  deleteDeliverablePhoto,
+  labelDeliverablePhoto,
+  moveDeliverablePhoto,
+} from "./upload-actions";
 
 /**
  * A photo opened from the job, in a window rather than a new tab.
@@ -47,6 +53,10 @@ export type ViewerPhoto = {
   taken: string;
   canMove: boolean;
   canDelete: boolean;
+  /** What somebody wrote on it — drawn on it, and its name in the export. */
+  label: string | null;
+  /** Changes when the photo is drawn again, so it is not shown from cache. */
+  version: string;
   /** Where it is filed, for a section photographed per location. */
   locationId: string | null;
   locationName: string | null;
@@ -67,6 +77,17 @@ export type MoveTarget = {
 
 const isPdf = (photo: { mimeType: string }) =>
   photo.mimeType === "application/pdf";
+
+/** The file, at a width when a smaller copy will do, as it is drawn now. */
+export function fileUrl(photo: { id: string; version: string }, width?: number): string {
+  return `/api/files/${photo.id}?${width ? `w=${width}&` : ""}v=${photo.version}`;
+}
+
+/** What a photo downloads as: its label when it has one. */
+function downloadName(photo: ViewerPhoto): string {
+  if (!photo.label) return photo.originalName;
+  return `${photo.label}.${isPdf(photo) ? "pdf" : "jpg"}`;
+}
 
 function size(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
@@ -93,6 +114,7 @@ export function PhotoViewer({
   grouped,
   targets,
   locations,
+  labels,
   current: currentKey,
   onClose,
 }: {
@@ -106,6 +128,8 @@ export function PhotoViewer({
   /** Sections a photo can be moved to, this one included. */
   targets: MoveTarget[];
   locations: { id: string; name: string }[];
+  /** The labels already used on this job's photos, offered when labelling. */
+  labels: string[];
   /** The key of the section the photos are in. */
   current: string;
   onClose: () => void;
@@ -119,6 +143,7 @@ export function PhotoViewer({
   });
   const [menu, setMenu] = React.useState(false);
   const [moving, setMoving] = React.useState(false);
+  const [labelling, setLabelling] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [pending, startTransition] = React.useTransition();
   const dialog = React.useRef<HTMLDivElement>(null);
@@ -140,6 +165,7 @@ export function PhotoViewer({
       setAt({ id: photos[nextIndex].id, index: nextIndex });
       setMenu(false);
       setMoving(false);
+      setLabelling(false);
       setError(null);
     },
     [index, photos],
@@ -182,7 +208,7 @@ export function PhotoViewer({
       const near = photos[(index + step + photos.length) % photos.length];
       if (near && !isPdf(near)) {
         const image = new Image();
-        image.src = `/api/files/${near.id}?w=800`;
+        image.src = fileUrl(near, 800);
       }
     }
   }, [index, photos]);
@@ -244,16 +270,16 @@ export function PhotoViewer({
         // is room to read it.
         <iframe
           key={photo.id}
-          src={`/api/files/${photo.id}`}
+          src={fileUrl(photo)}
           title={photo.originalName}
           className="size-full bg-white"
         />
       ) : (
         // eslint-disable-next-line @next/next/no-img-element
         <img
-          key={photo.id}
-          src={`/api/files/${photo.id}?w=800`}
-          alt={`${title}, ${where}${position}`}
+          key={`${photo.id}-${photo.version}`}
+          src={fileUrl(photo, 800)}
+          alt={`${title}, ${where}${photo.label ? `${photo.label}, ` : ""}${position}`}
           draggable={false}
           className="max-h-full max-w-full select-none object-contain"
         />
@@ -362,7 +388,7 @@ export function PhotoViewer({
                   ) : (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
-                      src={`/api/files/${one.id}?w=200`}
+                      src={fileUrl(one, 200)}
                       alt=""
                       loading="lazy"
                       className="size-full object-cover"
@@ -383,8 +409,8 @@ export function PhotoViewer({
   const links = (
     <div className={cn("flex gap-2", wide && "flex-col")}>
       <a
-        href={`/api/files/${photo.id}?download=1`}
-        download={photo.originalName}
+        href={`${fileUrl(photo)}&download=1`}
+        download={downloadName(photo)}
         className={cn(
           "flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg",
           "bg-primary text-sm font-semibold text-primary-foreground hover:bg-primary/90",
@@ -395,7 +421,7 @@ export function PhotoViewer({
         Download
       </a>
       <a
-        href={`/api/files/${photo.id}`}
+        href={fileUrl(photo)}
         target="_blank"
         rel="noreferrer"
         className={cn(
@@ -445,6 +471,22 @@ export function PhotoViewer({
               role="menuitem"
               onClick={() => {
                 setMenu(false);
+                setMoving(false);
+                setLabelling(true);
+              }}
+              className="flex min-h-11 items-center gap-2.5 rounded-lg px-3 text-left text-sm hover:bg-muted"
+            >
+              <Tag className="size-4" />
+              {photo.label ? "Change the label" : "Add a label"}
+            </button>
+          ) : null}
+          {photo.canMove ? (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setMenu(false);
+                setLabelling(false);
                 setMoving(true);
               }}
               className="flex min-h-11 items-center gap-2.5 rounded-lg px-3 text-left text-sm hover:bg-muted"
@@ -477,6 +519,14 @@ export function PhotoViewer({
       targets={targets}
       locations={locations}
       onDone={() => setMoving(false)}
+      onError={setError}
+    />
+  ) : labelling ? (
+    <LabelPhoto
+      key={photo.id}
+      photo={photo}
+      labels={labels}
+      onDone={() => setLabelling(false)}
       onError={setError}
     />
   ) : null;
@@ -528,6 +578,12 @@ export function PhotoViewer({
           {errorLine}
           {mover ?? (
             <dl className="grid grid-cols-[84px_minmax(0,1fr)] gap-x-2 gap-y-2 text-[13px]">
+              {photo.label ? (
+                <>
+                  <dt className="text-muted-foreground">Label</dt>
+                  <dd className="font-semibold [overflow-wrap:anywhere]">{photo.label}</dd>
+                </>
+              ) : null}
               <dt className="text-muted-foreground">Uploaded by</dt>
               <dd>{photo.uploadedBy ?? "Unattributed"}</dd>
               <dt className="text-muted-foreground">Taken</dt>
@@ -597,6 +653,12 @@ export function PhotoViewer({
         {errorLine}
         {mover ?? (
           <div className="flex flex-col gap-0.5">
+            {photo.label ? (
+              <span className="flex items-center gap-1.5 text-sm font-semibold [overflow-wrap:anywhere]">
+                <Tag className="size-3.5 shrink-0 text-muted-foreground" />
+                {photo.label}
+              </span>
+            ) : null}
             <span className="text-[13px]">
               {photo.uploadedBy ?? "Unattributed"} · {photo.taken}
             </span>
@@ -719,6 +781,95 @@ function MovePhoto({
           {pending ? <Loader2 className="animate-spin" /> : null}
           Move
         </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          disabled={pending}
+          onClick={onDone}
+        >
+          Cancel
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A label on this one photo: written, changed, or taken off.
+ *
+ * The ones already used on the job are there to tap, so the third photo of a
+ * damaged port is called what the first one was.
+ */
+function LabelPhoto({
+  photo,
+  labels,
+  onDone,
+  onError,
+}: {
+  photo: ViewerPhoto;
+  labels: string[];
+  onDone: () => void;
+  onError: (message: string | null) => void;
+}) {
+  const [text, setText] = React.useState(photo.label ?? "");
+  const [pending, startTransition] = React.useTransition();
+  const id = React.useId();
+
+  function save(label: string) {
+    onError(null);
+    startTransition(async () => {
+      const formData = new FormData();
+      formData.set("attachmentId", photo.id);
+      formData.set("label", label);
+      const result = await labelDeliverablePhoto(formData);
+      if (!result.ok) return onError(result.error);
+      onDone();
+    });
+  }
+
+  const same = text.replace(/\s+/g, " ").trim() === (photo.label ?? "");
+
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface-raised p-3">
+      <label htmlFor={id} className="text-sm font-medium">
+        {photo.label ? "Change the label" : "Label this photo"}
+      </label>
+      <PhotoLabelInput
+        id={id}
+        value={text}
+        labels={labels}
+        disabled={pending}
+        autoFocus
+        onChange={setText}
+        onEnter={() => {
+          if (!same && text.trim()) save(text);
+        }}
+      />
+      <span className="text-xs text-muted-foreground">
+        Written on the photo above its stamp, and its file name in the export.
+      </span>
+      <div className="flex flex-wrap gap-2">
+        <Button
+          type="button"
+          size="sm"
+          disabled={pending || same || !text.trim()}
+          onClick={() => save(text)}
+        >
+          {pending ? <Loader2 className="animate-spin" /> : null}
+          Save label
+        </Button>
+        {photo.label ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            disabled={pending}
+            onClick={() => save("")}
+          >
+            Take the label off
+          </Button>
+        ) : null}
         <Button
           type="button"
           size="sm"

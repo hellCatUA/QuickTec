@@ -2,6 +2,7 @@ import { siteLabel } from "@/lib/address";
 import { getCompanySettings } from "@/lib/company";
 import { usDateTimeInZone, usTimeInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
+import { fileVersion } from "@/lib/storage";
 import {
   effectiveRules,
   fieldProgress,
@@ -38,6 +39,8 @@ import type { JobLifecycle } from "@prisma-client";
 export type ReviewImage = {
   id: string;
   label: string;
+  /** Changes when a photo is drawn again with a new label. */
+  version?: string;
 };
 
 export type ReviewStepData = {
@@ -190,7 +193,7 @@ export async function loadReview(jobId: string): Promise<LoadedReview | null> {
           customLabel: true,
           locationId: true,
           textValue: true,
-          attachments: { select: { id: true } },
+          attachments: { select: { id: true, label: true, storagePath: true } },
         },
       },
       locations: {
@@ -275,8 +278,12 @@ export async function loadReview(jobId: string): Promise<LoadedReview | null> {
       required: field.rule.required,
       filled: field.files > 0 || field.hasText,
       gap: field.gap,
-      attachmentIds: items.flatMap((item) =>
-        item.attachments.map((attachment) => attachment.id),
+      photos: items.flatMap((item) =>
+        item.attachments.map((attachment) => ({
+          id: attachment.id,
+          label: attachment.label,
+          version: fileVersion(attachment.storagePath),
+        })),
       ),
     };
   });
@@ -344,8 +351,8 @@ export async function loadReview(jobId: string): Promise<LoadedReview | null> {
       rows: sections.map((section) => ({
         label: section.label,
         value: section.filled
-          ? section.attachmentIds.length > 0
-            ? `${section.attachmentIds.length} photo${section.attachmentIds.length === 1 ? "" : "s"}`
+          ? section.photos.length > 0
+            ? `${section.photos.length} photo${section.photos.length === 1 ? "" : "s"}`
             : "Recorded"
           : "Empty",
         // Short of what it asks for is as missing as empty: 2 photos of 3 is
@@ -365,7 +372,11 @@ export async function loadReview(jobId: string): Promise<LoadedReview | null> {
       // Every photo the client is about to be sent, in the pass that is about
       // them. Reading "4 photos" and believing it is not a review.
       images: sections.flatMap((section) =>
-        section.attachmentIds.map((id) => ({ id, label: section.label })),
+        section.photos.map((photo) => ({
+          id: photo.id,
+          label: photo.label ? `${section.label} — ${photo.label}` : section.label,
+          version: photo.version,
+        })),
       ),
     },
     {

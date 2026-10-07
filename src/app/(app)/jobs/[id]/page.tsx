@@ -53,6 +53,8 @@ import { formatRate } from "@/lib/money";
 import { canOnJob } from "@/lib/scope";
 import { loadTimeline } from "@/lib/timeline-data";
 import { can, getSessionUser, permissionScope } from "@/lib/session";
+import { jobLabels } from "@/lib/photo-label";
+import { fileVersion } from "@/lib/storage";
 import { loadJobForExport } from "@/lib/exports/job-data";
 import { buildTextReport } from "@/lib/exports/text-report";
 import { jobSpan, visitTotals } from "@/lib/time-tracking";
@@ -278,6 +280,8 @@ export default async function JobPage({
               createdAt: true,
               uploadedById: true,
               uploadedBy: { select: { name: true } },
+              label: true,
+              storagePath: true,
             },
           },
         },
@@ -1439,6 +1443,11 @@ export default async function JobPage({
                 <Deliverables
                   jobId={job.id}
                   rules={rules}
+                  labels={jobLabels(
+                    job.deliverables.flatMap((item) =>
+                      item.attachments.map((attachment) => attachment.label),
+                    ),
+                  )}
                   canUpload={canUpload}
                   canRemoveLocations={canManageJob}
                   photoCount={photoCount}
@@ -1475,6 +1484,8 @@ export default async function JobPage({
                           canMove: canUpload && (mine || canApproveJob),
                           canDelete:
                             canDeleteUploads && (mine || canApproveJob),
+                          label: attachment.label,
+                          version: fileVersion(attachment.storagePath),
                         };
                       }),
                     };

@@ -36,7 +36,7 @@ export type ReviewStep = {
   rows: { label: string; value: string; missing?: boolean }[];
   flags: ReviewFlag[];
   /** Photos and receipts, so a count can be disbelieved. */
-  images: { id: string; label: string }[];
+  images: { id: string; label: string; version?: string }[];
   /** Signed off already, against the findings as they stand now. */
   checked: boolean;
   /** Signed off against findings that have since changed. */
@@ -253,7 +253,7 @@ export function JobReview({
               {step.images.map((image) => (
                 <a
                   key={image.id}
-                  href={`/api/files/${image.id}`}
+                  href={`/api/files/${image.id}${image.version ? `?v=${image.version}` : ""}`}
                   target="_blank"
                   rel="noreferrer"
                   title={image.label}
@@ -261,7 +261,7 @@ export function JobReview({
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
-                    src={`/api/files/${image.id}?w=200`}
+                    src={`/api/files/${image.id}?w=200${image.version ? `&v=${image.version}` : ""}`}
                     alt={image.label}
                     loading="lazy"
                     className="size-16 object-cover"

@@ -106,6 +106,7 @@ export async function loadJobForExport(jobId: string) {
               storagePath: true,
               originalName: true,
               mimeType: true,
+              label: true,
               createdAt: true,
               capturedAt: true,
               uploadedBy: { select: { name: true } },

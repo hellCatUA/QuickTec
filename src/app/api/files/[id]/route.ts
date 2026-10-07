@@ -7,6 +7,8 @@ import { attachmentOwner } from "@/lib/attachments";
 import { db } from "@/lib/db";
 import { canOnJob } from "@/lib/scope";
 import { getSessionUser, permissionScope } from "@/lib/session";
+import { extensionFor } from "@/lib/exports/photo-layout";
+import { labelledFileName } from "@/lib/photo-label";
 import { absolutePath, fileExists } from "@/lib/storage";
 
 /**
@@ -35,6 +37,7 @@ export async function GET(
       storagePath: true,
       mimeType: true,
       originalName: true,
+      label: true,
       uploadedById: true,
     },
   });
@@ -94,16 +97,26 @@ export async function GET(
     ? await thumbnail(attachment.storagePath, width)
     : await readFile(absolutePath(attachment.storagePath));
 
+  // A labelled photo downloads under its label — "Damaged port.jpg" — as it
+  // is named in the export. The plain name is for browsers that cannot read
+  // the encoded one, and a label is often not plain ASCII.
+  const name = labelledFileName(
+    attachment.label,
+    attachment.originalName,
+    extensionFor(attachment.mimeType, attachment.originalName),
+  );
+  const plain = name.replace(/[^\w.\-]/g, "_");
+
   return new NextResponse(new Uint8Array(data), {
     headers: {
       // Derivatives are re-encoded as JPEG whatever the original was, so the
       // header has to follow what is actually in the body.
       "Content-Type": wantsThumb ? "image/jpeg" : attachment.mimeType,
       "Content-Length": String(data.byteLength),
-      "Content-Disposition": `${disposition}; filename="${attachment.originalName.replace(/[^\w.\-]/g, "_")}"`,
+      "Content-Disposition": `${disposition}; filename="${plain}"; filename*=UTF-8''${encodeURIComponent(name).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)}`,
       // Private: the response is scoped to this user's permissions, so a shared
-      // cache must never hand it to anyone else. Immutable because the id maps
-      // to one file for its lifetime.
+      // cache must never hand it to anyone else. Immutable: a photo that is
+      // labelled is drawn again, and the page asks for it with a new `v`.
       "Cache-Control": "private, max-age=31536000, immutable",
     },
   });

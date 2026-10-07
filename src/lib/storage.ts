@@ -49,6 +49,15 @@ export type StoredFile = {
 };
 
 /**
+ * A short tag for the file an attachment points at now. A labelled photo is
+ * drawn again under a new name, and a page that asks for it with this in the
+ * address is not handed the old drawing from its cache.
+ */
+export function fileVersion(storagePath: string): string {
+  return createHash("sha1").update(storagePath).digest("hex").slice(0, 10);
+}
+
+/**
  * Writes a file under jobs/<jobId>/. The name is a fresh uuid, so two techs
  * uploading IMG_0001.HEIC within a second of each other cannot collide.
  */

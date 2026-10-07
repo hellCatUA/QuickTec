@@ -32,7 +32,9 @@ import { searchIcons } from "@/lib/location-icons";
 import { prepareForUpload } from "@/lib/photo-upload";
 import { cn } from "@/lib/utils";
 import type { DeliverableCategory } from "@prisma-client";
+import { PhotoLabelInput } from "./photo-label-input";
 import {
+  fileUrl,
   type MoveTarget,
   PdfTile,
   PhotoViewer,
@@ -165,11 +167,14 @@ export function Deliverables({
   canRemoveLocations,
   photoCount,
   photoLimit,
+  labels,
 }: {
   jobId: string;
   /** The sections that are on. */
   rules: DeliverableRule[];
   items: DeliverableItemView[];
+  /** The labels already written on this job's photos, offered for the next. */
+  labels: string[];
   locations: LocationView[];
   /** The locations offered by name when one is added. */
   known: KnownLocationView[];
@@ -303,6 +308,7 @@ export function Deliverables({
           items={items.filter((item) => itemMatchesRule(item, field.rule))}
           locations={locations}
           known={known}
+          labels={labels}
           isOpen={open.includes(field.key)}
           adding={adding?.key === field.key ? adding : null}
           orphaned={orphanKeys.has(field.key)}
@@ -328,6 +334,7 @@ export function Deliverables({
           grouped={viewed.locations !== null}
           targets={targets}
           locations={locations}
+          labels={labels}
           current={viewed.key}
           onClose={() => setViewing(null)}
         />
@@ -444,8 +451,8 @@ function Thumb({
       ) : (
         // eslint-disable-next-line @next/next/no-img-element
         <img
-          src={`/api/files/${photo.id}?w=200`}
-          alt={photo.originalName}
+          src={fileUrl(photo, 200)}
+          alt={photo.label ?? photo.originalName}
           loading="lazy"
           className="size-full object-cover"
         />
@@ -460,6 +467,7 @@ function Section({
   items,
   locations,
   known,
+  labels,
   isOpen,
   adding,
   orphaned,
@@ -478,6 +486,7 @@ function Section({
   items: DeliverableItemView[];
   locations: LocationView[];
   known: KnownLocationView[];
+  labels: string[];
   isOpen: boolean;
   adding: Adding | null;
   /** Holds photos but is no longer a field this job asks for. */
@@ -583,6 +592,7 @@ function Section({
           typed={typed}
           locations={locations}
           known={known}
+          labels={labels}
           adding={adding}
           canUpload={canUpload}
           canRemoveLocations={canRemoveLocations}
@@ -745,6 +755,7 @@ function Opened({
   typed,
   locations,
   known,
+  labels,
   adding,
   canUpload,
   canRemoveLocations,
@@ -760,6 +771,7 @@ function Opened({
   typed: DeliverableItemView[];
   locations: LocationView[];
   known: KnownLocationView[];
+  labels: string[];
   adding: Adding | null;
   canUpload: boolean;
   canRemoveLocations: boolean;
@@ -780,6 +792,7 @@ function Opened({
         rule={rule}
         place={place}
         locationId={locationId}
+        labels={labels}
         remaining={remaining}
         onDone={onAddDone}
         onError={onError}
@@ -1137,6 +1150,7 @@ function UploadForm({
   rule,
   place,
   locationId,
+  labels,
   remaining,
   onDone,
   onError,
@@ -1146,12 +1160,17 @@ function UploadForm({
   /** "Pre-Install at MDF" — where these are going, said on the button. */
   place: string;
   locationId: string | null;
+  /** The labels already on this job's photos, offered for these. */
+  labels: string[];
   remaining: number;
   onDone: () => void;
   onError: (message: string | null) => void;
 }) {
   const [files, setFiles] = React.useState<File[]>([]);
   const [text, setText] = React.useState("");
+  // Written on each photo in this upload, above its stamp.
+  const [label, setLabel] = React.useState("");
+  const labelId = React.useId();
   // The upload a failed attempt left behind, with whatever text it saved:
   // trying again carries on in it rather than saving the same tracking
   // numbers a second time.
@@ -1183,6 +1202,7 @@ function UploadForm({
     formData.set("category", rule.category);
     if (rule.customLabel) formData.set("customLabel", rule.customLabel);
     if (locationId) formData.set("locationId", locationId);
+    if (label.trim()) formData.set("label", label);
     return formData;
   }
 
@@ -1367,6 +1387,24 @@ function UploadForm({
               this job.
             </p>
           ) : null}
+
+          {/* Something to tell these apart by: written on each photo above
+              its stamp, and its name in the export. */}
+          <div className="flex flex-col gap-1.5">
+            <label
+              htmlFor={labelId}
+              className="text-xs font-medium uppercase tracking-wide text-muted-foreground"
+            >
+              Label <span className="normal-case tracking-normal">(optional)</span>
+            </label>
+            <PhotoLabelInput
+              id={labelId}
+              value={label}
+              labels={labels}
+              disabled={pending}
+              onChange={setLabel}
+            />
+          </div>
         </div>
       ) : null}
 

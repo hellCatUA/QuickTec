@@ -1,5 +1,6 @@
 "use server";
 
+import { readFile, stat } from "node:fs/promises";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { recordAudit } from "@/lib/audit";
@@ -17,6 +18,7 @@ import {
 import { isLocationIcon } from "@/lib/location-icons";
 import {
   isPdf,
+  labelPhoto,
   looksLikeImage,
   processImage,
   processSignature,
@@ -25,9 +27,15 @@ import {
 import { DOCUMENT_LABELS, storeDocument } from "@/lib/job-documents";
 import { jobRuleSheet } from "@/lib/job-deliverables";
 import { describePlan, fieldsDropped, readLocationPlan } from "@/lib/location-plan";
+import { readPhotoLabel } from "@/lib/photo-label";
 import { canOnJob } from "@/lib/scope";
 import { getSessionUser, type SessionUser } from "@/lib/session";
-import { deleteFile, storeFile, storageErrorMessage } from "@/lib/storage";
+import {
+  absolutePath,
+  deleteFile,
+  storeFile,
+  storageErrorMessage,
+} from "@/lib/storage";
 import {
   DeliverableCategory,
   ReimbursementType,
@@ -166,8 +174,11 @@ async function storeUpload(
   job: JobForUpload,
   user: SessionUser,
   file: File,
-  options: { watermark: boolean; exif?: Buffer | null },
-): Promise<{ attachmentId: string; storagePath: string } | { error: string }> {
+  options: { watermark: boolean; exif?: Buffer | null; label?: string | null },
+): Promise<
+  | { attachmentId: string; storagePath: string; basePath: string | null }
+  | { error: string }
+> {
   if (file.size === 0) return { error: "That file is empty." };
   if (file.size > MAX_UPLOAD_BYTES) {
     return { error: "That file is larger than 20 MB." };
@@ -188,7 +199,13 @@ async function storeUpload(
 
   let processed;
   try {
-    processed = await processImage(input, file.type, stamp, options.exif);
+    processed = await processImage(
+      input,
+      file.type,
+      stamp,
+      options.exif,
+      options.label,
+    );
   } catch (error) {
     // Swallowing this is how "I cannot upload any photo" became unanswerable:
     // one message blamed the picture whatever had actually gone wrong, and
@@ -215,10 +232,16 @@ async function storeUpload(
   }
 
   let stored;
+  // The photo before its label was drawn, for when the label is changed.
+  let base: Awaited<ReturnType<typeof storeFile>> | null = null;
   try {
     stored = await storeFile(job.id, processed.data, processed.mimeType);
+    if (processed.base) {
+      base = await storeFile(job.id, processed.base, processed.mimeType);
+    }
   } catch (error) {
     console.error("[upload] storing a photo failed", error);
+    if (stored) await deleteFile(stored.storagePath);
     return { error: storageErrorMessage(error) };
   }
 
@@ -234,12 +257,19 @@ async function storeUpload(
       gpsLat: processed.gpsLat,
       gpsLng: processed.gpsLng,
       watermarked: processed.watermarked,
+      stampText: processed.watermarked ? stamp : null,
+      label: options.label ?? null,
+      basePath: base?.storagePath ?? null,
       uploadedById: user.id,
     },
     select: { id: true },
   });
 
-  return { attachmentId: attachment.id, storagePath: stored.storagePath };
+  return {
+    attachmentId: attachment.id,
+    storagePath: stored.storagePath,
+    basePath: base?.storagePath ?? null,
+  };
 }
 
 function touch(jobId: string) {
@@ -361,6 +391,10 @@ export async function saveDeliverable(
     return fail("Add a photo or some text.");
   }
 
+  // One label for the photos in this upload, written on each of them.
+  const labelled = readPhotoLabel(formData.get("label"));
+  if ("error" in labelled) return fail(labelled.error);
+
   const place = await placeFor(
     job.id,
     category,
@@ -435,7 +469,7 @@ export async function saveDeliverable(
 
   const failures: string[] = [];
   const results = await inBatches(files, UPLOAD_CONCURRENCY, (file) =>
-    storeUpload(job, user, file, { watermark: true, exif }),
+    storeUpload(job, user, file, { watermark: true, exif, label: labelled.label }),
   );
 
   for (const [index, result] of results.entries()) {
@@ -457,6 +491,7 @@ export async function saveDeliverable(
       }
       await db.attachment.delete({ where: { id: result.attachmentId } });
       await deleteFile(result.storagePath);
+      if (result.basePath) await deleteFile(result.basePath);
       failures.push(
         `${files[index].name}: the photos it was going with were moved or removed. Add it again.`,
       );
@@ -915,7 +950,7 @@ export async function saveSignature(
  */
 type PhotoInHand = {
   user: SessionUser;
-  attachment: { id: string; storagePath: string };
+  attachment: { id: string; storagePath: string; basePath: string | null };
   item: {
     id: string;
     jobId: string;
@@ -929,6 +964,9 @@ type PhotoInHand = {
 async function photoForChange(
   attachmentId: string,
   permission: "deliverable.upload" | "deliverable.delete",
+  refused = permission === "deliverable.delete"
+    ? "You cannot delete this photo."
+    : "You cannot move this photo.",
 ): Promise<PhotoInHand | { error: string }> {
   const user = await getSessionUser();
   if (!user) return { error: "Not signed in." };
@@ -938,6 +976,7 @@ async function photoForChange(
     select: {
       id: true,
       storagePath: true,
+      basePath: true,
       uploadedById: true,
       deliverableItem: {
         select: {
@@ -962,14 +1001,7 @@ async function photoForChange(
     ? await canOnJob(user, permission, job)
     : (await canOnJob(user, permission, job)) &&
       (await canOnJob(user, "job.approve_report", job));
-  if (!allowed) {
-    return {
-      error:
-        permission === "deliverable.delete"
-          ? "You cannot delete this photo."
-          : "You cannot move this photo.",
-    };
-  }
+  if (!allowed) return { error: refused };
 
   return { user, attachment, item };
 }
@@ -1096,6 +1128,7 @@ export async function deleteDeliverablePhoto(
 
   await db.attachment.delete({ where: { id: attachment.id } });
   await deleteFile(attachment.storagePath);
+  if (attachment.basePath) await deleteFile(attachment.basePath);
   await dropIfEmpty(item.id);
 
   await recordAudit({
@@ -1108,6 +1141,134 @@ export async function deleteDeliverablePhoto(
       category: item.category,
       label: placeLabel(item.category, item.customLabel, item.location),
       what: "photo",
+    },
+  });
+
+  touch(item.jobId);
+  return ok();
+}
+
+/**
+ * Writes a label on one photo, changes it, or takes it off.
+ *
+ * Drawn on the photo as a line above its stamp, so whoever opens it sees
+ * what it is of, and used as its file name in the export. The photo before
+ * its first label is kept, and every label is drawn on that: changing one
+ * never draws over the last, and taking it off gives the photo back as it was.
+ * A PDF has nothing to draw on, and the label is its name alone.
+ *
+ * Whoever may move a photo may label it: their own, or anyone's for a
+ * supervisor.
+ */
+export async function labelDeliverablePhoto(
+  formData: FormData,
+): Promise<ActionResult> {
+  const attachmentId = String(formData.get("attachmentId") ?? "");
+  if (!attachmentId) return fail("Which photo?");
+  const read = readPhotoLabel(formData.get("label"));
+  if ("error" in read) return fail(read.error);
+  const { label } = read;
+
+  const context = await photoForChange(
+    attachmentId,
+    "deliverable.upload",
+    "You cannot label this photo.",
+  );
+  if ("error" in context) return fail(context.error);
+  const { user, item } = context;
+
+  const photo = await db.attachment.findUniqueOrThrow({
+    where: { id: attachmentId },
+    select: {
+      storagePath: true,
+      basePath: true,
+      label: true,
+      mimeType: true,
+      watermarked: true,
+      stampText: true,
+      createdAt: true,
+    },
+  });
+  if ((photo.label ?? null) === label) return ok();
+
+  // Only if the photo is still the one read: two labels saved at once would
+  // otherwise each draw on it, and one drawing would be left behind on disk.
+  const unchanged = { id: attachmentId, storagePath: photo.storagePath };
+  const changedMeanwhile = "The photo changed while this was being saved. Try again.";
+
+  if (!photo.mimeType.startsWith("image/")) {
+    await db.attachment.update({ where: { id: attachmentId }, data: { label } });
+  } else if (label === null) {
+    if (photo.basePath) {
+      const { size } = await stat(absolutePath(photo.basePath));
+      const put = await db.attachment.updateMany({
+        where: unchanged,
+        data: { storagePath: photo.basePath, basePath: null, label: null, sizeBytes: size },
+      });
+      if (put.count === 0) return fail(changedMeanwhile);
+      await deleteFile(photo.storagePath);
+    } else {
+      await db.attachment.update({ where: { id: attachmentId }, data: { label: null } });
+    }
+  } else {
+    const basePath = photo.basePath ?? photo.storagePath;
+    // The job's line on it, for where the label goes. A photo stamped before
+    // the line was kept is given it as it would have been drawn.
+    let main: string | null = null;
+    if (photo.watermarked) {
+      main = photo.stampText;
+      if (!main) {
+        const job = await loadJob(item.jobId);
+        main = job
+          ? watermarkText({
+              date: isoDateInZone(job.firstClockIn ?? photo.createdAt, job.timeZone),
+              assignmentId: job.externalAssignmentId,
+              customerCode: job.customerCode,
+              siteNumber: job.siteNumber,
+            })
+          : null;
+      }
+    }
+    const drawn = await labelPhoto(await readFile(absolutePath(basePath)), main, label);
+    if (!drawn) {
+      return fail(
+        "The label could not be drawn on the photo. Check Photo pipeline under Settings → Integrations.",
+      );
+    }
+    let stored;
+    try {
+      stored = await storeFile(item.jobId, drawn, "image/jpeg");
+    } catch (error) {
+      console.error("[label] storing a labelled photo failed", error);
+      return fail(storageErrorMessage(error));
+    }
+    const put = await db.attachment.updateMany({
+      where: unchanged,
+      data: {
+        storagePath: stored.storagePath,
+        basePath,
+        label,
+        sizeBytes: stored.sizeBytes,
+      },
+    });
+    if (put.count === 0) {
+      await deleteFile(stored.storagePath);
+      return fail(changedMeanwhile);
+    }
+    // The last drawing goes; the photo it was drawn on stays.
+    if (photo.basePath) await deleteFile(photo.storagePath);
+  }
+
+  await recordAudit({
+    actorId: user.id,
+    entityType: "DeliverableItem",
+    entityId: item.id,
+    jobId: item.jobId,
+    action: "photo_labelled",
+    detail: {
+      field: placeLabel(item.category, item.customLabel, item.location),
+      from: photo.label,
+      to: label,
     },
   });
 

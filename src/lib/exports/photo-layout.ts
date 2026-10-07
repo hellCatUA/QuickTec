@@ -6,6 +6,7 @@ import { deliverableLabel, locationInField, ruleKey } from "@/lib/deliverables";
  *
  *   Pre-Install/MDF/001.jpg
  *   Pre-Install/MDF/002.jpg
+ *   Pre-Install/MDF/Damaged port.jpg    a photo somebody labelled
  *   Pre-Install/IDF/001.jpg
  *   Pre-Install/No location/001.jpg     a per-location field's unfiled photos
  *   Post Install/001.jpg                a field not photographed per location
@@ -13,9 +14,10 @@ import { deliverableLabel, locationInField, ruleKey } from "@/lib/deliverables";
  *
  * Field, then location, then the photo — numbered in the order the photos
  * were taken into the job, so a photo that was moved keeps its place by when
- * it was uploaded rather than by which upload it happens to sit in now. Who
- * took each one is not a folder any more; it is in the photo index beside
- * them.
+ * it was uploaded rather than by which upload it happens to sit in now. A
+ * photo with a label is named by it instead, "(2)" after it when two in one
+ * folder share one; the numbers count the rest. Who took each one is not a
+ * folder any more; it is in the photo index beside them.
  *
  * Whether a field has location folders is the field's own setting, not the
  * photo's: a photo that still carries a location from before the field
@@ -39,6 +41,8 @@ export type LayoutAttachment = {
   mimeType: string;
   originalName: string;
   createdAt: Date;
+  /** What somebody wrote on the photo; its file name when there is one. */
+  label?: string | null;
 };
 
 export type LayoutItem = {
@@ -55,6 +59,7 @@ export type PlannedPhoto = {
   path: string;
   field: string;
   location: string | null;
+  label: string | null;
 };
 
 export type PlannedNote = { path: string; text: string };
@@ -110,6 +115,19 @@ export function extensionFor(mimeType: string, originalName = ""): string {
   if (known[mimeType]) return known[mimeType];
   const fromName = /\.([a-z0-9]{1,5})$/i.exec(originalName)?.[1];
   return fromName ? fromName.toLowerCase() : "bin";
+}
+
+/**
+ * "Damaged port.jpg", or "Damaged port (2).jpg" when the folder has one —
+ * compared without case, as Windows and macOS compare them.
+ */
+function uniqueFile(stem: string, extension: string, taken: Set<string>): string {
+  let candidate = `${stem}.${extension}`;
+  for (let counter = 2; taken.has(candidate.toLowerCase()); counter++) {
+    candidate = `${stem} (${counter}).${extension}`;
+  }
+  taken.add(candidate.toLowerCase());
+  return candidate;
 }
 
 /** 001, 002 … 999, then 1000: wide enough that a file browser sorts them. */
@@ -208,15 +226,35 @@ export function planDeliverableExport(
           )
         : null;
 
-      list.forEach((photo, index) => {
-        const file = `${numbered(index, list.length)}.${extensionFor(photo.mimeType, photo.originalName)}`;
+      // Numbers first, so a label that happens to read "002" gives way to
+      // the photo that is the second, rather than the other way round.
+      const names = new Set<string>(["notes.txt"]);
+      const files = new Map<string, string>();
+      const plain = list.filter((photo) => !photo.label);
+      plain.forEach((photo, index) => {
+        files.set(
+          photo.id,
+          uniqueFile(numbered(index, plain.length), extensionFor(photo.mimeType, photo.originalName), names),
+        );
+      });
+      for (const photo of list) {
+        if (!photo.label) continue;
+        files.set(
+          photo.id,
+          uniqueFile(safeSegment(photo.label), extensionFor(photo.mimeType, photo.originalName), names),
+        );
+      }
+
+      for (const photo of list) {
+        const file = files.get(photo.id)!;
         photos.push({
           attachmentId: photo.id,
           path: sub ? `${folder}/${sub}/${file}` : `${folder}/${file}`,
           field: label,
           location: group === null ? null : (locationName.get(group) ?? null),
+          label: photo.label ?? null,
         });
-      });
+      }
     }
 
     // Serials and tracking numbers are text, not files, and would otherwise
