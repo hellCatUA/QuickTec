@@ -782,7 +782,9 @@ async function main() {
   const currentButton = page.getByRole("button", { name: "Copy the current WM Form" });
   check(
     "opened, the button reads Current",
-    (await currentButton.textContent())?.trim(),
+    // As shown: the closed word keeps its room, hidden, so the button does
+    // not change width.
+    (await currentButton.innerText()).trim(),
     "Current",
   );
   check(

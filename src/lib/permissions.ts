@@ -312,13 +312,15 @@ export const DEFAULT_ROLE_GRANTS: Record<
     "export.text": "PROJECT",
     "export.zip": "PROJECT",
     "export.internal_wo": "PROJECT",
-    // Money is deliberately own-only. A supervisor can no longer be anybody's
+    // Paying is deliberately own-only. A supervisor can no longer be anybody's
     // Direct Supervisor (see SUPERVISOR_ROLES), so REPORTS here resolved to
     // nothing but themselves — which is not "a supervisor pays their techs",
     // it is "a supervisor sets their own pay rate". Paying is a manager's or
     // an administrator's job; running a project is a supervisor's.
     "export.pay": "OWN",
-    "pay.view_rates": "OWN",
+    // Seeing the crew's rates on their projects is not paying them: it is
+    // what the WM Form carries, and supervisors send it.
+    "pay.view_rates": "PROJECT",
     "payroll.view": "OWN",
     "payroll.mark_received": "OWN",
     "mileage.submit": "OWN",

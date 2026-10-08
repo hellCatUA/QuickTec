@@ -135,16 +135,26 @@ export function ExportsPanel({
                   setOpen(true);
                 }
               }}
-              className={cn(buttonVariants({ size: "sm" }), "min-w-36 justify-between")}
+              className={buttonVariants({ size: "sm" })}
             >
-              <span className="flex items-center gap-2">
-                {copied === "copied" ? <Check /> : <Copy />}
-                {copied === "selected"
-                  ? "Selected — copy it"
-                  : open
-                    ? "Current"
-                    : "WM Form"}
-              </span>
+              {copied === "copied" ? <Check /> : <Copy />}
+              {copied === "selected" ? (
+                "Selected — copy it"
+              ) : (
+                // Both words take the same room, so the button keeps its
+                // width as it opens and the list under it does not jump.
+                <span className="grid">
+                  <span className={cn("col-start-1 row-start-1", open && "invisible")}>
+                    WM Form
+                  </span>
+                  <span
+                    aria-hidden={!open}
+                    className={cn("col-start-1 row-start-1", !open && "invisible")}
+                  >
+                    Current
+                  </span>
+                </span>
+              )}
               {hasCurrent ? open ? <ChevronUp /> : <ChevronDown /> : null}
             </button>
 
@@ -152,7 +162,7 @@ export function ExportsPanel({
               <div
                 role="menu"
                 aria-label="Other WM Form"
-                className="absolute left-0 top-full z-10 mt-1 flex w-full flex-col rounded-lg border border-border bg-surface-raised p-1 shadow-xl"
+                className="absolute left-0 top-full z-10 mt-1 flex w-max min-w-full flex-col rounded-lg border border-border bg-surface-raised p-1 shadow-xl"
                 onKeyDown={(event) => {
                   if (event.key === "Escape") {
                     event.preventDefault();

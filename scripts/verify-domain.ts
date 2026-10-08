@@ -3547,6 +3547,74 @@ async function main() {
       can(asRole("SUPERVISOR"), "pay.edit_rates"),
       false,
     );
+    // Seeing the crew's rates on their projects is what lets a supervisor
+    // send each tech's WM Form — which carries their pay.
+    check(
+      "a supervisor sees the rates of the crews on their projects",
+      DEFAULT_ROLE_GRANTS.SUPERVISOR["pay.view_rates"],
+      "PROJECT",
+    );
+    check(
+      "and the install holds it so, not the old own-only default",
+      (
+        await db.roleGrant.findUnique({
+          where: { role_permission: { role: "SUPERVISOR", permission: "pay.view_rates" } },
+          select: { scope: true },
+        })
+      )?.scope,
+      "PROJECT",
+    );
+    {
+      const { wmFormAssignments } = await import("@/lib/exports/guard");
+      const onProject = {
+        id: "sup",
+        grants: new Map(Object.entries(DEFAULT_ROLE_GRANTS.SUPERVISOR)),
+        projectGrants: new Map(),
+        scopedProjectIds: ["p1"],
+      } as never;
+      const crew = [
+        { id: "a1", userId: "t1" },
+        { id: "a2", userId: "t2" },
+      ];
+      check(
+        "so a supervisor has every tech's WM Form on their project's jobs",
+        (
+          await wmFormAssignments(
+            onProject,
+            { projectId: "p1", assigneeIds: ["t1", "t2"], createdById: "x" },
+            crew,
+          )
+        ).join(","),
+        "a1,a2",
+      );
+      check(
+        "and nobody's on a job outside their projects",
+        (
+          await wmFormAssignments(
+            onProject,
+            { projectId: "p2", assigneeIds: ["t1", "t2"], createdById: "x" },
+            crew,
+          )
+        ).join(","),
+        "",
+      );
+      check(
+        "while a tech has their own alone",
+        (
+          await wmFormAssignments(
+            {
+              id: "t1",
+              grants: new Map(Object.entries(DEFAULT_ROLE_GRANTS.TECH)),
+              projectGrants: new Map(),
+              scopedProjectIds: [],
+            } as never,
+            { projectId: "p1", assigneeIds: ["t1", "t2"], createdById: "x" },
+            crew,
+          )
+        ).join(","),
+        "a1",
+      );
+    }
 
     // Nothing is moved automatically, so the ones that need a decision have to
     // be findable. Put the tech back under Sam, who can no longer approve, and
