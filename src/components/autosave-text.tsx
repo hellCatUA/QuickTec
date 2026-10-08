@@ -27,6 +27,7 @@ export function AutosaveText({
   disabled,
   debounceMs = 1200,
   className,
+  maxLength,
 }: {
   initialValue: string;
   save: (value: string) => Promise<{ ok: boolean; error?: string }>;
@@ -37,6 +38,8 @@ export function AutosaveText({
   disabled?: boolean;
   debounceMs?: number;
   className?: string;
+  /** A hard limit, counted under the box. Text already longer is kept until it is shortened. */
+  maxLength?: number;
 }) {
   const [value, setValue] = React.useState(initialValue);
   const [status, setStatus] = React.useState<Status>("idle");
@@ -172,6 +175,7 @@ export function AutosaveText({
         rows={rows}
         placeholder={placeholder}
         disabled={disabled}
+        maxLength={maxLength}
         onChange={(event) => onChange(event.target.value)}
         onBlur={() => {
           if (timer.current) clearTimeout(timer.current);
@@ -179,7 +183,21 @@ export function AutosaveText({
         }}
       />
 
-      {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
+      {hint || maxLength ? (
+        <div className="flex items-start gap-2">
+          {hint ? <p className="flex-1 text-xs text-muted-foreground">{hint}</p> : null}
+          {maxLength ? (
+            <span
+              className={cn(
+                "tabular ml-auto shrink-0 text-xs",
+                value.trim().length > maxLength ? "font-semibold text-danger" : "text-muted-foreground",
+              )}
+            >
+              {value.trim().length} / {maxLength}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
       {!label ? <StatusLine status={status} error={error} /> : null}
     </div>
   );

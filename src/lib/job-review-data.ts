@@ -204,6 +204,7 @@ export async function loadReview(jobId: string): Promise<LoadedReview | null> {
         select: {
           type: true,
           label: true,
+          quantity: true,
           amount: true,
           attachments: { select: { id: true } },
         },
@@ -289,7 +290,10 @@ export async function loadReview(jobId: string): Promise<LoadedReview | null> {
   });
 
   const claims = job.reimbursements.map((entry) => ({
-    label: entry.label ?? entry.type,
+    label:
+      entry.type === "MATERIAL" && entry.quantity > 1
+        ? `(${entry.quantity}) ${entry.label ?? entry.type}`
+        : (entry.label ?? entry.type),
     amount: Number(entry.amount),
     hasReceipt: entry.attachments.length > 0,
     attachmentIds: entry.attachments.map((attachment) => attachment.id),

@@ -51,7 +51,8 @@ import {
   type JobFieldName,
 } from "@/lib/job-fields";
 import { jobRateNote, LATE_TRAVEL_NOTE, resolvePayRate } from "@/lib/pay-rates";
-import { capitaliseName } from "@/lib/names";
+import { capitaliseName, FULL_NAME_NEEDED, isFullName } from "@/lib/names";
+import { MAX_WORK_SUMMARY } from "@/lib/work-summary";
 import { formatPhone } from "@/lib/phone";
 import { notify } from "@/lib/notifications";
 import { canOnJob, resolveJobSupervisor } from "@/lib/scope";
@@ -1722,6 +1723,7 @@ export async function addPointOfContact(
   if (!parsed.success) return fail(z.prettifyError(parsed.error));
 
   const { jobId, type, name, position, phone, email } = parsed.data;
+  if (type === "MOD" && !isFullName(name)) return fail(FULL_NAME_NEEDED);
 
   const context = await loadContext(jobId);
   if (!context) return fail("Job not found.");
@@ -1798,6 +1800,7 @@ export async function updatePointOfContact(
     select: { jobId: true, type: true, name: true },
   });
   if (!contact) return fail("Contact not found.");
+  if (contact.type === "MOD" && !isFullName(name)) return fail(FULL_NAME_NEEDED);
 
   const context = await loadContext(contact.jobId);
   if (!context) return fail("Job not found.");
@@ -1839,7 +1842,7 @@ export async function deletePointOfContact(
     select: { jobId: true, type: true, name: true },
   });
   if (!contact) return fail("Contact not found.");
-
+  
   const context = await loadContext(contact.jobId);
   if (!context) return fail("Job not found.");
   const { user, job } = context;
@@ -1904,11 +1907,15 @@ export async function toggleScopeCheck(
   return ok;
 }
 
+/** The WM Form's "Work Summary (max. 500 characters)". */
+const SUMMARY_TOO_LONG = `Keep the work summary to ${MAX_WORK_SUMMARY} characters — the WM Form takes no more.`;
+
 export async function saveWorkPerformed(
   formData: FormData,
 ): Promise<ActionResult> {
   const jobId = String(formData.get("jobId") ?? "");
   const text = String(formData.get("value") ?? "");
+  if (text.trim().length > MAX_WORK_SUMMARY) return fail(SUMMARY_TOO_LONG);
 
   const context = await loadContext(jobId);
   if (!context) return fail("Job not found.");
@@ -1939,6 +1946,7 @@ export async function saveMergedWorkPerformed(
 ): Promise<ActionResult> {
   const jobId = String(formData.get("jobId") ?? "");
   const text = String(formData.get("value") ?? "");
+  if (text.trim().length > MAX_WORK_SUMMARY) return fail(SUMMARY_TOO_LONG);
 
   const context = await loadContext(jobId);
   if (!context) return fail("Job not found.");

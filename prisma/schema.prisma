@@ -1549,6 +1549,10 @@ model Reimbursement {
   /// Material name, or the hotel name. Unused for PARKING/TOLL, whose export
   /// label is the type itself.
   label  String?
+  /// How many of a material — "(2) Cat6 Keystone $8.00". 1 for everything
+  /// else. The amount is always the total for all of them; the price of one
+  /// is the amount over this, worked out where it is shown.
+  quantity Int             @default(1)
   amount Decimal           @db.Decimal(10, 2)
   note   String?
 

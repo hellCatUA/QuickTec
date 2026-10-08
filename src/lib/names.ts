@@ -33,3 +33,14 @@ export function capitaliseName(value: string): string {
       `${before}${letter.toLocaleUpperCase()}`,
   );
 }
+
+/**
+ * A first name and a last one — what the WM Form asks of the MOD/POC: "MOD /
+ * LCON Full Name". Two words with a letter in each; "Pat" or "pat." is not
+ * somebody the client can find again.
+ */
+export function isFullName(value: string): boolean {
+  return value.trim().split(/\s+/).filter((part) => /\p{L}/u.test(part)).length >= 2;
+}
+
+export const FULL_NAME_NEEDED = "Write the MOD/POC's full name — first and last.";

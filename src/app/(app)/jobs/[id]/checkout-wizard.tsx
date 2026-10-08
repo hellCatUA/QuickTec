@@ -414,7 +414,11 @@ export function CheckoutWizard({
 
                 {(!modId || modList.length === 0) && (
                   <>
-                    <Field label="MOD/POC name" htmlFor="mod-name">
+                    <Field
+                      label="MOD/POC full name"
+                      htmlFor="mod-name"
+                      hint="First and last."
+                    >
                       <Input
                         id="mod-name"
                         value={modName}
@@ -423,6 +427,7 @@ export function CheckoutWizard({
                         }
                         autoComplete="off"
                         autoCapitalize="words"
+                        placeholder="Jane Smith"
                       />
                     </Field>
                     <Field

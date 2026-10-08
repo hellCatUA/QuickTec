@@ -246,7 +246,12 @@ function ContactForm({
 
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface-raised p-3">
-      <Field label="Name" htmlFor={`poc-name-${key}`}>
+      <Field
+        label={type === "MOD" ? "Full name" : "Name"}
+        htmlFor={`poc-name-${key}`}
+        // Their full name is what the WM Form asks for — "MOD / LCON Full Name".
+        hint={type === "MOD" ? "First and last." : undefined}
+      >
         <Input
           id={`poc-name-${key}`}
           value={name}
@@ -254,6 +259,7 @@ function ContactForm({
           autoFocus
           autoComplete="off"
           autoCapitalize="words"
+          placeholder={type === "MOD" ? "Jane Smith" : undefined}
         />
       </Field>
 

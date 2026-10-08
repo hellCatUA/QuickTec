@@ -138,7 +138,9 @@ export async function loadJobForExport(jobId: string) {
           id: true,
           type: true,
           label: true,
+          quantity: true,
           amount: true,
+          assignmentId: true,
           attachments: {
             select: { id: true, storagePath: true, mimeType: true },
           },
@@ -150,7 +152,15 @@ export async function loadJobForExport(jobId: string) {
           id: true,
           isLead: true,
           workPerformed: true,
+          userId: true,
           user: { select: { name: true } },
+          // What the WM Form says each tech is paid: the same terms payroll
+          // pays them on.
+          payType: true,
+          payRate: true,
+          payFlat: true,
+          payFlatHours: true,
+          travelReimbursement: true,
           visits: {
             orderBy: { clockInAt: "asc" },
             select: {

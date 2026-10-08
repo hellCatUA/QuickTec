@@ -5,7 +5,7 @@ import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { db } from "@/lib/db";
 import { loadJobForExport } from "@/lib/exports/job-data";
-import { buildTextReport } from "@/lib/exports/text-report";
+import { buildLegacyWmForm as buildTextReport } from "@/lib/exports/text-report";
 import { absolutePath } from "@/lib/storage";
 
 /**
@@ -692,26 +692,65 @@ async function main() {
 
   await page.goto(url, { waitUntil: "domcontentloaded" });
 
+  // --- a material, so many at a price -------------------------------------
+  // Two boxes that fill each other: so many at a price each, or so many for
+  // a total, whichever the receipt shows.
+  await tab(page, "Deliverables");
+  await page.getByRole("button", { name: "Add claim" }).click();
+  await page.locator("#reimb-quantity").fill("2");
+  await page.locator("#reimb-each").fill("4");
+  check("two at $4 each is $8", await page.locator("#reimb-amount").inputValue(), "8.00");
+  await page.locator("#reimb-amount").fill("10");
+  check("a total typed gives the price each", await page.locator("#reimb-each").inputValue(), "5.00");
+  await page.locator("#reimb-quantity").fill("4");
+  check(
+    "and a new quantity keeps the total that was typed",
+    `${await page.locator("#reimb-amount").inputValue()} ${await page.locator("#reimb-each").inputValue()}`,
+    "10 2.50",
+  );
+  await page.locator("#reimb-label").fill("Cat6 Keystone(s)");
+  await page.getByRole("button", { name: "Save claim" }).click();
+  await page.waitForTimeout(2000);
+  const material = await db.reimbursement.findFirst({
+    where: { jobId: assignment.jobId, type: "MATERIAL", label: "Cat6 Keystone(s)" },
+    select: { id: true, quantity: true, amount: true },
+  });
+  check(
+    "it is kept as how many and what they all cost",
+    `${material?.quantity} ${material?.amount.toString()}`,
+    "4 10",
+  );
+  check(
+    "and listed as such",
+    await page.getByText("(4) Cat6 Keystone(s)", { exact: true }).isVisible(),
+    true,
+  );
+
   // --- exports ------------------------------------------------------------
   await page.reload({ waitUntil: "domcontentloaded" });
 
   await tab(page, "Details");
   await openSection(page, "Exports");
   check(
-    "the report is on the page ready to copy",
+    "the WM Form is on the page ready to copy",
     await page.locator("#text-report").isVisible(),
     true,
   );
 
   const reportText = await page.locator("#text-report").inputValue();
   check(
-    "the on-page report carries the release code just captured",
-    reportText.includes("Release code: RLS-4417"),
+    "it is the updated form, the tech's own",
+    reportText.split("\n")[1],
+    "Tech Name: Terry Tech",
+  );
+  check(
+    "the on-page form carries the release code just captured",
+    reportText.includes("Release Code: RLS-4417"),
     true,
   );
   check(
-    "the on-page report names the MOD who signed",
-    reportText.includes("MOD name: Dana Reyes"),
+    "the on-page form names the MOD who signed",
+    reportText.includes("MOD / LCON Full Name: Dana Reyes"),
     true,
   );
   check(
@@ -719,14 +758,52 @@ async function main() {
     /revisit/i.test(reportText),
     false,
   );
+  check(
+    "the material is on it with its quantity and total",
+    reportText.includes("Materials Used (Item + Qty):\n- (4) Cat6 Keystone(s) $10.00"),
+    true,
+  );
+  check(
+    "and in the materials total",
+    reportText.includes("Tech materials total amount: $10.00"),
+    true,
+  );
+  if (material) await db.reimbursement.delete({ where: { id: material.id } });
+
+  // The legacy form is behind the arrow beside the button.
+  await page.getByRole("button", { name: "Which WM Form" }).click();
+  check(
+    "the arrow offers the updated form and the legacy one",
+    (await page.getByRole("menuitemradio").allTextContents()).join(" | "),
+    "Updated (10/2026) | Legacy",
+  );
+  await page.getByRole("menuitemradio", { name: "Legacy" }).click();
+  check(
+    "and the legacy one is the old form, as it was",
+    (await page.locator("#text-report").inputValue()).includes("Release code: RLS-4417"),
+    true,
+  );
+  check(
+    "the button says which it is",
+    (await page.getByRole("link", { name: /WM Form/ }).first().textContent())?.includes("Legacy"),
+    true,
+  );
 
   const textDownload = await page.request.get(
     `${BASE}/api/jobs/${assignment.jobId}/export/text`,
   );
   check("text export downloads", textDownload.status(), 200);
   check(
-    "text export is offered as a file",
-    textDownload.headers()["content-disposition"]?.includes("-Report.txt"),
+    "text export is offered as the WM Form",
+    textDownload.headers()["content-disposition"]?.includes('filename="WM Form'),
+    true,
+  );
+  const legacyDownload = await page.request.get(
+    `${BASE}/api/jobs/${assignment.jobId}/export/text?form=legacy`,
+  );
+  check(
+    "and the legacy one as such",
+    legacyDownload.headers()["content-disposition"]?.includes("WM Form (Legacy).txt"),
     true,
   );
 
@@ -745,8 +822,8 @@ async function main() {
   const entries = zipEntryNames(zipBody);
 
   check(
-    "the archive carries the client report",
-    entries.some((name) => name.endsWith("-Report.txt")),
+    "the archive carries the WM Form",
+    entries.some((name) => name.startsWith("WM Form") && name.endsWith(".txt")),
     true,
   );
   check(
@@ -2264,7 +2341,8 @@ async function main() {
 
   check(
     "return tracking is no longer a field of its own in Time & schedule",
-    await page.getByText("Return tracking #").count(),
+    // Exactly: the WM Form on the same page has a "Return Tracking #:" line.
+    await page.getByText("Return tracking #", { exact: true }).count(),
     0,
   );
 
@@ -2797,8 +2875,22 @@ async function main() {
       .click();
     await planner.waitForTimeout(300);
 
-    // Typed in lower case, as it arrives off a phone keyboard.
+    // The WM Form asks for the MOD/POC's full name; a first name alone is
+    // somebody nobody can find again.
     const nameBox = planner.locator('[id^="poc-name-"]');
+    await nameBox.pressSequentially("pat");
+    await planner.getByRole("button", { name: "Save", exact: true }).click();
+    await planner.waitForTimeout(1500);
+    check(
+      "a MOD/POC needs a full name",
+      await planner
+        .getByText("Write the MOD/POC's full name — first and last.")
+        .isVisible(),
+      true,
+    );
+    await nameBox.fill("");
+
+    // Typed in lower case, as it arrives off a phone keyboard.
     await nameBox.pressSequentially("dana o'reilly");
     check(
       "a name is capitalised while it is typed",

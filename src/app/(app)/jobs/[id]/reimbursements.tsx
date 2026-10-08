@@ -16,32 +16,52 @@ const TYPE_META: Record<
     label: "Material",
     needsLabel: true,
     needsPhoto: false,
-    hint: 'Exported as "Cat 6A 3Ft $3.00" under Materials used.',
+    hint: 'On the WM Form as "- (2) Cat6 Keystone $8.00" under Materials Used, and in the materials total.',
   },
   PARKING: {
     label: "Parking",
     needsLabel: false,
     needsPhoto: true,
-    hint: 'Exported as "Parking $12.00" under Parking/Tolls.',
+    hint: 'Added to "Tech parking" on the WM Form.',
   },
   TOLL: {
     label: "Toll",
     needsLabel: false,
     needsPhoto: true,
-    hint: 'Exported as "Toll $6.50" under Parking/Tolls.',
+    hint: 'Added to "Tech tolls" on the WM Form.',
   },
   HOTEL: {
     label: "Hotel",
     needsLabel: true,
     needsPhoto: true,
-    hint: "Internal only — hotels never appear on the client report.",
+    hint: 'A "Tech hotel" line of its own on the WM Form, counted in the tech total. Never on the legacy form.',
   },
 };
+
+/** A whole number of at least one, or null. */
+function whole(value: string): number | null {
+  const count = Number(value);
+  return Number.isInteger(count) && count >= 1 ? count : null;
+}
+
+/** Dollars times a count, to the cent, as a box shows it. */
+function times(dollars: string, count: number): string {
+  const cents = Math.round(Number(dollars) * 100);
+  return Number.isFinite(cents) ? ((cents * count) / 100).toFixed(2) : "";
+}
+
+/** Dollars shared over a count, to the cent. */
+function divided(dollars: string, count: number): string {
+  const cents = Math.round(Number(dollars) * 100);
+  return Number.isFinite(cents) ? (Math.round(cents / count) / 100).toFixed(2) : "";
+}
 
 export type ReimbursementView = {
   id: string;
   type: ReimbursementType;
   label: string | null;
+  /** How many of a material; the amount is for all of them. */
+  quantity: number;
   amount: string;
   note: string | null;
   isOwn: boolean;
@@ -79,9 +99,15 @@ export function Reimbursements({
           className="flex flex-wrap items-center gap-2 rounded-lg border border-border p-2"
         >
           <span className="text-sm font-medium">
+            {entry.type === "MATERIAL" ? `(${entry.quantity}) ` : ""}
             {entry.label || TYPE_META[entry.type].label}
           </span>
           <span className="tabular text-sm">{formatMoney(entry.amount)}</span>
+          {entry.type === "MATERIAL" && entry.quantity > 1 ? (
+            <span className="tabular text-xs text-muted-foreground">
+              {formatMoney(Number(entry.amount) / entry.quantity)} each
+            </span>
+          ) : null}
           <span className="text-xs text-muted-foreground">
             {TYPE_META[entry.type].label}
           </span>
@@ -175,6 +201,12 @@ function ReimbursementForm({
   const [type, setType] = React.useState<ReimbursementType>("MATERIAL");
   const [label, setLabel] = React.useState("");
   const [amount, setAmount] = React.useState("");
+  // A material is so many at a price each, or so many for a total — whichever
+  // the receipt shows. Both boxes are there and each fills the other; the
+  // one typed into last is the one kept when the quantity changes.
+  const [quantity, setQuantity] = React.useState("1");
+  const [each, setEach] = React.useState("");
+  const [anchor, setAnchor] = React.useState<"each" | "total">("each");
   const [note, setNote] = React.useState("");
   const [files, setFiles] = React.useState<File[]>([]);
   const [pending, setPending] = React.useState(false);
@@ -190,6 +222,7 @@ function ReimbursementForm({
     formData.set("type", type);
     formData.set("label", label);
     formData.set("amount", amount);
+    if (type === "MATERIAL") formData.set("quantity", quantity);
     formData.set("note", note);
     for (const file of files) formData.append("files", file);
 
@@ -219,18 +252,78 @@ function ReimbursementForm({
           </Select>
         </Field>
 
-        <Field label="Amount ($)" htmlFor="reimb-amount">
-          <Input
-            id="reimb-amount"
-            type="number"
-            step="0.01"
-            min="0.01"
-            inputMode="decimal"
-            value={amount}
-            onChange={(event) => setAmount(event.target.value)}
-          />
-        </Field>
+        {type === "MATERIAL" ? (
+          <Field label="Quantity" htmlFor="reimb-quantity">
+            <Input
+              id="reimb-quantity"
+              type="number"
+              step="1"
+              min="1"
+              inputMode="numeric"
+              value={quantity}
+              onChange={(event) => {
+                const next = event.target.value;
+                setQuantity(next);
+                const count = whole(next);
+                if (!count) return;
+                if (anchor === "each" && each) setAmount(times(each, count));
+                else if (anchor === "total" && amount) setEach(divided(amount, count));
+              }}
+            />
+          </Field>
+        ) : (
+          <Field label="Amount ($)" htmlFor="reimb-amount">
+            <Input
+              id="reimb-amount"
+              type="number"
+              step="0.01"
+              min="0.01"
+              inputMode="decimal"
+              value={amount}
+              onChange={(event) => setAmount(event.target.value)}
+            />
+          </Field>
+        )}
       </div>
+
+      {type === "MATERIAL" ? (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Price each ($)" htmlFor="reimb-each">
+            <Input
+              id="reimb-each"
+              type="number"
+              step="0.01"
+              min="0"
+              inputMode="decimal"
+              value={each}
+              onChange={(event) => {
+                const next = event.target.value;
+                setEach(next);
+                setAnchor("each");
+                const count = whole(quantity);
+                setAmount(next && count ? times(next, count) : "");
+              }}
+            />
+          </Field>
+          <Field label="Total ($)" htmlFor="reimb-amount">
+            <Input
+              id="reimb-amount"
+              type="number"
+              step="0.01"
+              min="0.01"
+              inputMode="decimal"
+              value={amount}
+              onChange={(event) => {
+                const next = event.target.value;
+                setAmount(next);
+                setAnchor("total");
+                const count = whole(quantity);
+                setEach(next && count ? divided(next, count) : "");
+              }}
+            />
+          </Field>
+        </div>
+      ) : null}
 
       {meta.needsLabel ? (
         <Field
@@ -281,6 +374,7 @@ function ReimbursementForm({
           disabled={
             pending ||
             !amount ||
+            (type === "MATERIAL" && !whole(quantity)) ||
             (meta.needsLabel && !label) ||
             (meta.needsPhoto && files.length === 0)
           }

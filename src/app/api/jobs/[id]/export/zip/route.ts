@@ -1,6 +1,6 @@
 import { Readable } from "node:stream";
 import { NextResponse } from "next/server";
-import { contentDisposition, loadExportable } from "@/lib/exports/guard";
+import { contentDisposition, loadExportableWithForms } from "@/lib/exports/guard";
 import { buildJobZip, zipFileName } from "@/lib/exports/job-zip";
 import { recordAudit } from "@/lib/audit";
 import { getSessionUser } from "@/lib/session";
@@ -10,10 +10,13 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const data = await loadExportable(id, "export.zip");
-  if (!data) return new NextResponse("Not found", { status: 404 });
+  const loaded = await loadExportableWithForms(id, "export.zip");
+  if (!loaded) return new NextResponse("Not found", { status: 404 });
+  const { data, forms } = loaded;
 
-  const archive = await buildJobZip(data);
+  // The WM Forms in it are the ones this person may read — they say what
+  // each tech is paid.
+  const archive = await buildJobZip(data, forms);
 
   // Worth a timeline entry: this is the moment a job's photos leave the
   // company, and someone will eventually ask who sent them.

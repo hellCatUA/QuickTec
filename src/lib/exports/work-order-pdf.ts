@@ -207,7 +207,9 @@ export async function buildWorkOrderPdf(data: JobExportData): Promise<Buffer> {
       total += Number(entry.amount);
       line(
         doc,
-        entry.label ?? entry.type,
+        entry.type === "MATERIAL" && entry.quantity > 1
+          ? `(${entry.quantity}) ${entry.label ?? entry.type}`
+          : (entry.label ?? entry.type),
         `$${Number(entry.amount).toFixed(2)} (${entry.type})`,
       );
     }

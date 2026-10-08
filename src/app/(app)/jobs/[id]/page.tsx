@@ -56,7 +56,8 @@ import { can, getSessionUser, permissionScope } from "@/lib/session";
 import { jobLabels } from "@/lib/photo-label";
 import { fileVersion } from "@/lib/storage";
 import { loadJobForExport } from "@/lib/exports/job-data";
-import { buildTextReport } from "@/lib/exports/text-report";
+import { buildLegacyWmForm, buildWmForm } from "@/lib/exports/text-report";
+import { wmFormAssignments } from "@/lib/exports/guard";
 import { jobSpan, visitTotals } from "@/lib/time-tracking";
 import { Timeline } from "@/components/timeline";
 import { approveJob } from "../actions";
@@ -302,6 +303,7 @@ export default async function JobPage({
           id: true,
           type: true,
           label: true,
+          quantity: true,
           amount: true,
           note: true,
           assignment: { select: { userId: true } },
@@ -448,8 +450,35 @@ export default async function JobPage({
 
   // Rendered with the page rather than fetched, so the report is there to copy
   // even if the connection has dropped by the time someone wants it.
+  // Both versions of the WM Form: the updated one for each tech whose pay this
+  // person may see, and the legacy one.
   const exportData = canExportText ? await loadJobForExport(job.id) : null;
-  const textReport = exportData ? buildTextReport(exportData) : null;
+  const wmForms = exportData
+    ? {
+        updated: (
+          await wmFormAssignments(
+            user,
+            jobRef,
+            job.assignments.map((assignment) => ({
+              id: assignment.id,
+              userId: assignment.user.id,
+            })),
+          )
+        )
+          .map((assignmentId) => ({
+            assignmentId,
+            tech:
+              exportData.job.assignments.find((one) => one.id === assignmentId)?.user
+                .name ?? "Tech",
+            own:
+              job.assignments.find((one) => one.id === assignmentId)?.user.id === user.id,
+            text: buildWmForm(exportData, assignmentId) ?? "",
+          }))
+          // Your own first, then the lead and the rest as the job lists them.
+          .sort((a, b) => Number(b.own) - Number(a.own)),
+        legacy: buildLegacyWmForm(exportData),
+      }
+    : null;
 
   const mine = job.assignments.find(
     (assignment) => assignment.user.id === user.id,
@@ -1307,7 +1336,7 @@ export default async function JobPage({
               <Section
                 title="Exports"
                 summary={[
-                  canExportText ? "report" : null,
+                  canExportText ? "WM Form" : null,
                   canExportZip ? "photos" : null,
                   canExportPdf ? "PDF" : null,
                 ]
@@ -1315,13 +1344,13 @@ export default async function JobPage({
                   .join(" · ")}
               >
                 <p className="mb-3 text-sm text-muted-foreground">
-                  The report is the client-facing form — nothing internal
-                  appears in it. The ZIP carries the photos foldered by section
-                  and tech.
+                  The WM Form is the report pasted into the email — one per
+                  tech, with what they are owed. The ZIP carries it with the
+                  photos, foldered by section and location.
                 </p>
                 <ExportsPanel
                   jobId={job.id}
-                  report={textReport}
+                  forms={wmForms}
                   canText={canExportText}
                   canZip={canExportZip}
                   canPdf={canExportPdf}
@@ -1524,8 +1553,9 @@ export default async function JobPage({
               <CardHeader>
                 <CardTitle>Reimbursements</CardTitle>
                 <CardDescription>
-                  Materials and parking reach the client report; hotels stay
-                  internal.
+                  On each tech&rsquo;s WM Form: materials with their quantities,
+                  parking, tolls and hotels, all in the tech total. The legacy
+                  form leaves hotels out.
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -1536,6 +1566,7 @@ export default async function JobPage({
                     id: entry.id,
                     type: entry.type,
                     label: entry.label,
+                    quantity: entry.quantity,
                     amount: entry.amount.toString(),
                     note: entry.note,
                     isOwn: entry.assignment?.userId === user.id,

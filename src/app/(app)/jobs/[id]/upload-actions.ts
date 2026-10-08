@@ -695,6 +695,13 @@ const reimbursementSchema = z.object({
       message: "Enter an amount greater than zero",
     }),
   note: z.string().trim().max(500).optional(),
+  /** How many of a material; the amount is what they all cost. */
+  quantity: z.coerce
+    .number("Quantity has to be a number.")
+    .int("Quantity has to be a whole number.")
+    .min(1, "Quantity has to be at least 1.")
+    .max(9999, "That is more than one claim should hold.")
+    .default(1),
 });
 
 export async function saveReimbursement(
@@ -707,6 +714,7 @@ export async function saveReimbursement(
     label: formData.get("label") ?? undefined,
     amount: formData.get("amount") ?? "",
     note: formData.get("note") ?? undefined,
+    quantity: formData.get("quantity") || undefined,
   });
   if (!parsed.success) return fail(z.prettifyError(parsed.error));
 
@@ -715,6 +723,8 @@ export async function saveReimbursement(
   const { user, job } = context;
 
   const { type, label, amount, note } = parsed.data;
+  // Only a material comes in a number of; a parking ticket is one.
+  const quantity = type === "MATERIAL" ? parsed.data.quantity : 1;
 
   // Materials and hotels are named in the export; parking and tolls are
   // labelled by their type, so a name would be redundant.
@@ -745,6 +755,7 @@ export async function saveReimbursement(
       )?.id,
       type,
       label: label || null,
+      quantity,
       amount,
       note: note || null,
     },
@@ -766,7 +777,7 @@ export async function saveReimbursement(
     entityId: reimbursement.id,
     jobId: job.id,
     action: "reimbursement_added",
-    detail: { type, label: label ?? null, amount },
+    detail: { type, label: label ?? null, amount, ...(quantity > 1 ? { quantity } : {}) },
   });
 
   touch(job.id);

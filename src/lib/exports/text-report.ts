@@ -1,26 +1,35 @@
 import { formatAddress } from "@/lib/address";
-import { usTimeInZone } from "@/lib/datetime";
+import { assignmentTerms, labourCentsFor } from "@/lib/budget";
+import { isoDateInZone, usTimeInZone } from "@/lib/datetime";
 import type { JobExportData } from "@/lib/exports/job-data";
+import { fromCents, toCents } from "@/lib/money";
 import { ticketList } from "@/lib/tickets";
+import { assignmentTotals } from "@/lib/time-tracking";
 
 /**
- * The client-facing text report.
+ * The WM Form: the text report pasted into an email for the job.
  *
- * The template is fixed — it is pasted into an email to the subcontractor, so
- * the labels and their order are not ours to change. Two conventions for an
- * absent value, agreed with the business:
+ * Two versions. "Updated (10/2026)" is the one sent now — one per tech, with
+ * what they were on site for and what they are owed, because it serves
+ * WorkMarket and the company we started working with alike. "Legacy" is the
+ * form WorkMarket alone used to get, kept for the odd job that still wants
+ * it, and left exactly as it was.
+ *
+ * The templates are fixed — the labels, their order and the blank lines
+ * between the groups are not ours to change. Two conventions for an absent
+ * value, agreed with the business:
  *
  *   "-"    a required field that was deliberately bypassed or never obtained
  *   "N/a"  a field that was optional to begin with
  *
- * Nothing internal appears here: no hotel claims, no INC number, no internal
- * status, no pay.
+ * Neither has the INC number or the internal status. The legacy form has no
+ * pay and no hotel claims either; the updated one has the tech's own.
  */
 
 const NOT_OBTAINED = "-";
 const NOT_APPLICABLE = "N/a";
 
-/** Fields in the order the template lists them. */
+/** The legacy form's fields, in the order its template lists them. */
 const TEMPLATE: readonly string[] = [
   "Tech name",
   "Assignment ID",
@@ -104,7 +113,8 @@ export function returnTracking(data: JobExportData): string | null {
   return data.job.returnTrackingNumber?.trim() || null;
 }
 
-export function buildTextReport(data: JobExportData): string {
+/** The form WorkMarket alone used to get, as it always was. */
+export function buildLegacyWmForm(data: JobExportData): string {
   const { job, timeZone, span } = data;
 
   const materials = job.reimbursements
@@ -188,3 +198,184 @@ export function buildTextReport(data: JobExportData): string {
 }
 
 export const TEXT_REPORT_FIELDS = TEMPLATE;
+
+// ---------------------------------------------------------------------------
+// Updated (10/2026)
+// ---------------------------------------------------------------------------
+
+type Assignment = JobExportData["job"]["assignments"][number];
+
+/** "10/08/26" — the first line of the updated form. */
+function shortDate(date: Date, timeZone: string): string {
+  const [year, month, day] = isoDateInZone(date, timeZone).split("-");
+  return `${month}/${day}/${year.slice(2)}`;
+}
+
+/** "$45.00/hr", "$300.00 flat", "$300.00 flat (4 hrs) + $45.00/hr". */
+function rateOf(assignment: Assignment): string {
+  const terms = assignmentTerms(assignment);
+  const dollars = (cents: number) => `$${fromCents(cents)}`;
+  if (terms.payType === "HOURLY") return `${dollars(terms.hourlyCents)}/hr`;
+  if (terms.payType === "FLAT") return `${dollars(terms.flatCents)} flat`;
+  if (terms.payType === "FLAT_HOURLY") {
+    const hours = Number((terms.flatMinutes / 60).toFixed(2));
+    return `${dollars(terms.flatCents)} flat (${hours} hrs) + ${dollars(terms.hourlyCents)}/hr`;
+  }
+  return dollars(0);
+}
+
+/** "- (2) Cat6 Keystone(s) $8.00": how many, what, and what they all cost. */
+export function materialLine(entry: {
+  label: string | null;
+  quantity: number;
+  amount: { toString(): string };
+}): string {
+  return `(${entry.quantity}) ${entry.label ?? "Material"} ${money(entry.amount)}`;
+}
+
+/** Whose updated form a job has: one per tech on it, the lead first. */
+export function wmFormTechs(data: JobExportData) {
+  return data.job.assignments.map((assignment) => ({
+    assignmentId: assignment.id,
+    userId: assignment.userId,
+    name: assignment.user.name,
+  }));
+}
+
+/**
+ * The updated form for one tech on the job.
+ *
+ * Their own day: the date they started, when they arrived and left, the time
+ * they are paid for, and what they are owed for it — the same figures payroll
+ * pays them, travel and claims included. A claim with no line of its own on
+ * the form — a hotel — gets one after the tolls, and is in the total.
+ *
+ * The rest is the job's, as every tech on it would write it.
+ */
+export function buildWmForm(data: JobExportData, assignmentId: string): string | null {
+  const { job, timeZone, span } = data;
+  const assignment = job.assignments.find((one) => one.id === assignmentId);
+  if (!assignment) return null;
+
+  const visits = assignment.visits;
+  const totals = assignmentTotals(visits);
+  const paidMinutes = Math.round(totals.paidMinutes);
+  const firstIn = visits[0]?.clockInAt ?? null;
+  const lastOut = totals.hasOpenVisit
+    ? null
+    : visits.reduce<Date | null>(
+        (latest, visit) =>
+          visit.clockOutAt && (!latest || visit.clockOutAt > latest)
+            ? visit.clockOutAt
+            : latest,
+        null,
+      );
+
+  // A job that runs past midnight is dated the day it started.
+  const day =
+    firstIn ?? span.onsiteAt ?? job.scheduledStart ?? job.createdAt;
+
+  const claims = job.reimbursements.filter(
+    (entry) => entry.assignmentId === assignment.id,
+  );
+  const sum = (type: string) =>
+    claims
+      .filter((entry) => entry.type === type)
+      .reduce((total, entry) => total + toCents(entry.amount), 0);
+  const materials = claims.filter((entry) => entry.type === "MATERIAL");
+
+  const labour = labourCentsFor(assignmentTerms(assignment), paidMinutes);
+  const travel = assignment.travelReimbursement
+    ? toCents(assignment.travelReimbursement)
+    : 0;
+  const parts = {
+    materials: sum("MATERIAL"),
+    parking: sum("PARKING"),
+    tolls: sum("TOLL"),
+    hotel: sum("HOTEL"),
+  };
+  const total =
+    labour + travel + parts.materials + parts.parking + parts.tolls + parts.hotel;
+  const dollars = (cents: number) => `$${fromCents(cents)}`;
+
+  const pmPc = Array.from(
+    new Set(
+      [job.pmContact?.name, ...contactNames(data, "PM_PC")].filter(
+        (name): name is string => Boolean(name),
+      ),
+    ),
+  );
+  const mods = contactNames(data, "MOD");
+
+  // The lead's merged summary is the job's; without one, this tech's own
+  // words, and failing those everybody's.
+  const summary =
+    job.workPerformedMerged?.trim() ||
+    assignment.workPerformed?.trim() ||
+    workSummary(data);
+
+  // One group per block of the template, with the blank line between them.
+  const groups: string[][] = [
+    [shortDate(day, timeZone), `Tech Name: ${assignment.user.name}`],
+    [
+      `Assignment ID: ${job.externalAssignmentId ?? NOT_OBTAINED}`,
+      `Site Name & ID: ${data.siteName}`,
+      `Site Address: ${formatAddress(job.site)}`,
+    ],
+    [
+      `Work Order Company: ${job.client.name}`,
+      `Representing Company: ${job.repCompany?.name ?? NOT_APPLICABLE}`,
+    ],
+    [
+      `Onsite (Check-In): ${firstIn ? usTimeInZone(firstIn, timeZone) : NOT_OBTAINED}`,
+      `Offsite (Check-Out): ${lastOut ? usTimeInZone(lastOut, timeZone) : NOT_OBTAINED}`,
+      `Tech total time: ${
+        visits.length > 0 ? `${(paidMinutes / 60).toFixed(2)} hrs` : NOT_OBTAINED
+      }`,
+      `Tech travel: ${dollars(travel)}`,
+      `Tech rate: ${rateOf(assignment)}`,
+      `Tech materials total amount: ${dollars(parts.materials)}`,
+      `Tech parking: ${dollars(parts.parking)}`,
+      `Tech tolls: ${dollars(parts.tolls)}`,
+      ...(parts.hotel > 0 ? [`Tech hotel: ${dollars(parts.hotel)}`] : []),
+      `Tech total: ${dollars(total)}`,
+    ],
+    [
+      `PM / PC Name: ${pmPc.join(", ") || NOT_APPLICABLE}`,
+      `MOD / LCON Full Name: ${mods.length > 0 ? mods.join(", ") : "No MOD"}`,
+      `NOC / Support Name: ${contactNames(data, "NOC").join(", ") || NOT_APPLICABLE}`,
+    ],
+    [
+      `Ticket #: ${ticketList(job) ?? NOT_OBTAINED}`,
+      `Release Code: ${
+        job.noReleaseCode ? NOT_OBTAINED : (job.releaseCode ?? NOT_OBTAINED)
+      }`,
+      `Return Tracking #: ${returnTracking(data) ?? NOT_APPLICABLE}`,
+    ],
+    [
+      materials.length > 0
+        ? `Materials Used (Item + Qty):\n${materials
+            .map((entry) => `- ${materialLine(entry)}`)
+            .join("\n")}`
+        : `Materials Used (Item + Qty): ${NOT_APPLICABLE}`,
+    ],
+    [`Work Summary (max. 500 characters): ${summary ?? NOT_OBTAINED}`],
+  ];
+
+  return `${groups.map((group) => group.join("\n")).join("\n\n")}\n`;
+}
+
+/**
+ * What the form is saved as: "WM Form.txt" — "WM Form - Terry Tech.txt" on a
+ * job with more than one tech, where each has their own.
+ */
+export function wmFormFileName(
+  data: JobExportData,
+  form: { assignmentId: string } | "legacy",
+): string {
+  if (form === "legacy") return "WM Form (Legacy).txt";
+  if (data.job.assignments.length < 2) return "WM Form.txt";
+  const name =
+    data.job.assignments.find((one) => one.id === form.assignmentId)?.user.name ?? "Tech";
+  return `WM Form - ${name}.txt`;
+}

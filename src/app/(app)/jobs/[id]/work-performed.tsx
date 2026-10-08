@@ -1,6 +1,7 @@
 "use client";
 
 import { AutosaveText } from "@/components/autosave-text";
+import { MAX_WORK_SUMMARY } from "@/lib/work-summary";
 import { saveMergedWorkPerformed, saveWorkPerformed } from "./actions";
 
 /**
@@ -33,6 +34,7 @@ export function WorkPerformed({
           label="Your work performed"
           initialValue={own ?? ""}
           rows={5}
+          maxLength={MAX_WORK_SUMMARY}
           placeholder="What you did, what you found, anything the client needs to know."
           save={async (value) => {
             const formData = new FormData();
@@ -55,6 +57,7 @@ export function WorkPerformed({
           hint="What actually goes to the client. Leave it blank to export each tech's entry prefixed with their name."
           initialValue={merged ?? ""}
           rows={6}
+          maxLength={MAX_WORK_SUMMARY}
           save={async (value) => {
             const formData = new FormData();
             formData.set("jobId", jobId);

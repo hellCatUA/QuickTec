@@ -7,7 +7,11 @@ import {
   safeSegment,
   uniqueSegment,
 } from "@/lib/exports/photo-layout";
-import { buildTextReport } from "@/lib/exports/text-report";
+import {
+  buildLegacyWmForm,
+  buildWmForm,
+  wmFormFileName,
+} from "@/lib/exports/text-report";
 import { buildWorkOrderPdf } from "@/lib/exports/work-order-pdf";
 import { absolutePath, fileExists } from "@/lib/storage";
 
@@ -50,11 +54,24 @@ export function zipFileName(data: JobExportData): string {
   return `${exportStem(data)}.zip`;
 }
 
-export function reportFileName(data: JobExportData): string {
-  return `${data.job.externalAssignmentId || data.job.intWoId}-Report.txt`;
+/**
+ * The WM Forms that go in the archive: the updated form of each tech whose
+ * pay the downloader may see, or — when that is nobody's — the legacy form,
+ * which has no pay on it, so the archive still carries a report.
+ */
+function wmForms(data: JobExportData, forms: string[]) {
+  const updated = forms
+    .map((assignmentId) => ({
+      name: wmFormFileName(data, { assignmentId }),
+      text: buildWmForm(data, assignmentId),
+    }))
+    .filter((form): form is { name: string; text: string } => form.text !== null);
+  return updated.length > 0
+    ? updated
+    : [{ name: wmFormFileName(data, "legacy"), text: buildLegacyWmForm(data) }];
 }
 
-export async function buildJobZip(data: JobExportData) {
+export async function buildJobZip(data: JobExportData, forms: string[] = []) {
   const { job, company } = data;
 
   // archiver 8 is ESM and exports the archive classes rather than the old
@@ -83,7 +100,8 @@ export async function buildJobZip(data: JobExportData) {
     );
   });
 
-  archive.append(buildTextReport(data), { name: reportFileName(data) });
+  const reports = wmForms(data, forms);
+  for (const report of reports) archive.append(report.text, { name: report.name });
 
   // "NetCom INT WO", not the field label "NetCom INT WO ID" — the folder is
   // named for the document, not for the number printed inside it.
@@ -146,7 +164,7 @@ export async function buildJobZip(data: JobExportData) {
       workOrderFolder,
       clientWorkOrderFolder,
       signOffFolder,
-      reportFileName(data),
+      ...reports.map((report) => report.name),
       "Photo index.csv",
       "MISSING FILES.txt",
     ],

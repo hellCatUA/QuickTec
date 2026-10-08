@@ -800,7 +800,9 @@ async function main() {
   //
   // Two spellings survive on purpose and are listed here rather than hunted
   // down, because both are stored data:
-  //   * the text report heading, agreed with the subcontractor;
+  //   * the WM Form headings, agreed with the subcontractor — the legacy
+  //     form's "Buyer/Representing company" and the updated one's
+  //     "Representing Company:";
   //   * the punch reason codes, parsed back out of rows already written.
   {
     const { readFile, readdir } = await import("node:fs/promises");
@@ -823,7 +825,9 @@ async function main() {
     const stale: string[] = [];
     for (const file of await sources("src")) {
       const text = await readFile(file, "utf8");
-      const withoutHeading = text.replaceAll("Buyer/Representing company", "");
+      const withoutHeading = text
+        .replaceAll("Buyer/Representing company", "")
+        .replaceAll("`Representing Company: ${", "");
       if (/representing compan/i.test(withoutHeading)) stale.push(file);
     }
 
@@ -3809,10 +3813,12 @@ async function main() {
 
   // --- exports ------------------------------------------------------------
   const { loadJobForExport } = await import("@/lib/exports/job-data");
-  const { buildTextReport } = await import("@/lib/exports/text-report");
-  const { buildJobZip, zipFileName, reportFileName } = await import(
-    "@/lib/exports/job-zip"
-  );
+  const {
+    buildLegacyWmForm: buildTextReport,
+    buildWmForm,
+    wmFormFileName,
+  } = await import("@/lib/exports/text-report");
+  const { buildJobZip, zipFileName } = await import("@/lib/exports/job-zip");
   const { buildWorkOrderPdf } = await import("@/lib/exports/work-order-pdf");
 
   // A job with everything the template can carry, so the golden output below
@@ -3929,7 +3935,7 @@ async function main() {
     "",
   ].join("\n");
 
-  check("text report matches the template exactly", report, expected);
+  check("the legacy form is exactly as it always was", report, expected);
 
   // A second ticket has to reach the report. Their systems paste one field,
   // and a ticket left off is work nobody gets billed for.
@@ -4028,9 +4034,131 @@ async function main() {
   );
   check("merged output drops the per-tech prefixes", merged.includes("Terry Tech:"), false);
 
+  // --- the WM Form, updated (10/2026) --------------------------------------
+  // One per tech: their own day and what they are owed for it, the same
+  // figures payroll pays them, in the template's groups exactly.
+  await db.jobAssignment.update({
+    where: { id: techAssignment.id },
+    data: { travelReimbursement: "25.00" },
+  });
+  await db.reimbursement.createMany({
+    data: [
+      {
+        jobId: exportJob.id,
+        assignmentId: techAssignment.id,
+        type: "MATERIAL",
+        label: "Cat6 Keystone(s)",
+        quantity: 2,
+        amount: "8.00",
+      },
+      { jobId: exportJob.id, assignmentId: techAssignment.id, type: "PARKING", amount: "5.00" },
+      {
+        jobId: exportJob.id,
+        assignmentId: techAssignment.id,
+        type: "HOTEL",
+        label: "Motel 6",
+        amount: "100.00",
+      },
+    ],
+  });
+  const formData = (await loadJobForExport(exportJob.id))!;
+  check(
+    "the updated form for one tech matches the template exactly",
+    buildWmForm(formData, techAssignment.id),
+    [
+      "07/28/26",
+      "Tech Name: Terry Tech",
+      "",
+      "Assignment ID: 887766",
+      "Site Name & ID: SBUX #24541",
+      "Site Address: 1912 Pike Pl, Seattle, WA 98101",
+      "",
+      "Work Order Company: NetCom Sub",
+      "Representing Company: N/a",
+      "",
+      "Onsite (Check-In): 9:00 AM",
+      "Offsite (Check-Out): 12:00 PM",
+      "Tech total time: 3.00 hrs",
+      "Tech travel: $25.00",
+      "Tech rate: $45.00/hr",
+      "Tech materials total amount: $8.00",
+      "Tech parking: $5.00",
+      "Tech tolls: $0.00",
+      "Tech hotel: $100.00",
+      "Tech total: $273.00",
+      "",
+      "PM / PC Name: N/a",
+      "MOD / LCON Full Name: No MOD",
+      "NOC / Support Name: Priya Anand",
+      "",
+      "Ticket #: INC0099123",
+      "Release Code: -",
+      "Return Tracking #: 1Z999AA10123456784",
+      "",
+      "Materials Used (Item + Qty):",
+      "- (2) Cat6 Keystone(s) $8.00",
+      "",
+      "Work Summary (max. 500 characters): Switch replaced, uplinks verified.",
+      "",
+    ].join("\n"),
+  );
+  const leadForm = buildWmForm(formData, leadAssignment.id) ?? "";
+  check(
+    "each tech has their own: the lead's day, rate and total",
+    ["Tech Name:", "Onsite", "Offsite", "Tech total time:", "Tech rate:", "Tech total:"]
+      .map((start) => leadForm.split("\n").find((line) => line.startsWith(start)))
+      .join(" | "),
+    "Tech Name: Sam Super | Onsite (Check-In): 8:00 AM | Offsite (Check-Out): 4:00 PM | Tech total time: 8.00 hrs | Tech rate: $65.00/hr | Tech total: $520.00",
+  );
+  check("with no hotel, no hotel line", leadForm.includes("Tech hotel"), false);
+  check(
+    "and no materials of their own says so",
+    leadForm.includes("Materials Used (Item + Qty): N/a"),
+    true,
+  );
+  check(
+    "nobody else's claims are on it",
+    leadForm.includes("Cat6 Keystone"),
+    false,
+  );
+  await db.jobAssignment.update({
+    where: { id: leadAssignment.id },
+    data: { payType: "FLAT_HOURLY", payFlat: "300", payFlatHours: "4", payRate: "45" },
+  });
+  check(
+    "a flat with hours and an hourly rate reads as both",
+    buildWmForm((await loadJobForExport(exportJob.id))!, leadAssignment.id)
+      ?.split("\n")
+      .find((line) => line.startsWith("Tech rate:")),
+    "Tech rate: $300.00 flat (4 hrs) + $45.00/hr",
+  );
+  await db.jobAssignment.update({
+    where: { id: leadAssignment.id },
+    data: { payType: "HOURLY", payFlat: null, payFlatHours: null, payRate: "65" },
+  });
+  check(
+    "on a job with two techs each form is named for its tech",
+    wmFormFileName(formData, { assignmentId: techAssignment.id }),
+    "WM Form - Terry Tech.txt",
+  );
+  check("and the legacy one says so", wmFormFileName(formData, "legacy"), "WM Form (Legacy).txt");
+
   // --- ZIP ----------------------------------------------------------------
   check("zip is named for the work date and assignment", zipFileName(exportData), "2026-07-28-887766.zip");
-  check("report file is named for the assignment", reportFileName(exportData), "887766-Report.txt");
+
+  const withForms = await buildJobZip((await loadJobForExport(exportJob.id))!, [
+    techAssignment.id,
+    leadAssignment.id,
+  ]);
+  const formChunks: Buffer[] = [];
+  for await (const chunk of withForms) formChunks.push(Buffer.from(chunk));
+  const formZip = Buffer.concat(formChunks).toString("latin1");
+  check(
+    "the zip carries each tech's form the downloader may read",
+    formZip.includes("WM Form - Terry Tech.txt") && formZip.includes("WM Form - Sam Super.txt"),
+    true,
+  );
+  check("and not the legacy one then", formZip.includes("WM Form (Legacy).txt"), false);
 
   const zipData = (await loadJobForExport(exportJob.id))!;
   const archive = await buildJobZip(zipData);
@@ -4048,7 +4176,11 @@ async function main() {
   }
 
   check("zip is a real archive", zip.subarray(0, 2).toString(), "PK");
-  check("zip contains the report", names.includes("887766-Report.txt"), true);
+  check(
+    "a zip for somebody who may read nobody's pay carries the legacy form",
+    names.includes("WM Form (Legacy).txt"),
+    true,
+  );
   // The folder follows the company name, so read it rather than assuming it.
   const companyName = (await db.companySettings.findUniqueOrThrow({
     where: { id: "singleton" },
