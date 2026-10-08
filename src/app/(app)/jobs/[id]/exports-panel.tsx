@@ -3,13 +3,13 @@
 import {
   Check,
   ChevronDown,
+  ChevronUp,
   Copy,
   FileArchive,
-  FileText,
   Printer,
 } from "lucide-react";
 import * as React from "react";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 export type WmForms = {
@@ -18,12 +18,7 @@ export type WmForms = {
   legacy: string;
 };
 
-type Version = "updated" | "legacy";
-
-const VERSIONS: { value: Version; label: string }[] = [
-  { value: "updated", label: "Updated (10/2026)" },
-  { value: "legacy", label: "Legacy" },
-];
+type Version = "current" | "legacy";
 
 /**
  * The three ways a job leaves the system.
@@ -33,9 +28,9 @@ const VERSIONS: { value: Version; label: string }[] = [
  * into an email is what actually happens most days, and a spinner would be
  * the wrong answer at that moment.
  *
- * It comes in two versions. The updated one is what is sent now and what the
- * button gives; the arrow beside it opens the choice, for the odd job that
- * still wants the legacy form.
+ * One button copies it. Opened, the button itself becomes "Current" — the
+ * form sent now — with "Legacy" under it for the odd job that still wants the
+ * old one; either copies, and the button folds back to what it was.
  */
 export function ExportsPanel({
   jobId,
@@ -50,23 +45,23 @@ export function ExportsPanel({
   canZip: boolean;
   canPdf: boolean;
 }) {
-  const [copied, setCopied] = React.useState<"copied" | "selected" | null>(null);
-  const hasUpdated = Boolean(forms && forms.updated.length > 0);
-  // Null until somebody picks: the updated form whenever there is one, even
-  // if there was not when the page first loaded.
-  const [version, setVersion] = React.useState<Version | null>(null);
+  const hasCurrent = Boolean(forms && forms.updated.length > 0);
   const [techId, setTechId] = React.useState(forms?.updated[0]?.assignmentId ?? "");
   const [open, setOpen] = React.useState(false);
-  const menuRoot = React.useRef<HTMLDivElement>(null);
-  const arrow = React.useRef<HTMLButtonElement>(null);
-  const items = React.useRef<(HTMLButtonElement | null)[]>([]);
+  // What the box below shows: the last thing copied, the current form until
+  // anything has been.
+  const [shown, setShown] = React.useState<Version>("current");
+  const [copied, setCopied] = React.useState<"copied" | "selected" | null>(null);
+  const root = React.useRef<HTMLDivElement>(null);
+  const button = React.useRef<HTMLButtonElement>(null);
+  const legacyItem = React.useRef<HTMLButtonElement>(null);
 
-  // The choice folds away on a tap anywhere else, as any menu does, and when
+  // The list folds away on a tap anywhere else, as any menu does, and when
   // focus moves on past it.
   React.useEffect(() => {
     if (!open) return;
     function away(event: Event) {
-      if (!menuRoot.current?.contains(event.target as Node)) setOpen(false);
+      if (!root.current?.contains(event.target as Node)) setOpen(false);
     }
     document.addEventListener("pointerdown", away);
     document.addEventListener("focusin", away);
@@ -76,59 +71,32 @@ export function ExportsPanel({
     };
   }, [open]);
 
-  const shown: Version =
-    (version ?? (hasUpdated ? "updated" : "legacy")) === "updated" && hasUpdated
-      ? "updated"
-      : "legacy";
-
-  function openMenu() {
-    setOpen(true);
-    // Into the menu, on the version shown.
-    requestAnimationFrame(() =>
-      items.current[shown === "updated" ? 0 : 1]?.focus(),
-    );
-  }
-
-  function closeMenu() {
-    setOpen(false);
-    arrow.current?.focus();
-  }
-
-  function onMenuKey(event: React.KeyboardEvent) {
-    const list = items.current.filter(
-      (item): item is HTMLButtonElement => Boolean(item && !item.disabled),
-    );
-    const at = list.indexOf(document.activeElement as HTMLButtonElement);
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-      event.preventDefault();
-      const step = event.key === "ArrowDown" ? 1 : -1;
-      list[(at + step + list.length) % list.length]?.focus();
-    } else if (event.key === "Escape") {
-      event.preventDefault();
-      closeMenu();
-    } else if (event.key === "Tab") {
-      setOpen(false);
-    }
-  }
   const tech =
     forms?.updated.find((one) => one.assignmentId === techId) ?? forms?.updated[0];
-  const report = !forms ? null : shown === "updated" ? (tech?.text ?? null) : forms.legacy;
-  const download =
-    shown === "updated" && tech
-      ? `/api/jobs/${jobId}/export/text?tech=${tech.assignmentId}`
-      : `/api/jobs/${jobId}/export/text?form=legacy`;
+  const current = tech?.text ?? null;
+  const textOf = (version: Version) =>
+    !forms ? null : version === "current" && current ? current : forms.legacy;
+  const preview = textOf(hasCurrent ? shown : "legacy");
 
-  async function copy() {
-    if (!report) return;
+  async function copy(version: Version) {
+    const text = textOf(version);
+    setOpen(false);
+    button.current?.focus();
+    if (!text) return;
+    setShown(version);
     try {
-      await navigator.clipboard.writeText(report);
+      await navigator.clipboard.writeText(text);
       setCopied("copied");
     } catch {
       // Safari refuses the clipboard API outside a user gesture chain and on
-      // insecure origins; select the text so it can still be copied by hand —
-      // and say so, rather than claim it was copied.
-      const area = document.getElementById("text-report") as HTMLTextAreaElement | null;
-      area?.select();
+      // insecure origins; the form is put in the box below and selected so it
+      // can still be copied by hand — and the button says so, rather than
+      // claiming it was copied.
+      requestAnimationFrame(() => {
+        const area = document.getElementById("text-report") as HTMLTextAreaElement | null;
+        area?.focus();
+        area?.select();
+      });
       setCopied("selected");
     }
     setTimeout(() => setCopied(null), 2000);
@@ -136,84 +104,75 @@ export function ExportsPanel({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap gap-2">
-        {canText && report ? (
-          <Button type="button" size="sm" onClick={copy}>
-            {copied === "copied" ? <Check /> : <Copy />}
-            {copied === "copied"
-              ? "Copied"
-              : copied === "selected"
-                ? "Selected — copy it"
-                : "Copy WM Form"}
-          </Button>
-        ) : null}
-
+      <div className="flex flex-wrap items-start gap-2">
         {canText && forms ? (
-          // One button that gives the form, and an arrow beside it for which
-          // version: the updated one unless somebody asks otherwise.
-          <div ref={menuRoot} className="relative flex">
-            <a
-              href={download}
-              className="inline-flex min-h-9 items-center gap-2 rounded-l-lg border border-border bg-surface-raised px-3 text-xs font-medium text-foreground transition-colors hover:bg-muted [&_svg]:size-4 [&_svg]:shrink-0"
-            >
-              <FileText />
-              WM Form
-              {shown === "legacy" ? (
-                <span className="text-xs text-muted-foreground">· Legacy</span>
-              ) : null}
-            </a>
+          <div ref={root} className="relative">
+            {/* Closed, it opens the choice; open, it is the current form and
+                copies it. Without a current form to offer — it shows pay this
+                person may not see — it copies the legacy one straight away. */}
             <button
-              ref={arrow}
+              ref={button}
               type="button"
-              aria-label="Which WM Form"
-              aria-haspopup="menu"
-              aria-expanded={open}
-              onClick={() => (open ? closeMenu() : openMenu())}
+              aria-haspopup={hasCurrent ? "menu" : undefined}
+              aria-expanded={hasCurrent ? open : undefined}
+              aria-label={
+                open ? "Copy the current WM Form" : hasCurrent ? "WM Form" : "Copy the WM Form"
+              }
+              onClick={() => {
+                if (!hasCurrent) return void copy("legacy");
+                if (open) return void copy("current");
+                setOpen(true);
+              }}
               onKeyDown={(event) => {
-                if (event.key === "ArrowDown") {
+                if (event.key === "Escape" && open) {
                   event.preventDefault();
-                  openMenu();
+                  setOpen(false);
+                } else if (event.key === "ArrowDown" && open) {
+                  event.preventDefault();
+                  legacyItem.current?.focus();
+                } else if (event.key === "ArrowDown" && hasCurrent) {
+                  event.preventDefault();
+                  setOpen(true);
                 }
               }}
-              className="inline-flex min-h-9 items-center rounded-r-lg border border-l-0 border-border bg-surface-raised px-2 text-foreground transition-colors hover:bg-muted"
+              className={cn(buttonVariants({ size: "sm" }), "min-w-36 justify-between")}
             >
-              <ChevronDown className={cn("size-4 transition-transform", open && "rotate-180")} />
+              <span className="flex items-center gap-2">
+                {copied === "copied" ? <Check /> : <Copy />}
+                {copied === "selected"
+                  ? "Selected — copy it"
+                  : open
+                    ? "Current"
+                    : "WM Form"}
+              </span>
+              {hasCurrent ? open ? <ChevronUp /> : <ChevronDown /> : null}
             </button>
+
             {open ? (
               <div
                 role="menu"
-                aria-label="Which WM Form"
-                onKeyDown={onMenuKey}
-                className="absolute left-0 top-10 z-10 flex w-max min-w-full flex-col rounded-xl border border-border bg-surface-raised p-1 shadow-xl"
+                aria-label="Other WM Form"
+                className="absolute left-0 top-full z-10 mt-1 flex w-full flex-col rounded-lg border border-border bg-surface-raised p-1 shadow-xl"
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    setOpen(false);
+                    button.current?.focus();
+                  } else if (event.key === "ArrowUp") {
+                    event.preventDefault();
+                    button.current?.focus();
+                  }
+                }}
               >
-                {VERSIONS.map((option, index) => {
-                  const disabled = option.value === "updated" && !hasUpdated;
-                  return (
-                    <button
-                      key={option.value}
-                      ref={(node) => {
-                        items.current[index] = node;
-                      }}
-                      type="button"
-                      role="menuitemradio"
-                      aria-checked={shown === option.value}
-                      disabled={disabled}
-                      onClick={() => {
-                        setVersion(option.value);
-                        closeMenu();
-                      }}
-                      className="flex min-h-10 items-center gap-2 rounded-lg px-3 text-left text-sm hover:bg-muted disabled:opacity-50"
-                    >
-                      <Check
-                        className={cn(
-                          "size-4",
-                          shown === option.value ? "opacity-100" : "opacity-0",
-                        )}
-                      />
-                      {option.label}
-                    </button>
-                  );
-                })}
+                <button
+                  ref={legacyItem}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => void copy("legacy")}
+                  className="flex min-h-9 items-center rounded-md px-3 text-left text-xs font-medium hover:bg-muted"
+                >
+                  Legacy
+                </button>
               </div>
             ) : null}
           </div>
@@ -240,17 +199,17 @@ export function ExportsPanel({
         ) : null}
       </div>
 
-      {/* Why there is no updated form: it says what each tech is paid. */}
-      {canText && forms && !hasUpdated ? (
+      {/* Why there is no current form: it says what each tech is paid. */}
+      {canText && forms && !hasCurrent ? (
         <p className="text-xs text-muted-foreground">
-          The updated form says what each tech is paid, so it is only offered to
-          the tech and to whoever may see the crew&rsquo;s rates (View pay rates,
-          under Settings → Roles). This is the legacy form.
+          The current WM Form says what each tech is paid, so it is only offered
+          to the tech and to whoever may see the crew&rsquo;s rates (View pay
+          rates, under Settings → Roles). This copies the legacy form.
         </p>
       ) : null}
 
       {/* Whose form, on a job with more than one tech: each sends their own. */}
-      {canText && shown === "updated" && forms && forms.updated.length > 1 ? (
+      {canText && forms && forms.updated.length > 1 ? (
         <div
           role="radiogroup"
           aria-label="Whose WM Form"
@@ -264,6 +223,7 @@ export function ExportsPanel({
             const step = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : -1;
             const next = forms.updated[(at + step + forms.updated.length) % forms.updated.length];
             setTechId(next.assignmentId);
+            setShown("current");
             requestAnimationFrame(() =>
               document.getElementById(`wm-tech-${next.assignmentId}`)?.focus(),
             );
@@ -277,7 +237,10 @@ export function ExportsPanel({
               role="radio"
               aria-checked={one.assignmentId === tech?.assignmentId}
               tabIndex={one.assignmentId === tech?.assignmentId ? 0 : -1}
-              onClick={() => setTechId(one.assignmentId)}
+              onClick={() => {
+                setTechId(one.assignmentId);
+                setShown("current");
+              }}
               className={cn(
                 "min-h-8 rounded-lg px-3 text-sm ring-1 ring-inset",
                 one.assignmentId === tech?.assignmentId
@@ -291,17 +254,26 @@ export function ExportsPanel({
         </div>
       ) : null}
 
-      {canText && report ? (
-        <textarea
-          id="text-report"
-          aria-label={shown === "updated" ? "WM Form" : "WM Form, legacy"}
-          readOnly
-          value={report}
-          rows={Math.min(34, report.split("\n").length + 1)}
-          // Monospace and no wrapping: this is a fixed-width form the client
-          // reads line by line, and rewrapping it hides missing values.
-          className="w-full resize-y overflow-x-auto whitespace-pre rounded-lg border border-border bg-input p-3 font-mono text-xs"
-        />
+      {canText && preview ? (
+        <div className="flex flex-col gap-1">
+          {hasCurrent ? (
+            <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              {shown === "current" ? "Current" : "Legacy"}
+            </span>
+          ) : null}
+          <textarea
+            id="text-report"
+            aria-label={
+              hasCurrent && shown === "current" ? "WM Form, current" : "WM Form, legacy"
+            }
+            readOnly
+            value={preview}
+            rows={Math.min(34, preview.split("\n").length + 1)}
+            // Monospace and no wrapping: this is a fixed-width form the client
+            // reads line by line, and rewrapping it hides missing values.
+            className="w-full resize-y overflow-x-auto whitespace-pre rounded-lg border border-border bg-input p-3 font-mono text-xs"
+          />
+        </div>
       ) : null}
     </div>
   );

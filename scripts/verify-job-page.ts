@@ -770,24 +770,47 @@ async function main() {
   );
   if (material) await db.reimbursement.delete({ where: { id: material.id } });
 
-  // The legacy form is behind the arrow beside the button.
-  await page.getByRole("button", { name: "Which WM Form" }).click();
+  // One blue button. Opened, it is the current form — "Current" — with
+  // "Legacy" under it; either copies, and the button folds back.
+  await page
+    .context()
+    .grantPermissions(["clipboard-read", "clipboard-write"], { origin: BASE });
+  const clipboard = () => page.evaluate(() => navigator.clipboard.readText());
+  const wmButton = page.getByRole("button", { name: "WM Form", exact: true });
+  check("the WM Form is one button", await wmButton.isVisible(), true);
+  await wmButton.click();
+  const currentButton = page.getByRole("button", { name: "Copy the current WM Form" });
   check(
-    "the arrow offers the updated form and the legacy one",
-    (await page.getByRole("menuitemradio").allTextContents()).join(" | "),
-    "Updated (10/2026) | Legacy",
+    "opened, the button reads Current",
+    (await currentButton.textContent())?.trim(),
+    "Current",
   );
-  await page.getByRole("menuitemradio", { name: "Legacy" }).click();
   check(
-    "and the legacy one is the old form, as it was",
-    (await page.locator("#text-report").inputValue()).includes("Release code: RLS-4417"),
+    "with Legacy under it",
+    (await page.getByRole("menuitem").allTextContents()).join(" | "),
+    "Legacy",
+  );
+  await page.getByRole("menuitem", { name: "Legacy" }).click();
+  await page.waitForTimeout(300);
+  check(
+    "Legacy copies the old form, as it was",
+    (await clipboard()).includes("Release code: RLS-4417"),
     true,
   );
   check(
-    "the button says which it is",
-    (await page.getByRole("link", { name: /WM Form/ }).first().textContent())?.includes("Legacy"),
-    true,
+    "and the button folds back",
+    `${await wmButton.isVisible()} ${await page.getByRole("menuitem").count()}`,
+    "true 0",
   );
+  await wmButton.click();
+  await currentButton.click();
+  await page.waitForTimeout(300);
+  check(
+    "Current copies the tech's current form",
+    (await clipboard()).split("\n").slice(0, 2).join(" | "),
+    `${reportText.split("\n")[0]} | Tech Name: Terry Tech`,
+  );
+  check("and folds back too", await wmButton.isVisible(), true);
 
   const textDownload = await page.request.get(
     `${BASE}/api/jobs/${assignment.jobId}/export/text`,
