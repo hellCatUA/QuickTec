@@ -27,7 +27,11 @@ export async function GET(
   const query = new URL(request.url).searchParams;
   let report: string | null;
   let filename: string;
-  if (query.get("form") === "legacy") {
+  // Asked for without saying which, by somebody who may read nobody's pay:
+  // the legacy form, which has none on it, rather than nothing at all.
+  const legacy =
+    query.get("form") === "legacy" || (!query.get("tech") && forms.length === 0);
+  if (legacy) {
     report = buildLegacyWmForm(data);
     filename = wmFormFileName(data, "legacy");
   } else {

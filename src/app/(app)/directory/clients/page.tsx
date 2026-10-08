@@ -51,7 +51,7 @@ export default async function ClientsPage() {
       <PageHeader
         title="Paying companies"
         backHref="/directory"
-        description="Who pays us for the work. The report we send back still heads this “Buyer/Representing company” — an agreed format, kept verbatim on purpose."
+        description="Who pays us for the work. On the WM Form we send back this is the Work Order Company (“Buyer/Representing company” on the legacy form) — agreed formats, kept verbatim on purpose."
       />
       <ClientList
         clients={clients.map((client) => ({

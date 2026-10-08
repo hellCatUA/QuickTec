@@ -50,33 +50,66 @@ export function ExportsPanel({
   canZip: boolean;
   canPdf: boolean;
 }) {
-  const [copied, setCopied] = React.useState(false);
+  const [copied, setCopied] = React.useState<"copied" | "selected" | null>(null);
   const hasUpdated = Boolean(forms && forms.updated.length > 0);
-  const [version, setVersion] = React.useState<Version>(
-    hasUpdated ? "updated" : "legacy",
-  );
+  // Null until somebody picks: the updated form whenever there is one, even
+  // if there was not when the page first loaded.
+  const [version, setVersion] = React.useState<Version | null>(null);
   const [techId, setTechId] = React.useState(forms?.updated[0]?.assignmentId ?? "");
   const [open, setOpen] = React.useState(false);
   const menuRoot = React.useRef<HTMLDivElement>(null);
+  const arrow = React.useRef<HTMLButtonElement>(null);
+  const items = React.useRef<(HTMLButtonElement | null)[]>([]);
 
-  // The choice folds away on a tap anywhere else, as any menu does.
+  // The choice folds away on a tap anywhere else, as any menu does, and when
+  // focus moves on past it.
   React.useEffect(() => {
     if (!open) return;
-    function away(event: PointerEvent) {
+    function away(event: Event) {
       if (!menuRoot.current?.contains(event.target as Node)) setOpen(false);
     }
-    function escape(event: KeyboardEvent) {
-      if (event.key === "Escape") setOpen(false);
-    }
     document.addEventListener("pointerdown", away);
-    document.addEventListener("keydown", escape);
+    document.addEventListener("focusin", away);
     return () => {
       document.removeEventListener("pointerdown", away);
-      document.removeEventListener("keydown", escape);
+      document.removeEventListener("focusin", away);
     };
   }, [open]);
 
-  const shown = version === "updated" && hasUpdated ? "updated" : "legacy";
+  const shown: Version =
+    (version ?? (hasUpdated ? "updated" : "legacy")) === "updated" && hasUpdated
+      ? "updated"
+      : "legacy";
+
+  function openMenu() {
+    setOpen(true);
+    // Into the menu, on the version shown.
+    requestAnimationFrame(() =>
+      items.current[shown === "updated" ? 0 : 1]?.focus(),
+    );
+  }
+
+  function closeMenu() {
+    setOpen(false);
+    arrow.current?.focus();
+  }
+
+  function onMenuKey(event: React.KeyboardEvent) {
+    const list = items.current.filter(
+      (item): item is HTMLButtonElement => Boolean(item && !item.disabled),
+    );
+    const at = list.indexOf(document.activeElement as HTMLButtonElement);
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const step = event.key === "ArrowDown" ? 1 : -1;
+      list[(at + step + list.length) % list.length]?.focus();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      closeMenu();
+    } else if (event.key === "Tab") {
+      setOpen(false);
+    }
+  }
   const tech =
     forms?.updated.find((one) => one.assignmentId === techId) ?? forms?.updated[0];
   const report = !forms ? null : shown === "updated" ? (tech?.text ?? null) : forms.legacy;
@@ -89,14 +122,16 @@ export function ExportsPanel({
     if (!report) return;
     try {
       await navigator.clipboard.writeText(report);
+      setCopied("copied");
     } catch {
       // Safari refuses the clipboard API outside a user gesture chain and on
-      // insecure origins; select the text so it can still be copied by hand.
+      // insecure origins; select the text so it can still be copied by hand —
+      // and say so, rather than claim it was copied.
       const area = document.getElementById("text-report") as HTMLTextAreaElement | null;
       area?.select();
+      setCopied("selected");
     }
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    setTimeout(() => setCopied(null), 2000);
   }
 
   return (
@@ -104,8 +139,12 @@ export function ExportsPanel({
       <div className="flex flex-wrap gap-2">
         {canText && report ? (
           <Button type="button" size="sm" onClick={copy}>
-            {copied ? <Check /> : <Copy />}
-            {copied ? "Copied" : "Copy WM Form"}
+            {copied === "copied" ? <Check /> : <Copy />}
+            {copied === "copied"
+              ? "Copied"
+              : copied === "selected"
+                ? "Selected — copy it"
+                : "Copy WM Form"}
           </Button>
         ) : null}
 
@@ -124,11 +163,18 @@ export function ExportsPanel({
               ) : null}
             </a>
             <button
+              ref={arrow}
               type="button"
               aria-label="Which WM Form"
               aria-haspopup="menu"
               aria-expanded={open}
-              onClick={() => setOpen((was) => !was)}
+              onClick={() => (open ? closeMenu() : openMenu())}
+              onKeyDown={(event) => {
+                if (event.key === "ArrowDown") {
+                  event.preventDefault();
+                  openMenu();
+                }
+              }}
               className="inline-flex min-h-9 items-center rounded-r-lg border border-l-0 border-border bg-surface-raised px-2 text-foreground transition-colors hover:bg-muted"
             >
               <ChevronDown className={cn("size-4 transition-transform", open && "rotate-180")} />
@@ -136,20 +182,25 @@ export function ExportsPanel({
             {open ? (
               <div
                 role="menu"
+                aria-label="Which WM Form"
+                onKeyDown={onMenuKey}
                 className="absolute left-0 top-10 z-10 flex w-max min-w-full flex-col rounded-xl border border-border bg-surface-raised p-1 shadow-xl"
               >
-                {VERSIONS.map((option) => {
+                {VERSIONS.map((option, index) => {
                   const disabled = option.value === "updated" && !hasUpdated;
                   return (
                     <button
                       key={option.value}
+                      ref={(node) => {
+                        items.current[index] = node;
+                      }}
                       type="button"
                       role="menuitemradio"
                       aria-checked={shown === option.value}
                       disabled={disabled}
                       onClick={() => {
                         setVersion(option.value);
-                        setOpen(false);
+                        closeMenu();
                       }}
                       className="flex min-h-10 items-center gap-2 rounded-lg px-3 text-left text-sm hover:bg-muted disabled:opacity-50"
                     >
@@ -189,15 +240,43 @@ export function ExportsPanel({
         ) : null}
       </div>
 
+      {/* Why there is no updated form: it says what each tech is paid. */}
+      {canText && forms && !hasUpdated ? (
+        <p className="text-xs text-muted-foreground">
+          The updated form says what each tech is paid, so it is only offered to
+          the tech and to whoever may see the crew&rsquo;s rates (View pay rates,
+          under Settings → Roles). This is the legacy form.
+        </p>
+      ) : null}
+
       {/* Whose form, on a job with more than one tech: each sends their own. */}
       {canText && shown === "updated" && forms && forms.updated.length > 1 ? (
-        <div role="radiogroup" aria-label="Whose WM Form" className="flex flex-wrap gap-1.5">
+        <div
+          role="radiogroup"
+          aria-label="Whose WM Form"
+          className="flex flex-wrap gap-1.5"
+          onKeyDown={(event) => {
+            if (!["ArrowRight", "ArrowLeft", "ArrowDown", "ArrowUp"].includes(event.key)) {
+              return;
+            }
+            event.preventDefault();
+            const at = forms.updated.findIndex((one) => one.assignmentId === tech?.assignmentId);
+            const step = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : -1;
+            const next = forms.updated[(at + step + forms.updated.length) % forms.updated.length];
+            setTechId(next.assignmentId);
+            requestAnimationFrame(() =>
+              document.getElementById(`wm-tech-${next.assignmentId}`)?.focus(),
+            );
+          }}
+        >
           {forms.updated.map((one) => (
             <button
               key={one.assignmentId}
+              id={`wm-tech-${one.assignmentId}`}
               type="button"
               role="radio"
               aria-checked={one.assignmentId === tech?.assignmentId}
+              tabIndex={one.assignmentId === tech?.assignmentId ? 0 : -1}
               onClick={() => setTechId(one.assignmentId)}
               className={cn(
                 "min-h-8 rounded-lg px-3 text-sm ring-1 ring-inset",

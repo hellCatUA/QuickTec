@@ -54,7 +54,7 @@ export function WorkPerformed({
       {canMerge ? (
         <AutosaveText
           label="Merged summary"
-          hint="What actually goes to the client. Leave it blank to export each tech's entry prefixed with their name."
+          hint="What goes to the client on every tech's WM Form. Left blank, each tech's form carries their own words."
           initialValue={merged ?? ""}
           rows={6}
           maxLength={MAX_WORK_SUMMARY}

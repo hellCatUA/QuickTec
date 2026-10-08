@@ -335,7 +335,7 @@ export function CheckoutWizard({
                 Revisit required
                 <span className="block text-xs text-muted-foreground">
                   Flags the job for whoever plans the return trip. Internal — it
-                  never reaches the client report.
+                  never reaches the WM Form.
                 </span>
               </span>
             </label>
@@ -449,7 +449,7 @@ export function CheckoutWizard({
               </>
             ) : (
               <p className="text-xs text-muted-foreground">
-                The report will read “No MOD”.
+                The WM Form will read “No MOD”.
               </p>
             )}
           </div>

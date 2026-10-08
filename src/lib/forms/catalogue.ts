@@ -146,7 +146,11 @@ const SOURCES: FormSource[] = [
     resolve: (context) => {
       const used = context.data.job.reimbursements
         .filter((entry) => entry.type === "MATERIAL")
-        .map((entry) => entry.label ?? "Material");
+        .map((entry) =>
+          entry.quantity > 1
+            ? `(${entry.quantity}) ${entry.label ?? "Material"}`
+            : (entry.label ?? "Material"),
+        );
       return used.length > 0 ? used.join(", ") : null;
     } },
 

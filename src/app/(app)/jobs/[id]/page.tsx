@@ -452,19 +452,22 @@ export default async function JobPage({
   // even if the connection has dropped by the time someone wants it.
   // Both versions of the WM Form: the updated one for each tech whose pay this
   // person may see, and the legacy one.
+  // Whose pay this person may see: their own, or everybody's for whoever may
+  // see the crew's rates — the same rule the WM Form follows.
+  const payVisible = new Set(
+    await wmFormAssignments(
+      user,
+      jobRef,
+      job.assignments.map((assignment) => ({
+        id: assignment.id,
+        userId: assignment.user.id,
+      })),
+    ),
+  );
   const exportData = canExportText ? await loadJobForExport(job.id) : null;
   const wmForms = exportData
     ? {
-        updated: (
-          await wmFormAssignments(
-            user,
-            jobRef,
-            job.assignments.map((assignment) => ({
-              id: assignment.id,
-              userId: assignment.user.id,
-            })),
-          )
-        )
+        updated: [...payVisible]
           .map((assignmentId) => ({
             assignmentId,
             tech:
@@ -475,7 +478,14 @@ export default async function JobPage({
             text: buildWmForm(exportData, assignmentId) ?? "",
           }))
           // Your own first, then the lead and the rest as the job lists them.
-          .sort((a, b) => Number(b.own) - Number(a.own)),
+          .sort((a, b) => Number(b.own) - Number(a.own))
+          // Two techs with one name are told apart on the buttons.
+          .map((form, index, all) => {
+            const before = all
+              .slice(0, index)
+              .filter((other) => other.tech === form.tech).length;
+            return before > 0 ? { ...form, tech: `${form.tech} (${before + 1})` } : form;
+          }),
         legacy: buildLegacyWmForm(exportData),
       }
     : null;
@@ -1298,11 +1308,15 @@ export default async function JobPage({
                   id: assignment.id,
                   userId: assignment.user.id,
                   name: assignment.user.name,
-                  payType: assignment.payType,
-                  payRate: assignment.payRate.toString(),
-                  travelReimbursement:
-                    assignment.travelReimbursement?.toString() ?? null,
-                  payNote: showPay ? assignment.payRateNote : null,
+                  // Somebody else's pay reaches the page only for whoever may
+                  // see the crew's: a tech sees their own line and no other.
+                  payType: payVisible.has(assignment.id) ? assignment.payType : "HOURLY",
+                  payRate: payVisible.has(assignment.id) ? assignment.payRate.toString() : "0",
+                  travelReimbursement: payVisible.has(assignment.id)
+                    ? (assignment.travelReimbursement?.toString() ?? null)
+                    : null,
+                  payNote:
+                    showPay && payVisible.has(assignment.id) ? assignment.payRateNote : null,
                   overridden: assignment.payOverridden,
                   isLead: assignment.isLead,
                   onSite: jobSpan(assignment.visits, now).open,
@@ -1310,7 +1324,7 @@ export default async function JobPage({
                     assignment.visits.length > 0 ||
                     assignment._count.deliverables > 0,
                   supervisorName: assignment.supervisor?.name ?? null,
-                  rate: showPay
+                  rate: showPay && payVisible.has(assignment.id)
                     ? `${describeTerms(assignmentTerms(assignment))}${
                         assignment.travelReimbursement
                           ? ` · travel $${Number(assignment.travelReimbursement).toFixed(2)}`
@@ -1562,6 +1576,15 @@ export default async function JobPage({
                 <Reimbursements
                   jobId={job.id}
                   canEdit={canUpload}
+                  // A tech's claims are their own; anyone else says whose.
+                  crew={
+                    mine
+                      ? null
+                      : job.assignments.map((assignment) => ({
+                          assignmentId: assignment.id,
+                          name: assignment.user.name,
+                        }))
+                  }
                   entries={job.reimbursements.map((entry) => ({
                     id: entry.id,
                     type: entry.type,

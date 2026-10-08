@@ -72,10 +72,16 @@ export function Reimbursements({
   jobId,
   entries,
   canEdit,
+  crew,
 }: {
   jobId: string;
   entries: ReimbursementView[];
   canEdit: boolean;
+  /**
+   * Whose a claim can be, for somebody adding one who is not on the crew
+   * themselves. Null for a tech, whose claims are their own.
+   */
+  crew: { assignmentId: string; name: string }[] | null;
 }) {
   const [adding, setAdding] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -99,7 +105,7 @@ export function Reimbursements({
           className="flex flex-wrap items-center gap-2 rounded-lg border border-border p-2"
         >
           <span className="text-sm font-medium">
-            {entry.type === "MATERIAL" ? `(${entry.quantity}) ` : ""}
+            {entry.type === "MATERIAL" && entry.quantity > 1 ? `(${entry.quantity}) ` : ""}
             {entry.label || TYPE_META[entry.type].label}
           </span>
           <span className="tabular text-sm">{formatMoney(entry.amount)}</span>
@@ -170,6 +176,7 @@ export function Reimbursements({
         adding ? (
           <ReimbursementForm
             jobId={jobId}
+            crew={crew}
             onDone={() => setAdding(false)}
             onError={setError}
           />
@@ -191,13 +198,18 @@ export function Reimbursements({
 
 function ReimbursementForm({
   jobId,
+  crew,
   onDone,
   onError,
 }: {
   jobId: string;
+  crew: { assignmentId: string; name: string }[] | null;
   onDone: () => void;
   onError: (message: string | null) => void;
 }) {
+  const [whose, setWhose] = React.useState(
+    crew && crew.length === 1 ? crew[0].assignmentId : "",
+  );
   const [type, setType] = React.useState<ReimbursementType>("MATERIAL");
   const [label, setLabel] = React.useState("");
   const [amount, setAmount] = React.useState("");
@@ -223,6 +235,7 @@ function ReimbursementForm({
     formData.set("label", label);
     formData.set("amount", amount);
     if (type === "MATERIAL") formData.set("quantity", quantity);
+    if (crew) formData.set("assignmentId", whose);
     formData.set("note", note);
     for (const file of files) formData.append("files", file);
 
@@ -235,14 +248,51 @@ function ReimbursementForm({
 
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface-raised p-3">
+      {crew ? (
+        crew.length > 0 ? (
+          <Field
+            label="Whose claim"
+            htmlFor="reimb-whose"
+            hint="It goes on their WM Form and is paid to them."
+          >
+            <Select
+              id="reimb-whose"
+              value={whose}
+              onChange={(event) => setWhose(event.target.value)}
+            >
+              <option value="">— choose the tech —</option>
+              {crew.map((one) => (
+                <option key={one.assignmentId} value={one.assignmentId}>
+                  {one.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        ) : (
+          <p className="text-sm text-warning">
+            Nobody is on this job yet. A claim is a tech&rsquo;s — add the crew
+            first.
+          </p>
+        )
+      ) : null}
+
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Type" htmlFor="reimb-type">
           <Select
             id="reimb-type"
             value={type}
-            onChange={(event) =>
-              setType(event.target.value as ReimbursementType)
-            }
+            onChange={(event) => {
+              const next = event.target.value as ReimbursementType;
+              // A material's three boxes and a parking ticket's one do not
+              // carry over: what was typed for one is not the other's amount.
+              if ((next === "MATERIAL") !== (type === "MATERIAL")) {
+                setAmount("");
+                setEach("");
+                setQuantity("1");
+                setAnchor("each");
+              }
+              setType(next);
+            }}
           >
             {(Object.keys(TYPE_META) as ReimbursementType[]).map((option) => (
               <option key={option} value={option}>
@@ -293,7 +343,7 @@ function ReimbursementForm({
               id="reimb-each"
               type="number"
               step="0.01"
-              min="0"
+              min="0.01"
               inputMode="decimal"
               value={each}
               onChange={(event) => {
@@ -374,6 +424,8 @@ function ReimbursementForm({
           disabled={
             pending ||
             !amount ||
+            !(Number(amount) > 0) ||
+            (crew !== null && !whose) ||
             (type === "MATERIAL" && !whole(quantity)) ||
             (meta.needsLabel && !label) ||
             (meta.needsPhoto && files.length === 0)

@@ -744,15 +744,30 @@ export async function saveReimbursement(
     return fail("A receipt photo is required for this claim.");
   }
 
+  // Whose claim it is: the person adding it, when they are on the crew. A
+  // supervisor adding one for somebody says whose — a claim that is nobody's
+  // is on nobody's WM Form and paid to nobody.
+  const own = await db.jobAssignment.findUnique({
+    where: { jobId_userId: { jobId: job.id, userId: user.id } },
+    select: { id: true },
+  });
+  let assignmentId = own?.id ?? null;
+  if (!assignmentId) {
+    const asked = String(formData.get("assignmentId") ?? "");
+    const theirs = asked
+      ? await db.jobAssignment.findFirst({
+          where: { id: asked, jobId: job.id },
+          select: { id: true },
+        })
+      : null;
+    if (!theirs) return fail("Say which tech this claim is for.");
+    assignmentId = theirs.id;
+  }
+
   const reimbursement = await db.reimbursement.create({
     data: {
       jobId: job.id,
-      assignmentId: (
-        await db.jobAssignment.findUnique({
-          where: { jobId_userId: { jobId: job.id, userId: user.id } },
-          select: { id: true },
-        })
-      )?.id,
+      assignmentId,
       type,
       label: label || null,
       quantity,

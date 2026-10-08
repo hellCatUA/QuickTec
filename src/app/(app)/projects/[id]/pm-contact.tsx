@@ -101,7 +101,7 @@ export function PmContactPicker({
 
         <div className="flex items-start gap-2 text-xs text-muted-foreground">
           <Info className="mt-0.5 size-3.5 shrink-0" />
-          Kept internally. The client report shows the name only — never the
+          Kept internally. The WM Form shows the name only — never the
           number.
         </div>
 

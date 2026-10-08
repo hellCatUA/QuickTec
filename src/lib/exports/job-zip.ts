@@ -28,7 +28,9 @@ import { absolutePath, fileExists } from "@/lib/storage";
  *   <Company> INT WO/2607-PRJ12-0001.pdf
  *   <Client> WO/<their work order, as attached>
  *   Sign-off sheets/<the blank>.pdf, <the blank> — filled.pdf
- *   887766-Report.txt
+ *   WM Form.txt                 one per tech whose pay the downloader may
+ *                               see — "WM Form - <tech>.txt" — or the legacy
+ *                               form, "WM Form (Legacy).txt"
  *
  * Photos sit under their field and then their location, numbered in the
  * order they reached the job — see planDeliverableExport. Who took each one,
@@ -60,12 +62,15 @@ export function zipFileName(data: JobExportData): string {
  * which has no pay on it, so the archive still carries a report.
  */
 function wmForms(data: JobExportData, forms: string[]) {
+  // Two techs called John Smith are two forms, not one overwriting the other.
+  const taken = new Set<string>();
   const updated = forms
     .map((assignmentId) => ({
-      name: wmFormFileName(data, { assignmentId }),
+      name: wmFormFileName(data, { assignmentId }).replace(/\.txt$/, ""),
       text: buildWmForm(data, assignmentId),
     }))
-    .filter((form): form is { name: string; text: string } => form.text !== null);
+    .filter((form): form is { name: string; text: string } => form.text !== null)
+    .map((form) => ({ ...form, name: `${uniqueSegment(form.name, taken)}.txt` }));
   return updated.length > 0
     ? updated
     : [{ name: wmFormFileName(data, "legacy"), text: buildLegacyWmForm(data) }];

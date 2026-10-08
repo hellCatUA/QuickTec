@@ -269,6 +269,7 @@ async function jobsInRange(
             select: {
               type: true,
               label: true,
+              quantity: true,
               amount: true,
               // Only whether there is one. The statement says a receipt was
               // taken; looking at it is the job page's business.
@@ -297,7 +298,11 @@ async function jobsInRange(
     const reimbursements: PayExpense[] = assignment.job.reimbursements.map(
       (entry) => ({
         kind: entry.type,
-        label: entry.label,
+        // How many of a material, when it is more than one.
+        label:
+          entry.type === "MATERIAL" && entry.quantity > 1
+            ? `(${entry.quantity}) ${entry.label ?? "Material"}`
+            : entry.label,
         cents: toCents(entry.amount),
         hasReceipt: entry._count.attachments > 0,
       }),

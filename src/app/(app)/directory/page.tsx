@@ -40,7 +40,7 @@ export default async function DirectoryPage() {
       title: "Rep companies",
       count: repCompanies,
       description:
-        "Who represents the customer and hands the work down. One link above the paying company — and it is the paying company, not this one, that the report has always called “Buyer/Representing company”.",
+        "Who represents the customer and hands the work down. One link above the paying company. On the WM Form it is the Representing Company; the legacy form only ever named the paying company, as “Buyer/Representing company”.",
       visible: canManageClients,
     },
     {
@@ -49,7 +49,7 @@ export default async function DirectoryPage() {
       title: "Paying companies",
       count: clients,
       description:
-        "Who pays us for the work. One link up from the rep company, and not the same as the customer. The report still calls them “Buyer/Representing company” — that heading is agreed with the subcontractor and is not ours to change.",
+        "Who pays us for the work. One link up from the rep company, and not the same as the customer. On the WM Form they are the Work Order Company; the legacy form calls them “Buyer/Representing company”. Both headings are agreed with the subcontractor and are not ours to change.",
       visible: canManageClients,
     },
     {

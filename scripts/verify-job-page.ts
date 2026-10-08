@@ -922,6 +922,35 @@ async function main() {
     { name: "authjs.session-token", value: bossToken, url: BASE },
   ]);
 
+  // A claim added by somebody who is not on the crew says whose it is: one
+  // that is nobody's is on nobody's WM Form and paid to nobody.
+  {
+    const managerPage = await bossContext.newPage();
+    await managerPage.goto(url, { waitUntil: "load" });
+    await tab(managerPage, "Deliverables");
+    await managerPage.getByRole("button", { name: "Add claim" }).click();
+    check(
+      "a manager adding a claim is asked whose it is",
+      await managerPage.locator("#reimb-whose").isVisible(),
+      true,
+    );
+    check(
+      "the only tech on the job is already chosen",
+      (await managerPage.locator("#reimb-whose option:checked").textContent())?.trim(),
+      "Terry Tech",
+    );
+    await managerPage.locator("#reimb-quantity").fill("1");
+    await managerPage.locator("#reimb-each").fill("3");
+    await managerPage.locator("#reimb-label").fill("Patch cable");
+    await managerPage.locator("#reimb-whose").selectOption("");
+    check(
+      "and it cannot be saved as nobody's",
+      await managerPage.getByRole("button", { name: "Save claim" }).isDisabled(),
+      true,
+    );
+    await managerPage.close();
+  }
+
   const pdfAsManager = await bossContext.request.get(
     `${BASE}/api/jobs/${assignment.jobId}/export/pdf`,
   );

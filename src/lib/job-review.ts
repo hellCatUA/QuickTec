@@ -233,7 +233,13 @@ export function reviewDeliverables(input: DeliverablesInput): ReviewFlag[] {
 }
 
 export type ReimbursementsInput = {
-  entries: { label: string; amount: number; hasReceipt: boolean }[];
+  entries: {
+    label: string;
+    amount: number;
+    hasReceipt: boolean;
+    /** Whose it is. A claim that is nobody's is on nobody's WM Form. */
+    hasTech?: boolean;
+  }[];
 };
 
 /**
@@ -253,6 +259,16 @@ export function reviewReimbursements(input: ReimbursementsInput): ReviewFlag[] {
     });
   }
 
+  const nobodys = input.entries
+    .filter((entry) => entry.hasTech === false)
+    .map((entry) => entry.label);
+  if (nobodys.length > 0) {
+    flags.push({
+      level: "warn",
+      text: `Not on any tech's WM Form, and not paid to anyone: ${nobodys.join(", ")}.`,
+    });
+  }
+
   return flags;
 }
 
@@ -260,6 +276,12 @@ export type WorkInput = {
   /** What actually goes to the client, when somebody has written it. */
   merged: string | null;
   entries: { who: string; text: string | null }[];
+  /**
+   * The summary each tech's WM Form carries, by tech — which the form's
+   * template caps at 500 characters.
+   */
+  forms?: { who: string; text: string | null }[];
+  limit?: number;
 };
 
 export function reviewWork(input: WorkInput): ReviewFlag[] {
@@ -270,7 +292,7 @@ export function reviewWork(input: WorkInput): ReviewFlag[] {
   if (!input.merged?.trim() && written.length === 0) {
     flags.push({
       level: "warn",
-      text: "Nothing written. The client report would go out empty.",
+      text: "Nothing written. The WM Form would go out with no work summary.",
     });
     return flags;
   }
@@ -281,8 +303,24 @@ export function reviewWork(input: WorkInput): ReviewFlag[] {
   if (!input.merged?.trim() && silent.length > 0) {
     flags.push({
       level: "note",
-      text: `${silent.join(", ")} wrote nothing, so the report carries only the others.`,
+      text: `${silent.join(", ")} wrote nothing, so their WM Form carries the others' words.`,
     });
+  }
+
+  // Written before the limit, or several techs' words put together for one
+  // who wrote none: longer than the form takes.
+  if (input.limit) {
+    const over = (input.forms ?? []).filter(
+      (form) => (form.text?.length ?? 0) > input.limit!,
+    );
+    if (over.length > 0) {
+      flags.push({
+        level: "warn",
+        text: `The work summary on ${over
+          .map((form) => `${form.who}'s WM Form (${form.text!.length})`)
+          .join(", ")} is over ${input.limit} characters. Write a merged summary of up to ${input.limit}.`,
+      });
+    }
   }
 
   return flags;

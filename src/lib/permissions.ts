@@ -117,13 +117,13 @@ export const PERMISSIONS = {
   // --- Exports --------------------------------------------------------------
   "export.text": {
     group: "Exports",
-    label: "Export text report",
-    description: "Generate the client-facing text report for a job.",
+    label: "Export WM Form",
+    description: "Copy or download the WM Form — the report emailed for a job. The updated form also needs View pay rates for other techs' pay.",
   },
   "export.zip": {
     group: "Exports",
     label: "Export job ZIP",
-    description: "Download the full job archive with photos and the report.",
+    description: "Download the full job archive with photos and the WM Form.",
   },
   "export.internal_wo": {
     group: "Exports",

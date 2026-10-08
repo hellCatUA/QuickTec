@@ -827,7 +827,7 @@ async function main() {
       const text = await readFile(file, "utf8");
       const withoutHeading = text
         .replaceAll("Buyer/Representing company", "")
-        .replaceAll("`Representing Company: ${", "");
+        .replaceAll("Representing Company", "");
       if (/representing compan/i.test(withoutHeading)) stale.push(file);
     }
 
@@ -1694,7 +1694,7 @@ async function main() {
     "an empty report is the one thing that must not go out",
     reviewWork({ merged: null, entries: [{ who: "Terry Tech", text: "  " }] })[0]
       ?.text,
-    "Nothing written. The client report would go out empty.",
+    "Nothing written. The WM Form would go out with no work summary.",
   );
   check(
     "one tech writing nothing is mentioned once the others have",
@@ -4142,6 +4142,43 @@ async function main() {
     "WM Form - Terry Tech.txt",
   );
   check("and the legacy one says so", wmFormFileName(formData, "legacy"), "WM Form (Legacy).txt");
+
+  const { formSummary } = await import("@/lib/exports/text-report");
+  check(
+    "a tech who wrote nothing carries the one other tech's words, unprefixed",
+    formSummary({ merged: null, own: null, entries: [{ who: "Sam", text: "Swapped it." }, { who: "Terry", text: null }] }),
+    "Swapped it.",
+  );
+  check(
+    "or everybody's, each with their name",
+    formSummary({
+      merged: null,
+      own: null,
+      entries: [
+        { who: "Sam", text: "Swapped it." },
+        { who: "Alex", text: "Tested it." },
+      ],
+    }),
+    "Sam: Swapped it.\n\nAlex: Tested it.",
+  );
+  const formReview = await import("@/lib/job-review");
+  check(
+    "a claim that is nobody's is flagged before the forms go out",
+    formReview.reviewReimbursements({
+      entries: [{ label: "(2) Cat6", amount: 8, hasReceipt: true, hasTech: false }],
+    })[0]?.text,
+    "Not on any tech's WM Form, and not paid to anyone: (2) Cat6.",
+  );
+  check(
+    "and a summary longer than the form takes",
+    formReview.reviewWork({
+      merged: "x".repeat(600),
+      entries: [{ who: "Sam", text: "a" }],
+      forms: [{ who: "Sam", text: "x".repeat(600) }],
+      limit: 500,
+    }).some((flag) => flag.text.includes("over 500 characters")),
+    true,
+  );
 
   // --- ZIP ----------------------------------------------------------------
   check("zip is named for the work date and assignment", zipFileName(exportData), "2026-07-28-887766.zip");

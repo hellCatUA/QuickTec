@@ -1842,7 +1842,6 @@ export async function deletePointOfContact(
     select: { jobId: true, type: true, name: true },
   });
   if (!contact) return fail("Contact not found.");
-  
   const context = await loadContext(contact.jobId);
   if (!context) return fail("Job not found.");
   const { user, job } = context;

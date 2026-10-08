@@ -1350,8 +1350,8 @@ function UploadForm({
             </Button>
 
             <p className="text-xs text-muted-foreground">
-              They reach “Return track #” on the report as one list, separated
-              by commas.
+              They reach “Return Tracking #” on the WM Form as one list,
+              separated by commas.
             </p>
           </div>
         ) : (

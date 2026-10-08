@@ -34,7 +34,8 @@ export async function loadExportableWithForms(
     select: {
       projectId: true,
       createdById: true,
-      assignments: { select: { id: true, userId: true } },
+      // The lead first, so a form asked for without saying whose is theirs.
+      assignments: { orderBy: { isLead: "desc" }, select: { id: true, userId: true } },
     },
   });
   if (!job) return null;

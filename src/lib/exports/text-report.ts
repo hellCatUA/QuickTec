@@ -3,6 +3,7 @@ import { assignmentTerms, labourCentsFor } from "@/lib/budget";
 import { isoDateInZone, usTimeInZone } from "@/lib/datetime";
 import type { JobExportData } from "@/lib/exports/job-data";
 import { fromCents, toCents } from "@/lib/money";
+import { safeSegment } from "@/lib/exports/photo-layout";
 import { ticketList } from "@/lib/tickets";
 import { assignmentTotals } from "@/lib/time-tracking";
 
@@ -233,13 +234,22 @@ export function materialLine(entry: {
   return `(${entry.quantity}) ${entry.label ?? "Material"} ${money(entry.amount)}`;
 }
 
-/** Whose updated form a job has: one per tech on it, the lead first. */
-export function wmFormTechs(data: JobExportData) {
-  return data.job.assignments.map((assignment) => ({
-    assignmentId: assignment.id,
-    userId: assignment.userId,
-    name: assignment.user.name,
-  }));
+/**
+ * The summary on one tech's updated form: the lead's merged one, which is the
+ * job's; without one, this tech's own words; failing those everybody's.
+ */
+export function formSummary(input: {
+  merged: string | null;
+  own: string | null;
+  entries: { who: string; text: string | null }[];
+}): string | null {
+  if (input.merged?.trim()) return input.merged.trim();
+  if (input.own?.trim()) return input.own.trim();
+  const written = input.entries.filter((entry) => entry.text?.trim());
+  if (written.length === 0) return null;
+  // One other tech's words need no name in front of them.
+  if (written.length === 1) return written[0].text!.trim();
+  return written.map((entry) => `${entry.who}: ${entry.text!.trim()}`).join("\n\n");
 }
 
 /**
@@ -284,7 +294,10 @@ export function buildWmForm(data: JobExportData, assignmentId: string): string |
       .reduce((total, entry) => total + toCents(entry.amount), 0);
   const materials = claims.filter((entry) => entry.type === "MATERIAL");
 
-  const labour = labourCentsFor(assignmentTerms(assignment), paidMinutes);
+  // No time on the job is no pay for it, as payroll has it: a tech who never
+  // clocked in is paid nothing for the work, flat rate or not.
+  const labour =
+    visits.length > 0 ? labourCentsFor(assignmentTerms(assignment), paidMinutes) : 0;
   const travel = assignment.travelReimbursement
     ? toCents(assignment.travelReimbursement)
     : 0;
@@ -307,12 +320,11 @@ export function buildWmForm(data: JobExportData, assignmentId: string): string |
   );
   const mods = contactNames(data, "MOD");
 
-  // The lead's merged summary is the job's; without one, this tech's own
-  // words, and failing those everybody's.
-  const summary =
-    job.workPerformedMerged?.trim() ||
-    assignment.workPerformed?.trim() ||
-    workSummary(data);
+  const summary = formSummary({
+    merged: job.workPerformedMerged,
+    own: assignment.workPerformed,
+    entries: job.assignments.map((one) => ({ who: one.user.name, text: one.workPerformed })),
+  });
 
   // One group per block of the template, with the blank line between them.
   const groups: string[][] = [
@@ -377,5 +389,6 @@ export function wmFormFileName(
   if (data.job.assignments.length < 2) return "WM Form.txt";
   const name =
     data.job.assignments.find((one) => one.id === form.assignmentId)?.user.name ?? "Tech";
-  return `WM Form - ${name}.txt`;
+  // A name is not a path: "Ann/Lee" must not open a folder in the archive.
+  return `WM Form - ${safeSegment(name)}.txt`;
 }

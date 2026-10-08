@@ -2,7 +2,9 @@ import { siteLabel } from "@/lib/address";
 import { getCompanySettings } from "@/lib/company";
 import { usDateTimeInZone, usTimeInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
+import { formSummary } from "@/lib/exports/text-report";
 import { fileVersion } from "@/lib/storage";
+import { MAX_WORK_SUMMARY } from "@/lib/work-summary";
 import {
   effectiveRules,
   fieldProgress,
@@ -206,6 +208,7 @@ export async function loadReview(jobId: string): Promise<LoadedReview | null> {
           label: true,
           quantity: true,
           amount: true,
+          assignmentId: true,
           attachments: { select: { id: true } },
         },
       },
@@ -292,10 +295,11 @@ export async function loadReview(jobId: string): Promise<LoadedReview | null> {
   const claims = job.reimbursements.map((entry) => ({
     label:
       entry.type === "MATERIAL" && entry.quantity > 1
-        ? `(${entry.quantity}) ${entry.label ?? entry.type}`
+        ? `(${entry.quantity}) ${entry.label ?? "Material"}`
         : (entry.label ?? entry.type),
     amount: Number(entry.amount),
     hasReceipt: entry.attachments.length > 0,
+    hasTech: entry.assignmentId !== null,
     attachmentIds: entry.attachments.map((attachment) => attachment.id),
   }));
 
@@ -404,7 +408,19 @@ export async function loadReview(jobId: string): Promise<LoadedReview | null> {
         : written
             .filter((entry) => entry.text?.trim())
             .map((entry) => ({ label: entry.who, value: entry.text! })),
-      flags: reviewWork({ merged: job.workPerformedMerged, entries: written }),
+      flags: reviewWork({
+        merged: job.workPerformedMerged,
+        entries: written,
+        forms: written.map((entry) => ({
+          who: entry.who,
+          text: formSummary({
+            merged: job.workPerformedMerged,
+            own: entry.text,
+            entries: written,
+          }),
+        })),
+        limit: MAX_WORK_SUMMARY,
+      }),
       images: [],
     },
   ];
