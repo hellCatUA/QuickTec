@@ -4512,6 +4512,224 @@ async function main() {
     0,
   );
 
+  // --- a job that runs past Sunday midnight --------------------------------
+  // A job is paid in the week its clock-in falls in, and paid there whole: the
+  // flat, the travel, every claim and every hour, the ones after midnight
+  // included. The week it runs into finds nothing to pay again. What makes
+  // that hold is one visit per job per tech, which the database enforces, so
+  // these checks pin the index as well as the arithmetic: without it, a second
+  // punch on Monday would bring the whole job into the next week a second time.
+  {
+    const { loadPayWeek, loadPayMonth } = await import("@/lib/pay-period");
+
+    const overnightJob = await db.job.create({
+      data: {
+        ...base,
+        intWoId: "2609-PRJ12-9501",
+        intWoSequence: 9501,
+        title: "Overnight cutover",
+        projectId: project.id,
+      },
+    });
+    const overnight = await db.jobAssignment.create({
+      data: {
+        jobId: overnightJob.id,
+        userId: tech.id,
+        payType: "FLAT",
+        payRate: "300",
+        travelReimbursement: "40",
+      },
+    });
+    // Sunday 4 October 10:00pm to Monday 5 October 2:00am, local.
+    await db.visit.create({
+      data: {
+        assignmentId: overnight.id,
+        clockInAt: new Date("2026-10-05T05:00:00Z"),
+        clockOutAt: new Date("2026-10-05T09:00:00Z"),
+      },
+    });
+    await db.reimbursement.createMany({
+      data: [
+        { jobId: overnightJob.id, assignmentId: overnight.id, type: "PARKING", amount: "12.00" },
+        { jobId: overnightJob.id, assignmentId: overnight.id, type: "MATERIAL", amount: "3.00" },
+      ],
+    });
+
+    const sundayWeek = weekRange(new Date("2026-10-04T19:00:00Z"), TZ);
+    const mondayWeek = weekRange(new Date("2026-10-05T19:00:00Z"), TZ);
+    check(
+      "the two weeks meet at Monday midnight",
+      sundayWeek.end.getTime() === mondayWeek.start.getTime(),
+      true,
+    );
+
+    // ON CONFLICT DO NOTHING, so the refusal is a count of nothing written
+    // rather than an error the client would print as though something broke.
+    const secondPunch = await db.visit.createMany({
+      data: [{ assignmentId: overnight.id, clockInAt: new Date("2026-10-05T16:00:00Z") }],
+      skipDuplicates: true,
+    });
+    check("a second punch on the same job is refused", secondPunch.count, 0);
+
+    const buildWeek = (week: typeof sundayWeek) =>
+      buildPayrollPeriod({ userId: tech.id, week, timeZone: TZ, payLagWeeks: 3 });
+    const lineIn = (payrollPeriodId: string) =>
+      db.payrollLine.findUnique({
+        where: {
+          payrollPeriodId_assignmentId: {
+            payrollPeriodId,
+            assignmentId: overnight.id,
+          },
+        },
+      });
+
+    // What a week would pay for the job, so a failure says how much went twice.
+    const paidIn = async (payrollPeriodId: string) =>
+      (await lineIn(payrollPeriodId))?.totalExpected.toString() ?? "nothing";
+
+    const sundayPeriodId = await buildWeek(sundayWeek);
+    const mondayPeriodId = await buildWeek(mondayWeek);
+    const sundayLine = await lineIn(sundayPeriodId);
+
+    check("the flat is paid in the week it started", sundayLine?.laborAmount.toString(), "300");
+    check("with its travel", sundayLine?.travelReimb.toString(), "40");
+    check("and its parking", sundayLine?.parkingTollsReimb.toString(), "12");
+    check("and its materials", sundayLine?.materialsReimb.toString(), "3");
+    check("and every hour, past midnight too", sundayLine?.paidMinutes, 240);
+    check("the line adds up", sundayLine?.totalExpected.toString(), "355");
+    check("the week it ran into pays none of it", await paidIn(mondayPeriodId), "nothing");
+
+    // Flat + hourly: the flat once, and the hours past what it covers in the
+    // same week as the clock-in. $100 for 2 hrs, then 2 more at $40.
+    await db.jobAssignment.update({
+      where: { id: overnight.id },
+      data: { payType: "FLAT_HOURLY", payRate: "40", payFlat: "100", payFlatHours: "2" },
+    });
+    await buildWeek(sundayWeek);
+    await buildWeek(mondayWeek);
+    check(
+      "flat + hourly pays its flat and its hours in the clock-in week",
+      (await lineIn(sundayPeriodId))?.laborAmount.toString(),
+      "180",
+    );
+    check(
+      "and the next week still pays none of it",
+      await paidIn(mondayPeriodId),
+      "nothing",
+    );
+
+    // The tech's own statement reads the same visits, so it has to agree.
+    const statementOf = async (weekStart: Date) =>
+      (
+        await loadPayWeek({
+          userId: tech.id,
+          weekStart,
+          timeZone: TZ,
+          payLagWeeks: 3,
+          now: mondayWeek.end,
+        })
+      ).jobs.filter((job) => job.assignmentId === overnight.id);
+    const onSunday = await statementOf(sundayWeek.start);
+    check("the statement shows it in the week it started", onSunday.length, 1);
+    check(
+      "with its labour",
+      ((onSunday[0]?.earnedCents ?? 0) / 100).toFixed(2),
+      "180.00",
+    );
+    check(
+      "and travel and claims once",
+      (
+        (onSunday[0]?.reimbursements.reduce((sum, one) => sum + one.cents, 0) ?? 0) /
+        100
+      ).toFixed(2),
+      "55.00",
+    );
+    check(
+      "and not in the week it ran into",
+      (await statementOf(mondayWeek.start)).length,
+      0,
+    );
+    // The Sunday's week starts 28 September, so it is September's, and
+    // October must not count the job again.
+    const monthCount = async (month: number) =>
+      (
+        await loadPayMonth({
+          userId: tech.id,
+          year: 2026,
+          month,
+          timeZone: TZ,
+          payLagWeeks: 3,
+          now: mondayWeek.end,
+        })
+      ).period.jobs.filter((job) => job.assignmentId === overnight.id).length;
+    check(
+      "September counts it and October does not",
+      `${await monthCount(9)}/${await monthCount(10)}`,
+      "1/0",
+    );
+
+    // Refreshing a week that has been paid recomputes the figures and leaves
+    // every decision on it alone — an override, what arrived, the notes.
+    const receivedOn = new Date("2026-10-23T19:00:00Z");
+    await db.payrollPeriod.update({
+      where: { id: sundayPeriodId },
+      data: {
+        status: "RECEIVED",
+        receivedAmount: "275.00",
+        receivedDate: receivedOn,
+        note: "Paid with the September run",
+      },
+    });
+    await db.payrollLine.update({
+      where: { id: sundayLine!.id },
+      data: {
+        overrideAmount: "275.00",
+        overrideNote: "Agreed on site",
+        receivedAmount: "275.00",
+        receivedDate: receivedOn,
+        payStatus: "RECEIVED",
+        payNote: "Cleared",
+      },
+    });
+    await db.reimbursement.create({
+      data: { jobId: overnightJob.id, assignmentId: overnight.id, type: "TOLL", amount: "6.50" },
+    });
+    await buildWeek(sundayWeek);
+    await buildWeek(mondayWeek);
+
+    const refreshedLine = await lineIn(sundayPeriodId);
+    const refreshedPeriod = await db.payrollPeriod.findUniqueOrThrow({
+      where: { id: sundayPeriodId },
+    });
+    check("a refresh picks up a late claim", refreshedLine?.parkingTollsReimb.toString(), "18.5");
+    check("and recomputes the line", refreshedLine?.totalExpected.toString(), "241.5");
+    check(
+      "without touching the override",
+      `${refreshedLine?.overrideAmount} ${refreshedLine?.overrideNote}`,
+      "275 Agreed on site",
+    );
+    check(
+      "or what arrived against the line",
+      `${refreshedLine?.receivedAmount} ${refreshedLine?.payStatus} ${refreshedLine?.receivedDate?.toISOString()} ${refreshedLine?.payNote}`,
+      `275 RECEIVED ${receivedOn.toISOString()} Cleared`,
+    );
+    check(
+      "or against the week",
+      `${refreshedPeriod.receivedAmount} ${refreshedPeriod.status} ${refreshedPeriod.receivedDate?.toISOString()} ${refreshedPeriod.note}`,
+      `275 RECEIVED ${receivedOn.toISOString()} Paid with the September run`,
+    );
+    check(
+      "and the late claim does not land in the next week",
+      await paidIn(mondayPeriodId),
+      "nothing",
+    );
+
+    await db.payrollPeriod.deleteMany({
+      where: { id: { in: [sundayPeriodId, mondayPeriodId] } },
+    });
+    await db.job.delete({ where: { id: overnightJob.id } });
+  }
+
   // --- what a person earned, read from the clock ---------------------------
   // Pay used to be read out of PayrollPeriod, so on a deployment where nobody
   // had ever pressed Build every tech saw an empty page for every week they had
