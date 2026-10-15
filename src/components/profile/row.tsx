@@ -12,9 +12,13 @@ import { cn } from "@/lib/utils";
  *
  * Shared by the profile itself, its pay card and a manager's panel, so a line
  * looks the same wherever it is: the level in a column of its own width — the
- * values end on one edge whatever their badge says — and on a phone beside
- * the line's name rather than under its value, so a line is not three rows
- * tall.
+ * values end on one edge whatever their badge says — and, where the card is
+ * too narrow for three columns, beside the line's name rather than under its
+ * value, so a line is not three rows tall.
+ *
+ * By the card's width rather than the window's: beside the profile's own
+ * column of picture and legend, a card on a laptop is as narrow as a tablet,
+ * and three columns there left a City box 26px wide.
  */
 export function ProfileRow({
   label,
@@ -41,36 +45,35 @@ export function ProfileRow({
   const Tag = htmlFor ? "label" : "span";
   return (
     <div
-      className={cn(
-        "grid gap-2 border-t border-border p-4 first:border-t-0 sm:grid-cols-[10rem_minmax(0,1fr)_8.5rem] sm:gap-4",
-        highlight && "bg-primary/5",
-      )}
+      className={cn("@container border-t border-border first:border-t-0", highlight && "bg-primary/5")}
     >
-      <div className="flex items-start gap-2 sm:pt-2.5">
-        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <Tag {...(htmlFor ? { htmlFor } : {})} className="text-sm font-medium">
-            {label}
-          </Tag>
-          {source ? (
-            <span className="flex items-center gap-1 text-xs text-muted-foreground">
-              <Cloud className="size-3 text-primary" /> {source}
-            </span>
-          ) : note ? (
-            <span className="text-xs text-muted-foreground">{note}</span>
-          ) : null}
+      <div className="grid gap-2 p-4 @2xl:grid-cols-[10rem_minmax(0,1fr)_8.5rem] @2xl:gap-4">
+        <div className="flex items-start gap-2 @2xl:pt-2.5">
+          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <Tag {...(htmlFor ? { htmlFor } : {})} className="text-sm font-medium">
+              {label}
+            </Tag>
+            {source ? (
+              <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                <Cloud className="size-3 text-primary" /> {source}
+              </span>
+            ) : note ? (
+              <span className="text-xs text-muted-foreground">{note}</span>
+            ) : null}
+          </div>
+          <LevelControls level={level} field={field} label={label} className="@2xl:hidden" />
         </div>
-        <LevelControls level={level} field={field} label={label} className="sm:hidden" />
+        <div className="@container min-w-0">
+          {children}
+          {hint ? <p className="mt-1.5 text-xs text-muted-foreground">{hint}</p> : null}
+        </div>
+        <LevelControls
+          level={level}
+          field={field}
+          label={label}
+          className="hidden @2xl:flex @2xl:self-start @2xl:pt-1.5"
+        />
       </div>
-      <div className="min-w-0">
-        {children}
-        {hint ? <p className="mt-1.5 text-xs text-muted-foreground">{hint}</p> : null}
-      </div>
-      <LevelControls
-        level={level}
-        field={field}
-        label={label}
-        className="hidden sm:flex sm:self-start sm:pt-1.5"
-      />
     </div>
   );
 }

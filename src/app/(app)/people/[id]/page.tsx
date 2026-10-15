@@ -14,8 +14,10 @@ import { formatRate } from "@/lib/money";
 import { isGuest } from "@/lib/permissions";
 import { telHref } from "@/lib/phone";
 import {
+  actingSupervisor,
   audienceFor,
   contactPhones,
+  isDirectSupervisorOf,
   levelsFor,
   loadPrivacySettings,
   loadProfile,
@@ -110,7 +112,7 @@ export default async function PersonPage({
   });
   const phones = contactPhones(profile, levels, audience);
   const picture = show("picture") ? avatarSrc(profile.id, profile.avatarPath) : null;
-  const directSupervisor = profile.directSupervisorId === viewer.id;
+  const directSupervisor = isDirectSupervisorOf(viewer, profile);
 
   // Shown by their level like every other line: the company may open any of
   // them up, and a Federated street is then shown to everybody signed in.
@@ -339,7 +341,7 @@ export default async function PersonPage({
                 statesOfOperation: profile.statesOfOperation,
                 hasPicture: Boolean(profile.avatarPath),
               }}
-              directSupervisor={profile.directSupervisor?.name ?? null}
+              directSupervisor={actingSupervisor(profile)?.name ?? null}
               notTheirEmployee={notTheirEmployee(viewer, profile)}
               requests={requests.map((request) => ({
                 id: request.id,

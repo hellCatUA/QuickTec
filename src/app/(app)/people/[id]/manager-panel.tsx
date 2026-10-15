@@ -137,7 +137,20 @@ export function ManagerPanel({
             </p>
           ) : null}
         </CardHeader>
+        {/* Opened afresh whenever what is stored changes — an answer given
+            above, a save here — so every box shows what is stored and says it
+            was opened on it. Kept as typed, a box would go on showing the old
+            legal name after a request for a new one was approved, and the next
+            save would put the old one back. */}
         <ManagerFields
+          key={[
+            subject.legalName,
+            subject.serviceStartDate,
+            subject.workPhone,
+            subject.voipPhone,
+            subject.primaryRegion,
+            [...subject.statesOfOperation].sort().join(","),
+          ].join("|")}
           subject={subject}
           levels={levels}
           busy={busy}

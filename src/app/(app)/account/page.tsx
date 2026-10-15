@@ -18,7 +18,7 @@ import { avatarSrc, requestedAvatarSrc } from "@/lib/avatar";
 import { db } from "@/lib/db";
 import { formatRate } from "@/lib/money";
 import { isGuest } from "@/lib/permissions";
-import { levelsFor, loadPrivacySettings, loadProfile } from "@/lib/profile";
+import { actingSupervisor, levelsFor, loadPrivacySettings, loadProfile } from "@/lib/profile";
 import { homeRegion, monthYear, ROLE_LABEL } from "@/lib/profile-format";
 import { profileHistory } from "@/lib/profile-history";
 import { isProfileField, yearsLabel } from "@/lib/profile-privacy";
@@ -62,7 +62,10 @@ export default async function AccountPage({
   const levels = levelsFor(profile, settings);
   const pendingPicture = requests.find((request) => request.field === "PICTURE") ?? null;
   const pendingLegal = requests.find((request) => request.field === "LEGAL_NAME") ?? null;
-  const reviewer = profile.directSupervisor?.name ?? null;
+  // Who is named as answering a request: the direct supervisor while they
+  // still are one. The line saying who they report to shows the record.
+  const supervisor = profile.directSupervisor?.name ?? null;
+  const reviewer = actingSupervisor(profile)?.name ?? null;
 
   const years = yearsLabel(profile.serviceStartDate);
   const since = monthYear(profile.serviceStartDate);
@@ -102,7 +105,7 @@ export default async function AccountPage({
                   <div className="text-lg font-semibold">{profile.name}</div>
                   <div className="text-sm text-muted-foreground">
                     {ROLE_LABEL[profile.baseRole] ?? profile.baseRole}
-                    {reviewer ? ` · reports to ${reviewer}` : ""}
+                    {supervisor ? ` · reports to ${supervisor}` : ""}
                   </div>
                 </div>
                 <ul className="flex flex-col items-center gap-1 text-sm text-foreground/80">
@@ -150,7 +153,8 @@ export default async function AccountPage({
                   ? { id: pendingLegal.id, value: pendingLegal.value, reviewer }
                   : null,
               role: ROLE_LABEL[profile.baseRole] ?? profile.baseRole,
-              supervisor: reviewer,
+              supervisor,
+              reviewer,
               years: years ? `${years}${since ? ` · since ${since}` : ""}` : null,
               phone: profile.phone,
               workPhone: profile.workPhone,
@@ -176,10 +180,11 @@ export default async function AccountPage({
                   <DollarSign className="size-4 text-muted-foreground" /> Pay
                 </CardTitle>
               </CardHeader>
+              {/* No history link: a rate is set on the pay pages and kept in
+                  their own record, not on the profile's timeline. */}
               <ProfileRow
                 label="Default pay rate"
                 level={levels.defaultPayRate}
-                field="defaultPayRate"
                 hint="Set by managers. A job or a project with its own rate pays that instead."
               >
                 <ReadOnlyValue empty="Not set">

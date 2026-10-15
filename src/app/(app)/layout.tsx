@@ -13,9 +13,9 @@ import {
 } from "@/lib/brand";
 import { APP_NAME, brandLine } from "@/lib/company";
 import { db } from "@/lib/db";
-import { buildNavItems } from "@/lib/nav";
+import { buildNavItems, opensSettings } from "@/lib/nav";
 import { ROLE_LABEL } from "@/lib/profile-format";
-import { can, getSessionUser } from "@/lib/session";
+import { getSessionUser } from "@/lib/session";
 
 export default async function AppLayout({
   children,
@@ -53,11 +53,7 @@ export default async function AppLayout({
       : ownName;
 
   const items = buildNavItems(user);
-  const canManageSettings =
-    can(user, "settings.company") ||
-    can(user, "users.manage") ||
-    can(user, "roles.manage") ||
-    can(user, "settings.integrations");
+  const canManageSettings = opensSettings(user);
 
   return (
     <div className="flex min-h-dvh flex-col">

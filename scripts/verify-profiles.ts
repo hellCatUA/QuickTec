@@ -182,9 +182,9 @@ async function rules() {
     "PUBLIC",
   );
   check(
-    "a stored level below a field's floor counts as its default",
+    "a stored level below a field's floor is raised to the floor, not to the default",
     privacySettings([{ field: "email", level: "RESTRICTED", allowPublic: null }]).email.level,
-    "PUBLIC",
+    "FEDERATED",
   );
   check("and the settings offer only what is allowed", levelsAllowed("role").join(","), "FEDERATED,PUBLIC");
   check(
@@ -274,6 +274,33 @@ async function audienceAndCards() {
     }
   } finally {
     await db.project.delete({ where: { id: project.id } });
+  }
+
+  // A supervisor link that outlived the supervisor: the person it points at
+  // was moved to a role that cannot supervise.
+  await db.user.update({ where: { id: tech.id }, data: { directSupervisorId: peer.id } });
+  try {
+    const stale = await sessionOf(peer.email);
+    check(
+      "a supervisor link to somebody who can no longer supervise opens no pay rate",
+      await seesPayOf({ ...stale, grants: new Map([["pay.view_rates", "PROJECT"]]) as SessionUser["grants"] }, tech.id),
+      false,
+    );
+    const sent = await fileProfileRequest({
+      subject: { id: tech.id, name: tech.name, directSupervisorId: peer.id },
+      requesterId: tech.id,
+      field: "LEGAL_NAME",
+      value: "Terrence Stale Tech",
+    });
+    check("and a request goes to the managers instead", sent.reviewer, null);
+    check(
+      "without telling them what was asked",
+      await db.notification.count({ where: { userId: peer.id, kind: "profile_request" } }),
+      0,
+    );
+    await db.profileRequest.deleteMany({ where: { id: sent.id } });
+  } finally {
+    await db.user.update({ where: { id: tech.id }, data: { directSupervisorId: tech.directSupervisorId } });
   }
 
   const guest = await db.user.upsert({
@@ -514,6 +541,19 @@ async function pages() {
     const saved = await db.user.findUniqueOrThrow({ where: { id: tech.id } });
     check("the phones are saved", `${saved.workPhone} ${saved.voipPhone} ${saved.preferredPhone}`, "559-555-0110 559-555-0199 VOIP");
 
+    // Their supervisor sets the work phone while the page sits open; the next
+    // save, of something else, must not put the old one back.
+    await db.user.update({ where: { id: tech.id }, data: { workPhone: "559-555-0177" } });
+    await own.locator("#own-city").fill("Tulare");
+    await own.getByRole("button", { name: "Save changes" }).click();
+    let city: string | null = null;
+    for (let attempt = 0; attempt < 60 && city !== "Tulare"; attempt++) {
+      city = (await db.user.findUniqueOrThrow({ where: { id: tech.id } })).city;
+      if (city !== "Tulare") await own.waitForTimeout(250);
+    }
+    check("a later save keeps what it did not touch", (await db.user.findUniqueOrThrow({ where: { id: tech.id } })).workPhone, "559-555-0177");
+    await db.user.update({ where: { id: tech.id }, data: { city: "Visalia", workPhone: "559-555-0110" } });
+
     await own.getByRole("button", { name: "Request a change" }).click();
     await own.locator("#own-legal-new").fill("terrence allen tech");
     await own.getByRole("button", { name: "Send to your supervisor" }).click();
@@ -537,6 +577,17 @@ async function pages() {
       "approved, the legal name changes",
       (await db.user.findUniqueOrThrow({ where: { id: tech.id } })).legalName,
       "Terrence Allen Tech",
+    );
+    check("and the box shows it", await bossPage.locator("#m-legal").inputValue(), "Terrence Allen Tech");
+    // Saving something else from the same page must not put the old name back.
+    await bossPage.locator("#m-start").fill("2019-03-05");
+    await bossPage.getByRole("button", { name: "Save", exact: true }).click();
+    await bossPage.getByRole("status").filter({ hasText: "Saved." }).waitFor({ timeout: 15_000 });
+    const afterSave = await db.user.findUniqueOrThrow({ where: { id: tech.id } });
+    check(
+      "a save after approving keeps the approved legal name",
+      `${afterSave.legalName} ${afterSave.serviceStartDate?.toISOString().slice(0, 10)}`,
+      "Terrence Allen Tech 2019-03-05",
     );
 
     // --- another manager is warned ------------------------------------------

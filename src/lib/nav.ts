@@ -52,12 +52,7 @@ export function buildNavItems(user: SessionUser): NavItem[] {
     secondary.push({ href: "/people", label: "People", icon: "people" });
   }
   secondary.push({ href: "/account", label: "Account", icon: "account" });
-  if (
-    can(user, "settings.company") ||
-    can(user, "users.manage", { minScope: "ALL" }) ||
-    can(user, "roles.manage", { minScope: "ALL" }) ||
-    can(user, "settings.integrations")
-  ) {
+  if (opensSettings(user)) {
     secondary.push({ href: "/settings", label: "Settings", icon: "settings" });
   }
 
@@ -65,4 +60,19 @@ export function buildNavItems(user: SessionUser): NavItem[] {
   // Somebody who cannot see jobs gets a shorter bar rather than Mileage
   // sliding into the slot where Jobs lives on every other phone.
   return [...primary.slice(0, PRIMARY_NAV_COUNT), ...secondary];
+}
+
+/**
+ * Whether Settings has anything for this person. The users and roles cards
+ * are company-wide, so a narrower grant of either opens nothing there — and a
+ * link to a page that sends them back to the dashboard is worse than none.
+ * One rule for the menu and the account menu both.
+ */
+export function opensSettings(user: SessionUser): boolean {
+  return (
+    can(user, "settings.company") ||
+    can(user, "users.manage", { minScope: "ALL" }) ||
+    can(user, "roles.manage", { minScope: "ALL" }) ||
+    can(user, "settings.integrations")
+  );
 }

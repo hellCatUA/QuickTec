@@ -1,6 +1,7 @@
 import { cache } from "react";
 import { auth } from "@/auth";
 import { db } from "@/lib/db";
+import { canSupervise } from "@/lib/supervisors";
 import {
   type Permission,
   scopeAtLeast,
@@ -232,10 +233,15 @@ export async function reachableUserIds(
   if (scope === "ALL") return null;
   if (scope === "OWN") return [user.id];
 
-  const reports = await db.user.findMany({
-    where: { directSupervisorId: user.id },
-    select: { id: true },
-  });
+  // Reports only while this user can still be somebody's supervisor: the
+  // link stays on the tech's record when their supervisor is moved to a role
+  // that cannot be one.
+  const reports = canSupervise(user.baseRole)
+    ? await db.user.findMany({
+        where: { directSupervisorId: user.id },
+        select: { id: true },
+      })
+    : [];
   const ids = new Set([user.id, ...reports.map((r) => r.id)]);
 
   if (scope === "PROJECT" && user.scopedProjectIds.length > 0) {

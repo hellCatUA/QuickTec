@@ -1,9 +1,11 @@
 import type { ProfileRequestField } from "@prisma-client";
 import { db } from "@/lib/db";
 import { notify } from "@/lib/notifications";
+import { actingSupervisor } from "@/lib/profile";
 import { recordProfileEvents } from "@/lib/profile-history";
 import type { ProfileField } from "@/lib/profile-privacy";
 import { deleteFile } from "@/lib/storage";
+import { SUPERVISOR_ROLES } from "@/lib/supervisors";
 
 /**
  * Asking for a change to your own legal name or picture, and answering.
@@ -31,9 +33,21 @@ const WHAT: Record<ProfileRequestField, string> = {
  * answer it, so the request does not wait on nobody. That is whoever manages
  * users across the company, read from the matrix as it stands rather than
  * from a list of roles that may no longer hold the permission.
+ *
+ * A supervisor who has since left, or been moved to a role that cannot
+ * supervise, counts as none: they could not answer it, and a new legal name
+ * is not theirs to read any more.
  */
-async function reviewersOf(subject: { directSupervisorId: string | null }): Promise<string[]> {
-  if (subject.directSupervisorId) return [subject.directSupervisorId];
+async function reviewersOf(subject: {
+  directSupervisorId: string | null;
+}): Promise<{ ids: string[]; name: string | null }> {
+  if (subject.directSupervisorId) {
+    const supervisor = await db.user.findFirst({
+      where: { id: subject.directSupervisorId, active: true, baseRole: { in: SUPERVISOR_ROLES } },
+      select: { id: true, name: true },
+    });
+    if (supervisor) return { ids: [supervisor.id], name: supervisor.name };
+  }
   const roles = await db.roleGrant.findMany({
     where: { permission: "users.manage", scope: "ALL" },
     select: { role: true },
@@ -57,12 +71,13 @@ async function reviewersOf(subject: { directSupervisorId: string | null }): Prom
     },
     select: { id: true },
   });
-  return managers.map((manager) => manager.id);
+  return { ids: managers.map((manager) => manager.id), name: null };
 }
 
 /**
  * Files a request, replacing whatever the same person was already waiting on
- * for the same field: the newest ask is the one that stands.
+ * for the same field: the newest ask is the one that stands. Says who it went
+ * to: their direct supervisor by name, or null for the managers.
  */
 export async function fileProfileRequest(input: {
   subject: { id: string; name: string; directSupervisorId: string | null };
@@ -70,7 +85,7 @@ export async function fileProfileRequest(input: {
   field: ProfileRequestField;
   value?: string | null;
   picturePath?: string | null;
-}): Promise<{ id: string }> {
+}): Promise<{ id: string; reviewer: string | null }> {
   const superseded = await db.profileRequest.findMany({
     where: { userId: input.subject.id, field: input.field, status: "PENDING" },
     select: { id: true, picturePath: true },
@@ -109,7 +124,8 @@ export async function fileProfileRequest(input: {
     ],
   });
 
-  for (const reviewerId of await reviewersOf(input.subject)) {
+  const reviewers = await reviewersOf(input.subject);
+  for (const reviewerId of reviewers.ids) {
     await notify({
       userId: reviewerId,
       actorId: input.requesterId,
@@ -123,7 +139,7 @@ export async function fileProfileRequest(input: {
     });
   }
 
-  return created;
+  return { id: created.id, reviewer: reviewers.name };
 }
 
 /** Takes back a request that has not been answered. */
@@ -183,7 +199,7 @@ export async function answerProfileRequest(input: {
           name: true,
           legalName: true,
           avatarPath: true,
-          directSupervisorId: true,
+          directSupervisor: { select: { id: true, name: true, baseRole: true, active: true } },
         },
       },
     },
@@ -259,9 +275,10 @@ export async function answerProfileRequest(input: {
     href: "/account",
   });
 
-  if (input.warned && subject.directSupervisorId) {
+  const supervisor = actingSupervisor(subject);
+  if (input.warned && supervisor) {
     await notify({
-      userId: subject.directSupervisorId,
+      userId: supervisor.id,
       actorId: input.reviewerId,
       kind: "profile_changed",
       title: `${input.reviewerName} ${input.approve ? "approved" : "turned down"} ${WHAT[request.field]} for ${subject.name}`,

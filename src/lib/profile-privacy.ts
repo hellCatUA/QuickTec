@@ -245,8 +245,10 @@ export function privacySettings(overrides: PrivacyOverride[]): PrivacySettings {
     if (!isProfileField(row.field)) continue;
     const definition = fieldDefinition(row.field);
     settings[row.field] = {
-      // A row from before a field gained a floor is held to it.
-      level: levelsAllowed(row.field).includes(row.level) ? row.level : definition.level,
+      // A row from before a field gained a floor is held to it — raised to
+      // the floor, the narrowest it may now be, not thrown open to the
+      // default: an email somebody kept off client paperwork stays off it.
+      level: levelsAllowed(row.field).includes(row.level) ? row.level : levelsAllowed(row.field)[0],
       allowPublic: definition.allowPublic
         ? (row.allowPublic ?? definition.allowPublic.default)
         : false,

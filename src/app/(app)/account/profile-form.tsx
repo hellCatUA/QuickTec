@@ -39,6 +39,8 @@ export type OwnProfile = {
   pendingLegalName: { id: string; value: string; reviewer: string | null } | null;
   role: string;
   supervisor: string | null;
+  /** Who answers what they ask: the direct supervisor while they still are one, else null for a manager. */
+  reviewer: string | null;
   years: string | null;
   phone: string | null;
   workPhone: string | null;
@@ -56,6 +58,34 @@ export type OwnProfile = {
   statesOfOperation: string[];
   avatarVisibility: PrivacyLevel;
 };
+
+/** The fields that say what they held when the form was opened, as `was.<name>`. */
+const OPENED = [
+  "name",
+  "phone",
+  "workPhone",
+  "voipPhone",
+  "preferredPhone",
+  "addressLine1",
+  "addressLine2",
+  "city",
+  "state",
+  "postalCode",
+  "timeZone",
+  "primaryRegion",
+  "statesOfOperation",
+] as const;
+
+function openedFrom(formData: FormData): Record<(typeof OPENED)[number], string> {
+  return Object.fromEntries(
+    OPENED.map((key) => [
+      key,
+      key === "statesOfOperation"
+        ? formData.getAll(key).map(String).sort().join(",")
+        : String(formData.get(key) ?? ""),
+    ]),
+  ) as Record<(typeof OPENED)[number], string>;
+}
 
 /**
  * The part of somebody's profile that is theirs to keep current, with what is
@@ -99,8 +129,31 @@ export function ProfileForm({
     profile.timeZoneManual ? profile.timeZone : "auto",
   );
 
+  // What each field showed when the page was opened, and after each save what
+  // was saved: only a field changed from it is saved, so what a supervisor
+  // set while this sat open stays.
+  const [opened, setOpened] = React.useState<Record<(typeof OPENED)[number], string>>(() => ({
+    name: profile.name,
+    phone: profile.phone ?? "",
+    workPhone: profile.workPhone ?? "",
+    voipPhone: profile.voipPhone ?? "",
+    preferredPhone: preferred ?? "",
+    addressLine1: profile.addressLine1 ?? "",
+    addressLine2: profile.addressLine2 ?? "",
+    city: profile.city ?? "",
+    state: region,
+    postalCode: profile.postalCode ?? "",
+    timeZone: zoneChoice,
+    primaryRegion: primary,
+    statesOfOperation: [...profile.statesOfOperation].sort().join(","),
+  }));
+
   const [state, formAction, pending] = useActionState<ProfileResult | null, FormData>(
-    saveOwnProfile,
+    async (previous, formData) => {
+      const result = await saveOwnProfile(previous, formData);
+      if (result.ok) setOpened(openedFrom(formData));
+      return result;
+    },
     null,
   );
 
@@ -116,7 +169,23 @@ export function ProfileForm({
   }
 
   return (
-    <form action={formAction} onInput={onInput} className="flex flex-col gap-4">
+    <form
+      // Sent by hand rather than as the form's action: React empties a form
+      // its action has saved back to the values it was first drawn with, and
+      // the controlled boxes here — the preferred phone, the zone, the states —
+      // then showed one thing while holding another. A preferred VoIP line
+      // read as Work after saving, and the next save made it Work.
+      onSubmit={(event) => {
+        event.preventDefault();
+        const formData = new FormData(event.currentTarget);
+        React.startTransition(() => formAction(formData));
+      }}
+      onInput={onInput}
+      className="flex flex-col gap-4"
+    >
+        {OPENED.map((key) => (
+          <input key={key} type="hidden" name={`was.${key}`} value={opened[key]} />
+        ))}
         <Card>
           <CardHeader>
             <CardTitle>Name &amp; role</CardTitle>
@@ -298,11 +367,15 @@ export function ProfileForm({
                 : undefined
             }
           >
-            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_9rem_7rem]">
+            {/* By the width the value has, like the line around it: the city
+                on a line of its own with the state and ZIP side by side
+                under it, and all three on one line where there is room. */}
+            <div className="grid gap-2 @2xs:grid-cols-[minmax(0,1fr)_7rem] @lg:grid-cols-[minmax(0,1fr)_9rem_7rem]">
               <Input
                 id="own-city"
                 name="city"
                 aria-label="City"
+                className="@2xs:col-span-2 @lg:col-span-1"
                 defaultValue={profile.city ?? ""}
                 autoComplete="address-level2"
               />
@@ -442,7 +515,7 @@ function LegalName({ profile }: { profile: OwnProfile }) {
         <NameInput id="own-legal" name="legalName" defaultValue="" placeholder="As on your ID" />
         <p className="text-xs text-muted-foreground">
           For payroll and anything you sign. You set it once; after that a change is asked for
-          {profile.guest ? "" : " — your direct supervisor answers"}.
+          {` — ${profile.reviewer ?? "a manager"} answers`}.
         </p>
       </div>
     );
@@ -487,6 +560,7 @@ function LegalName({ profile }: { profile: OwnProfile }) {
 
       {asking ? (
         <LegalAsk
+          reviewer={profile.reviewer}
           busy={busy}
           onCancel={() => setAsking(false)}
           onSend={(value) =>
@@ -516,10 +590,12 @@ function LegalName({ profile }: { profile: OwnProfile }) {
  * name to submit under and Enter sends it rather than saving the page.
  */
 function LegalAsk({
+  reviewer,
   busy,
   onSend,
   onCancel,
 }: {
+  reviewer: string | null;
   busy: boolean;
   onSend: (value: string) => void;
   onCancel: () => void;
@@ -544,7 +620,7 @@ function LegalAsk({
         </span>
         <Button type="button" size="sm" disabled={busy} onClick={() => onSend(value)}>
           {busy ? <Loader2 className="animate-spin" /> : null}
-          Send to your supervisor
+          {reviewer ? "Send to your supervisor" : "Send to a manager"}
         </Button>
         <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={onCancel}>
           Cancel

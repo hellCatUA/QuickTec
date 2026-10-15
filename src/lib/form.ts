@@ -98,3 +98,24 @@ export const flag = z
     if (value === undefined || value === null) return false;
     return TRUE_VALUES.has(String(value).trim().toLowerCase());
   });
+
+/**
+ * For a form that also says what each field held when it was opened, as
+ * `was.<name>`: whether the person changed this one. A field they left alone
+ * keeps whatever is stored now, so a change somebody else made while the form
+ * sat open — a request approved, a phone set by a supervisor — is not put back
+ * by a save that never touched it.
+ *
+ * A form that does not say counts every field as changed.
+ */
+export function changedSinceOpened(formData: FormData) {
+  return (key: string, now: string | null, same = (a: string, b: string) => a === b): boolean => {
+    if (!formData.has(`was.${key}`)) return true;
+    return !same(now ?? "", String(formData.get(`was.${key}`) ?? ""));
+  };
+}
+
+/** Phones compared as they read, so "5595550142" and "559-555-0142" are one number. */
+export function samePhone(a: string, b: string): boolean {
+  return (formatPhone(a) || a) === (formatPhone(b) || b);
+}

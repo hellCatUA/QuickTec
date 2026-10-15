@@ -90,11 +90,19 @@ export async function seesRestricted(viewer: SessionUser, subject: Subject): Pro
     if (managed > 0) return true;
   }
 
+  // A job's supervisor is copied onto the tech's assignment when they are
+  // put on it: the project's manager, or else the tech's direct supervisor.
+  // The copy stays when either moves on, so it counts only while it still
+  // holds — the viewer still runs the job's project. (A direct supervisor who
+  // still is one was answered above.)
   const supervised = await db.jobAssignment.count({
     where: {
       userId: subject.id,
       supervisorId: viewer.id,
-      job: { lifecycle: { notIn: ["CLOSED", "REJECTED"] } },
+      job: {
+        lifecycle: { notIn: ["CLOSED", "REJECTED"] },
+        project: { managerId: viewer.id, status: { not: "CLOSED" } },
+      },
     },
   });
   return supervised > 0;
@@ -128,6 +136,22 @@ export function mayEditProfileOf(
   return isDirectSupervisorOf(viewer, subject) || managesProfiles(viewer);
 }
 
+type SupervisorLink = { id: string; name: string; baseRole: BaseRole; active: boolean } | null;
+
+/**
+ * Somebody's direct supervisor while they still are one: active, and in a
+ * role that can supervise. The link outlives a demotion and a departure, and
+ * whoever it points at then can neither see this person's Restricted lines
+ * nor answer what they ask — so they are not who is named, asked or told.
+ */
+export function actingSupervisor(subject: {
+  directSupervisor: SupervisorLink;
+}): { id: string; name: string } | null {
+  const supervisor = subject.directSupervisor;
+  if (!supervisor || !supervisor.active || !canSupervise(supervisor.baseRole)) return null;
+  return { id: supervisor.id, name: supervisor.name };
+}
+
 /**
  * Whether changing this person's legal name, years of service or picture is
  * somebody else's to do: they have a direct supervisor, and it is not the
@@ -135,9 +159,10 @@ export function mayEditProfileOf(
  */
 export function notTheirEmployee(
   viewer: SessionUser,
-  subject: { directSupervisorId: string | null },
+  subject: { directSupervisor: SupervisorLink },
 ): boolean {
-  return Boolean(subject.directSupervisorId) && subject.directSupervisorId !== viewer.id;
+  const supervisor = actingSupervisor(subject);
+  return supervisor !== null && supervisor.id !== viewer.id;
 }
 
 export const PROFILE_SELECT = {
@@ -150,7 +175,7 @@ export const PROFILE_SELECT = {
   active: true,
   signInMethod: true,
   directSupervisorId: true,
-  directSupervisor: { select: { id: true, name: true } },
+  directSupervisor: { select: { id: true, name: true, baseRole: true, active: true } },
   serviceStartDate: true,
   phone: true,
   workPhone: true,
@@ -183,7 +208,7 @@ export type ProfileRecord = {
   active: boolean;
   signInMethod: "SSO" | "LOCAL";
   directSupervisorId: string | null;
-  directSupervisor: { id: string; name: string } | null;
+  directSupervisor: SupervisorLink;
   serviceStartDate: Date | null;
   phone: string | null;
   workPhone: string | null;

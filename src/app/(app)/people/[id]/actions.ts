@@ -3,12 +3,12 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { storeUploadedAvatar } from "@/lib/avatar";
+import { usDateInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
-import { optionalText, phoneText } from "@/lib/form";
+import { changedSinceOpened, optionalText, phoneText, samePhone } from "@/lib/form";
 import { capitaliseName, isFullName } from "@/lib/names";
 import { notify } from "@/lib/notifications";
-import { formatPhone } from "@/lib/phone";
-import { loadProfile, mayEditProfileOf, notTheirEmployee } from "@/lib/profile";
+import { actingSupervisor, loadProfile, mayEditProfileOf, notTheirEmployee, type ProfileRecord } from "@/lib/profile";
 import { isoDate, monthYear, phoneText as phoneDisplay, stateText, statesText } from "@/lib/profile-format";
 import { profileChanges, recordProfileEvents, type ProfileChange } from "@/lib/profile-history";
 import { answerProfileRequest } from "@/lib/profile-requests";
@@ -51,13 +51,14 @@ function warning(subjectName: string, supervisorName: string | null, what: strin
 }
 
 async function tellSupervisor(input: {
-  subject: { id: string; name: string; directSupervisorId: string | null };
+  subject: ProfileRecord;
   actor: { id: string; name: string };
   what: string;
 }) {
-  if (!input.subject.directSupervisorId) return;
+  const supervisor = actingSupervisor(input.subject);
+  if (!supervisor) return;
   await notify({
-    userId: input.subject.directSupervisorId,
+    userId: supervisor.id,
     actorId: input.actor.id,
     kind: "profile_changed",
     title: `${input.actor.name} changed ${input.what} for ${input.subject.name}`,
@@ -85,12 +86,7 @@ export async function saveProfileAsManager(formData: FormData): Promise<ManagerR
   // held when it was opened; a field left as it was keeps whatever is stored
   // now, so a legal name approved while this page sat open is not put back,
   // and the name box re-capitalising "Maria de la Cruz" is not a change.
-  const was = (key: string): string | null =>
-    formData.has(`was.${key}`) ? String(formData.get(`was.${key}`) ?? "") : null;
-  const touched = (key: string, now: string | null, same = (a: string, b: string) => a === b) => {
-    const opened = was(key);
-    return opened === null || !same(now ?? "", opened);
-  };
+  const touched = changedSinceOpened(formData);
 
   const typedLegal = data.legalName ? capitaliseName(data.legalName) : null;
   const legalName = touched("legalName", typedLegal, (a, b) => a === capitaliseName(b))
@@ -108,7 +104,6 @@ export async function saveProfileAsManager(formData: FormData): Promise<ManagerR
     return { ok: false, error: "The start date cannot be in the future." };
   }
 
-  const samePhone = (a: string, b: string) => (formatPhone(a) || a) === (formatPhone(b) || b);
   const workPhone = touched("workPhone", data.workPhone, samePhone) ? data.workPhone : before.workPhone;
   const voipPhone = touched("voipPhone", data.voipPhone, samePhone) ? data.voipPhone : before.voipPhone;
   const primaryRegion = touched("primaryRegion", data.primaryRegion)
@@ -139,7 +134,7 @@ export async function saveProfileAsManager(formData: FormData): Promise<ManagerR
       ok: false,
       confirm: warning(
         before.name,
-        before.directSupervisor?.name ?? null,
+        actingSupervisor(before)?.name ?? null,
         sensitive.length === 2
           ? "the legal name and the years of service"
           : sensitive[0].field === "legalName"
@@ -162,13 +157,16 @@ export async function saveProfileAsManager(formData: FormData): Promise<ManagerR
     },
   });
 
-  // Stored the way it reads: a start date is "March 2019" in the history.
+  // Stored the way it reads: a start date is "March 2019" in the history —
+  // or, moved within its month, the dates themselves, so the change is not
+  // "March 2019 → March 2019".
+  const sameMonth = monthYear(before.serviceStartDate) === monthYear(start);
   const readable = (change: ProfileChange): ProfileChange =>
     change.field === "yearsOfService"
       ? {
           field: change.field,
-          from: monthYear(before.serviceStartDate),
-          to: monthYear(start),
+          from: sameMonth ? usDateInZone(before.serviceStartDate!, "UTC") : monthYear(before.serviceStartDate),
+          to: sameMonth ? usDateInZone(start!, "UTC") : monthYear(start),
         }
       : change;
 
@@ -227,7 +225,7 @@ export async function setPictureAsManager(formData: FormData): Promise<ManagerRe
   if (warned && formData.get("confirmed") !== "1") {
     return {
       ok: false,
-      confirm: warning(subject.name, subject.directSupervisor?.name ?? null, "the profile picture"),
+      confirm: warning(subject.name, actingSupervisor(subject)?.name ?? null, "the profile picture"),
     };
   }
 
@@ -277,7 +275,7 @@ export async function removePictureAsManager(formData: FormData): Promise<Manage
   if (warned && formData.get("confirmed") !== "1") {
     return {
       ok: false,
-      confirm: warning(subject.name, subject.directSupervisor?.name ?? null, "the profile picture"),
+      confirm: warning(subject.name, actingSupervisor(subject)?.name ?? null, "the profile picture"),
     };
   }
 
@@ -320,7 +318,7 @@ export async function answerRequest(formData: FormData): Promise<ManagerResult> 
       ok: false,
       confirm: warning(
         subject.name,
-        subject.directSupervisor?.name ?? null,
+        actingSupervisor(subject)?.name ?? null,
         request.field === "PICTURE" ? "the profile picture" : "the legal name",
       ),
     };

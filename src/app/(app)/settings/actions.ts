@@ -9,7 +9,7 @@ import {
   BRAND_SCALE_MIN,
 } from "@/lib/brand";
 import { db } from "@/lib/db";
-import { flag, optionalText, phoneText } from "@/lib/form";
+import { flag, optionalText, phoneText, samePhone } from "@/lib/form";
 import {
   canSignInWithPassword,
   hashPassword,
@@ -20,6 +20,8 @@ import {
 import { isLocationIcon } from "@/lib/location-icons";
 import { MAX_LOCATION_NAME } from "@/lib/deliverables";
 import { PERMISSION_KEYS, type Permission } from "@/lib/permissions";
+import { recordProfileEvents } from "@/lib/profile-history";
+import { effectivePreferred, PHONE_LABEL } from "@/lib/profile-privacy";
 import { can, requirePermission, type SessionUser } from "@/lib/session";
 import { canSupervise } from "@/lib/supervisors";
 import { timeZoneForZip, US_STATES } from "@/lib/us-regions";
@@ -121,22 +123,25 @@ export async function updateCompanySettings(
   return { ok: true };
 }
 
+// Fed straight to the date formatting on every page that shows the person —
+// to them and to whoever looks at their profile — which throws on a zone it
+// does not know.
+const timeZoneText = z
+  .string()
+  .trim()
+  .refine((zone) => {
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone: zone });
+      return true;
+    } catch {
+      return false;
+    }
+  }, "That is not a time zone.");
+
 const userSchema = z.object({
   userId: z.string().min(1),
   directSupervisorId: optionalText,
-  // Fed straight to the date formatting on every page that shows them, which
-  // throws on a zone it does not know.
-  timeZone: z
-    .string()
-    .trim()
-    .refine((zone) => {
-      try {
-        new Intl.DateTimeFormat("en-US", { timeZone: zone });
-        return true;
-      } catch {
-        return false;
-      }
-    }, "That is not a time zone."),
+  timeZone: timeZoneText,
   /** What the app calls them. Blank means "go back to what NextCloud says". */
   name: optionalText,
   // No legal name: it is the direct supervisor's, and is changed on the
@@ -249,7 +254,7 @@ export async function updateUser(
   // pick: replaced by a manager, it stops being the preferred one, rather than
   // a number they never chose going out on the paperwork.
   const preferredChange =
-    rest.phone !== before.phone && before.preferredPhone === "PERSONAL"
+    !samePhone(rest.phone ?? "", before.phone ?? "") && before.preferredPhone === "PERSONAL"
       ? { preferredPhone: null }
       : {};
 
@@ -265,9 +270,30 @@ export async function updateUser(
     action: "updated",
     detail: diffFields(
       before as unknown as Record<string, unknown>,
-      { ...rest, ...nameChange, ...zoneChange } as unknown as Record<string, unknown>,
+      { ...rest, ...nameChange, ...zoneChange, ...preferredChange } as unknown as Record<string, unknown>,
     ),
   });
+  // On their own history too, by name: the phone clients get changed, and
+  // they did not change it.
+  if ("preferredPhone" in preferredChange) {
+    const after = effectivePreferred(null, {
+      personal: rest.phone,
+      work: before.workPhone,
+      voip: before.voipPhone,
+    });
+    await recordProfileEvents({
+      actorId: actor.id,
+      userId,
+      kind: "changed",
+      changes: [
+        {
+          field: "preferredPhone",
+          from: PHONE_LABEL.PERSONAL,
+          to: after ? PHONE_LABEL[after] : null,
+        },
+      ],
+    });
+  }
 
   revalidatePath("/settings/users");
   return { ok: true };
@@ -346,7 +372,7 @@ const outsideUserSchema = z.object({
     .toLowerCase()
     .pipe(z.email("That is not an email address")),
   baseRole: z.enum(BaseRole),
-  timeZone: z.string().trim().min(1),
+  timeZone: timeZoneText,
   /** Blank means issue a link instead and let them choose their own. */
   password: optionalText,
 });
@@ -367,13 +393,36 @@ function setupLink(token: string): string {
  * account over through a reset link. The roles that can change what
  * everybody else may do are handed out only by somebody who already can.
  */
-function mayHoldKeysTo(actor: SessionUser, role: BaseRole): boolean {
-  if (role !== "MANAGER" && role !== "ADMINISTRATOR") return true;
-  return can(actor, "roles.manage", { minScope: "ALL" });
+async function mayHoldKeysTo(
+  actor: SessionUser,
+  target: { role: BaseRole; userId?: string },
+): Promise<boolean> {
+  if (can(actor, "roles.manage", { minScope: "ALL" })) return true;
+  if (target.role === "MANAGER" || target.role === "ADMINISTRATOR") return false;
+  // Nor anybody else who can change the matrix — by what their role is
+  // granted as it stands, or what they were granted themselves — rather than
+  // by which roles happen to hold it today.
+  const byRole = await db.roleGrant.count({
+    where: { role: target.role, permission: "roles.manage", scope: "ALL" },
+  });
+  if (byRole > 0) return false;
+  if (target.userId) {
+    const byOverride = await db.permissionOverride.count({
+      where: {
+        userId: target.userId,
+        permission: "roles.manage",
+        granted: true,
+        scope: "ALL",
+        projectId: null,
+      },
+    });
+    if (byOverride > 0) return false;
+  }
+  return true;
 }
 
 const KEYS_REFUSED =
-  "Only somebody who manages roles can open a password way into a manager's or an administrator's account.";
+  "Only somebody who manages roles can open a password way into an account that manages roles — a manager's, an administrator's, or anybody else's who can change the matrix.";
 
 async function issueToken(userId: string, actorId: string): Promise<string> {
   // Anything outstanding stops working: two live links means two people can
@@ -418,7 +467,7 @@ export async function createOutsideUser(
 
   const { name, email, baseRole, timeZone, password } = parsed.data;
 
-  if (!mayHoldKeysTo(actor, baseRole)) return { ok: false, error: KEYS_REFUSED };
+  if (!(await mayHoldKeysTo(actor, { role: baseRole }))) return { ok: false, error: KEYS_REFUSED };
 
   if (password) {
     const problem = passwordProblem(password);
@@ -556,7 +605,9 @@ export async function grantPasswordFallback(
     },
   });
   if (!user) return { ok: false, error: "No such account." };
-  if (!mayHoldKeysTo(actor, user.baseRole)) return { ok: false, error: KEYS_REFUSED };
+  if (!(await mayHoldKeysTo(actor, { role: user.baseRole, userId: user.id }))) {
+    return { ok: false, error: KEYS_REFUSED };
+  }
 
   if (user.signInMethod === "LOCAL") {
     return {
@@ -705,7 +756,9 @@ export async function resetOutsidePassword(
     },
   });
   if (!user) return { ok: false, error: "No such account." };
-  if (!mayHoldKeysTo(actor, user.baseRole)) return { ok: false, error: KEYS_REFUSED };
+  if (!(await mayHoldKeysTo(actor, { role: user.baseRole, userId: user.id }))) {
+    return { ok: false, error: KEYS_REFUSED };
+  }
 
   if (!canSignInWithPassword(user)) {
     return {

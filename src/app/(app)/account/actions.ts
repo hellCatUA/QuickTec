@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { storeUploadedAvatar } from "@/lib/avatar";
 import { db } from "@/lib/db";
-import { optionalText, phoneText } from "@/lib/form";
+import { changedSinceOpened, optionalText, phoneText, samePhone } from "@/lib/form";
 import { capitaliseName, isFullName } from "@/lib/names";
 import { loadPrivacySettings, loadProfile } from "@/lib/profile";
 import {
@@ -76,6 +76,12 @@ export async function saveOwnProfile(
   const before = await loadProfile(user.id);
   if (!before) return { ok: false, error: "Account not found." };
 
+  // Only what they changed: their supervisor may have set a work phone, or a
+  // manager a state, while this page sat open.
+  const touched = changedSinceOpened(formData);
+  const pick = <T,>(key: string, now: string | null, typed: T, stored: T, same?: (a: string, b: string) => boolean) =>
+    touched(key, now, same) ? typed : stored;
+
   // The name box capitalises what it is given, so "Ludwig van Beethoven"
   // comes back as "Ludwig Van Beethoven" without anybody touching it. That is
   // not a change, and must not become one — nor a reason to take the name
@@ -83,35 +89,60 @@ export async function saveOwnProfile(
   // one word for them.
   const typed = data.name ? capitaliseName(data.name) : null;
   if (!typed) return { ok: false, error: "Write your preferred name — first and last." };
-  const nameChanged = typed !== capitaliseName(before.name);
+  const nameChanged =
+    touched("name", typed, (a, b) => a === capitaliseName(b)) && typed !== capitaliseName(before.name);
   const name = nameChanged ? typed : before.name;
   if (nameChanged && !isFullName(name)) {
     return { ok: false, error: "Write your preferred name in full — first and last." };
   }
 
-  const phones = { personal: data.phone, work: data.workPhone, voip: data.voipPhone };
-  const preferredPhone = data.preferredPhone as "PERSONAL" | "WORK" | "VOIP" | null;
-  if (preferredPhone) {
+  // The phones and the preferred one go together: which may be preferred
+  // depends on which phones there are.
+  const phonesTouched =
+    touched("phone", data.phone, samePhone) ||
+    touched("workPhone", data.workPhone, samePhone) ||
+    touched("voipPhone", data.voipPhone, samePhone) ||
+    touched("preferredPhone", data.preferredPhone);
+  const phone = phonesTouched ? data.phone : before.phone;
+  const workPhone = phonesTouched ? data.workPhone : before.workPhone;
+  const voipPhone = phonesTouched ? data.voipPhone : before.voipPhone;
+  const phones = { personal: phone, work: workPhone, voip: voipPhone };
+  const preferredPhone = phonesTouched
+    ? (data.preferredPhone as "PERSONAL" | "WORK" | "VOIP" | null)
+    : before.preferredPhone;
+  if (phonesTouched && preferredPhone) {
     const why = whyNotPreferable(preferredPhone, phones);
     if (why) return { ok: false, error: `${PHONE_LABEL[preferredPhone]} can't be your preferred phone: ${why.toLowerCase()}.` };
   }
+
+  // The street is its two lines together.
+  const streetTouched =
+    touched("addressLine1", data.addressLine1) || touched("addressLine2", data.addressLine2);
+  const addressLine1 = streetTouched ? data.addressLine1 : before.addressLine1;
+  const addressLine2 = streetTouched ? data.addressLine2 : before.addressLine2;
+  const city = pick("city", data.city, data.city, before.city);
+  const state = pick("state", data.state, data.state, before.state);
+  const postalCode = pick("postalCode", data.postalCode, data.postalCode, before.postalCode);
 
   // The zone follows the ZIP until somebody picks one; picking "from my ZIP"
   // hands it back.
   let timeZone = before.timeZone;
   let timeZoneManual = before.timeZoneManual;
-  if (data.timeZone === "auto") {
-    timeZoneManual = false;
-    timeZone = timeZoneForZip(data.postalCode) ?? before.timeZone;
-  } else if (data.timeZone) {
-    if (!US_TIME_ZONES.some((zone) => zone.value === data.timeZone)) {
-      return { ok: false, error: "That is not a time zone." };
+  if (touched("timeZone", data.timeZone) || touched("postalCode", data.postalCode)) {
+    if (data.timeZone === "auto") {
+      timeZoneManual = false;
+      timeZone = timeZoneForZip(postalCode) ?? before.timeZone;
+    } else if (data.timeZone) {
+      if (!US_TIME_ZONES.some((zone) => zone.value === data.timeZone)) {
+        return { ok: false, error: "That is not a time zone." };
+      }
+      timeZone = data.timeZone;
+      timeZoneManual = true;
     }
-    timeZone = data.timeZone;
-    timeZoneManual = true;
   }
 
-  const states = Array.from(
+  const primaryRegion = pick("primaryRegion", data.primaryRegion, data.primaryRegion, before.primaryRegion);
+  const submittedStates = Array.from(
     new Set(
       formData
         .getAll("statesOfOperation")
@@ -119,14 +150,19 @@ export async function saveOwnProfile(
         .filter((value) => US_STATES.some((entry) => entry.code === value)),
     ),
   );
+  const states = pick(
+    "statesOfOperation",
+    [...submittedStates].sort().join(","),
+    submittedStates,
+    before.statesOfOperation,
+  );
 
   // A legal name is theirs to give once — at onboarding, which until there is
-  // an onboarding is "while there is none". After that, they ask.
-  // Given once — at onboarding, which until there is one is "until it has
-  // ever been set". After that it is asked for, even if it has been cleared.
-  const legalName =
-    !before.legalNameSetAt && data.legalName ? capitaliseName(data.legalName) : before.legalName;
-  if (legalName && legalName !== before.legalName && !isFullName(legalName)) {
+  // one is "until it has ever been set". After that it is asked for, even if
+  // it has been cleared.
+  const legalTyped =
+    !before.legalNameSetAt && data.legalName ? capitaliseName(data.legalName) : null;
+  if (legalTyped && legalTyped !== before.legalName && !isFullName(legalTyped)) {
     return { ok: false, error: "Write your legal name in full — first and last." };
   }
 
@@ -137,23 +173,32 @@ export async function saveOwnProfile(
       // A name typed here is a decision, and NextCloud must not undo it at
       // the next sign-in.
       ...(name !== before.name ? { nameOverridden: true } : {}),
-      legalName,
-      ...(legalName && !before.legalNameSetAt ? { legalNameSetAt: new Date() } : {}),
-      phone: data.phone,
-      workPhone: data.workPhone,
-      voipPhone: data.voipPhone,
+      phone,
+      workPhone,
+      voipPhone,
       preferredPhone,
-      addressLine1: data.addressLine1,
-      addressLine2: data.addressLine2,
-      city: data.city,
-      state: data.state,
-      postalCode: data.postalCode,
+      addressLine1,
+      addressLine2,
+      city,
+      state,
+      postalCode,
       timeZone,
       timeZoneManual,
-      primaryRegion: data.primaryRegion,
+      primaryRegion,
       statesOfOperation: states,
     },
   });
+
+  // Once, and only while it still is the first time: two tabs, or a double
+  // tap, must not give it twice.
+  let legalName = before.legalName;
+  if (legalTyped && legalTyped !== before.legalName) {
+    const given = await db.user.updateMany({
+      where: { id: user.id, legalNameSetAt: null },
+      data: { legalName: legalTyped, legalNameSetAt: new Date() },
+    });
+    if (given.count === 1) legalName = legalTyped;
+  }
 
   const preferredBefore = effectivePreferred(before.preferredPhone, {
     personal: before.phone,
@@ -185,16 +230,16 @@ export async function saveOwnProfile(
       {
         name,
         legalName,
-        personalPhone: phoneDisplay(data.phone),
-        workPhone: phoneDisplay(data.workPhone),
-        voipPhone: phoneDisplay(data.voipPhone),
+        personalPhone: phoneDisplay(phone),
+        workPhone: phoneDisplay(workPhone),
+        voipPhone: phoneDisplay(voipPhone),
         preferredPhone: preferredAfter ? PHONE_LABEL[preferredAfter] : null,
-        street: streetText(data.addressLine1, data.addressLine2),
-        city: data.city,
-        state: stateText(data.state),
-        zip: data.postalCode,
+        street: streetText(addressLine1, addressLine2),
+        city,
+        state: stateText(state),
+        zip: postalCode,
         timeZone: zoneText(timeZone),
-        primaryRegion: stateText(data.primaryRegion),
+        primaryRegion: stateText(primaryRegion),
         statesOfOperation: statesText(states),
       },
     ),
@@ -285,8 +330,9 @@ export async function uploadOwnPicture(formData: FormData): Promise<ProfileResul
     // Somebody set one in the meantime, so this one is now a request.
   }
 
+  let sent: { reviewer: string | null };
   try {
-    await fileProfileRequest({
+    sent = await fileProfileRequest({
       subject,
       requesterId: user.id,
       field: "PICTURE",
@@ -298,7 +344,7 @@ export async function uploadOwnPicture(formData: FormData): Promise<ProfileResul
   }
 
   revalidatePath("/account");
-  return { ok: true, message: "Sent to your direct supervisor. It shows once they approve it." };
+  return { ok: true, message: `Sent to ${sent.reviewer ?? "a manager"}. It shows once approved.` };
 }
 
 /**
@@ -326,10 +372,11 @@ export async function requestOwnLegalName(
   if (subject.legalName === value) return { ok: false, error: "That is already your legal name." };
 
   if (!subject.legalNameSetAt) {
-    await db.user.update({
-      where: { id: user.id },
+    const given = await db.user.updateMany({
+      where: { id: user.id, legalNameSetAt: null },
       data: { legalName: value, legalNameSetAt: new Date() },
     });
+    if (given.count === 0) return { ok: false, error: "Your legal name was set meanwhile. Reload to ask for a change." };
     await recordProfileEvents({
       actorId: user.id,
       userId: user.id,
@@ -340,9 +387,9 @@ export async function requestOwnLegalName(
     return { ok: true, message: "Saved." };
   }
 
-  await fileProfileRequest({ subject, requesterId: user.id, field: "LEGAL_NAME", value });
+  const sent = await fileProfileRequest({ subject, requesterId: user.id, field: "LEGAL_NAME", value });
   revalidatePath("/account");
-  return { ok: true, message: "Sent to your direct supervisor." };
+  return { ok: true, message: `Sent to ${sent.reviewer ?? "a manager"}.` };
 }
 
 export async function withdrawOwnRequest(requestId: string): Promise<ProfileResult> {
