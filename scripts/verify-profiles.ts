@@ -79,7 +79,6 @@ async function sessionOf(email: string): Promise<SessionUser> {
       email: true,
       name: true,
       baseRole: true,
-      signInMethod: true,
       timeZone: true,
       directSupervisorId: true,
       projectMemberships: {
@@ -95,7 +94,6 @@ async function sessionOf(email: string): Promise<SessionUser> {
     name: user.name,
     avatarUrl: null,
     baseRole: user.baseRole,
-    outside: user.signInMethod === "LOCAL",
     timeZone: user.timeZone,
     mustChangePassword: false,
     directSupervisorId: user.directSupervisorId,
@@ -129,6 +127,16 @@ async function rules() {
   );
   check("nothing chosen falls back to the work phone", effectivePreferred(null, phones), "WORK");
   check("a choice that is no longer allowed falls back too", effectivePreferred("PERSONAL", phones), "WORK");
+  check(
+    "but never to the personal phone — nobody chose to share it",
+    effectivePreferred(null, { personal: phones.personal, work: null, voip: null }),
+    null,
+  );
+  check(
+    "not even when a manager takes the work phone away",
+    effectivePreferred("WORK", { personal: phones.personal, work: null, voip: null }),
+    null,
+  );
 
   const subject = (preferredPhone: "PERSONAL" | "WORK" | "VOIP" | null, avatarVisibility: "FEDERATED" | "PUBLIC" = "FEDERATED") => ({
     preferredPhone,
@@ -178,7 +186,7 @@ async function rules() {
 async function audienceAndCards() {
   console.log("\n— who is looking —");
   const tech = await db.user.findUniqueOrThrow({ where: { email: "tech@417group.org" } });
-  const subject = { id: tech.id, directSupervisorId: tech.directSupervisorId };
+  const subject = { id: tech.id, directSupervisorId: tech.directSupervisorId, baseRole: tech.baseRole };
 
   check("the person themselves", await audienceFor(await sessionOf("tech@417group.org"), subject), "SELF");
   check("their direct supervisor", await audienceFor(await sessionOf("boss@417group.org"), subject), "RESTRICTED");
@@ -188,6 +196,16 @@ async function audienceAndCards() {
   // A field supervisor sees Restricted lines only through open work they
   // manage the person on.
   const sup = await sessionOf("sup@417group.org");
+  const peer = await db.user.upsert({
+    where: { email: "peer-profile@example.com" },
+    update: { active: true, baseRole: "SUPERVISOR" },
+    create: {
+      email: "peer-profile@example.com",
+      name: "Pat Peer",
+      baseRole: "SUPERVISOR",
+      signInMethod: "LOCAL",
+    },
+  });
   const client = await db.client.findFirstOrThrow();
   const project = await db.project.create({
     data: {
@@ -198,6 +216,7 @@ async function audienceAndCards() {
         create: [
           { userId: sup.id, role: "SUPERVISOR" },
           { userId: tech.id, role: "TECH" },
+          { userId: peer.id, role: "SUPERVISOR" },
         ],
       },
     },
@@ -205,6 +224,11 @@ async function audienceAndCards() {
   try {
     const onProject = { ...sup, scopedProjectIds: [...sup.scopedProjectIds, project.id] };
     check("a supervisor on a project they share", await audienceFor(onProject, subject), "RESTRICTED");
+    check(
+      "but not over another supervisor on it — working beside is not managing",
+      await audienceFor(onProject, { id: peer.id, directSupervisorId: peer.directSupervisorId, baseRole: peer.baseRole }),
+      "FEDERATED",
+    );
     await db.project.update({ where: { id: project.id }, data: { status: "CLOSED" } });
     const others = await db.project.count({
       where: {
@@ -220,20 +244,21 @@ async function audienceAndCards() {
     await db.project.delete({ where: { id: project.id } });
   }
 
-  const outside = await db.user.upsert({
-    where: { email: "outside-profile@example.com" },
-    update: { active: true },
+  const guest = await db.user.upsert({
+    where: { email: "guest-profile@example.com" },
+    update: { active: true, baseRole: "GUEST" },
     create: {
-      email: "outside-profile@example.com",
-      name: "Olive Outside",
-      baseRole: "MANAGER",
+      email: "guest-profile@example.com",
+      name: "Gus Guest",
+      baseRole: "GUEST",
       signInMethod: "LOCAL",
     },
   });
+  check("a guest sees the Public lines alone", await audienceFor(await sessionOf(guest.email), subject), "PUBLIC");
   check(
-    "an outside account sees the Public lines alone, whatever its role",
-    await audienceFor(await sessionOf(outside.email), subject),
-    "PUBLIC",
+    "an account held here is not a guest for that — a tech without NextCloud is still a tech",
+    await audienceFor(await sessionOf(peer.email), subject),
+    "FEDERATED",
   );
 
   console.log("\n— what goes to clients —");
@@ -252,7 +277,14 @@ async function audienceAndCards() {
   check("a preferred VoIP line goes alone", phonesLine(card), "VoIP 559-555-0199");
   check("and says it is VoIP", preferredPhoneLine(card), "559-555-0199 (VoIP)");
 
-  await db.user.update({ where: { id: tech.id }, data: { workPhone: null, preferredPhone: "PERSONAL" } });
+  await db.user.update({
+    where: { id: tech.id },
+    data: { workPhone: null, voipPhone: null, preferredPhone: null },
+  });
+  card = (await loadContactCards([tech.id])).get(tech.id)!;
+  check("a personal phone nobody chose stays off the paperwork", card.phones.length, 0);
+
+  await db.user.update({ where: { id: tech.id }, data: { preferredPhone: "PERSONAL" } });
   card = (await loadContactCards([tech.id])).get(tech.id)!;
   check("a preferred personal phone goes out once it may", preferredPhoneLine(card), "559-555-0142");
 
@@ -328,16 +360,36 @@ async function nextcloudPicture() {
   const tech2 = await db.user.findUniqueOrThrow({ where: { email: "tech2@417group.org" } });
   if (tech2.avatarPath) await deleteFile(tech2.avatarPath);
   await db.user.update({ where: { id: tech2.id }, data: { avatarPath: null } });
+  // A fresh start: the copy is once in a profile's life, and earlier runs
+  // have already had theirs.
+  await db.auditEvent.deleteMany({
+    where: { entityType: "User", entityId: tech2.id, action: { startsWith: "profile." } },
+  });
 
   const picture = await jpeg("#336699");
   const server = createServer((request, response) => {
     response.setHeader("Content-Type", "image/jpeg");
-    response.setHeader("X-NC-IsCustomAvatar", request.url?.includes("drawn") ? "0" : "1");
+    if (request.url?.includes("drawn")) response.setHeader("X-NC-IsCustomAvatar", "0");
+    else if (!request.url?.includes("unmarked")) response.setHeader("X-NC-IsCustomAvatar", "1");
     response.end(picture);
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const port = (server.address() as AddressInfo).port;
+  const issuer = process.env.NEXTCLOUD_ISSUER;
+  process.env.NEXTCLOUD_ISSUER = `http://127.0.0.1:${port}`;
   try {
+    await importNextcloudPicture(tech2.id, `http://127.0.0.1:${port + 1}/elsewhere`);
+    check(
+      "nothing is fetched from anywhere but NextCloud",
+      (await db.user.findUniqueOrThrow({ where: { id: tech2.id } })).avatarPath,
+      null,
+    );
+    await importNextcloudPicture(tech2.id, `http://127.0.0.1:${port}/unmarked`);
+    check(
+      "a picture NextCloud does not say was chosen is not copied",
+      (await db.user.findUniqueOrThrow({ where: { id: tech2.id } })).avatarPath,
+      null,
+    );
     await importNextcloudPicture(tech2.id, `http://127.0.0.1:${port}/drawn`);
     check(
       "a drawn initial is not copied",
@@ -353,8 +405,18 @@ async function nextcloudPicture() {
       (await db.user.findUniqueOrThrow({ where: { id: tech2.id } })).avatarPath,
       copied,
     );
+    // A manager takes it down; the next sign-in must not put it back.
+    await db.user.update({ where: { id: tech2.id }, data: { avatarPath: null } });
+    if (copied) await deleteFile(copied);
+    await importNextcloudPicture(tech2.id, `http://127.0.0.1:${port}/chosen`);
+    check(
+      "not even after it has been taken down",
+      (await db.user.findUniqueOrThrow({ where: { id: tech2.id } })).avatarPath,
+      null,
+    );
   } finally {
     server.close();
+    process.env.NEXTCLOUD_ISSUER = issuer;
   }
 }
 
@@ -481,11 +543,23 @@ async function pages() {
     const colleague = await pageAs(browser, "tech2@417group.org");
     const seen = await colleague.request.get(`${BASE}/api/avatars/${tech.id}`);
     check("a Federated picture is there for anybody signed in", seen.status(), 200);
-    const outside = await pageAs(browser, "outside-profile@example.com");
-    const hidden = await outside.request.get(`${BASE}/api/avatars/${tech.id}`);
-    check("and not for an outside account", hidden.status(), 404);
-    const directory = await outside.goto(`${BASE}/people`, { waitUntil: "load" });
-    check("which has no people directory either", directory?.status(), 404);
+    const guest = await pageAs(browser, "guest-profile@example.com");
+    const hidden = await guest.request.get(`${BASE}/api/avatars/${tech.id}`);
+    check("and not for a guest", hidden.status(), 404);
+    const directory = await guest.goto(`${BASE}/people`, { waitUntil: "load" });
+    check("who has no people directory either", directory?.status(), 404);
+    await guest.goto(`${BASE}/dashboard`, { waitUntil: "load" });
+    check(
+      "and no way to jobs, approvals or people from the menu",
+      await guest
+        .locator("nav")
+        .first()
+        .getByRole("link", { name: /^(Jobs|Approvals|People)$/ })
+        .count(),
+      0,
+    );
+    const jobs = await guest.goto(`${BASE}/jobs`, { waitUntil: "load" });
+    check("nor to the jobs list by its address", guest.url().includes("/jobs") && jobs?.status() === 200, false);
 
     await own.goto(`${BASE}/account`, { waitUntil: "load" });
     await own.locator('input[aria-label="Choose a picture"]').setInputFiles({
@@ -556,7 +630,10 @@ async function main() {
   }
   await db.profileRequest.deleteMany({ where: { status: "PENDING" } });
   await db.user.update({ where: { id: tech.id }, data: { avatarVisibility: "FEDERATED" } });
-  await db.user.updateMany({ where: { email: "outside-profile@example.com" }, data: { active: false } });
+  await db.user.updateMany({
+    where: { email: { in: ["guest-profile@example.com", "peer-profile@example.com"] } },
+    data: { active: false },
+  });
 
   console.log(failures === 0 ? "\nAll profile checks passed." : `\n${failures} profile check(s) failed.`);
   await db.$disconnect();

@@ -80,8 +80,15 @@ export async function saveProfileAsManager(formData: FormData): Promise<ManagerR
     return { ok: false, error: "You cannot change this person's profile." };
   }
 
-  const legalName = data.legalName ? capitaliseName(data.legalName) : null;
-  if (legalName && !isFullName(legalName)) {
+  // The name box capitalises what it is given, so a stored "Maria de la Cruz"
+  // comes back as "Maria De La Cruz" untouched. That is not a change — and
+  // must not cost a warning, a notification or a line in the history.
+  const typedLegal = data.legalName ? capitaliseName(data.legalName) : null;
+  const legalName =
+    typedLegal && before.legalName && typedLegal === capitaliseName(before.legalName)
+      ? before.legalName
+      : typedLegal;
+  if (legalName && legalName !== before.legalName && !isFullName(legalName)) {
     return { ok: false, error: "Write the legal name in full — first and last." };
   }
   const start = data.serviceStartDate ? new Date(`${data.serviceStartDate}T00:00:00Z`) : null;

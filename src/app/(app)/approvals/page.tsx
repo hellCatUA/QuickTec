@@ -23,6 +23,7 @@ import { isoDateInZone, usDateTimeInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
 import { JOB_FIELDS, isJobField } from "@/lib/job-fields";
 import { formatMoney } from "@/lib/money";
+import { isGuest } from "@/lib/permissions";
 import { managesProfiles } from "@/lib/profile";
 import { jobScopeWhere, reportIds } from "@/lib/scope";
 import { getSessionUser, permissionScope } from "@/lib/session";
@@ -159,7 +160,7 @@ export default async function ApprovalsPage({
 
       // A legal name or a picture somebody may only ask for: their direct
       // supervisor answers, and so may whoever manages users.
-      user.outside
+      isGuest(user)
         ? []
         : db.profileRequest.findMany({
             where: {

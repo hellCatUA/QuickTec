@@ -286,8 +286,13 @@ export function whyNotPreferable(kind: PreferredPhone, phones: Phones): string |
 
 /**
  * The preferred phone as it stands: the one chosen when it still may be, and
- * otherwise the first on file of work, personal and VoIP. Null when there are
- * no numbers at all.
+ * otherwise the work phone or the VoIP line, whichever is on file.
+ *
+ * Never the personal phone unless somebody chose it. Being the preferred phone
+ * is what makes a personal number Public, so falling back to it would put a
+ * number nobody agreed to share on a client's paperwork — the person who only
+ * ever gave the company their own number, or whose work phone a manager just
+ * took away. Null when there is nothing it may be.
  */
 export function effectivePreferred(
   chosen: PreferredPhone | null,
@@ -295,7 +300,7 @@ export function effectivePreferred(
 ): PreferredPhone | null {
   const allowed = preferableKinds(phones);
   if (chosen && allowed.includes(chosen)) return chosen;
-  return allowed[0] ?? null;
+  return allowed.find((kind) => kind !== "PERSONAL") ?? null;
 }
 
 // ---------------------------------------------------------------------------

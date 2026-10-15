@@ -12,6 +12,7 @@ export const ROLE_LABEL: Record<string, string> = {
   SUPERVISOR: "Supervisor",
   TECH: "Tech",
   ACCOUNTANT: "Accountant",
+  GUEST: "Guest",
 };
 
 const MONTHS = [

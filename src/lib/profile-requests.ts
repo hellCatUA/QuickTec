@@ -54,13 +54,14 @@ export async function fileProfileRequest(input: {
     where: { userId: input.subject.id, field: input.field, status: "PENDING" },
     select: { id: true, picturePath: true },
   });
-  if (superseded.length > 0) {
-    await db.profileRequest.deleteMany({
-      where: { id: { in: superseded.map((row) => row.id) } },
+  // One by one and only while still pending: a supervisor approving the old
+  // one at this very moment has just made its picture the one in use, and
+  // deleting the file underneath them would leave nobody with a picture.
+  for (const row of superseded) {
+    const gone = await db.profileRequest.deleteMany({
+      where: { id: row.id, status: "PENDING" },
     });
-    for (const row of superseded) {
-      if (row.picturePath) await deleteFile(row.picturePath);
-    }
+    if (gone.count === 1 && row.picturePath) await deleteFile(row.picturePath);
   }
 
   const created = await db.profileRequest.create({
@@ -116,7 +117,12 @@ export async function withdrawProfileRequest(input: {
   });
   if (!request) return false;
 
-  await db.profileRequest.delete({ where: { id: request.id } });
+  // Only while still pending, for the same reason as above: an answer that
+  // got there first has already decided what happens to the file.
+  const gone = await db.profileRequest.deleteMany({
+    where: { id: request.id, status: "PENDING" },
+  });
+  if (gone.count === 0) return false;
   if (request.picturePath) await deleteFile(request.picturePath);
 
   await recordProfileEvents({

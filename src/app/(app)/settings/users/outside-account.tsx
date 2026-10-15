@@ -8,7 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Field, Input, Select } from "@/components/ui/field";
 import { createOutsideUser, type LinkResult } from "../actions";
 
-const ROLES = ["TECH", "SUPERVISOR", "MANAGER", "ACCOUNTANT", "ADMINISTRATOR"];
+const ROLES = ["TECH", "SUPERVISOR", "MANAGER", "ACCOUNTANT", "ADMINISTRATOR", "GUEST"];
 
 const TIME_ZONES = [
   "America/Los_Angeles",

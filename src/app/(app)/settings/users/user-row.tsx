@@ -25,6 +25,7 @@ const ROLE_VARIANT: Record<
   SUPERVISOR: "success",
   ACCOUNTANT: "warning",
   TECH: "neutral",
+  GUEST: "neutral",
 };
 
 export function UserRow({

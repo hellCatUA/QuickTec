@@ -52,6 +52,7 @@ import { assignmentTerms, describeTerms } from "@/lib/budget";
 import { formatRate } from "@/lib/money";
 import { canOnJob } from "@/lib/scope";
 import { loadTimeline } from "@/lib/timeline-data";
+import { reachableContact } from "@/lib/profile";
 import { can, getSessionUser, permissionScope } from "@/lib/session";
 import { jobLabels } from "@/lib/photo-label";
 import { fileVersion } from "@/lib/storage";
@@ -358,7 +359,7 @@ export default async function JobPage({
               baseRole: true,
               directSupervisorId: true,
               directSupervisor: {
-                select: { name: true, phone: true, email: true },
+                select: { id: true, name: true },
               },
             },
           },
@@ -763,7 +764,13 @@ export default async function JobPage({
 
   // The tech's own supervisor always heads the dispatch block — the one number
   // they are most likely to need and least likely to have to hand.
-  const supervisor = mine?.user.directSupervisor;
+  const supervisor = mine?.user.directSupervisor
+    ? {
+        name: mine.user.directSupervisor.name,
+        // The numbers their profile lets this tech have, not a personal one.
+        ...(await reachableContact(user, mine.user.directSupervisor.id)),
+      }
+    : null;
   const dispatch = [
     ...(supervisor
       ? [

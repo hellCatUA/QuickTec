@@ -12,6 +12,7 @@ export const GROUP_TO_ROLE: Record<string, BaseRole> = {
   "quicktec-supervisor": "SUPERVISOR",
   "quicktec-tech": "TECH",
   "quicktec-accountant": "ACCOUNTANT",
+  "quicktec-guest": "GUEST",
 };
 
 /**
@@ -28,6 +29,8 @@ const ROLE_PRECEDENCE: BaseRole[] = [
   "SUPERVISOR",
   "ACCOUNTANT",
   "TECH",
+  // Last: somebody in a staff group as well is staff.
+  "GUEST",
 ];
 
 /** Returns null when the user is in none of the quicktec-* groups. */

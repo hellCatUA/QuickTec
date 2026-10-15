@@ -49,42 +49,59 @@ export async function storeUploadedAvatar(
 }
 
 /**
- * Copies somebody's NextCloud picture the first time there is one to copy.
+ * Copies somebody's NextCloud picture, once.
  *
  * Only a picture they chose: NextCloud draws an initial on a coloured circle
- * for everybody who has not, and says which it handed over. Taking the drawn
- * one would fill the profile with something nobody picked — and, once there
- * is a picture, changing it needs a supervisor's answer.
+ * for everybody who has not, and says which it handed over in a header. With
+ * no header there is no telling, so nothing is copied — a drawn initial taken
+ * for a photo would sit there needing a supervisor's answer to replace.
  *
- * Best effort and never in the way of signing in: a NextCloud that will not
- * hand the picture over without a session, a timeout, a file that is not an
- * image — each of them just leaves the profile without one.
+ * Once means once: when the profile has ever had a picture — copied, set,
+ * requested, or taken down by a manager — this does nothing, so a picture a
+ * manager removed does not come back at the next sign-in.
+ *
+ * Only from NextCloud itself, without following redirects anywhere else, and
+ * never more than the size limit read into memory. Best effort and never in
+ * the way of signing in: any failure just leaves the profile without one.
  */
 export async function importNextcloudPicture(userId: string, url: string): Promise<void> {
   try {
+    const issuer = process.env.NEXTCLOUD_ISSUER;
+    if (!issuer) return;
+    const source = new URL(url);
+    if (source.host !== new URL(issuer).host) return;
+    if (source.protocol !== "https:" && source.protocol !== "http:") return;
+
     const current = await db.user.findUnique({
       where: { id: userId },
       select: { avatarPath: true },
     });
     if (!current || current.avatarPath) return;
 
-    const response = await fetch(url, {
-      signal: AbortSignal.timeout(5000),
-      redirect: "follow",
+    const before = await db.auditEvent.count({
+      where: {
+        entityType: "User",
+        entityId: userId,
+        action: { startsWith: "profile." },
+        detail: { path: ["field"], equals: "picture" },
+      },
     });
-    if (!response.ok) return;
-    if (response.headers.get("x-nc-iscustomavatar") === "0") return;
-    if (!(response.headers.get("content-type") ?? "").startsWith("image/")) return;
+    if (before > 0) return;
 
-    const declared = Number(response.headers.get("content-length") ?? 0);
-    if (declared > AVATAR_MAX_BYTES) return;
-    const data = Buffer.from(await response.arrayBuffer());
-    if (data.byteLength > AVATAR_MAX_BYTES || !looksLikeImage(data)) return;
+    const response = await fetch(source, {
+      signal: AbortSignal.timeout(5000),
+      redirect: "manual",
+    });
+    if (response.status !== 200) return;
+    if (response.headers.get("x-nc-iscustomavatar") !== "1") return;
+    const type = response.headers.get("content-type") ?? "";
+    if (!type.startsWith("image/")) return;
+    if (Number(response.headers.get("content-length") ?? 0) > AVATAR_MAX_BYTES) return;
 
-    const path = await storeAvatar(
-      userId,
-      await processAvatar(data, response.headers.get("content-type") ?? ""),
-    );
+    const data = await readCapped(response, AVATAR_MAX_BYTES);
+    if (!data || !looksLikeImage(data)) return;
+
+    const path = await storeAvatar(userId, await processAvatar(data, type));
 
     // Only into an empty slot: a picture set while this was on its way —
     // by them, or by their supervisor — wins.
@@ -107,4 +124,23 @@ export async function importNextcloudPicture(userId: string, url: string): Promi
   } catch (error) {
     console.error("[avatar] could not copy the NextCloud picture:", error);
   }
+}
+
+/** The body, or null as soon as it passes the limit — never more than that held. */
+async function readCapped(response: Response, limit: number): Promise<Buffer | null> {
+  if (!response.body) return null;
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > limit) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks);
 }

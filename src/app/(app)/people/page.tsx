@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/field";
 import { EmptyState, PageHeader } from "@/components/ui/page-header";
 import { avatarSrc } from "@/lib/avatar";
 import { db } from "@/lib/db";
+import { isGuest } from "@/lib/permissions";
 import { levelsFor, loadPrivacySettings, PROFILE_SELECT, shows } from "@/lib/profile";
 import { homeRegion, ROLE_LABEL } from "@/lib/profile-format";
 import { getSessionUser } from "@/lib/session";
@@ -25,7 +26,7 @@ export default async function PeoplePage({
 }) {
   const viewer = await getSessionUser();
   if (!viewer) redirect("/signin");
-  if (viewer.outside) notFound();
+  if (isGuest(viewer)) notFound();
 
   const { q } = await searchParams;
   const query = (q ?? "").trim();
@@ -34,7 +35,9 @@ export default async function PeoplePage({
     db.user.findMany({
       where: {
         active: true,
-        signInMethod: "SSO",
+        // The company's people — whether they sign in through NextCloud or
+        // with a password held here — and not its guests.
+        baseRole: { not: "GUEST" },
         ...(query ? { name: { contains: query, mode: "insensitive" as const } } : {}),
       },
       orderBy: { name: "asc" },

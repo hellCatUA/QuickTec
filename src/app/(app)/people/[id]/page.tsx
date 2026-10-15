@@ -11,6 +11,7 @@ import { avatarSrc, requestedAvatarSrc } from "@/lib/avatar";
 import { usTimeInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
 import { formatRate } from "@/lib/money";
+import { isGuest } from "@/lib/permissions";
 import { telHref } from "@/lib/phone";
 import {
   audienceFor,
@@ -65,7 +66,7 @@ export default async function PersonPage({
 }) {
   const viewer = await getSessionUser();
   if (!viewer) redirect("/signin");
-  if (viewer.outside) notFound();
+  if (isGuest(viewer)) notFound();
 
   const { id } = await params;
   if (id === viewer.id) redirect("/account");
@@ -105,6 +106,16 @@ export default async function PersonPage({
   const phones = contactPhones(profile, levels, audience);
   const picture = show("picture") ? avatarSrc(profile.id, profile.avatarPath) : null;
   const directSupervisor = profile.directSupervisorId === viewer.id;
+
+  // Shown by their level like every other line: the company may open any of
+  // them up, and a Federated street is then shown to everybody signed in.
+  const personal = (["legalName", "street", "personalPhone", "defaultPayRate"] as ProfileField[]).filter(
+    (field) =>
+      show(field) &&
+      // The personal phone may already be up in Contact, as the preferred one.
+      (field !== "personalPhone" ||
+        (Boolean(profile.phone) && !phones.some((phone) => phone.kind === "PERSONAL"))),
+  );
 
   const hidden = (Object.keys(PROFILE_FIELDS) as ProfileField[]).filter(
     (field) =>
@@ -256,42 +267,50 @@ export default async function PersonPage({
             </dl>
           </Card>
 
-          {audience === "RESTRICTED" ? (
+          {personal.length > 0 ? (
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <Lock className="size-4 text-muted-foreground" /> Restricted
+                  <Lock className="size-4 text-muted-foreground" /> Personal details
                 </CardTitle>
               </CardHeader>
               <dl>
-                <Line label="Legal name" level={levels.legalName}>
-                  {profile.legalName ?? <span className="text-muted-foreground">Not set</span>}
-                </Line>
-                <Line label="Street" level={levels.street}>
-                  {streetText(profile.addressLine1, profile.addressLine2) ?? (
-                    <span className="text-muted-foreground">Not on file</span>
-                  )}
-                </Line>
-                {profile.phone && !phones.some((phone) => phone.kind === "PERSONAL") ? (
+                {show("legalName") ? (
+                  <Line label="Legal name" level={levels.legalName}>
+                    {profile.legalName ?? <span className="text-muted-foreground">Not set</span>}
+                  </Line>
+                ) : null}
+                {show("street") ? (
+                  <Line label="Street address" level={levels.street}>
+                    {streetText(profile.addressLine1, profile.addressLine2) ?? (
+                      <span className="text-muted-foreground">Not on file</span>
+                    )}
+                  </Line>
+                ) : null}
+                {show("personalPhone") && profile.phone && !phones.some((phone) => phone.kind === "PERSONAL") ? (
                   <Line label="Personal phone" level={levels.personalPhone}>
                     <a href={telHref(profile.phone)} className="hover:underline">
                       {phoneText(profile.phone)}
                     </a>
                   </Line>
                 ) : null}
-                <Line label="Default pay rate" level={levels.defaultPayRate}>
-                  {profile.defaultPayType && profile.defaultPayRate ? (
-                    formatRate(
-                      profile.defaultPayType as Parameters<typeof formatRate>[0],
-                      profile.defaultPayRate.toString(),
-                    )
-                  ) : (
-                    <span className="text-muted-foreground">Not set</span>
-                  )}
-                </Line>
+                {show("defaultPayRate") ? (
+                  <Line label="Default pay rate" level={levels.defaultPayRate}>
+                    {profile.defaultPayType && profile.defaultPayRate ? (
+                      formatRate(
+                        profile.defaultPayType as Parameters<typeof formatRate>[0],
+                        profile.defaultPayRate.toString(),
+                      )
+                    ) : (
+                      <span className="text-muted-foreground">Not set</span>
+                    )}
+                  </Line>
+                ) : null}
               </dl>
             </Card>
-          ) : hidden.length > 0 ? (
+          ) : null}
+
+          {hidden.length > 0 ? (
             <p className="flex items-start gap-2 rounded-xl border border-dashed border-border px-4 py-3 text-sm text-muted-foreground">
               <Lock className="mt-0.5 size-4 shrink-0" />
               <span>

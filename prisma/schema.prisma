@@ -33,15 +33,20 @@ enum SignInMethod {
 }
 
 /// Mapped hard from NextCloud groups on every login (quicktec-admin,
-/// quicktec-manager, quicktec-supervisor, quicktec-tech, quicktec-accountant)
-/// for SSO accounts. Set by an administrator for LOCAL ones, which have no
-/// groups to read.
+/// quicktec-manager, quicktec-supervisor, quicktec-tech, quicktec-accountant,
+/// quicktec-guest) for SSO accounts. Set by an administrator for LOCAL ones,
+/// which have no groups to read.
 enum BaseRole {
   ADMINISTRATOR
   MANAGER
   SUPERVISOR
   TECH
   ACCOUNTANT
+  /// Somebody outside the company — a vendor, a partner, a buyer, a client.
+  /// Starts with no permissions at all; access to particular jobs, as an
+  /// observer, is granted to them later. Of anybody's profile they see only
+  /// what is Public.
+  GUEST
 }
 
 /// How far a permission reaches. Checked per permission, not per role.

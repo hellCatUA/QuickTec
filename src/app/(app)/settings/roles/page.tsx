@@ -69,6 +69,7 @@ export default async function RolesSettingsPage({
     "MANAGER",
     "ADMINISTRATOR",
     "ACCOUNTANT",
+    "GUEST",
   ];
 
   return (

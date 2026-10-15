@@ -400,4 +400,17 @@ export const DEFAULT_ROLE_GRANTS: Record<
     "payroll.view": "ALL",
     "audit.view": "ALL",
   },
+
+  // Outside the company, and nothing to begin with: no jobs, no reports, no
+  // people. What a guest may see is granted to them, job by job, later.
+  GUEST: {},
 };
+
+/**
+ * Somebody outside the company — a vendor, a partner, a buyer, a client. What
+ * they may do is whatever they have been granted; what they may see of other
+ * people is what is Public, and there is no list of the company's people.
+ */
+export function isGuest(user: { baseRole: BaseRole }): boolean {
+  return user.baseRole === "GUEST";
+}

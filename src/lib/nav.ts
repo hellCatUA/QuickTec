@@ -1,4 +1,5 @@
 import { PRIMARY_NAV_COUNT, type NavItem } from "@/components/nav-icons";
+import { isGuest } from "@/lib/permissions";
 import { can, type SessionUser } from "@/lib/session";
 
 /**
@@ -24,7 +25,10 @@ export function buildNavItems(user: SessionUser): NavItem[] {
   if (can(user, "project.manage") || can(user, "job.view")) {
     primary.push({ href: "/projects", label: "Projects", icon: "projects" });
   }
-  primary.push({ href: "/approvals", label: "Approvals", icon: "approvals" });
+  // A guest has nothing to approve and has not been put on anything yet.
+  if (!isGuest(user)) {
+    primary.push({ href: "/approvals", label: "Approvals", icon: "approvals" });
+  }
 
   const secondary: NavItem[] = [];
   if (can(user, "mileage.submit")) {
@@ -42,9 +46,9 @@ export function buildNavItems(user: SessionUser): NavItem[] {
   if (can(user, "client.manage") || can(user, "project.manage")) {
     secondary.push({ href: "/directory", label: "Directory", icon: "directory" });
   }
-  // Everybody at the company may see everybody else's Federated lines; an
-  // outside account is not at the company.
-  if (!user.outside) {
+  // Everybody at the company may see everybody else's Federated lines; a
+  // guest is not at the company.
+  if (!isGuest(user)) {
     secondary.push({ href: "/people", label: "People", icon: "people" });
   }
   secondary.push({ href: "/account", label: "Account", icon: "account" });

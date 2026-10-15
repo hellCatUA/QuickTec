@@ -16,6 +16,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { avatarSrc, requestedAvatarSrc } from "@/lib/avatar";
 import { db } from "@/lib/db";
 import { formatRate } from "@/lib/money";
+import { isGuest } from "@/lib/permissions";
 import { levelsFor, loadPrivacySettings, loadProfile } from "@/lib/profile";
 import { homeRegion, monthYear, ROLE_LABEL } from "@/lib/profile-format";
 import { profileHistory } from "@/lib/profile-history";
@@ -139,6 +140,7 @@ export default async function AccountPage({
               name: profile.name,
               email: profile.email,
               sso: profile.signInMethod === "SSO",
+              guest: isGuest(profile),
               legalName: profile.legalName,
               pendingLegalName:
                 pendingLegal && pendingLegal.value
@@ -164,32 +166,34 @@ export default async function AccountPage({
             }}
           />
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <DollarSign className="size-4 text-muted-foreground" /> Pay
-              </CardTitle>
-            </CardHeader>
-            <div className="grid gap-2 p-4 sm:grid-cols-[10rem_minmax(0,1fr)_auto] sm:gap-4">
-              <span className="text-sm font-medium sm:pt-2.5">Default pay rate</span>
-              <div>
-                <ReadOnlyValue empty="Not set">
-                  {profile.defaultPayType && profile.defaultPayRate
-                    ? formatRate(
-                        profile.defaultPayType as Parameters<typeof formatRate>[0],
-                        profile.defaultPayRate.toString(),
-                      )
-                    : null}
-                </ReadOnlyValue>
-                <p className="mt-1.5 text-xs text-muted-foreground">
-                  Set by managers. A job or a project with its own rate pays that instead.
-                </p>
+          {isGuest(profile) ? null : (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <DollarSign className="size-4 text-muted-foreground" /> Pay
+                </CardTitle>
+              </CardHeader>
+              <div className="grid gap-2 p-4 sm:grid-cols-[10rem_minmax(0,1fr)_auto] sm:gap-4">
+                <span className="text-sm font-medium sm:pt-2.5">Default pay rate</span>
+                <div>
+                  <ReadOnlyValue empty="Not set">
+                    {profile.defaultPayType && profile.defaultPayRate
+                      ? formatRate(
+                          profile.defaultPayType as Parameters<typeof formatRate>[0],
+                          profile.defaultPayRate.toString(),
+                        )
+                      : null}
+                  </ReadOnlyValue>
+                  <p className="mt-1.5 text-xs text-muted-foreground">
+                    Set by managers. A job or a project with its own rate pays that instead.
+                  </p>
+                </div>
+                <div className="sm:pt-2">
+                  <LevelBadge level={levels.defaultPayRate} />
+                </div>
               </div>
-              <div className="sm:pt-2">
-                <LevelBadge level={levels.defaultPayRate} />
-              </div>
-            </div>
-          </Card>
+            </Card>
+          )}
 
           <ProfileHistory
             entries={entries}

@@ -1388,7 +1388,6 @@ async function main() {
       id: userId,
       grants: new Map([["job.view", scope]]),
       projectGrants: new Map(),
-      outside: false,
       scopedProjectIds: userId === sup.id ? [project.id] : [],
     } as never;
     const where = await jobScopeWhere(user, "job.view");
@@ -1401,7 +1400,6 @@ async function main() {
       id: userId,
       grants: new Map([["job.view", scope]]),
       projectGrants: new Map(),
-      outside: false,
       scopedProjectIds: [],
     } as never;
     const where = await jobScopeWhere(user, "job.view");
@@ -3363,7 +3361,6 @@ async function main() {
       id: "who",
       grants: new Map(Object.entries(DEFAULT_ROLE_GRANTS[role])),
       projectGrants: new Map(),
-      outside: false,
       scopedProjectIds: [],
     } as never;
   }
@@ -3573,7 +3570,6 @@ async function main() {
         id: "sup",
         grants: new Map(Object.entries(DEFAULT_ROLE_GRANTS.SUPERVISOR)),
         projectGrants: new Map(),
-        outside: false,
         scopedProjectIds: ["p1"],
       } as never;
       const crew = [
@@ -3610,7 +3606,6 @@ async function main() {
               id: "t1",
               grants: new Map(Object.entries(DEFAULT_ROLE_GRANTS.TECH)),
               projectGrants: new Map(),
-              outside: false,
               scopedProjectIds: [],
             } as never,
             { projectId: "p1", assigneeIds: ["t1", "t2"], createdById: "x" },

@@ -22,6 +22,7 @@ import { MAX_LOCATION_NAME } from "@/lib/deliverables";
 import { PERMISSION_KEYS, type Permission } from "@/lib/permissions";
 import { requirePermission } from "@/lib/session";
 import { canSupervise } from "@/lib/supervisors";
+import { timeZoneForZip } from "@/lib/us-regions";
 import { BaseRole, PermissionScope } from "@prisma-client";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
@@ -218,8 +219,16 @@ export async function updateUser(
           : {};
 
   // A zone set here is a choice, and a later change of address must not
-  // quietly replace it with the one its ZIP is in.
-  const zoneChange = rest.timeZone !== before.timeZone ? { timeZoneManual: true } : {};
+  // quietly replace it with the one its ZIP is in. Left alone while the ZIP
+  // moved, it follows the ZIP — as it would on their own profile — unless it
+  // was a choice already.
+  const zipZone = timeZoneForZip(rest.postalCode);
+  const zoneChange =
+    rest.timeZone !== before.timeZone
+      ? { timeZoneManual: true }
+      : rest.postalCode !== before.postalCode && !before.timeZoneManual && zipZone
+        ? { timeZone: zipZone }
+        : {};
 
   await db.user.update({
     where: { id: userId },
@@ -233,7 +242,7 @@ export async function updateUser(
     action: "updated",
     detail: diffFields(
       before as unknown as Record<string, unknown>,
-      { ...rest, ...nameChange } as unknown as Record<string, unknown>,
+      { ...rest, ...nameChange, ...zoneChange } as unknown as Record<string, unknown>,
     ),
   });
 

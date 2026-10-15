@@ -19,6 +19,7 @@ const ROLE_LABEL: Record<BaseRole, string> = {
   MANAGER: "Manager",
   ADMINISTRATOR: "Admin",
   ACCOUNTANT: "Accountant",
+  GUEST: "Guest",
 };
 
 type Group = {

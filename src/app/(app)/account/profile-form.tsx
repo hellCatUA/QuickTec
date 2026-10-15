@@ -32,6 +32,7 @@ export type OwnProfile = {
   name: string;
   email: string;
   sso: boolean;
+  guest: boolean;
   legalName: string | null;
   pendingLegalName: { id: string; value: string; reviewer: string | null } | null;
   role: string;
@@ -128,23 +129,34 @@ export function ProfileForm({
           >
             <NameInput id="own-name" name="name" defaultValue={profile.name} required />
           </Row>
-          <Row label="Legal name" htmlFor="own-legal" level={level("legalName")} field="legalName">
+          <Row
+            label="Legal name"
+            htmlFor={profile.legalName ? undefined : "own-legal"}
+            level={level("legalName")}
+            field="legalName"
+          >
             <LegalName profile={profile} />
           </Row>
           <Row label="Role" source={profile.sso ? "NextCloud groups" : null} level={level("role")} field="role">
             <ReadOnlyValue>{profile.role}</ReadOnlyValue>
           </Row>
-          <Row label="Direct supervisor" level={level("directSupervisor")} field="directSupervisor">
-            <ReadOnlyValue empty="Not set — payroll needs one">{profile.supervisor}</ReadOnlyValue>
-          </Row>
-          <Row
-            label="Years of service"
-            level={level("yearsOfService")}
-            field="yearsOfService"
-            hint="Set by your direct supervisor."
-          >
-            <ReadOnlyValue empty="Not set yet">{profile.years}</ReadOnlyValue>
-          </Row>
+          {/* A guest is nobody's employee: no supervisor to name, no service
+              to count. */}
+          {profile.guest ? null : (
+            <>
+              <Row label="Direct supervisor" level={level("directSupervisor")} field="directSupervisor">
+                <ReadOnlyValue empty="Not set — payroll needs one">{profile.supervisor}</ReadOnlyValue>
+              </Row>
+              <Row
+                label="Years of service"
+                level={level("yearsOfService")}
+                field="yearsOfService"
+                hint="Set by your direct supervisor."
+              >
+                <ReadOnlyValue empty="Not set yet">{profile.years}</ReadOnlyValue>
+              </Row>
+            </>
+          )}
         </Card>
 
         <Card>
@@ -164,7 +176,9 @@ export function ProfileForm({
                 ? "Clients get only your VoIP line, marked as VoIP."
                 : preferred
                   ? `Clients get your ${PHONE_LABEL[preferred].toLowerCase()} phone${phones.voip ? ", and your VoIP line beside it" : ""}.`
-                  : "Add a phone below to choose one."
+                  : phones.personal
+                    ? "Clients get no phone until you choose one. Your personal phone goes to them only if you pick it."
+                    : "Add a phone below to choose one."
             }
             highlight
           >
@@ -174,7 +188,7 @@ export function ProfileForm({
               value={preferred ?? ""}
               onChange={(event) => setChosen((event.target.value || null) as PreferredPhone | null)}
             >
-              {preferred ? null : <option value="">No phone on file</option>}
+              {preferred ? null : <option value="">None chosen</option>}
               {(["PERSONAL", "WORK", "VOIP"] as PreferredPhone[]).map((kind) => {
                 const why = whyNotPreferable(kind, phones);
                 return (

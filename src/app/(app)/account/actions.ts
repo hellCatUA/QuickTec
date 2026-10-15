@@ -17,6 +17,7 @@ import {
 import { profileChanges, recordProfileEvents } from "@/lib/profile-history";
 import {
   effectivePreferred,
+  LEVEL_INFO,
   PHONE_LABEL,
   whyNotPreferable,
 } from "@/lib/profile-privacy";
@@ -75,8 +76,16 @@ export async function saveOwnProfile(
   const before = await loadProfile(user.id);
   if (!before) return { ok: false, error: "Account not found." };
 
-  const name = data.name ? capitaliseName(data.name) : null;
-  if (!name || !isFullName(name)) {
+  // The name box capitalises what it is given, so "Ludwig van Beethoven"
+  // comes back as "Ludwig Van Beethoven" without anybody touching it. That is
+  // not a change, and must not become one — nor a reason to take the name
+  // over from NextCloud, nor to refuse a save because NextCloud only ever had
+  // one word for them.
+  const typed = data.name ? capitaliseName(data.name) : null;
+  if (!typed) return { ok: false, error: "Write your preferred name — first and last." };
+  const nameChanged = typed !== capitaliseName(before.name);
+  const name = nameChanged ? typed : before.name;
+  if (nameChanged && !isFullName(name)) {
     return { ok: false, error: "Write your preferred name in full — first and last." };
   }
 
@@ -115,6 +124,9 @@ export async function saveOwnProfile(
   // an onboarding is "while there is none". After that, they ask.
   const legalName =
     !before.legalName && data.legalName ? capitaliseName(data.legalName) : before.legalName;
+  if (legalName && legalName !== before.legalName && !isFullName(legalName)) {
+    return { ok: false, error: "Write your legal name in full — first and last." };
+  }
 
   await db.user.update({
     where: { id: user.id },
@@ -218,8 +230,9 @@ export async function setOwnPictureVisibility(level: string): Promise<ProfileRes
     changes: [
       {
         field: "picture",
-        from: `Shown to ${before.avatarVisibility === "PUBLIC" ? "Public" : "Federated"}`,
-        to: `Shown to ${level === "PUBLIC" ? "Public" : "Federated"}`,
+        // "Not Public" is whatever level the company keeps pictures at.
+        from: `Shown to ${before.avatarVisibility === "PUBLIC" ? "Public" : LEVEL_INFO[settings.picture.level].label}`,
+        to: `Shown to ${level === "PUBLIC" ? "Public" : LEVEL_INFO[settings.picture.level].label}`,
       },
     ],
   });

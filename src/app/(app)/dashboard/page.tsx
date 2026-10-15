@@ -31,6 +31,8 @@ import { db } from "@/lib/db";
 import { OPEN_LIFECYCLES } from "@/lib/job-status";
 import { jobScopeWhere, reportIds } from "@/lib/scope";
 import { uploadsWritable } from "@/lib/storage";
+import { isGuest } from "@/lib/permissions";
+import { managesProfiles, reachableContact } from "@/lib/profile";
 import { can, getSessionUser, permissionScope } from "@/lib/session";
 
 export const metadata = { title: "Dashboard" };
@@ -124,11 +126,16 @@ export default async function DashboardPage() {
       },
     }),
 
+    // Their supervisor as this person may see them: the numbers the
+    // supervisor's profile shares, not their personal one.
     user.directSupervisorId
-      ? db.user.findUnique({
-          where: { id: user.directSupervisorId },
-          select: { name: true, email: true, phone: true },
-        })
+      ? Promise.all([
+          db.user.findUnique({
+            where: { id: user.directSupervisorId },
+            select: { name: true },
+          }),
+          reachableContact(user, user.directSupervisorId),
+        ]).then(([row, contact]) => (row ? { name: row.name, ...contact } : null))
       : Promise.resolve(null),
   ]);
 
@@ -144,6 +151,7 @@ export default async function DashboardPage() {
     payrollCount,
     notificationCount,
     myPendingCount,
+    profileRequestCount,
   ] = await Promise.all([
     changeWhere
       ? db.changeRequest.count({ where: { status: "PENDING", job: changeWhere } })
@@ -172,6 +180,16 @@ export default async function DashboardPage() {
     db.changeRequest.count({
       where: { requestedById: user.id, status: "PENDING" },
     }),
+    // The same queue Approvals shows: what their reports asked for, or every
+    // request for whoever manages users.
+    isGuest(user)
+      ? 0
+      : db.profileRequest.count({
+          where: {
+            status: "PENDING",
+            ...(managesProfiles(user) ? {} : { user: { directSupervisorId: user.id } }),
+          },
+        }),
   ]);
 
   const waiting = [
@@ -179,6 +197,7 @@ export default async function DashboardPage() {
     { label: "Ad-hoc jobs", count: adHocCount, href: "/approvals" },
     { label: "Reports to review", count: reviewCount, href: "/approvals" },
     { label: "Payroll weeks", count: payrollCount, href: "/approvals" },
+    { label: "Profile requests", count: profileRequestCount, href: "/approvals" },
     {
       label: "To acknowledge",
       count: notificationCount,
@@ -425,12 +444,14 @@ export default async function DashboardPage() {
                 {formatPhone(supervisor.phone)}
               </a>
             ) : null}
-            <a
-              href={`mailto:${supervisor.email}`}
-              className="truncate text-primary underline-offset-4 hover:underline"
-            >
-              {supervisor.email}
-            </a>
+            {supervisor.email ? (
+              <a
+                href={`mailto:${supervisor.email}`}
+                className="truncate text-primary underline-offset-4 hover:underline"
+              >
+                {supervisor.email}
+              </a>
+            ) : null}
           </CardContent>
         </Card>
       ) : null}

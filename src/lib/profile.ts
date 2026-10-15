@@ -11,6 +11,7 @@ import {
   type PrivacySettings,
   type ProfileField,
 } from "@/lib/profile-privacy";
+import { isGuest } from "@/lib/permissions";
 import { can, type SessionUser } from "@/lib/session";
 
 /**
@@ -31,36 +32,47 @@ export async function loadPrivacySettings(): Promise<PrivacySettings> {
 /** Company managers: the roles a direct supervisor is picked from. */
 const COMPANY_MANAGERS: BaseRole[] = ["MANAGER", "ADMINISTRATOR"];
 
+type Subject = { id: string; directSupervisorId: string | null; baseRole: BaseRole };
+
 /**
  * Whether the viewer may see this person's Restricted lines: they are the
- * person's direct supervisor, a company manager, or manage them on work that
- * is still going on — the PM or a supervisor of a project they are on, or the
- * supervisor of a job they are on.
+ * person's direct supervisor, a company manager or somebody who manages
+ * users, or they manage this person on work that is still going on — as the
+ * PM or a supervisor of a project the person works on, or the supervisor of a
+ * job the person is on.
  *
- * Only open work counts. A PM from a project that closed two years ago has no
- * business with somebody's home address today.
+ * Managing somebody, not working beside them: two supervisors on one project
+ * do not manage each other, and nobody's project manages a company manager.
+ * And only open work counts — a PM from a project that closed two years ago
+ * has no business with somebody's home address today.
  */
-export async function seesRestricted(
-  viewer: SessionUser,
-  subject: { id: string; directSupervisorId: string | null },
-): Promise<boolean> {
-  if (viewer.outside) return false;
+export async function seesRestricted(viewer: SessionUser, subject: Subject): Promise<boolean> {
+  if (isGuest(viewer)) return false;
   if (viewer.id === subject.id) return true;
   if (subject.directSupervisorId === viewer.id) return true;
   if (COMPANY_MANAGERS.includes(viewer.baseRole)) return true;
+  // Whoever may edit somebody's profile has to be able to read it.
+  if (managesProfiles(viewer)) return true;
 
-  if (viewer.scopedProjectIds.length > 0) {
-    const shared = await db.project.count({
+  if (viewer.scopedProjectIds.length > 0 && !COMPANY_MANAGERS.includes(subject.baseRole)) {
+    const managed = await db.project.count({
       where: {
         id: { in: viewer.scopedProjectIds },
         status: { not: "CLOSED" },
-        OR: [
-          { members: { some: { userId: subject.id } } },
-          { jobs: { some: { assignments: { some: { userId: subject.id } } } } },
+        // Not somebody who runs the project themselves.
+        members: { none: { userId: subject.id, role: { in: ["PROJECT_MANAGER", "SUPERVISOR"] } } },
+        OR: [{ managerId: null }, { managerId: { not: subject.id } }],
+        AND: [
+          {
+            OR: [
+              { members: { some: { userId: subject.id, role: "TECH" } } },
+              { jobs: { some: { assignments: { some: { userId: subject.id } } } } },
+            ],
+          },
         ],
       },
     });
-    if (shared > 0) return true;
+    if (managed > 0) return true;
   }
 
   const supervised = await db.jobAssignment.count({
@@ -74,12 +86,9 @@ export async function seesRestricted(
 }
 
 /** Who the viewer is to the person whose profile they are looking at. */
-export async function audienceFor(
-  viewer: SessionUser,
-  subject: { id: string; directSupervisorId: string | null },
-): Promise<Audience> {
+export async function audienceFor(viewer: SessionUser, subject: Subject): Promise<Audience> {
   if (viewer.id === subject.id) return "SELF";
-  if (viewer.outside) return "PUBLIC";
+  if (isGuest(viewer)) return "PUBLIC";
   return (await seesRestricted(viewer, subject)) ? "RESTRICTED" : "FEDERATED";
 }
 
@@ -100,7 +109,7 @@ export function mayEditProfileOf(
   viewer: SessionUser,
   subject: { id: string; directSupervisorId: string | null },
 ): boolean {
-  if (viewer.outside || viewer.id === subject.id) return false;
+  if (isGuest(viewer) || viewer.id === subject.id) return false;
   return subject.directSupervisorId === viewer.id || managesProfiles(viewer);
 }
 
@@ -306,4 +315,35 @@ export function phonesLine(card: ContactCard): string | null {
     return phone.kind === "VOIP" ? `VoIP ${number}` : number;
   });
   return parts.length > 0 ? parts.join(", ") : null;
+}
+
+/**
+ * How the viewer may reach somebody: the phone and email their profile lets
+ * this viewer see. The preferred phone first; failing that, whichever other
+ * number this viewer may see — a tech whose supervisor never chose one still
+ * needs a number, but not one the supervisor keeps Restricted.
+ */
+export async function reachableContact(
+  viewer: SessionUser,
+  userId: string,
+): Promise<{ phone: string | null; email: string | null }> {
+  const profile = await loadProfile(userId);
+  if (!profile) return { phone: null, email: null };
+  const [audience, settings] = await Promise.all([
+    audienceFor(viewer, profile),
+    loadPrivacySettings(),
+  ]);
+  const levels = levelsFor(profile, settings);
+  const preferred = contactPhones(profile, levels, audience)[0]?.number ?? null;
+  const fallback = (
+    [
+      ["workPhone", profile.workPhone],
+      ["voipPhone", profile.voipPhone],
+      ["personalPhone", profile.phone],
+    ] as [ProfileField, string | null][]
+  ).find(([field, number]) => number && shows(levels, audience, field))?.[1];
+  return {
+    phone: preferred ?? fallback ?? null,
+    email: shows(levels, audience, "email") ? profile.email : null,
+  };
 }
