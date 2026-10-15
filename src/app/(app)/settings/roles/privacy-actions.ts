@@ -9,6 +9,7 @@ import {
   isPrivacyLevel,
   isProfileField,
   LEVEL_INFO,
+  levelsAllowed,
   PROFILE_FIELD_KEYS,
 } from "@/lib/profile-privacy";
 import { requirePermission } from "@/lib/session";
@@ -27,13 +28,16 @@ export async function setFieldPrivacy(input: {
   level: string;
   allowPublic?: boolean;
 }): Promise<PrivacyResult> {
-  const actor = await requirePermission("roles.manage");
+  const actor = await requirePermission("roles.manage", { minScope: "ALL" });
 
   if (!isProfileField(input.field)) return { ok: false, error: "Unknown field." };
   if (!isPrivacyLevel(input.level)) return { ok: false, error: "Unknown level." };
 
   const field = input.field;
   const definition = fieldDefinition(field);
+  if (!levelsAllowed(field).includes(input.level)) {
+    return { ok: false, error: `${definition.label} cannot be kept narrower than that — it is shown across the app.` };
+  }
   const allowPublic = definition.allowPublic
     ? (input.allowPublic ?? definition.allowPublic.default)
     : false;
@@ -79,7 +83,7 @@ export async function setFieldPrivacy(input: {
 
 /** Forgets every change: the optimized defaults, as they ship. */
 export async function restorePrivacyDefaults(): Promise<PrivacyResult> {
-  const actor = await requirePermission("roles.manage");
+  const actor = await requirePermission("roles.manage", { minScope: "ALL" });
 
   const rows = await db.profilePrivacy.findMany({ select: { field: true, level: true } });
   if (rows.length === 0) return { ok: true };

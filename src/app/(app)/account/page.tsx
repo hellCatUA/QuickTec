@@ -2,7 +2,8 @@ import { BriefcaseBusiness, Clock, DollarSign, LogOut, MapPin } from "lucide-rea
 import { redirect } from "next/navigation";
 import { signOut } from "@/auth";
 import { ProfileHistory } from "@/components/profile/history";
-import { EditableKey, LevelBadge, LevelsLegend, ReadOnlyValue } from "@/components/profile/parts";
+import { EditableKey, LevelsLegend, ReadOnlyValue } from "@/components/profile/parts";
+import { ProfileRow } from "@/components/profile/row";
 import { ThemeToggle } from "@/components/theme";
 import { Button } from "@/components/ui/button";
 import {
@@ -95,6 +96,7 @@ export default async function AccountPage({
                     : null
                 }
                 reviewer={reviewer}
+                firstPicture={!profile.pictureSetAt}
               >
                 <div>
                   <div className="text-lg font-semibold">{profile.name}</div>
@@ -142,6 +144,7 @@ export default async function AccountPage({
               sso: profile.signInMethod === "SSO",
               guest: isGuest(profile),
               legalName: profile.legalName,
+              legalNameOpen: !profile.legalNameSetAt,
               pendingLegalName:
                 pendingLegal && pendingLegal.value
                   ? { id: pendingLegal.id, value: pendingLegal.value, reviewer }
@@ -173,25 +176,21 @@ export default async function AccountPage({
                   <DollarSign className="size-4 text-muted-foreground" /> Pay
                 </CardTitle>
               </CardHeader>
-              <div className="grid gap-2 p-4 sm:grid-cols-[10rem_minmax(0,1fr)_auto] sm:gap-4">
-                <span className="text-sm font-medium sm:pt-2.5">Default pay rate</span>
-                <div>
-                  <ReadOnlyValue empty="Not set">
-                    {profile.defaultPayType && profile.defaultPayRate
-                      ? formatRate(
-                          profile.defaultPayType as Parameters<typeof formatRate>[0],
-                          profile.defaultPayRate.toString(),
-                        )
-                      : null}
-                  </ReadOnlyValue>
-                  <p className="mt-1.5 text-xs text-muted-foreground">
-                    Set by managers. A job or a project with its own rate pays that instead.
-                  </p>
-                </div>
-                <div className="sm:pt-2">
-                  <LevelBadge level={levels.defaultPayRate} />
-                </div>
-              </div>
+              <ProfileRow
+                label="Default pay rate"
+                level={levels.defaultPayRate}
+                field="defaultPayRate"
+                hint="Set by managers. A job or a project with its own rate pays that instead."
+              >
+                <ReadOnlyValue empty="Not set">
+                  {profile.defaultPayType && profile.defaultPayRate
+                    ? formatRate(
+                        profile.defaultPayType as Parameters<typeof formatRate>[0],
+                        profile.defaultPayRate.toString(),
+                      )
+                    : null}
+                </ReadOnlyValue>
+              </ProfileRow>
             </Card>
           )}
 

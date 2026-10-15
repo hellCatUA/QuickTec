@@ -54,8 +54,8 @@ export function buildNavItems(user: SessionUser): NavItem[] {
   secondary.push({ href: "/account", label: "Account", icon: "account" });
   if (
     can(user, "settings.company") ||
-    can(user, "users.manage") ||
-    can(user, "roles.manage") ||
+    can(user, "users.manage", { minScope: "ALL" }) ||
+    can(user, "roles.manage", { minScope: "ALL" }) ||
     can(user, "settings.integrations")
   ) {
     secondary.push({ href: "/settings", label: "Settings", icon: "settings" });

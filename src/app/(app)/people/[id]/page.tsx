@@ -22,6 +22,7 @@ import {
   mayEditProfileOf,
   notTheirEmployee,
   seesHistory,
+  seesPayOf,
   shows,
 } from "@/lib/profile";
 import {
@@ -74,12 +75,16 @@ export default async function PersonPage({
   const profile = await loadProfile(id);
   if (!profile) notFound();
 
-  const [settings, audience] = await Promise.all([
+  const [settings, audience, payVisible] = await Promise.all([
     loadPrivacySettings(),
     audienceFor(viewer, profile),
+    seesPayOf(viewer, profile.id),
   ]);
   const levels = levelsFor(profile, settings);
-  const show = (field: ProfileField) => shows(levels, audience, field);
+  // The pay rate answers to the permission matrix as well as to its level:
+  // somebody "View pay rates" was taken from does not read it here instead.
+  const show = (field: ProfileField) =>
+    shows(levels, audience, field) && (field !== "defaultPayRate" || payVisible);
 
   const editable = mayEditProfileOf(viewer, profile);
   const history = seesHistory(audience);
@@ -126,17 +131,14 @@ export default async function PersonPage({
 
   return (
     <div className="mx-auto flex max-w-5xl flex-col gap-4">
-      <PageHeader
-        title={profile.name}
-        backHref="/people"
-        actions={
-          directSupervisor ? (
-            <Badge variant="primary">
-              <ShieldCheck className="size-3.5" /> You are their direct supervisor
-            </Badge>
-          ) : null
-        }
-      />
+      <PageHeader title={profile.name} backHref="/people" />
+      {/* A line of its own rather than beside the name, which it squeezed
+          onto two lines on a phone. */}
+      {directSupervisor ? (
+        <Badge variant="primary" className="-mt-2 self-start">
+          <ShieldCheck className="size-3.5" /> You are their direct supervisor
+        </Badge>
+      ) : null}
 
       {!profile.active ? (
         <p className="rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground">
@@ -256,7 +258,10 @@ export default async function PersonPage({
               ) : null}
               {show("primaryRegion") ? (
                 <Line label="Primary region" level={levels.primaryRegion}>
-                  {stateText(profile.primaryRegion ?? profile.state) ?? <span className="text-muted-foreground">Not set</span>}
+                  {/* The home state stands in only for somebody who may see it. */}
+                  {stateText(profile.primaryRegion ?? (show("state") ? profile.state : null)) ?? (
+                    <span className="text-muted-foreground">Not set</span>
+                  )}
                 </Line>
               ) : null}
               {show("statesOfOperation") ? (

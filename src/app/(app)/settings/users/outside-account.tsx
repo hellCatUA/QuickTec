@@ -6,18 +6,11 @@ import { NameInput } from "@/components/ui/name-input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Field, Input, Select } from "@/components/ui/field";
+import { US_TIME_ZONES } from "@/lib/us-regions";
 import { createOutsideUser, type LinkResult } from "../actions";
 
 const ROLES = ["TECH", "SUPERVISOR", "MANAGER", "ACCOUNTANT", "ADMINISTRATOR", "GUEST"];
 
-const TIME_ZONES = [
-  "America/Los_Angeles",
-  "America/Phoenix",
-  "America/Denver",
-  "America/Chicago",
-  "America/New_York",
-  "UTC",
-];
 
 /**
  * Adding somebody who does not work here.
@@ -155,9 +148,9 @@ export function OutsideAccount() {
                 name="timeZone"
                 defaultValue="America/Los_Angeles"
               >
-                {TIME_ZONES.map((zone) => (
-                  <option key={zone} value={zone}>
-                    {zone}
+                {US_TIME_ZONES.map((zone) => (
+                  <option key={zone.value} value={zone.value}>
+                    {zone.label}
                   </option>
                 ))}
               </Select>

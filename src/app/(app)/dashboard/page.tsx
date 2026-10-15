@@ -32,6 +32,7 @@ import { OPEN_LIFECYCLES } from "@/lib/job-status";
 import { jobScopeWhere, reportIds } from "@/lib/scope";
 import { uploadsWritable } from "@/lib/storage";
 import { isGuest } from "@/lib/permissions";
+import { canSupervise } from "@/lib/supervisors";
 import { managesProfiles, reachableContact } from "@/lib/profile";
 import { can, getSessionUser, permissionScope } from "@/lib/session";
 
@@ -101,8 +102,9 @@ export default async function DashboardPage() {
       : [],
 
     // Projects you are actually on, not the whole portfolio: a manager with
-    // ALL scope still opens the dashboard to see their own work.
-    db.project.findMany({
+    // ALL scope still opens the dashboard to see their own work. Not for a
+    // guest, who is let into particular jobs rather than into projects.
+    isGuest(user) ? [] : db.project.findMany({
       where: {
         status: "ACTIVE",
         OR: [
@@ -187,7 +189,13 @@ export default async function DashboardPage() {
       : db.profileRequest.count({
           where: {
             status: "PENDING",
-            ...(managesProfiles(user) ? {} : { user: { directSupervisorId: user.id } }),
+            // Somebody whose role no longer supervises keeps the link on
+              // their old reports' records, but not the queue.
+              ...(managesProfiles(user)
+                ? {}
+                : canSupervise(user.baseRole)
+                  ? { user: { directSupervisorId: user.id } }
+                  : { id: "" }),
           },
         }),
   ]);
@@ -427,7 +435,7 @@ export default async function DashboardPage() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <CircleCheck className="size-4 text-muted-foreground" />
+              <CircleCheck className="size-4 text-primary" />
               Your supervisor
             </CardTitle>
             <CardDescription>

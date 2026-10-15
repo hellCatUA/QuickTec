@@ -106,7 +106,7 @@ export function UserRow({
             </Badge>
             <Link
               href={`/people/${user.id}`}
-              className="text-xs font-medium text-primary hover:underline"
+              className="inline-flex min-h-10 items-center text-xs font-medium text-primary hover:underline"
             >
               Profile
             </Link>

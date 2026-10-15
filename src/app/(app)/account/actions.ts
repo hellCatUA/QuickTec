@@ -122,8 +122,10 @@ export async function saveOwnProfile(
 
   // A legal name is theirs to give once — at onboarding, which until there is
   // an onboarding is "while there is none". After that, they ask.
+  // Given once — at onboarding, which until there is one is "until it has
+  // ever been set". After that it is asked for, even if it has been cleared.
   const legalName =
-    !before.legalName && data.legalName ? capitaliseName(data.legalName) : before.legalName;
+    !before.legalNameSetAt && data.legalName ? capitaliseName(data.legalName) : before.legalName;
   if (legalName && legalName !== before.legalName && !isFullName(legalName)) {
     return { ok: false, error: "Write your legal name in full — first and last." };
   }
@@ -136,6 +138,7 @@ export async function saveOwnProfile(
       // the next sign-in.
       ...(name !== before.name ? { nameOverridden: true } : {}),
       legalName,
+      ...(legalName && !before.legalNameSetAt ? { legalNameSetAt: new Date() } : {}),
       phone: data.phone,
       workPhone: data.workPhone,
       voipPhone: data.voipPhone,
@@ -230,9 +233,10 @@ export async function setOwnPictureVisibility(level: string): Promise<ProfileRes
     changes: [
       {
         field: "picture",
+        // Who sees it, by the level's own name, as the badge beside it says.
         // "Not Public" is whatever level the company keeps pictures at.
-        from: `Shown to ${before.avatarVisibility === "PUBLIC" ? "Public" : LEVEL_INFO[settings.picture.level].label}`,
-        to: `Shown to ${level === "PUBLIC" ? "Public" : LEVEL_INFO[settings.picture.level].label}`,
+        from: LEVEL_INFO[before.avatarVisibility === "PUBLIC" ? "PUBLIC" : settings.picture.level].label,
+        to: LEVEL_INFO[level === "PUBLIC" ? "PUBLIC" : settings.picture.level].label,
       },
     ],
   });
@@ -254,17 +258,19 @@ export async function uploadOwnPicture(formData: FormData): Promise<ProfileResul
 
   const subject = await db.user.findUnique({
     where: { id: user.id },
-    select: { id: true, name: true, avatarPath: true, directSupervisorId: true },
+    select: { id: true, name: true, avatarPath: true, pictureSetAt: true, directSupervisorId: true },
   });
   if (!subject) return { ok: false, error: "Account not found." };
 
   const stored = await storeUploadedAvatar(user.id, file);
   if (!stored.ok) return stored;
 
-  if (!subject.avatarPath) {
+  // The first picture is theirs to set. One taken down by a manager is not
+  // a first picture: the next one is asked for.
+  if (!subject.avatarPath && !subject.pictureSetAt) {
     const taken = await db.user.updateMany({
-      where: { id: user.id, avatarPath: null },
-      data: { avatarPath: stored.path },
+      where: { id: user.id, avatarPath: null, pictureSetAt: null },
+      data: { avatarPath: stored.path, pictureSetAt: new Date() },
     });
     if (taken.count === 1) {
       await recordProfileEvents({
@@ -314,13 +320,16 @@ export async function requestOwnLegalName(
 
   const subject = await db.user.findUnique({
     where: { id: user.id },
-    select: { id: true, name: true, legalName: true, directSupervisorId: true },
+    select: { id: true, name: true, legalName: true, legalNameSetAt: true, directSupervisorId: true },
   });
   if (!subject) return { ok: false, error: "Account not found." };
   if (subject.legalName === value) return { ok: false, error: "That is already your legal name." };
 
-  if (!subject.legalName) {
-    await db.user.update({ where: { id: user.id }, data: { legalName: value } });
+  if (!subject.legalNameSetAt) {
+    await db.user.update({
+      where: { id: user.id },
+      data: { legalName: value, legalNameSetAt: new Date() },
+    });
     await recordProfileEvents({
       actorId: user.id,
       userId: user.id,

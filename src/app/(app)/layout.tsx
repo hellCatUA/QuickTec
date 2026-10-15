@@ -14,15 +14,8 @@ import {
 import { APP_NAME, brandLine } from "@/lib/company";
 import { db } from "@/lib/db";
 import { buildNavItems } from "@/lib/nav";
+import { ROLE_LABEL } from "@/lib/profile-format";
 import { can, getSessionUser } from "@/lib/session";
-
-const ROLE_LABEL: Record<string, string> = {
-  ADMINISTRATOR: "Administrator",
-  MANAGER: "Manager",
-  SUPERVISOR: "Supervisor",
-  TECH: "Tech",
-  ACCOUNTANT: "Accountant",
-};
 
 export default async function AppLayout({
   children,

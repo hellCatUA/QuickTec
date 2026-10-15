@@ -20,9 +20,9 @@ import {
 import { isLocationIcon } from "@/lib/location-icons";
 import { MAX_LOCATION_NAME } from "@/lib/deliverables";
 import { PERMISSION_KEYS, type Permission } from "@/lib/permissions";
-import { requirePermission } from "@/lib/session";
+import { can, requirePermission, type SessionUser } from "@/lib/session";
 import { canSupervise } from "@/lib/supervisors";
-import { timeZoneForZip } from "@/lib/us-regions";
+import { timeZoneForZip, US_STATES } from "@/lib/us-regions";
 import { BaseRole, PermissionScope } from "@prisma-client";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
@@ -124,7 +124,19 @@ export async function updateCompanySettings(
 const userSchema = z.object({
   userId: z.string().min(1),
   directSupervisorId: optionalText,
-  timeZone: z.string().trim().min(1),
+  // Fed straight to the date formatting on every page that shows them, which
+  // throws on a zone it does not know.
+  timeZone: z
+    .string()
+    .trim()
+    .refine((zone) => {
+      try {
+        new Intl.DateTimeFormat("en-US", { timeZone: zone });
+        return true;
+      } catch {
+        return false;
+      }
+    }, "That is not a time zone."),
   /** What the app calls them. Blank means "go back to what NextCloud says". */
   name: optionalText,
   // No legal name: it is the direct supervisor's, and is changed on the
@@ -133,7 +145,10 @@ const userSchema = z.object({
   addressLine1: optionalText,
   addressLine2: optionalText,
   city: optionalText,
-  state: optionalText,
+  state: optionalText.refine(
+    (value) => !value || US_STATES.some((entry) => entry.code === value),
+    "That is not a state.",
+  ),
   postalCode: optionalText,
   country: optionalText,
   active: flag,
@@ -230,9 +245,17 @@ export async function updateUser(
         ? { timeZone: zipZone }
         : {};
 
+  // A personal phone somebody picked as the one clients call is theirs to
+  // pick: replaced by a manager, it stops being the preferred one, rather than
+  // a number they never chose going out on the paperwork.
+  const preferredChange =
+    rest.phone !== before.phone && before.preferredPhone === "PERSONAL"
+      ? { preferredPhone: null }
+      : {};
+
   await db.user.update({
     where: { id: userId },
-    data: { ...rest, ...nameChange, ...zoneChange },
+    data: { ...rest, ...nameChange, ...zoneChange, ...preferredChange },
   });
 
   await recordAudit({
@@ -266,7 +289,7 @@ const roleGrantSchema = z.object({
 export async function updateRoleGrant(
   formData: FormData,
 ): Promise<ActionResult> {
-  const actor = await requirePermission("roles.manage");
+  const actor = await requirePermission("roles.manage", { minScope: "ALL" });
 
   const parsed = roleGrantSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) {
@@ -334,6 +357,24 @@ function setupLink(token: string): string {
   return `${base}/set-password?token=${token}`;
 }
 
+/**
+ * Whether the actor may hold the keys to an account with this role: create
+ * it with a password they chose, or be handed the link that sets one.
+ *
+ * Managing users is not managing roles. Without this an administrator — who
+ * manages users but not the permission matrix — could make a manager's
+ * account, sign in to it, and edit the matrix; or take a manager's own
+ * account over through a reset link. The roles that can change what
+ * everybody else may do are handed out only by somebody who already can.
+ */
+function mayHoldKeysTo(actor: SessionUser, role: BaseRole): boolean {
+  if (role !== "MANAGER" && role !== "ADMINISTRATOR") return true;
+  return can(actor, "roles.manage", { minScope: "ALL" });
+}
+
+const KEYS_REFUSED =
+  "Only somebody who manages roles can open a password way into a manager's or an administrator's account.";
+
 async function issueToken(userId: string, actorId: string): Promise<string> {
   // Anything outstanding stops working: two live links means two people can
   // take the account.
@@ -376,6 +417,8 @@ export async function createOutsideUser(
   }
 
   const { name, email, baseRole, timeZone, password } = parsed.data;
+
+  if (!mayHoldKeysTo(actor, baseRole)) return { ok: false, error: KEYS_REFUSED };
 
   if (password) {
     const problem = passwordProblem(password);
@@ -507,11 +550,13 @@ export async function grantPasswordFallback(
       id: true,
       name: true,
       active: true,
+      baseRole: true,
       signInMethod: true,
       passwordFallback: true,
     },
   });
   if (!user) return { ok: false, error: "No such account." };
+  if (!mayHoldKeysTo(actor, user.baseRole)) return { ok: false, error: KEYS_REFUSED };
 
   if (user.signInMethod === "LOCAL") {
     return {
@@ -654,11 +699,13 @@ export async function resetOutsidePassword(
     select: {
       id: true,
       name: true,
+      baseRole: true,
       signInMethod: true,
       passwordFallback: true,
     },
   });
   if (!user) return { ok: false, error: "No such account." };
+  if (!mayHoldKeysTo(actor, user.baseRole)) return { ok: false, error: KEYS_REFUSED };
 
   if (!canSignInWithPassword(user)) {
     return {

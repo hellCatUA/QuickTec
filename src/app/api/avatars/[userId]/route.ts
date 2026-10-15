@@ -10,14 +10,14 @@ import {
   shows,
 } from "@/lib/profile";
 import { getSessionUser } from "@/lib/session";
-import { absolutePath, fileExists } from "@/lib/storage";
+import { absolutePath, fileExists, fileVersion } from "@/lib/storage";
 
 /**
  * Serves somebody's profile picture to whoever may see it.
  *
  * The picture has a level like every other line of a profile, so the same
  * question is asked here as on the page that shows it: a Federated picture is
- * for people signed in to QuickTec, and not for an outside account. A picture
+ * for people signed in to QuickTec, and not for a guest. A picture
  * still waiting on an answer is shown to the person who sent it and to whoever
  * may answer it, nobody else.
  */
@@ -56,15 +56,24 @@ export async function GET(
     return new NextResponse("Not found", { status: 404 });
   }
 
+  // Asked again every time, because who may see it is decided per person and
+  // can change without the picture changing — but answered with a 304 when
+  // the browser already has this one, so asking is all it costs.
+  const etag = `"${fileVersion(storagePath)}"`;
+  const headers = {
+    "Cache-Control": "private, no-cache",
+    ETag: etag,
+  };
+  if (request.headers.get("if-none-match") === etag) {
+    return new NextResponse(null, { status: 304, headers });
+  }
+
   const data = await readFile(absolutePath(storagePath));
   return new NextResponse(new Uint8Array(data), {
     headers: {
+      ...headers,
       "Content-Type": "image/jpeg",
       "Content-Length": String(data.byteLength),
-      // Private, because who may see it is decided per person. Not immutable:
-      // a picture can stop being visible to somebody without changing, and a
-      // cache that kept it for a year would go on showing it.
-      "Cache-Control": "private, max-age=300",
     },
   });
 }

@@ -1,11 +1,11 @@
 "use client";
 
 import type { PreferredPhone, PrivacyLevel } from "@prisma-client";
-import { Check, Cloud, History, Loader2, Mail, MapPin, Phone, Route, X } from "lucide-react";
-import Link from "next/link";
+import { Check, Loader2, Mail, MapPin, Phone, Route, X } from "lucide-react";
 import * as React from "react";
 import { useActionState } from "react";
-import { LevelBadge, ReadOnlyValue } from "@/components/profile/parts";
+import { ReadOnlyValue } from "@/components/profile/parts";
+import { ProfileRow } from "@/components/profile/row";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Select } from "@/components/ui/field";
@@ -34,6 +34,8 @@ export type OwnProfile = {
   sso: boolean;
   guest: boolean;
   legalName: string | null;
+  /** Never set yet, so theirs to give rather than to ask for. */
+  legalNameOpen: boolean;
   pendingLegalName: { id: string; value: string; reviewer: string | null } | null;
   role: string;
   supervisor: string | null;
@@ -119,7 +121,7 @@ export function ProfileForm({
           <CardHeader>
             <CardTitle>Name &amp; role</CardTitle>
           </CardHeader>
-          <Row
+          <ProfileRow
             label="Preferred name"
             htmlFor="own-name"
             source={profile.sso ? "NextCloud" : null}
@@ -128,33 +130,33 @@ export function ProfileForm({
             hint="What clients and the team call you. First and last name."
           >
             <NameInput id="own-name" name="name" defaultValue={profile.name} required />
-          </Row>
-          <Row
+          </ProfileRow>
+          <ProfileRow
             label="Legal name"
-            htmlFor={profile.legalName ? undefined : "own-legal"}
+            htmlFor={profile.legalNameOpen ? "own-legal" : undefined}
             level={level("legalName")}
             field="legalName"
           >
             <LegalName profile={profile} />
-          </Row>
-          <Row label="Role" source={profile.sso ? "NextCloud groups" : null} level={level("role")} field="role">
+          </ProfileRow>
+          <ProfileRow label="Role" source={profile.sso ? "NextCloud groups" : null} level={level("role")} field="role">
             <ReadOnlyValue>{profile.role}</ReadOnlyValue>
-          </Row>
+          </ProfileRow>
           {/* A guest is nobody's employee: no supervisor to name, no service
               to count. */}
           {profile.guest ? null : (
             <>
-              <Row label="Direct supervisor" level={level("directSupervisor")} field="directSupervisor">
+              <ProfileRow label="Direct supervisor" level={level("directSupervisor")} field="directSupervisor">
                 <ReadOnlyValue empty="Not set — payroll needs one">{profile.supervisor}</ReadOnlyValue>
-              </Row>
-              <Row
+              </ProfileRow>
+              <ProfileRow
                 label="Years of service"
                 level={level("yearsOfService")}
                 field="yearsOfService"
                 hint="Set by your direct supervisor."
               >
                 <ReadOnlyValue empty="Not set yet">{profile.years}</ReadOnlyValue>
-              </Row>
+              </ProfileRow>
             </>
           )}
         </Card>
@@ -165,7 +167,7 @@ export function ProfileForm({
               <Phone className="size-4 text-muted-foreground" /> Phone
             </CardTitle>
           </CardHeader>
-          <Row
+          <ProfileRow
             label="Preferred"
             htmlFor="own-preferred"
             note="The one clients call"
@@ -199,8 +201,8 @@ export function ProfileForm({
                 );
               })}
             </Select>
-          </Row>
-          <Row
+          </ProfileRow>
+          <ProfileRow
             label="Personal"
             htmlFor="own-phone"
             source={profile.sso ? "NextCloud" : null}
@@ -213,8 +215,8 @@ export function ProfileForm({
             }
           >
             <PhoneInput id="own-phone" name="phone" defaultValue={profile.phone} />
-          </Row>
-          <Row
+          </ProfileRow>
+          <ProfileRow
             label="Work"
             htmlFor="own-work"
             level={level("workPhone")}
@@ -222,8 +224,8 @@ export function ProfileForm({
             hint="A company phone, if you have one."
           >
             <PhoneInput id="own-work" name="workPhone" defaultValue={profile.workPhone} />
-          </Row>
-          <Row
+          </ProfileRow>
+          <ProfileRow
             label="VoIP"
             htmlFor="own-voip"
             level={level("voipPhone")}
@@ -231,7 +233,7 @@ export function ProfileForm({
             hint="If you have one."
           >
             <PhoneInput id="own-voip" name="voipPhone" defaultValue={profile.voipPhone} />
-          </Row>
+          </ProfileRow>
         </Card>
 
         <Card>
@@ -240,7 +242,7 @@ export function ProfileForm({
               <Mail className="size-4 text-muted-foreground" /> Email
             </CardTitle>
           </CardHeader>
-          <Row
+          <ProfileRow
             label="Work"
             source={profile.sso ? "NextCloud sign-in" : null}
             level={level("email")}
@@ -252,7 +254,7 @@ export function ProfileForm({
             }
           >
             <ReadOnlyValue>{profile.email}</ReadOnlyValue>
-          </Row>
+          </ProfileRow>
         </Card>
 
         <Card>
@@ -261,7 +263,7 @@ export function ProfileForm({
               <MapPin className="size-4 text-muted-foreground" /> Home address
             </CardTitle>
           </CardHeader>
-          <Row
+          <ProfileRow
             label="Street"
             htmlFor="own-street"
             source={profile.sso ? "NextCloud" : null}
@@ -283,8 +285,8 @@ export function ProfileForm({
                 autoComplete="address-line2"
               />
             </div>
-          </Row>
-          <Row
+          </ProfileRow>
+          <ProfileRow
             label="Home region"
             note="City, state, ZIP"
             htmlFor="own-city"
@@ -296,7 +298,7 @@ export function ProfileForm({
                 : undefined
             }
           >
-            <div className="grid gap-2 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)]">
+            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_9rem_7rem]">
               <Input
                 id="own-city"
                 name="city"
@@ -323,8 +325,8 @@ export function ProfileForm({
                 autoComplete="postal-code"
               />
             </div>
-          </Row>
-          <Row
+          </ProfileRow>
+          <ProfileRow
             label="Time zone"
             htmlFor="own-zone"
             note={zoneChoice === "auto" ? "From your ZIP" : "Picked by you"}
@@ -347,7 +349,7 @@ export function ProfileForm({
                 </option>
               ))}
             </Select>
-          </Row>
+          </ProfileRow>
         </Card>
 
         <Card>
@@ -356,7 +358,7 @@ export function ProfileForm({
               <Route className="size-4 text-muted-foreground" /> Where you work
             </CardTitle>
           </CardHeader>
-          <Row
+          <ProfileRow
             label="Primary region"
             htmlFor="own-primary"
             level={level("primaryRegion")}
@@ -364,8 +366,8 @@ export function ProfileForm({
             hint="Starts as your home state."
           >
             <StatePicker id="own-primary" name="primaryRegion" value={primary} onChange={setPrimary} />
-          </Row>
-          <Row
+          </ProfileRow>
+          <ProfileRow
             label="States of operation"
             note="Where you take jobs"
             htmlFor="own-states"
@@ -378,7 +380,7 @@ export function ProfileForm({
                   {states.map((code) => (
                     <li
                       key={code}
-                      className="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-input pl-2.5 pr-1 text-sm"
+                      className="inline-flex h-10 items-center gap-1 rounded-md border border-border bg-input pl-2.5 pr-1 text-sm sm:h-8"
                     >
                       {stateName(code) ?? code}
                       <input type="hidden" name="statesOfOperation" value={code} />
@@ -386,7 +388,7 @@ export function ProfileForm({
                         type="button"
                         aria-label={`Remove ${stateName(code) ?? code}`}
                         onClick={() => setStates((was) => was.filter((entry) => entry !== code))}
-                        className="flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+                        className="flex size-8 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground sm:size-6"
                       >
                         <X className="size-3.5" />
                       </button>
@@ -403,10 +405,10 @@ export function ProfileForm({
                 }}
               />
             </div>
-          </Row>
+          </ProfileRow>
         </Card>
 
-        <div className="sticky bottom-[calc(env(safe-area-inset-bottom)+4.5rem)] z-10 flex flex-wrap items-center gap-3 rounded-xl border border-border bg-surface-raised p-3 shadow-lg md:bottom-4">
+        <div className="sticky bottom-[calc(env(safe-area-inset-bottom)+3.5rem)] z-10 flex flex-wrap items-center gap-3 rounded-xl border border-border bg-surface-raised p-3 shadow-lg md:bottom-4">
           <Button type="submit" disabled={pending}>
             {pending ? <Loader2 className="animate-spin" /> : null}
             Save changes
@@ -434,13 +436,13 @@ function LegalName({ profile }: { profile: OwnProfile }) {
   const [result, setResult] = React.useState<ProfileResult | null>(null);
   const [busy, startTransition] = React.useTransition();
 
-  if (!profile.legalName) {
+  if (profile.legalNameOpen) {
     return (
       <div className="flex flex-col gap-1.5">
         <NameInput id="own-legal" name="legalName" defaultValue="" placeholder="As on your ID" />
         <p className="text-xs text-muted-foreground">
-          For payroll and anything you sign. You set it once; after that a change goes to your
-          direct supervisor.
+          For payroll and anything you sign. You set it once; after that a change is asked for
+          {profile.guest ? "" : " — your direct supervisor answers"}.
         </p>
       </div>
     );
@@ -451,7 +453,9 @@ function LegalName({ profile }: { profile: OwnProfile }) {
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-2">
-        <ReadOnlyValue className="min-w-48 flex-1">{profile.legalName}</ReadOnlyValue>
+        <ReadOnlyValue className="min-w-48 flex-1" empty="Not set">
+          {profile.legalName}
+        </ReadOnlyValue>
         {!asking && !pendingRequest ? (
           <Button type="button" variant="ghost" size="sm" onClick={() => setAsking(true)}>
             Request a change
@@ -546,89 +550,6 @@ function LegalAsk({
           Cancel
         </Button>
       </div>
-    </div>
-  );
-}
-
-/**
- * One line of the profile: what it is and where it came from, the value, and
- * who sees it with the way into its history.
- */
-function Row({
-  label,
-  htmlFor,
-  source,
-  note,
-  level,
-  field,
-  hint,
-  highlight,
-  children,
-}: {
-  label: string;
-  htmlFor?: string;
-  source?: string | null;
-  note?: string;
-  level: PrivacyLevel;
-  field: ProfileField;
-  hint?: string;
-  highlight?: boolean;
-  children: React.ReactNode;
-}) {
-  const Tag = htmlFor ? "label" : "span";
-  return (
-    <div
-      className={`grid gap-2 border-t border-border p-4 first:border-t-0 sm:grid-cols-[10rem_minmax(0,1fr)_auto] sm:gap-4 ${highlight ? "bg-primary/5" : ""}`}
-    >
-      {/* On a phone who sees it sits beside the name of the line, so the
-          line is not three rows tall; wider, it has a column of its own. */}
-      <div className="flex items-start gap-2 sm:pt-2.5">
-        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <Tag {...(htmlFor ? { htmlFor } : {})} className="text-sm font-medium">
-            {label}
-          </Tag>
-          {source ? (
-            <span className="flex items-center gap-1 text-xs text-muted-foreground">
-              <Cloud className="size-3 text-primary" /> {source}
-            </span>
-          ) : note ? (
-            <span className="text-xs text-muted-foreground">{note}</span>
-          ) : null}
-        </div>
-        <LevelControls level={level} field={field} label={label} className="sm:hidden" />
-      </div>
-      <div className="min-w-0">
-        {children}
-        {hint ? <p className="mt-1.5 text-xs text-muted-foreground">{hint}</p> : null}
-      </div>
-      <LevelControls level={level} field={field} label={label} className="hidden sm:flex sm:pt-2" />
-    </div>
-  );
-}
-
-function LevelControls({
-  level,
-  field,
-  label,
-  className,
-}: {
-  level: PrivacyLevel;
-  field: ProfileField;
-  label: string;
-  className?: string;
-}) {
-  return (
-    <div className={`flex items-center gap-1 ${className ?? ""}`}>
-      <LevelBadge level={level} />
-      <Link
-        href={`?history=${field}#history`}
-        scroll={false}
-        aria-label={`History of ${label.toLowerCase()}`}
-        title="History"
-        className="flex size-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"
-      >
-        <History className="size-4" />
-      </Link>
     </div>
   );
 }

@@ -45,12 +45,14 @@
   --input: oklch(1 0 0);
   --ring: oklch(0.55 0.15 235);
 
-  --primary: oklch(0.52 0.16 235);
+  /* Dark enough for small text on a tint of itself — badges, warnings —
+     to read at 4.5:1 on white. */
+  --primary: oklch(0.48 0.16 235);
   --primary-foreground: oklch(0.99 0.005 235);
 
-  --success: oklch(0.52 0.14 155);
+  --success: oklch(0.46 0.13 155);
   --success-foreground: oklch(0.99 0.005 155);
-  --warning: oklch(0.62 0.14 70);
+  --warning: oklch(0.53 0.13 70);
   --warning-foreground: oklch(0.99 0.005 70);
   --danger: oklch(0.55 0.2 25);
   --danger-foreground: oklch(0.99 0.005 25);

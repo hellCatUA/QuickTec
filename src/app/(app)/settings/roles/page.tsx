@@ -22,7 +22,7 @@ export default async function RolesSettingsPage({
 }) {
   const viewer = await getSessionUser();
   if (!viewer) redirect("/signin");
-  if (!can(viewer, "roles.manage")) redirect("/dashboard");
+  if (!can(viewer, "roles.manage", { minScope: "ALL" })) redirect("/dashboard");
 
   const { tab } = await searchParams;
   const privacy = tab === "privacy";

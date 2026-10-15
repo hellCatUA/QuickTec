@@ -36,13 +36,16 @@ function who(entry: HistoryEntry): string {
   }
 }
 
+/** How many changes are shown before somebody asks for the rest. */
+const RECENT = 10;
+
+/** The links between views of the history: small text, a thumb's height. */
+const LINK = "inline-flex min-h-10 items-center text-xs font-medium text-primary hover:underline";
+
 /**
  * The history of a profile, newest first: what changed, from what to what,
  * who did it, and what was asked for and how it was answered.
  */
-/** How many changes are shown before somebody asks for the rest. */
-const RECENT = 10;
-
 export function ProfileHistory({
   entries,
   field,
@@ -67,11 +70,7 @@ export function ProfileHistory({
           {field ? `History — ${PROFILE_FIELDS[field].label}` : "History"}
         </CardTitle>
         {field ? (
-          <Link
-            href={`${basePath}#history`}
-            scroll={false}
-            className="ml-auto text-xs font-medium text-primary hover:underline"
-          >
+          <Link href={`${basePath}#history`} scroll={false} className={`ml-auto ${LINK}`}>
             Every field
           </Link>
         ) : null}
@@ -90,7 +89,7 @@ export function ProfileHistory({
               >
                 <span
                   aria-hidden
-                  className="absolute -left-[5px] top-1.5 size-2.5 rounded-full border border-border bg-surface"
+                  className="absolute -left-[5px] top-1.5 size-2.5 rounded-full bg-muted-foreground/40 ring-2 ring-surface"
                 />
                 <div className="text-xs text-muted-foreground">
                   {usDateTimeInZone(entry.at, timeZone)}
@@ -125,12 +124,12 @@ export function ProfileHistory({
           </ol>
         )}
         {shown.length < entries.length ? (
-          <Link
-            href={`${basePath}?history=all#history`}
-            scroll={false}
-            className="mt-3 inline-block text-xs font-medium text-primary hover:underline"
-          >
+          <Link href={`${basePath}?history=all#history`} scroll={false} className={`mt-1 ${LINK}`}>
             Show all {entries.length} changes
+          </Link>
+        ) : all && entries.length > RECENT ? (
+          <Link href={`${basePath}#history`} scroll={false} className={`mt-1 ${LINK}`}>
+            Show the latest {RECENT}
           </Link>
         ) : null}
       </CardContent>

@@ -7,6 +7,7 @@ import { db } from "@/lib/db";
 import { optionalText, phoneText } from "@/lib/form";
 import { capitaliseName, isFullName } from "@/lib/names";
 import { notify } from "@/lib/notifications";
+import { formatPhone } from "@/lib/phone";
 import { loadProfile, mayEditProfileOf, notTheirEmployee } from "@/lib/profile";
 import { isoDate, monthYear, phoneText as phoneDisplay, stateText, statesText } from "@/lib/profile-format";
 import { profileChanges, recordProfileEvents, type ProfileChange } from "@/lib/profile-history";
@@ -80,23 +81,41 @@ export async function saveProfileAsManager(formData: FormData): Promise<ManagerR
     return { ok: false, error: "You cannot change this person's profile." };
   }
 
-  // The name box capitalises what it is given, so a stored "Maria de la Cruz"
-  // comes back as "Maria De La Cruz" untouched. That is not a change — and
-  // must not cost a warning, a notification or a line in the history.
+  // Only what this person actually changed. The form says what each field
+  // held when it was opened; a field left as it was keeps whatever is stored
+  // now, so a legal name approved while this page sat open is not put back,
+  // and the name box re-capitalising "Maria de la Cruz" is not a change.
+  const was = (key: string): string | null =>
+    formData.has(`was.${key}`) ? String(formData.get(`was.${key}`) ?? "") : null;
+  const touched = (key: string, now: string | null, same = (a: string, b: string) => a === b) => {
+    const opened = was(key);
+    return opened === null || !same(now ?? "", opened);
+  };
+
   const typedLegal = data.legalName ? capitaliseName(data.legalName) : null;
-  const legalName =
-    typedLegal && before.legalName && typedLegal === capitaliseName(before.legalName)
-      ? before.legalName
-      : typedLegal;
+  const legalName = touched("legalName", typedLegal, (a, b) => a === capitaliseName(b))
+    ? typedLegal
+    : before.legalName;
   if (legalName && legalName !== before.legalName && !isFullName(legalName)) {
     return { ok: false, error: "Write the legal name in full — first and last." };
   }
-  const start = data.serviceStartDate ? new Date(`${data.serviceStartDate}T00:00:00Z`) : null;
+
+  const startText = touched("serviceStartDate", data.serviceStartDate)
+    ? data.serviceStartDate
+    : isoDate(before.serviceStartDate) || null;
+  const start = startText ? new Date(`${startText}T00:00:00Z`) : null;
   if (start && (Number.isNaN(start.getTime()) || start.getTime() > Date.now())) {
     return { ok: false, error: "The start date cannot be in the future." };
   }
 
-  const states = Array.from(
+  const samePhone = (a: string, b: string) => (formatPhone(a) || a) === (formatPhone(b) || b);
+  const workPhone = touched("workPhone", data.workPhone, samePhone) ? data.workPhone : before.workPhone;
+  const voipPhone = touched("voipPhone", data.voipPhone, samePhone) ? data.voipPhone : before.voipPhone;
+  const primaryRegion = touched("primaryRegion", data.primaryRegion)
+    ? data.primaryRegion
+    : before.primaryRegion;
+
+  const submittedStates = Array.from(
     new Set(
       formData
         .getAll("statesOfOperation")
@@ -104,12 +123,15 @@ export async function saveProfileAsManager(formData: FormData): Promise<ManagerR
         .filter((value) => US_STATES.some((entry) => entry.code === value)),
     ),
   );
+  const states = touched("statesOfOperation", [...submittedStates].sort().join(","))
+    ? submittedStates
+    : before.statesOfOperation;
 
   // The direct supervisor's own fields, and whether this is somebody else
   // reaching into them.
   const sensitive: ProfileChange[] = profileChanges(
     { legalName: before.legalName, yearsOfService: isoDate(before.serviceStartDate) || null },
-    { legalName, yearsOfService: data.serviceStartDate },
+    { legalName, yearsOfService: startText },
   );
   const warned = sensitive.length > 0 && notTheirEmployee(actor, before);
   if (warned && data.confirmed !== "1") {
@@ -131,10 +153,11 @@ export async function saveProfileAsManager(formData: FormData): Promise<ManagerR
     where: { id: before.id },
     data: {
       legalName,
+      ...(legalName && !before.legalNameSetAt ? { legalNameSetAt: new Date() } : {}),
       serviceStartDate: start,
-      workPhone: data.workPhone,
-      voipPhone: data.voipPhone,
-      primaryRegion: data.primaryRegion,
+      workPhone,
+      voipPhone,
+      primaryRegion,
       statesOfOperation: states,
     },
   });
@@ -168,9 +191,9 @@ export async function saveProfileAsManager(formData: FormData): Promise<ManagerR
         statesOfOperation: statesText(before.statesOfOperation),
       },
       {
-        workPhone: phoneDisplay(data.workPhone),
-        voipPhone: phoneDisplay(data.voipPhone),
-        primaryRegion: stateText(data.primaryRegion),
+        workPhone: phoneDisplay(workPhone),
+        voipPhone: phoneDisplay(voipPhone),
+        primaryRegion: stateText(primaryRegion),
         statesOfOperation: statesText(states),
       },
     ),
@@ -213,7 +236,10 @@ export async function setPictureAsManager(formData: FormData): Promise<ManagerRe
   const stored = await storeUploadedAvatar(subject.id, file);
   if (!stored.ok) return stored;
 
-  await db.user.update({ where: { id: subject.id }, data: { avatarPath: stored.path } });
+  await db.user.update({
+    where: { id: subject.id },
+    data: { avatarPath: stored.path, pictureSetAt: subject.pictureSetAt ?? new Date() },
+  });
   if (subject.avatarPath) await deleteFile(subject.avatarPath);
 
   await recordProfileEvents({

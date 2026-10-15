@@ -14,11 +14,13 @@ import {
   loadProfile,
   phonesLine,
   preferredPhoneLine,
+  seesPayOf,
 } from "@/lib/profile";
 import { profileHistory } from "@/lib/profile-history";
 import {
   effectivePreferred,
   levelFor,
+  levelsAllowed,
   preferableKinds,
   privacySettings,
   yearsLabel,
@@ -175,6 +177,17 @@ async function rules() {
     "FEDERATED",
   );
   check(
+    "a name the whole app shows cannot be kept narrower than Public",
+    privacySettings([{ field: "name", level: "RESTRICTED", allowPublic: null }]).name.level,
+    "PUBLIC",
+  );
+  check(
+    "a stored level below a field's floor counts as its default",
+    privacySettings([{ field: "email", level: "RESTRICTED", allowPublic: null }]).email.level,
+    "PUBLIC",
+  );
+  check("and the settings offer only what is allowed", levelsAllowed("role").join(","), "FEDERATED,PUBLIC");
+  check(
     "a field the code no longer knows is ignored",
     Object.keys(privacySettings([{ field: "shoeSize", level: "PUBLIC", allowPublic: null }])).includes("shoeSize"),
     false,
@@ -192,6 +205,25 @@ async function audienceAndCards() {
   check("their direct supervisor", await audienceFor(await sessionOf("boss@417group.org"), subject), "RESTRICTED");
   check("any company manager", await audienceFor(await sessionOf("admin@417group.org"), subject), "RESTRICTED");
   check("another tech", await audienceFor(await sessionOf("tech2@417group.org"), subject), "FEDERATED");
+  check(
+    "a supervisor demoted to tech is no longer one over their old reports",
+    await audienceFor(await sessionOf("tech2@417group.org"), { ...subject, directSupervisorId: (await sessionOf("tech2@417group.org")).id }),
+    "FEDERATED",
+  );
+
+  const tech2 = await sessionOf("tech2@417group.org");
+  check("a pay rate is not for another tech", await seesPayOf(tech2, tech.id), false);
+  check(
+    "nor for somebody who sees only their own",
+    await seesPayOf({ ...tech2, grants: new Map([["pay.view_rates", "OWN"]]) as SessionUser["grants"] }, tech.id),
+    false,
+  );
+  check(
+    "but is for somebody who sees everyone's",
+    await seesPayOf({ ...tech2, grants: new Map([["pay.view_rates", "ALL"]]) as SessionUser["grants"] }, tech.id),
+    true,
+  );
+  check("and always for the person themselves", await seesPayOf(await sessionOf("tech@417group.org"), tech.id), true);
 
   // A field supervisor sees Restricted lines only through open work they
   // manage the person on.
@@ -359,7 +391,7 @@ async function nextcloudPicture() {
   console.log("\n— the NextCloud picture —");
   const tech2 = await db.user.findUniqueOrThrow({ where: { email: "tech2@417group.org" } });
   if (tech2.avatarPath) await deleteFile(tech2.avatarPath);
-  await db.user.update({ where: { id: tech2.id }, data: { avatarPath: null } });
+  await db.user.update({ where: { id: tech2.id }, data: { avatarPath: null, pictureSetAt: null } });
   // A fresh start: the copy is once in a profile's life, and earlier runs
   // have already had theirs.
   await db.auditEvent.deleteMany({
@@ -405,6 +437,11 @@ async function nextcloudPicture() {
       (await db.user.findUniqueOrThrow({ where: { id: tech2.id } })).avatarPath,
       copied,
     );
+    check(
+      "and it counts as their picture having been set",
+      Boolean((await db.user.findUniqueOrThrow({ where: { id: tech2.id } })).pictureSetAt),
+      true,
+    );
     // A manager takes it down; the next sign-in must not put it back.
     await db.user.update({ where: { id: tech2.id }, data: { avatarPath: null } });
     if (copied) await deleteFile(copied);
@@ -428,6 +465,7 @@ async function pages() {
     where: { id: tech.id },
     data: {
       legalName: "Terrence A. Tech",
+      legalNameSetAt: new Date(),
       phone: "559-555-0142",
       workPhone: null,
       voipPhone: null,

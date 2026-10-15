@@ -61,6 +61,13 @@ type FieldDefinition = {
   group: ProfileGroup;
   /** The optimized default. */
   level: PrivacyLevel;
+  /**
+   * The narrowest level the company may set. Some lines are shown all over
+   * the app — the name on every job, the role and email in every picker — and
+   * offering to restrict them would be a promise the rest of the app does
+   * not keep.
+   */
+  minLevel?: PrivacyLevel;
   /** The field's one switch, where it has one: what it says, and its default. */
   allowPublic?: { label: string; default: boolean };
   /** Who changes it. Said, not configured. */
@@ -79,7 +86,9 @@ export const PROFILE_FIELDS = {
     label: "Preferred name",
     group: "Name & role",
     level: "PUBLIC",
-    changedBy: "The person",
+    // On the paperwork, the WM Form and every list: it is who they are.
+    minLevel: "PUBLIC",
+    changedBy: "The person; managers, on the users page",
   },
   legalName: {
     label: "Legal name",
@@ -91,12 +100,14 @@ export const PROFILE_FIELDS = {
     label: "Role",
     group: "Name & role",
     level: "FEDERATED",
-    changedBy: "NextCloud groups",
+    minLevel: "FEDERATED",
+    changedBy: "NextCloud groups; for an account held here, set when it is made",
   },
   directSupervisor: {
     label: "Direct supervisor",
     group: "Name & role",
     level: "FEDERATED",
+    minLevel: "FEDERATED",
     changedBy: "Managers",
   },
   yearsOfService: {
@@ -116,7 +127,7 @@ export const PROFILE_FIELDS = {
     group: "Phone & email",
     level: "RESTRICTED",
     allowPublic: { label: "Public while it is the preferred phone", default: true },
-    changedBy: "The person",
+    changedBy: "The person; managers, on the users page",
   },
   workPhone: {
     label: "Work phone",
@@ -134,37 +145,38 @@ export const PROFILE_FIELDS = {
     label: "Work email",
     group: "Phone & email",
     level: "PUBLIC",
-    changedBy: "NextCloud; an administrator for outside accounts",
+    minLevel: "FEDERATED",
+    changedBy: "NextCloud; for an account held here, set when it is made",
   },
   street: {
     label: "Street address",
     group: "Home address",
     level: "RESTRICTED",
-    changedBy: "The person",
+    changedBy: "The person; managers, on the users page",
   },
   city: {
     label: "City",
     group: "Home address",
     level: "PUBLIC",
-    changedBy: "The person",
+    changedBy: "The person; managers, on the users page",
   },
   state: {
     label: "State",
     group: "Home address",
     level: "PUBLIC",
-    changedBy: "The person",
+    changedBy: "The person; managers, on the users page",
   },
   zip: {
     label: "ZIP",
     group: "Home address",
     level: "PUBLIC",
-    changedBy: "The person",
+    changedBy: "The person; managers, on the users page",
   },
   timeZone: {
     label: "Time zone",
     group: "Home address",
     level: "PUBLIC",
-    changedBy: "The person — from the ZIP until they pick one",
+    changedBy: "The person — from the ZIP until they pick one; managers, on the users page",
   },
   primaryRegion: {
     label: "Primary region",
@@ -198,6 +210,12 @@ export function fieldDefinition(field: ProfileField): FieldDefinition {
   return PROFILE_FIELDS[field];
 }
 
+/** The levels the company may choose for a field, narrowest first. */
+export function levelsAllowed(field: ProfileField): PrivacyLevel[] {
+  const min = fieldDefinition(field).minLevel ?? "RESTRICTED";
+  return PRIVACY_LEVELS.filter((level) => openness(level) >= openness(min));
+}
+
 /** The company's level for every field, the defaults filled in. */
 export type PrivacySettings = Record<
   ProfileField,
@@ -227,7 +245,8 @@ export function privacySettings(overrides: PrivacyOverride[]): PrivacySettings {
     if (!isProfileField(row.field)) continue;
     const definition = fieldDefinition(row.field);
     settings[row.field] = {
-      level: row.level,
+      // A row from before a field gained a floor is held to it.
+      level: levelsAllowed(row.field).includes(row.level) ? row.level : definition.level,
       allowPublic: definition.allowPublic
         ? (row.allowPublic ?? definition.allowPublic.default)
         : false,

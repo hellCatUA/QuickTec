@@ -10,7 +10,7 @@ import {
   differsFromDefault,
   fieldDefinition,
   LEVEL_INFO,
-  PRIVACY_LEVELS,
+  levelsAllowed,
   PROFILE_FIELD_KEYS,
   PROFILE_GROUPS,
   type PrivacySettings,
@@ -159,7 +159,9 @@ export function PrivacyMatrix({ initial }: { initial: PrivacySettings }) {
               </colgroup>
               <thead>
                 <tr className="border-b border-border">
-                  <th className="p-3 text-left font-medium">Field</th>
+                  {/* Pinned, so the field's name stays in view while the rest
+                      of a row scrolls sideways on a phone. */}
+                  <th className="sticky left-0 z-10 bg-surface p-3 text-left font-medium">Field</th>
                   <th className="p-3 text-left text-xs font-medium text-muted-foreground">Who sees it</th>
                   <th className="p-3 text-left text-xs font-medium text-muted-foreground">Optimized default</th>
                   <th className="p-3 text-left text-xs font-medium text-muted-foreground">Changed by</th>
@@ -172,7 +174,9 @@ export function PrivacyMatrix({ initial }: { initial: PrivacySettings }) {
                   const differs = differsFromDefault(field, value);
                   return (
                     <tr key={field} className={`border-b border-border last:border-0 ${differs ? "bg-warning/5" : ""}`}>
-                      <td className="p-3 align-top font-medium">
+                      <td
+                        className={`sticky left-0 z-10 p-3 align-top font-medium ${differs ? "bg-[color-mix(in_oklch,var(--warning)_5%,var(--surface))]" : "bg-surface"}`}
+                      >
                         {definition.label}
                         {differs ? (
                           <Badge variant="warning" className="ml-2">
@@ -183,23 +187,30 @@ export function PrivacyMatrix({ initial }: { initial: PrivacySettings }) {
                       <td className="p-2 align-top">
                         <div className="flex items-center gap-2">
                           <LevelBadge level={value.level} iconOnly />
-                          <select
-                            aria-label={`Who sees ${definition.label.toLowerCase()}`}
-                            value={value.level}
-                            onChange={(event) =>
-                              void change(field, {
-                                level: event.target.value as PrivacyLevel,
-                                allowPublic: value.allowPublic,
-                              })
-                            }
-                            className="min-h-9 min-w-36 rounded-md border border-border bg-input px-2 text-xs"
-                          >
-                            {PRIVACY_LEVELS.map((level) => (
-                              <option key={level} value={level}>
-                                {LEVEL_INFO[level].label}
-                              </option>
-                            ))}
-                          </select>
+                          {levelsAllowed(field).length === 1 ? (
+                            // Shown everywhere, so there is nothing to choose.
+                            <span className="text-xs text-muted-foreground">
+                              Always {LEVEL_INFO[value.level].label}
+                            </span>
+                          ) : (
+                            <select
+                              aria-label={`Who sees ${definition.label.toLowerCase()}`}
+                              value={value.level}
+                              onChange={(event) =>
+                                void change(field, {
+                                  level: event.target.value as PrivacyLevel,
+                                  allowPublic: value.allowPublic,
+                                })
+                              }
+                              className="min-h-9 min-w-36 rounded-md border border-border bg-input px-2 text-xs"
+                            >
+                              {levelsAllowed(field).map((level) => (
+                                <option key={level} value={level}>
+                                  {LEVEL_INFO[level].label}
+                                </option>
+                              ))}
+                            </select>
+                          )}
                           {saving === field ? (
                             <Loader2 className="size-3 shrink-0 animate-spin text-muted-foreground" />
                           ) : null}

@@ -12,7 +12,10 @@ export const metadata = { title: "Users" };
 export default async function UsersSettingsPage() {
   const viewer = await getSessionUser();
   if (!viewer) redirect("/signin");
-  if (!can(viewer, "users.manage")) redirect("/dashboard");
+  // Every account's legal name, street and personal phone are on this page,
+  // and every change made from it needs the same reach: a narrower grant of
+  // the permission is not a way in to the whole company's details.
+  if (!can(viewer, "users.manage", { minScope: "ALL" })) redirect("/dashboard");
 
   const users = await db.user.findMany({
     orderBy: [{ active: "desc" }, { name: "asc" }],

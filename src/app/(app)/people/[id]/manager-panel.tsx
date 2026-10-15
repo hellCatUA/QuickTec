@@ -4,6 +4,7 @@ import type { PrivacyLevel, ProfileRequestField } from "@prisma-client";
 import { Camera, Check, Loader2, TriangleAlert, X } from "lucide-react";
 import * as React from "react";
 import { Avatar, LevelBadge } from "@/components/profile/parts";
+import { ProfileRow } from "@/components/profile/row";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Textarea } from "@/components/ui/field";
@@ -143,7 +144,7 @@ export function ManagerPanel({
           onSave={(formData) => submit(() => formData, saveProfileAsManager)}
         />
         <div className="flex flex-wrap items-center gap-2 border-t border-border p-4">
-          <span className="mr-auto flex items-center gap-2 text-sm font-medium">
+          <span className="flex w-full items-center gap-2 text-sm font-medium sm:mr-auto sm:w-auto">
             Profile picture <LevelBadge level={levels.picture} iconOnly />
           </span>
           <PicturePicker
@@ -235,29 +236,57 @@ function ManagerFields({
       }}
     >
       <input type="hidden" name="userId" value={subject.id} />
-      <Row label="Legal name" htmlFor="m-legal" level={levels.legalName}>
+      {/* What each field held when this was opened: only what is changed
+          from it is saved, so an answer given meanwhile is not undone. */}
+      <input type="hidden" name="was.legalName" value={subject.legalName ?? ""} />
+      <input type="hidden" name="was.serviceStartDate" value={subject.serviceStartDate} />
+      <input type="hidden" name="was.workPhone" value={subject.workPhone ?? ""} />
+      <input type="hidden" name="was.voipPhone" value={subject.voipPhone ?? ""} />
+      <input type="hidden" name="was.primaryRegion" value={subject.primaryRegion ?? ""} />
+      <input
+        type="hidden"
+        name="was.statesOfOperation"
+        value={[...subject.statesOfOperation].sort().join(",")}
+      />
+      <ProfileRow label="Legal name" htmlFor="m-legal" level={levels.legalName} field="legalName">
         <NameInput id="m-legal" name="legalName" defaultValue={subject.legalName} placeholder="As on their ID" />
-      </Row>
-      <Row label="Started" htmlFor="m-start" level={levels.yearsOfService} hint="Years of service count from here.">
+      </ProfileRow>
+      <ProfileRow
+        label="Started"
+        htmlFor="m-start"
+        level={levels.yearsOfService}
+        field="yearsOfService"
+        hint="Years of service count from here."
+      >
         <Input id="m-start" name="serviceStartDate" type="date" defaultValue={subject.serviceStartDate} />
-      </Row>
-      <Row label="Work phone" htmlFor="m-work" level={levels.workPhone}>
+      </ProfileRow>
+      <ProfileRow label="Work phone" htmlFor="m-work" level={levels.workPhone} field="workPhone">
         <PhoneInput id="m-work" name="workPhone" defaultValue={subject.workPhone} />
-      </Row>
-      <Row label="VoIP" htmlFor="m-voip" level={levels.voipPhone}>
+      </ProfileRow>
+      <ProfileRow label="VoIP" htmlFor="m-voip" level={levels.voipPhone} field="voipPhone">
         <PhoneInput id="m-voip" name="voipPhone" defaultValue={subject.voipPhone} />
-      </Row>
-      <Row label="Primary region" htmlFor="m-primary" level={levels.primaryRegion}>
+      </ProfileRow>
+      <ProfileRow
+        label="Primary region"
+        htmlFor="m-primary"
+        level={levels.primaryRegion}
+        field="primaryRegion"
+      >
         <StatePicker id="m-primary" name="primaryRegion" value={primary} onChange={setPrimary} />
-      </Row>
-      <Row label="States of operation" htmlFor="m-states" level={levels.statesOfOperation}>
+      </ProfileRow>
+      <ProfileRow
+        label="States of operation"
+        htmlFor="m-states"
+        level={levels.statesOfOperation}
+        field="statesOfOperation"
+      >
         <div className="flex flex-col gap-2">
           {states.length > 0 ? (
             <ul className="flex flex-wrap gap-1.5" aria-label="States of operation">
               {states.map((code) => (
                 <li
                   key={code}
-                  className="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-input pl-2.5 pr-1 text-sm"
+                  className="inline-flex h-10 items-center gap-1 rounded-md border border-border bg-input pl-2.5 pr-1 text-sm sm:h-8"
                 >
                   {stateName(code) ?? code}
                   <input type="hidden" name="statesOfOperation" value={code} />
@@ -265,7 +294,7 @@ function ManagerFields({
                     type="button"
                     aria-label={`Remove ${stateName(code) ?? code}`}
                     onClick={() => setStates((was) => was.filter((entry) => entry !== code))}
-                    className="flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+                    className="flex size-8 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground sm:size-6"
                   >
                     <X className="size-3.5" />
                   </button>
@@ -282,7 +311,7 @@ function ManagerFields({
             }}
           />
         </div>
-      </Row>
+      </ProfileRow>
       <div className="border-t border-border p-4">
         <Button type="submit" size="sm" disabled={busy}>
           {busy ? <Loader2 className="animate-spin" /> : null}
@@ -475,35 +504,6 @@ function NotYourEmployee({
             Change anyway
           </button>
         </div>
-      </div>
-    </div>
-  );
-}
-
-function Row({
-  label,
-  htmlFor,
-  level,
-  hint,
-  children,
-}: {
-  label: string;
-  htmlFor: string;
-  level: PrivacyLevel;
-  hint?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="grid gap-2 border-t border-border p-4 first-of-type:border-t-0 sm:grid-cols-[10rem_minmax(0,1fr)_auto] sm:gap-4">
-      <label htmlFor={htmlFor} className="text-sm font-medium sm:pt-2.5">
-        {label}
-      </label>
-      <div className="min-w-0">
-        {children}
-        {hint ? <p className="mt-1.5 text-xs text-muted-foreground">{hint}</p> : null}
-      </div>
-      <div className="sm:pt-2">
-        <LevelBadge level={level} iconOnly />
       </div>
     </div>
   );

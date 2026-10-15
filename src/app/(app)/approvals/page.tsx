@@ -24,6 +24,7 @@ import { db } from "@/lib/db";
 import { JOB_FIELDS, isJobField } from "@/lib/job-fields";
 import { formatMoney } from "@/lib/money";
 import { isGuest } from "@/lib/permissions";
+import { canSupervise } from "@/lib/supervisors";
 import { managesProfiles } from "@/lib/profile";
 import { jobScopeWhere, reportIds } from "@/lib/scope";
 import { getSessionUser, permissionScope } from "@/lib/session";
@@ -51,6 +52,8 @@ export default async function ApprovalsPage({
 }) {
   const user = await getSessionUser();
   if (!user) redirect("/signin");
+  // A guest has nothing here to approve, and nothing to be told about yet.
+  if (isGuest(user)) redirect("/dashboard");
 
   const { tab } = await searchParams;
   const active: ApprovalTab = isApprovalTab(tab) ? tab : "waiting";
@@ -165,7 +168,13 @@ export default async function ApprovalsPage({
         : db.profileRequest.findMany({
             where: {
               status: "PENDING",
-              ...(managesProfiles(user) ? {} : { user: { directSupervisorId: user.id } }),
+              // Somebody whose role no longer supervises keeps the link on
+              // their old reports' records, but not the queue.
+              ...(managesProfiles(user)
+                ? {}
+                : canSupervise(user.baseRole)
+                  ? { user: { directSupervisorId: user.id } }
+                  : { id: "" }),
             },
             orderBy: { createdAt: "asc" },
             take: 50,

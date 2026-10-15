@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import sharp from "sharp";
 import { attachmentOwner } from "@/lib/attachments";
 import { db } from "@/lib/db";
+import { isGuest } from "@/lib/permissions";
 import { canOnJob } from "@/lib/scope";
 import { getSessionUser, permissionScope } from "@/lib/session";
 import { labelledFileName } from "@/lib/photo-label";
@@ -63,7 +64,9 @@ export async function GET(
     if (!allowed) return new NextResponse("Not found", { status: 404 });
   } else if (owner.kind === "directory") {
     // A company's blank sign-off sheet holds no customer data and is the
-    // document a tech is expected to fill in, so anyone signed in may read it.
+    // document a tech is expected to fill in, so anyone at the company may
+    // read it — a guest is not at the company.
+    if (isGuest(user)) return new NextResponse("Not found", { status: 404 });
   } else if (owner.userId !== user.id) {
     // Mileage photos: the owner always, plus whoever can see other people's
     // trips at a wide enough scope.

@@ -27,13 +27,34 @@ const WHAT: Record<ProfileRequestField, string> = {
 
 /**
  * Who hears that somebody asked: their direct supervisor, or — when they have
- * none, which payroll will be complaining about separately — the managers, so
- * the request does not wait on nobody.
+ * none, which payroll will be complaining about separately — whoever may
+ * answer it, so the request does not wait on nobody. That is whoever manages
+ * users across the company, read from the matrix as it stands rather than
+ * from a list of roles that may no longer hold the permission.
  */
 async function reviewersOf(subject: { directSupervisorId: string | null }): Promise<string[]> {
   if (subject.directSupervisorId) return [subject.directSupervisorId];
+  const roles = await db.roleGrant.findMany({
+    where: { permission: "users.manage", scope: "ALL" },
+    select: { role: true },
+  });
+  const overrides = await db.permissionOverride.findMany({
+    where: { permission: "users.manage", granted: true, scope: "ALL", projectId: null },
+    select: { userId: true },
+  });
+  const revoked = await db.permissionOverride.findMany({
+    where: { permission: "users.manage", granted: false, projectId: null },
+    select: { userId: true },
+  });
   const managers = await db.user.findMany({
-    where: { active: true, baseRole: { in: ["MANAGER", "ADMINISTRATOR"] } },
+    where: {
+      active: true,
+      OR: [
+        { baseRole: { in: roles.map((grant) => grant.role) } },
+        { id: { in: overrides.map((grant) => grant.userId) } },
+      ],
+      id: { notIn: revoked.map((grant) => grant.userId) },
+    },
     select: { id: true },
   });
   return managers.map((manager) => manager.id);
@@ -196,7 +217,7 @@ export async function answerProfileRequest(input: {
     if (input.approve) {
       await db.user.update({
         where: { id: subject.id },
-        data: { legalName: request.value },
+        data: { legalName: request.value, legalNameSetAt: new Date() },
       });
     }
   } else {
@@ -205,7 +226,7 @@ export async function answerProfileRequest(input: {
     if (input.approve && request.picturePath) {
       await db.user.update({
         where: { id: subject.id },
-        data: { avatarPath: request.picturePath },
+        data: { avatarPath: request.picturePath, pictureSetAt: new Date() },
       });
       if (subject.avatarPath) await deleteFile(subject.avatarPath);
     } else if (request.picturePath) {

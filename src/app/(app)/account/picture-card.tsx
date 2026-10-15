@@ -31,6 +31,7 @@ export function PictureCard({
   allowPublic,
   pending,
   reviewer,
+  firstPicture,
   children,
 }: {
   name: string;
@@ -42,6 +43,8 @@ export function PictureCard({
   allowPublic: boolean;
   pending: { id: string; src: string } | null;
   reviewer: string | null;
+  /** No picture has ever been set, so the first one is theirs to set. */
+  firstPicture: boolean;
   children?: React.ReactNode;
 }) {
   const [open, setOpen] = React.useState(false);
@@ -96,7 +99,7 @@ export function PictureCard({
           scroll={false}
           aria-label="History of profile picture"
           title="History"
-          className="flex size-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"
+          className="flex size-10 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground sm:size-8"
         >
           <History className="size-4" />
         </Link>
@@ -107,7 +110,7 @@ export function PictureCard({
           aria-expanded={open}
           disabled={busy}
           onClick={() => setOpen((was) => !was)}
-          className="ml-auto flex size-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+          className="ml-auto flex size-10 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
         >
           {busy ? <Loader2 className="size-4 animate-spin" /> : <MoreHorizontal className="size-4" />}
         </button>
@@ -116,7 +119,9 @@ export function PictureCard({
           <div
             role="menu"
             aria-label="Picture settings"
-            className="absolute right-0 top-full z-50 mt-1 w-64 overflow-hidden rounded-lg border border-border bg-surface-raised py-1 shadow-lg"
+            // Opens upwards: below the picture on a phone is the tab bar,
+            // which it ran under.
+            className="absolute bottom-full right-0 z-50 mb-1 w-64 overflow-hidden rounded-lg border border-border bg-surface-raised py-1 shadow-lg"
           >
             <div className="px-3 pb-1 pt-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Who sees your picture
@@ -154,7 +159,7 @@ export function PictureCard({
               className="flex min-h-11 w-full items-center gap-2.5 px-3 text-left text-sm hover:bg-muted"
             >
               <Camera className="size-4 text-muted-foreground" />
-              {!src && !pending
+              {firstPicture && !pending
                 ? "Add a picture"
                 : pending
                   ? "Send a different picture"
@@ -196,8 +201,11 @@ export function PictureCard({
         </div>
       ) : src ? null : (
         <p className="w-full text-left text-xs text-muted-foreground">
-          No picture yet. Your first one is yours to set; after that a new one goes to your direct
-          supervisor.
+          {/* Whoever answers it by name: somebody without a direct supervisor —
+              a guest, say — is answered by a manager. */}
+          {firstPicture
+            ? `No picture yet. Your first one is yours to set; after that a new one goes to ${reviewer ?? "a manager"} first.`
+            : `No picture. A new one goes to ${reviewer ?? "a manager"} first.`}
         </p>
       )}
 

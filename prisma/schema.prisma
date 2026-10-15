@@ -109,6 +109,13 @@ model User {
   /// counted from. Their direct supervisor's to set.
   serviceStartDate DateTime? @db.Date
 
+  /// When the legal name and the picture were first set — by them at
+  /// onboarding, by a manager, or (the picture) from NextCloud. From then on
+  /// they are asked for, even after somebody clears one: a manager taking a
+  /// picture down is not an invitation to put up another without asking.
+  legalNameSetAt DateTime?
+  pictureSetAt   DateTime?
+
   /// Where they actually are. Wanted for payroll and for posting anything
   /// physical, and deliberately not on the report a customer reads.
   addressLine1 String?

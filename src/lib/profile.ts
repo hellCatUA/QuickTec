@@ -12,7 +12,8 @@ import {
   type ProfileField,
 } from "@/lib/profile-privacy";
 import { isGuest } from "@/lib/permissions";
-import { can, type SessionUser } from "@/lib/session";
+import { can, permissionScope, reachableUserIds, type SessionUser } from "@/lib/session";
+import { canSupervise } from "@/lib/supervisors";
 
 /**
  * Somebody's profile, as one particular person may see it.
@@ -35,26 +36,40 @@ const COMPANY_MANAGERS: BaseRole[] = ["MANAGER", "ADMINISTRATOR"];
 type Subject = { id: string; directSupervisorId: string | null; baseRole: BaseRole };
 
 /**
+ * Whether the viewer is this person's direct supervisor and still one. The
+ * link stays on the person's record when their supervisor is moved to a role
+ * that cannot supervise, and it is a link that opens their Restricted lines.
+ */
+export function isDirectSupervisorOf(
+  viewer: SessionUser,
+  subject: { directSupervisorId: string | null },
+): boolean {
+  return subject.directSupervisorId === viewer.id && canSupervise(viewer.baseRole);
+}
+
+/**
  * Whether the viewer may see this person's Restricted lines: they are the
  * person's direct supervisor, a company manager or somebody who manages
- * users, or they manage this person on work that is still going on — as the
- * PM or a supervisor of a project the person works on, or the supervisor of a
- * job the person is on.
+ * users, or they manage this tech on work that is still going on — as the
+ * PM or a supervisor of a project the tech works on, or the supervisor of a
+ * job the tech is on.
  *
- * Managing somebody, not working beside them: two supervisors on one project
- * do not manage each other, and nobody's project manages a company manager.
- * And only open work counts — a PM from a project that closed two years ago
- * has no business with somebody's home address today.
+ * Only techs are managed through the work. A PM can put anybody on one of
+ * their jobs, and doing so must not be a way to read a colleague's — or a
+ * manager's — home address. And only open work counts: a PM from a project
+ * that closed two years ago has no business with somebody's address today.
  */
 export async function seesRestricted(viewer: SessionUser, subject: Subject): Promise<boolean> {
   if (isGuest(viewer)) return false;
   if (viewer.id === subject.id) return true;
-  if (subject.directSupervisorId === viewer.id) return true;
+  if (isDirectSupervisorOf(viewer, subject)) return true;
   if (COMPANY_MANAGERS.includes(viewer.baseRole)) return true;
   // Whoever may edit somebody's profile has to be able to read it.
   if (managesProfiles(viewer)) return true;
 
-  if (viewer.scopedProjectIds.length > 0 && !COMPANY_MANAGERS.includes(subject.baseRole)) {
+  if (subject.baseRole !== "TECH") return false;
+
+  if (viewer.scopedProjectIds.length > 0) {
     const managed = await db.project.count({
       where: {
         id: { in: viewer.scopedProjectIds },
@@ -110,7 +125,7 @@ export function mayEditProfileOf(
   subject: { id: string; directSupervisorId: string | null },
 ): boolean {
   if (isGuest(viewer) || viewer.id === subject.id) return false;
-  return subject.directSupervisorId === viewer.id || managesProfiles(viewer);
+  return isDirectSupervisorOf(viewer, subject) || managesProfiles(viewer);
 }
 
 /**
@@ -130,6 +145,7 @@ export const PROFILE_SELECT = {
   name: true,
   email: true,
   legalName: true,
+  legalNameSetAt: true,
   baseRole: true,
   active: true,
   signInMethod: true,
@@ -152,6 +168,7 @@ export const PROFILE_SELECT = {
   statesOfOperation: true,
   avatarPath: true,
   avatarVisibility: true,
+  pictureSetAt: true,
   defaultPayType: true,
   defaultPayRate: true,
 } as const;
@@ -161,6 +178,7 @@ export type ProfileRecord = {
   name: string;
   email: string;
   legalName: string | null;
+  legalNameSetAt: Date | null;
   baseRole: BaseRole;
   active: boolean;
   signInMethod: "SSO" | "LOCAL";
@@ -183,6 +201,7 @@ export type ProfileRecord = {
   statesOfOperation: string[];
   avatarPath: string | null;
   avatarVisibility: PrivacyLevel;
+  pictureSetAt: Date | null;
   defaultPayType: string | null;
   defaultPayRate: { toString(): string } | null;
 };
@@ -346,4 +365,18 @@ export async function reachableContact(
     phone: preferred ?? fallback ?? null,
     email: shows(levels, audience, "email") ? profile.email : null,
   };
+}
+
+/**
+ * Whether the viewer may see this person's pay rate. Its privacy level says
+ * who may in principle; "View pay rates" in the permission matrix says who
+ * may in fact, and how far it reaches. A profile is not a way round the
+ * matrix.
+ */
+export async function seesPayOf(viewer: SessionUser, subjectId: string): Promise<boolean> {
+  if (viewer.id === subjectId) return true;
+  const scope = permissionScope(viewer, "pay.view_rates");
+  if (!scope || scope === "OWN") return false;
+  const reach = await reachableUserIds(viewer, scope);
+  return reach === null || reach.includes(subjectId);
 }

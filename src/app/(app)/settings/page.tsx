@@ -25,7 +25,7 @@ export default async function SettingsPage() {
       title: "Users",
       description:
         "Direct supervisors, time zones and account status. Roles come from NextCloud groups.",
-      visible: can(user, "users.manage"),
+      visible: can(user, "users.manage", { minScope: "ALL" }),
     },
     {
       href: "/settings/roles",
@@ -33,7 +33,7 @@ export default async function SettingsPage() {
       title: "Roles & permissions",
       description:
         "The permission matrix — what each role can do and how far it reaches — and Privacy: who sees each line of a profile.",
-      visible: can(user, "roles.manage"),
+      visible: can(user, "roles.manage", { minScope: "ALL" }),
     },
     {
       href: "/settings/integrations",

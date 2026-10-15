@@ -57,8 +57,8 @@ export async function storeUploadedAvatar(
  * for a photo would sit there needing a supervisor's answer to replace.
  *
  * Once means once: when the profile has ever had a picture — copied, set,
- * requested, or taken down by a manager — this does nothing, so a picture a
- * manager removed does not come back at the next sign-in.
+ * or approved, even one a manager has since taken down — this does nothing,
+ * so a picture a manager removed does not come back at the next sign-in.
  *
  * Only from NextCloud itself, without following redirects anywhere else, and
  * never more than the size limit read into memory. Best effort and never in
@@ -74,19 +74,9 @@ export async function importNextcloudPicture(userId: string, url: string): Promi
 
     const current = await db.user.findUnique({
       where: { id: userId },
-      select: { avatarPath: true },
+      select: { avatarPath: true, pictureSetAt: true },
     });
-    if (!current || current.avatarPath) return;
-
-    const before = await db.auditEvent.count({
-      where: {
-        entityType: "User",
-        entityId: userId,
-        action: { startsWith: "profile." },
-        detail: { path: ["field"], equals: "picture" },
-      },
-    });
-    if (before > 0) return;
+    if (!current || current.avatarPath || current.pictureSetAt) return;
 
     const response = await fetch(source, {
       signal: AbortSignal.timeout(5000),
@@ -106,8 +96,8 @@ export async function importNextcloudPicture(userId: string, url: string): Promi
     // Only into an empty slot: a picture set while this was on its way —
     // by them, or by their supervisor — wins.
     const taken = await db.user.updateMany({
-      where: { id: userId, avatarPath: null },
-      data: { avatarPath: path },
+      where: { id: userId, avatarPath: null, pictureSetAt: null },
+      data: { avatarPath: path, pictureSetAt: new Date() },
     });
     if (taken.count === 0) {
       await deleteFile(path);
