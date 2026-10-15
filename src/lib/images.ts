@@ -664,3 +664,21 @@ export async function processSignature(input: Buffer): Promise<ProcessedImage> {
     watermarked: false,
   };
 }
+
+/** The side of a stored profile picture. Big enough for a profile page, small enough to send to every list. */
+export const AVATAR_SIZE = 512;
+
+/**
+ * A profile picture: upright, cropped square around the middle, and a JPEG of
+ * a size that is no burden to serve beside every name in a list. Whatever the
+ * phone sent — HEIC included — comes out the same.
+ */
+export async function processAvatar(input: Buffer, mimeType: string): Promise<Buffer> {
+  const decoded = isHeic(mimeType, input) ? await heicToJpeg(input) : input;
+  return sharp(decoded, { failOn: "none" })
+    .rotate()
+    .resize({ width: AVATAR_SIZE, height: AVATAR_SIZE, fit: "cover", position: "attention" })
+    .flatten({ background: "#ffffff" })
+    .jpeg({ quality: 85, mozjpeg: true })
+    .toBuffer();
+}

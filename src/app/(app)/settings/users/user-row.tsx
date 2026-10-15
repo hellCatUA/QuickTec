@@ -1,7 +1,9 @@
 "use client";
 
 import { Check, Loader2 } from "lucide-react";
+import Link from "next/link";
 import { useActionState, useState } from "react";
+import { ReadOnlyValue } from "@/components/profile/parts";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -101,6 +103,12 @@ export function UserRow({
             >
               {user.baseRole}
             </Badge>
+            <Link
+              href={`/people/${user.id}`}
+              className="text-xs font-medium text-primary hover:underline"
+            >
+              Profile
+            </Link>
           </div>
 
           {/* Two different questions. An outside account's password is the
@@ -137,17 +145,17 @@ export function UserRow({
               />
             </Field>
 
-            <Field
-              label="Legal name"
-              htmlFor={`legal-${user.id}`}
-              hint="For payroll and anything with a signature line. Blank means the display name is it."
-            >
-              <Input
-                id={`legal-${user.id}`}
-                name="legalName"
-                defaultValue={user.legalName ?? ""}
-                autoComplete="off"
-              />
+            {/* The legal name is the direct supervisor's, and anybody else
+                changing it is warned and the supervisor told — which happens
+                on the profile, so it is changed there and only shown here. */}
+            <Field label="Legal name">
+              <ReadOnlyValue empty="Not set">{user.legalName}</ReadOnlyValue>
+              <Link
+                href={`/people/${user.id}`}
+                className="text-xs font-medium text-primary hover:underline"
+              >
+                Change it on their profile
+              </Link>
             </Field>
           </div>
 

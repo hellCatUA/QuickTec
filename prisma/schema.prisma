@@ -76,8 +76,33 @@ model User {
   /// app itself goes on using `name`.
   legalName String?
 
-  phone     String?
-  avatarUrl String?
+  /// Their personal number — what NextCloud has for them, when it has one.
+  /// Restricted unless it is the preferred phone, and it cannot be that while
+  /// a work phone is on file.
+  phone          String?
+  /// A phone the company gave them.
+  workPhone      String?
+  /// A VoIP line, when they have one. Goes to clients beside the preferred
+  /// phone — or alone, marked as VoIP, when it is the preferred one.
+  voipPhone      String?
+  /// Which of the three clients are given. Null until somebody chooses, and
+  /// then work, personal, VoIP — the first one on file — stands in.
+  preferredPhone PreferredPhone?
+
+  /// NextCloud's address for their picture, refreshed at sign-in. A source and
+  /// nothing more: what is shown is the copy below.
+  avatarUrl        String?
+  /// Their profile picture, a square on the uploads volume. Taken from
+  /// NextCloud the first time there is one, otherwise set at onboarding;
+  /// after that it changes only with the direct supervisor's say-so.
+  avatarPath       String?
+  /// Who sees the picture: the one level a person chooses for themselves,
+  /// between the ones the company allows.
+  avatarVisibility PrivacyLevel @default(FEDERATED)
+
+  /// When they started with the company, which is what years of service is
+  /// counted from. Their direct supervisor's to set.
+  serviceStartDate DateTime? @db.Date
 
   /// Where they actually are. Wanted for payroll and for posting anything
   /// physical, and deliberately not on the report a customer reads.
@@ -87,6 +112,11 @@ model User {
   state        String?
   postalCode   String?
   country      String? @default("USA")
+
+  /// The state they mainly work in. Starts as their home state.
+  primaryRegion     String?
+  /// Every state they take jobs in, as two-letter codes.
+  statesOfOperation String[] @default([])
 
   /// How this person proves who they are.
   ///
@@ -136,6 +166,10 @@ model User {
   active   Boolean  @default(true)
   timeZone String   @default("America/Los_Angeles")
 
+  /// Picked by hand rather than worked out from the ZIP. Until it is, a new
+  /// address brings its own zone with it.
+  timeZoneManual Boolean @default(false)
+
   /// Always the person who pays this tech, regardless of project membership.
   /// Payroll approval follows this link and nothing else.
   directSupervisorId String?
@@ -181,9 +215,83 @@ model User {
   calendarEvents        CalendarEvent[]
   passwordSetupTokens   PasswordSetupToken[]
   jobDraft              JobDraft?
+  profileRequests       ProfileRequest[]     @relation("ProfileRequestSubject")
+  requestedProfiles     ProfileRequest[]     @relation("ProfileRequester")
+  reviewedProfiles      ProfileRequest[]     @relation("ProfileRequestReviewer")
 
   @@index([baseRole, active])
   @@index([directSupervisorId])
+}
+
+/// Who may see a field of somebody's profile. Nested: everybody who sees a
+/// Restricted field also sees a Federated one, and so on.
+enum PrivacyLevel {
+  /// The person, their direct supervisor, and company, project, team and job
+  /// managers.
+  RESTRICTED
+  /// Everybody signed in to QuickTec.
+  FEDERATED
+  /// Federated, plus vendors, partners, buyers and clients — what goes out on
+  /// the paperwork as the tech's contact details.
+  PUBLIC
+}
+
+/// Which phone clients are given.
+enum PreferredPhone {
+  PERSONAL
+  WORK
+  VOIP
+}
+
+/// What somebody may only ask for, once it is set.
+enum ProfileRequestField {
+  LEGAL_NAME
+  PICTURE
+}
+
+/// The company's own level for one profile field, where it is not the
+/// optimized default. No row means the default, and restoring the defaults is
+/// deleting every row.
+model ProfilePrivacy {
+  /// A key from PROFILE_FIELDS in src/lib/profile-privacy.ts.
+  field       String       @id
+  level       PrivacyLevel
+  /// The one switch two fields have. The picture: whether a person may make
+  /// theirs Public. The personal phone: whether it is Public while it is the
+  /// preferred one.
+  allowPublic Boolean?
+  updatedById String?
+  updatedAt   DateTime     @updatedAt
+}
+
+/// A change somebody asked for to their own legal name or picture, waiting on
+/// their direct supervisor or a manager. Withdrawing one deletes it; its story
+/// stays in the audit trail.
+model ProfileRequest {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation("ProfileRequestSubject", fields: [userId], references: [id], onDelete: Cascade)
+
+  field       ProfileRequestField
+  /// The legal name asked for.
+  value       String?
+  /// The picture asked for, on the uploads volume. Removed when it is turned
+  /// down; becomes the picture when it is not.
+  picturePath String?
+
+  requestedById String
+  requestedBy   User   @relation("ProfileRequester", fields: [requestedById], references: [id], onDelete: Cascade)
+
+  status       ApprovalStatus @default(PENDING)
+  reviewedById String?
+  reviewedBy   User?          @relation("ProfileRequestReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt   DateTime?
+  reviewNote   String?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, status])
+  @@index([status])
 }
 
 /// A single-use link that lets somebody choose their own password.

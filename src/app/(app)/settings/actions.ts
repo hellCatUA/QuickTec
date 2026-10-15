@@ -126,7 +126,8 @@ const userSchema = z.object({
   timeZone: z.string().trim().min(1),
   /** What the app calls them. Blank means "go back to what NextCloud says". */
   name: optionalText,
-  legalName: optionalText,
+  // No legal name: it is the direct supervisor's, and is changed on the
+  // profile, where anybody else is warned and the supervisor told.
   phone: phoneText,
   addressLine1: optionalText,
   addressLine2: optionalText,
@@ -216,9 +217,13 @@ export async function updateUser(
           ? { nameOverridden: false }
           : {};
 
+  // A zone set here is a choice, and a later change of address must not
+  // quietly replace it with the one its ZIP is in.
+  const zoneChange = rest.timeZone !== before.timeZone ? { timeZoneManual: true } : {};
+
   await db.user.update({
     where: { id: userId },
-    data: { ...rest, ...nameChange },
+    data: { ...rest, ...nameChange, ...zoneChange },
   });
 
   await recordAudit({

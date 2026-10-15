@@ -1,4 +1,11 @@
-import { ArrowRight, CircleCheck, Clock, FileQuestion, Wallet } from "lucide-react";
+import {
+  ArrowRight,
+  CircleCheck,
+  CircleUser,
+  Clock,
+  FileQuestion,
+  Wallet,
+} from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
@@ -16,6 +23,7 @@ import { isoDateInZone, usDateTimeInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
 import { JOB_FIELDS, isJobField } from "@/lib/job-fields";
 import { formatMoney } from "@/lib/money";
+import { managesProfiles } from "@/lib/profile";
 import { jobScopeWhere, reportIds } from "@/lib/scope";
 import { getSessionUser, permissionScope } from "@/lib/session";
 import { DecidedList, fieldKind, type DecidedRow } from "./decided";
@@ -67,7 +75,7 @@ export default async function ApprovalsPage({
   const changeWhere = await jobScopeWhere(user, "job.approve_change");
   const reportWhere = await jobScopeWhere(user, "job.approve_report");
 
-  const [changeRequests, adHocJobs, pendingReview, payrollPeriods] =
+  const [changeRequests, adHocJobs, pendingReview, payrollPeriods, profileRequests] =
     await Promise.all([
       changeWhere
         ? db.changeRequest.findMany({
@@ -148,6 +156,26 @@ export default async function ApprovalsPage({
           },
         });
       })(),
+
+      // A legal name or a picture somebody may only ask for: their direct
+      // supervisor answers, and so may whoever manages users.
+      user.outside
+        ? []
+        : db.profileRequest.findMany({
+            where: {
+              status: "PENDING",
+              ...(managesProfiles(user) ? {} : { user: { directSupervisorId: user.id } }),
+            },
+            orderBy: { createdAt: "asc" },
+            take: 50,
+            select: {
+              id: true,
+              field: true,
+              value: true,
+              createdAt: true,
+              user: { select: { id: true, name: true, legalName: true } },
+            },
+          }),
     ]);
 
   // Notifications are counted apart: the headline is about decisions waiting,
@@ -156,7 +184,8 @@ export default async function ApprovalsPage({
     changeRequests.length +
     adHocJobs.length +
     pendingReview.length +
-    payrollPeriods.length;
+    payrollPeriods.length +
+    profileRequests.length;
 
   // --- what you have asked for ----------------------------------------------
   // Yours by authorship, not by scope: a tech cannot approve their own request
@@ -408,6 +437,53 @@ export default async function ApprovalsPage({
                   <span className="text-muted-foreground">
                     · {request.requestedBy.name} ·{" "}
                     {usDateTimeInZone(request.createdAt, zone)}
+                  </span>
+                </div>
+              </Link>
+            ))}
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {profileRequests.length > 0 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <CircleUser className="size-4 text-warning" />
+              Profile requests
+            </CardTitle>
+            <CardDescription>
+              A new legal name or picture somebody asked for. Answered on their
+              profile.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-2">
+            {profileRequests.map((request) => (
+              <Link
+                key={request.id}
+                href={`/people/${request.user.id}#requests`}
+                className="flex flex-col gap-1 rounded-lg border border-border p-2 transition-colors hover:border-primary/50"
+              >
+                <div className="flex flex-wrap items-center gap-2 text-sm">
+                  <Badge variant="warning">
+                    {request.field === "PICTURE" ? "Profile picture" : "Legal name"}
+                  </Badge>
+                  <span className="font-medium">{request.user.name}</span>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  {request.field === "LEGAL_NAME" ? (
+                    <>
+                      <span className="text-muted-foreground line-through">
+                        {request.user.legalName || "empty"}
+                      </span>
+                      <ArrowRight className="size-3 text-muted-foreground" />
+                      <span>{request.value}</span>
+                    </>
+                  ) : (
+                    <span>A new picture</span>
+                  )}
+                  <span className="text-muted-foreground">
+                    · {usDateTimeInZone(request.createdAt, zone)}
                   </span>
                 </div>
               </Link>

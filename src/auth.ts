@@ -5,6 +5,7 @@ import NextAuth, {
   type NextAuthConfig,
 } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
+import { importNextcloudPicture } from "@/lib/avatar";
 import { db } from "@/lib/db";
 import { extractGroups, resolveBaseRole } from "@/lib/nextcloud-groups";
 import {
@@ -449,7 +450,11 @@ export const authConfig: NextAuthConfig = {
         return `/signin?error=LocalAccount`;
       }
 
+      const picture = typeof claims.picture === "string" ? claims.picture : null;
+      let userId: string;
+
       if (existing) {
+        userId = existing.id;
         await db.user.update({
           where: { id: existing.id },
           data: {
@@ -466,7 +471,7 @@ export const authConfig: NextAuthConfig = {
           },
         });
       } else {
-        await db.user.create({
+        const created = await db.user.create({
           data: {
             nextcloudSub: sub,
             email,
@@ -475,8 +480,16 @@ export const authConfig: NextAuthConfig = {
             baseRole: role,
             lastLoginAt: new Date(),
           },
+          select: { id: true },
         });
+        userId = created.id;
       }
+
+      // Their NextCloud picture becomes their profile picture the first time
+      // there is one — copied, so who sees it is ours to decide. Not awaited:
+      // a slow NextCloud must not hold somebody at the sign-in page, and the
+      // copy only ever fills an empty slot.
+      if (picture) void importNextcloudPicture(userId, picture);
 
       return true;
     },

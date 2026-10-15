@@ -32,7 +32,7 @@ export default async function SettingsPage() {
       icon: KeyRound,
       title: "Roles & permissions",
       description:
-        "The permission matrix — what each role can do and how far it reaches.",
+        "The permission matrix — what each role can do and how far it reaches — and Privacy: who sees each line of a profile.",
       visible: can(user, "roles.manage"),
     },
     {

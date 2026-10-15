@@ -99,6 +99,18 @@ export async function storeFile(
 }
 
 /**
+ * Writes a profile picture under avatars/<userId>/ — the one in use and any
+ * waiting on a supervisor's answer sit side by side, each under a fresh name.
+ */
+export async function storeAvatar(userId: string, data: Buffer): Promise<string> {
+  const storagePath = path.join("avatars", userId, `${randomUUID()}.jpg`);
+  const absolute = absolutePath(storagePath);
+  await mkdir(path.dirname(absolute), { recursive: true });
+  await writeFile(absolute, data);
+  return storagePath;
+}
+
+/**
  * Duplicates a stored file under another key.
  *
  * Used when a company's saved blank is put onto a job: the job keeps its own

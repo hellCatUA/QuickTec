@@ -1,0 +1,570 @@
+import "dotenv/config";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { encode } from "next-auth/jwt";
+import { chromium, type Browser, type Page } from "playwright";
+import sharp from "sharp";
+import { importNextcloudPicture } from "@/lib/avatar";
+import { db } from "@/lib/db";
+import { formSource } from "@/lib/forms/catalogue";
+import {
+  audienceFor,
+  contactCard,
+  loadContactCards,
+  loadProfile,
+  phonesLine,
+  preferredPhoneLine,
+} from "@/lib/profile";
+import { profileHistory } from "@/lib/profile-history";
+import {
+  effectivePreferred,
+  levelFor,
+  preferableKinds,
+  privacySettings,
+  yearsLabel,
+} from "@/lib/profile-privacy";
+import { answerProfileRequest, fileProfileRequest } from "@/lib/profile-requests";
+import type { SessionUser } from "@/lib/session";
+import { deleteFile } from "@/lib/storage";
+
+/**
+ * Profiles: who sees which line, how a legal name and a picture are asked for
+ * and answered, the warning another manager gets, and the company's own
+ * levels under Settings → Roles & permissions → Privacy.
+ *
+ * The rules are checked directly; the pages through a real browser against
+ * the app on BASE_URL with the same AUTH_SECRET. Rewrites the fixture people's
+ * profiles — a development database only.
+ */
+
+const BASE = process.env.BASE_URL ?? "http://127.0.0.1:3000";
+let failures = 0;
+
+function check(label: string, actual: unknown, expected: unknown) {
+  const ok = String(actual) === String(expected);
+  if (!ok) failures++;
+  console.log(`${ok ? "PASS" : "FAIL"}  ${label}\n      got ${actual}${ok ? "" : `  want ${expected}`}`);
+}
+
+async function tokenFor(email: string) {
+  const user = await db.user.findUniqueOrThrow({ where: { email } });
+  return encode({
+    token: { sub: user.nextcloudSub ?? user.id, userId: user.id },
+    secret: process.env.AUTH_SECRET!,
+    salt: "authjs.session-token",
+    maxAge: 3600,
+  });
+}
+
+async function pageAs(browser: Browser, email: string): Promise<Page> {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  await context.addCookies([
+    {
+      name: "authjs.session-token",
+      value: await tokenFor(email),
+      url: BASE,
+      httpOnly: true,
+      sameSite: "Lax",
+    },
+  ]);
+  return context.newPage();
+}
+
+/** Builds the session a signed-in person would have, enough for the audience rules. */
+async function sessionOf(email: string): Promise<SessionUser> {
+  const user = await db.user.findUniqueOrThrow({
+    where: { email },
+    select: {
+      id: true,
+      email: true,
+      name: true,
+      baseRole: true,
+      signInMethod: true,
+      timeZone: true,
+      directSupervisorId: true,
+      projectMemberships: {
+        where: { role: { in: ["PROJECT_MANAGER", "SUPERVISOR"] } },
+        select: { projectId: true },
+      },
+      managedProjects: { select: { id: true } },
+    },
+  });
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    avatarUrl: null,
+    baseRole: user.baseRole,
+    outside: user.signInMethod === "LOCAL",
+    timeZone: user.timeZone,
+    mustChangePassword: false,
+    directSupervisorId: user.directSupervisorId,
+    grants: new Map(),
+    projectGrants: new Map(),
+    scopedProjectIds: Array.from(
+      new Set([
+        ...user.projectMemberships.map((m) => m.projectId),
+        ...user.managedProjects.map((p) => p.id),
+      ]),
+    ),
+  };
+}
+
+async function jpeg(color: string): Promise<Buffer> {
+  return sharp({ create: { width: 64, height: 64, channels: 3, background: color } })
+    .jpeg()
+    .toBuffer();
+}
+
+async function rules() {
+  console.log("\n— the levels —");
+  const defaults = privacySettings([]);
+  const phones = { personal: "559-555-0142", work: "559-555-0110", voip: "559-555-0199" };
+
+  check("a personal phone cannot be preferred while there is a work phone", preferableKinds(phones).join(","), "WORK,VOIP");
+  check(
+    "it can once the work phone is gone",
+    preferableKinds({ ...phones, work: null }).join(","),
+    "PERSONAL,VOIP",
+  );
+  check("nothing chosen falls back to the work phone", effectivePreferred(null, phones), "WORK");
+  check("a choice that is no longer allowed falls back too", effectivePreferred("PERSONAL", phones), "WORK");
+
+  const subject = (preferredPhone: "PERSONAL" | "WORK" | "VOIP" | null, avatarVisibility: "FEDERATED" | "PUBLIC" = "FEDERATED") => ({
+    preferredPhone,
+    phones: { ...phones, work: preferredPhone === "PERSONAL" ? null : phones.work },
+    avatarVisibility,
+  });
+  check("the personal phone is Restricted", levelFor("personalPhone", defaults, subject("WORK")), "RESTRICTED");
+  check("and Public while it is the preferred one", levelFor("personalPhone", defaults, subject("PERSONAL")), "PUBLIC");
+  check(
+    "unless the company says otherwise",
+    levelFor(
+      "personalPhone",
+      privacySettings([{ field: "personalPhone", level: "RESTRICTED", allowPublic: false }]),
+      subject("PERSONAL"),
+    ),
+    "RESTRICTED",
+  );
+  check(
+    "and then the preferred phone is kept off the paperwork with it",
+    levelFor(
+      "preferredPhone",
+      privacySettings([{ field: "personalPhone", level: "RESTRICTED", allowPublic: false }]),
+      subject("PERSONAL"),
+    ),
+    "RESTRICTED",
+  );
+  check("the picture is Federated", levelFor("picture", defaults, subject("WORK")), "FEDERATED");
+  check("until its owner makes it Public", levelFor("picture", defaults, subject("WORK", "PUBLIC")), "PUBLIC");
+  check(
+    "which the company can take away",
+    levelFor(
+      "picture",
+      privacySettings([{ field: "picture", level: "FEDERATED", allowPublic: false }]),
+      subject("WORK", "PUBLIC"),
+    ),
+    "FEDERATED",
+  );
+  check(
+    "a field the code no longer knows is ignored",
+    Object.keys(privacySettings([{ field: "shoeSize", level: "PUBLIC", allowPublic: null }])).includes("shoeSize"),
+    false,
+  );
+  check("years count whole years", yearsLabel(new Date("2019-03-04T00:00:00Z"), new Date("2026-03-03T00:00:00Z")), "6 years");
+  check("and turn on the day", yearsLabel(new Date("2019-03-04T00:00:00Z"), new Date("2026-03-04T00:00:00Z")), "7 years");
+}
+
+async function audienceAndCards() {
+  console.log("\n— who is looking —");
+  const tech = await db.user.findUniqueOrThrow({ where: { email: "tech@417group.org" } });
+  const subject = { id: tech.id, directSupervisorId: tech.directSupervisorId };
+
+  check("the person themselves", await audienceFor(await sessionOf("tech@417group.org"), subject), "SELF");
+  check("their direct supervisor", await audienceFor(await sessionOf("boss@417group.org"), subject), "RESTRICTED");
+  check("any company manager", await audienceFor(await sessionOf("admin@417group.org"), subject), "RESTRICTED");
+  check("another tech", await audienceFor(await sessionOf("tech2@417group.org"), subject), "FEDERATED");
+
+  // A field supervisor sees Restricted lines only through open work they
+  // manage the person on.
+  const sup = await sessionOf("sup@417group.org");
+  const client = await db.client.findFirstOrThrow();
+  const project = await db.project.create({
+    data: {
+      name: "Profile audience check",
+      code: `PRF${Math.floor(Math.random() * 90000 + 10000)}`,
+      clientId: client.id,
+      members: {
+        create: [
+          { userId: sup.id, role: "SUPERVISOR" },
+          { userId: tech.id, role: "TECH" },
+        ],
+      },
+    },
+  });
+  try {
+    const onProject = { ...sup, scopedProjectIds: [...sup.scopedProjectIds, project.id] };
+    check("a supervisor on a project they share", await audienceFor(onProject, subject), "RESTRICTED");
+    await db.project.update({ where: { id: project.id }, data: { status: "CLOSED" } });
+    const others = await db.project.count({
+      where: {
+        id: { in: sup.scopedProjectIds },
+        status: { not: "CLOSED" },
+        OR: [{ members: { some: { userId: tech.id } } }, { jobs: { some: { assignments: { some: { userId: tech.id } } } } }],
+      },
+    });
+    if (others === 0) {
+      check("but not once the project has closed", await audienceFor(onProject, subject), "FEDERATED");
+    }
+  } finally {
+    await db.project.delete({ where: { id: project.id } });
+  }
+
+  const outside = await db.user.upsert({
+    where: { email: "outside-profile@example.com" },
+    update: { active: true },
+    create: {
+      email: "outside-profile@example.com",
+      name: "Olive Outside",
+      baseRole: "MANAGER",
+      signInMethod: "LOCAL",
+    },
+  });
+  check(
+    "an outside account sees the Public lines alone, whatever its role",
+    await audienceFor(await sessionOf(outside.email), subject),
+    "PUBLIC",
+  );
+
+  console.log("\n— what goes to clients —");
+  await db.user.update({
+    where: { id: tech.id },
+    data: { phone: "559-555-0142", workPhone: "559-555-0110", voipPhone: "559-555-0199", preferredPhone: "WORK" },
+  });
+  const settings = privacySettings([]);
+  let card = contactCard((await loadProfile(tech.id))!, settings);
+  check("the preferred work phone and the VoIP line beside it", phonesLine(card), "559-555-0110, VoIP 559-555-0199");
+  check("never the personal one", card.phones.some((phone) => phone.kind === "PERSONAL"), false);
+  check("the work email", card.email, tech.email);
+
+  await db.user.update({ where: { id: tech.id }, data: { preferredPhone: "VOIP" } });
+  card = contactCard((await loadProfile(tech.id))!, settings);
+  check("a preferred VoIP line goes alone", phonesLine(card), "VoIP 559-555-0199");
+  check("and says it is VoIP", preferredPhoneLine(card), "559-555-0199 (VoIP)");
+
+  await db.user.update({ where: { id: tech.id }, data: { workPhone: null, preferredPhone: "PERSONAL" } });
+  card = (await loadContactCards([tech.id])).get(tech.id)!;
+  check("a preferred personal phone goes out once it may", preferredPhoneLine(card), "559-555-0142");
+
+  const source = formSource("tech.leadPhone")!;
+  const value = source.resolve!(
+    {
+      data: { job: { assignments: [{ userId: tech.id }] }, contacts: new Map([[tech.id, card]]) } as never,
+      now: new Date(),
+    },
+    0,
+  );
+  check("the paperwork's lead tech phone is the same line", value, "559-555-0142");
+}
+
+async function requests() {
+  console.log("\n— asking and answering —");
+  const tech = await db.user.findUniqueOrThrow({ where: { email: "tech@417group.org" } });
+  const boss = await db.user.findUniqueOrThrow({ where: { email: "boss@417group.org" } });
+  const subject = { id: tech.id, name: tech.name, directSupervisorId: tech.directSupervisorId };
+
+  await db.notification.deleteMany({ where: { userId: { in: [tech.id, boss.id] }, kind: { startsWith: "profile_" } } });
+
+  const first = await fileProfileRequest({ subject, requesterId: tech.id, field: "LEGAL_NAME", value: "Terrence Q Tech" });
+  const second = await fileProfileRequest({ subject, requesterId: tech.id, field: "LEGAL_NAME", value: "Terrence Allen Tech" });
+  check(
+    "a second ask replaces the first",
+    await db.profileRequest.count({ where: { userId: tech.id, status: "PENDING", field: "LEGAL_NAME" } }),
+    1,
+  );
+  check("and the first is gone", await db.profileRequest.count({ where: { id: first.id } }), 0);
+  check(
+    "their direct supervisor hears about it",
+    await db.notification.count({ where: { userId: boss.id, kind: "profile_request" } }),
+    2,
+  );
+
+  const answered = await answerProfileRequest({
+    requestId: second.id,
+    reviewerId: boss.id,
+    reviewerName: boss.name,
+    approve: true,
+    note: null,
+    warned: false,
+  });
+  check("approving works", answered.ok, true);
+  check(
+    "and puts the new legal name in place",
+    (await db.user.findUniqueOrThrow({ where: { id: tech.id } })).legalName,
+    "Terrence Allen Tech",
+  );
+  check(
+    "the person who asked is told",
+    await db.notification.count({ where: { userId: tech.id, kind: "profile_request_answered" } }),
+    1,
+  );
+  const again = await answerProfileRequest({
+    requestId: second.id,
+    reviewerId: boss.id,
+    reviewerName: boss.name,
+    approve: false,
+    note: "late",
+    warned: false,
+  });
+  check("an answered request cannot be answered twice", again.ok, false);
+
+  const history = await profileHistory(tech.id, "legalName");
+  check("the history has the request and the answer", history.slice(0, 2).map((entry) => entry.kind).join(","), "approved,requested");
+  check("with the value asked for", history[0].to, "Terrence Allen Tech");
+}
+
+async function nextcloudPicture() {
+  console.log("\n— the NextCloud picture —");
+  const tech2 = await db.user.findUniqueOrThrow({ where: { email: "tech2@417group.org" } });
+  if (tech2.avatarPath) await deleteFile(tech2.avatarPath);
+  await db.user.update({ where: { id: tech2.id }, data: { avatarPath: null } });
+
+  const picture = await jpeg("#336699");
+  const server = createServer((request, response) => {
+    response.setHeader("Content-Type", "image/jpeg");
+    response.setHeader("X-NC-IsCustomAvatar", request.url?.includes("drawn") ? "0" : "1");
+    response.end(picture);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as AddressInfo).port;
+  try {
+    await importNextcloudPicture(tech2.id, `http://127.0.0.1:${port}/drawn`);
+    check(
+      "a drawn initial is not copied",
+      (await db.user.findUniqueOrThrow({ where: { id: tech2.id } })).avatarPath,
+      null,
+    );
+    await importNextcloudPicture(tech2.id, `http://127.0.0.1:${port}/chosen`);
+    const copied = (await db.user.findUniqueOrThrow({ where: { id: tech2.id } })).avatarPath;
+    check("a picture they chose is", Boolean(copied), true);
+    await importNextcloudPicture(tech2.id, `http://127.0.0.1:${port}/again`);
+    check(
+      "and only the once",
+      (await db.user.findUniqueOrThrow({ where: { id: tech2.id } })).avatarPath,
+      copied,
+    );
+  } finally {
+    server.close();
+  }
+}
+
+async function pages() {
+  console.log("\n— the pages —");
+  const tech = await db.user.findUniqueOrThrow({ where: { email: "tech@417group.org" } });
+  const boss = await db.user.findUniqueOrThrow({ where: { email: "boss@417group.org" } });
+  await db.user.update({
+    where: { id: tech.id },
+    data: {
+      legalName: "Terrence A. Tech",
+      phone: "559-555-0142",
+      workPhone: null,
+      voipPhone: null,
+      preferredPhone: null,
+      addressLine1: "412 Oak Ave",
+      city: "Visalia",
+      state: "CA",
+      postalCode: "93291",
+      serviceStartDate: new Date("2019-03-04T00:00:00Z"),
+      avatarVisibility: "FEDERATED",
+    },
+  });
+  await db.profileRequest.deleteMany({ where: { userId: tech.id } });
+  await db.profilePrivacy.deleteMany({});
+  await db.notification.deleteMany({ where: { userId: boss.id, kind: "profile_changed" } });
+
+  const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH });
+  try {
+    // --- their own ---------------------------------------------------------
+    const own = await pageAs(browser, "tech@417group.org");
+    await own.goto(`${BASE}/account`, { waitUntil: "load" });
+    check("the account page is the profile", await own.getByRole("heading", { name: "Your profile" }).isVisible(), true);
+    check(
+      "the legal name is read-only once set",
+      await own.getByText("Terrence A. Tech").first().isVisible(),
+      true,
+    );
+    check("and says so", (await own.getByText("(read-only)").count()) > 0, true);
+    check("the theme control is still here", await own.getByRole("radiogroup", { name: "Theme" }).isVisible(), true);
+
+    await own.locator("#own-work").fill("559-555-0110");
+    check(
+      "a work phone takes the personal one off the preferred list",
+      await own.locator('#own-preferred option[value="PERSONAL"]').isDisabled(),
+      true,
+    );
+    await own.locator("#own-voip").fill("559-555-0199");
+    await own.locator("#own-preferred").selectOption("VOIP");
+    check(
+      "a preferred VoIP line says it goes alone",
+      await own.getByText("Clients get only your VoIP line, marked as VoIP.").isVisible(),
+      true,
+    );
+    await own.getByRole("button", { name: "Save changes" }).click();
+    await own.getByRole("status").filter({ hasText: "Saved." }).waitFor({ timeout: 15_000 });
+    const saved = await db.user.findUniqueOrThrow({ where: { id: tech.id } });
+    check("the phones are saved", `${saved.workPhone} ${saved.voipPhone} ${saved.preferredPhone}`, "559-555-0110 559-555-0199 VOIP");
+
+    await own.getByRole("button", { name: "Request a change" }).click();
+    await own.locator("#own-legal-new").fill("terrence allen tech");
+    await own.getByRole("button", { name: "Send to your supervisor" }).click();
+    await own.getByText("waiting on Bo Ross").waitFor({ timeout: 15_000 });
+    check("a request for a new legal name waits on the supervisor", true, true);
+    check(
+      "capitalised as it was typed",
+      (await db.profileRequest.findFirstOrThrow({ where: { userId: tech.id, status: "PENDING" } })).value,
+      "Terrence Allen Tech",
+    );
+
+    // --- the supervisor answers ---------------------------------------------
+    const bossPage = await pageAs(browser, "boss@417group.org");
+    await bossPage.goto(`${BASE}/approvals`, { waitUntil: "load" });
+    check("it is on the supervisor's approvals", await bossPage.getByText("Profile requests").isVisible(), true);
+    await bossPage.goto(`${BASE}/people/${tech.id}`, { waitUntil: "load" });
+    check("their own employee, said so", await bossPage.getByText("You are their direct supervisor").isVisible(), true);
+    await bossPage.getByRole("button", { name: "Approve" }).click();
+    await bossPage.getByRole("status").filter({ hasText: "Approved." }).waitFor({ timeout: 15_000 });
+    check(
+      "approved, the legal name changes",
+      (await db.user.findUniqueOrThrow({ where: { id: tech.id } })).legalName,
+      "Terrence Allen Tech",
+    );
+
+    // --- another manager is warned ------------------------------------------
+    const admin = await pageAs(browser, "admin@417group.org");
+    await admin.goto(`${BASE}/people/${tech.id}`, { waitUntil: "load" });
+    await admin.locator("#m-legal").fill("Terrence Alan Tech");
+    await admin.getByRole("button", { name: "Save", exact: true }).click();
+    const dialog = admin.getByRole("alertdialog");
+    await dialog.waitFor({ timeout: 15_000 });
+    check("another manager is told this is not their employee", await dialog.getByText("Terry Tech isn't your employee").isVisible(), true);
+    check(
+      "and nothing has changed yet",
+      (await db.user.findUniqueOrThrow({ where: { id: tech.id } })).legalName,
+      "Terrence Allen Tech",
+    );
+    await dialog.getByRole("button", { name: "Change anyway" }).click();
+    await admin.getByRole("status").filter({ hasText: "Saved." }).waitFor({ timeout: 15_000 });
+    check(
+      "past the warning it changes",
+      (await db.user.findUniqueOrThrow({ where: { id: tech.id } })).legalName,
+      "Terrence Alan Tech",
+    );
+    check(
+      "and the direct supervisor is told",
+      await db.notification.count({ where: { userId: boss.id, kind: "profile_changed" } }),
+      1,
+    );
+    const latest = (await profileHistory(tech.id, "legalName"))[0];
+    check("the history marks it as past the warning", latest.warned, true);
+
+    // --- pictures -----------------------------------------------------------
+    await bossPage.goto(`${BASE}/people/${tech.id}`, { waitUntil: "load" });
+    await bossPage.locator('input[aria-label="Upload"]').setInputFiles({
+      name: "face.jpg",
+      mimeType: "image/jpeg",
+      buffer: await jpeg("#aa3344"),
+    });
+    await bossPage.getByRole("status").filter({ hasText: "Picture set." }).waitFor({ timeout: 15_000 });
+    const withPicture = await db.user.findUniqueOrThrow({ where: { id: tech.id } });
+    check("the supervisor sets the picture", Boolean(withPicture.avatarPath), true);
+
+    const colleague = await pageAs(browser, "tech2@417group.org");
+    const seen = await colleague.request.get(`${BASE}/api/avatars/${tech.id}`);
+    check("a Federated picture is there for anybody signed in", seen.status(), 200);
+    const outside = await pageAs(browser, "outside-profile@example.com");
+    const hidden = await outside.request.get(`${BASE}/api/avatars/${tech.id}`);
+    check("and not for an outside account", hidden.status(), 404);
+    const directory = await outside.goto(`${BASE}/people`, { waitUntil: "load" });
+    check("which has no people directory either", directory?.status(), 404);
+
+    await own.goto(`${BASE}/account`, { waitUntil: "load" });
+    await own.locator('input[aria-label="Choose a picture"]').setInputFiles({
+      name: "new.jpg",
+      mimeType: "image/jpeg",
+      buffer: await jpeg("#33aa44"),
+    });
+    await own.getByText("New picture waiting on Bo Ross").waitFor({ timeout: 15_000 });
+    check(
+      "a new picture is a request once there is one",
+      await db.profileRequest.count({ where: { userId: tech.id, field: "PICTURE", status: "PENDING" } }),
+      1,
+    );
+    check(
+      "and the picture in use stays until it is answered",
+      (await db.user.findUniqueOrThrow({ where: { id: tech.id } })).avatarPath,
+      withPicture.avatarPath,
+    );
+
+    await own.getByRole("button", { name: "Picture settings" }).click();
+    await own.getByRole("menuitemradio", { name: /^Public/ }).click();
+    await own.waitForTimeout(800);
+    check(
+      "who sees the picture is theirs to choose",
+      (await db.user.findUniqueOrThrow({ where: { id: tech.id } })).avatarVisibility,
+      "PUBLIC",
+    );
+
+    // --- what another tech sees ---------------------------------------------
+    await colleague.goto(`${BASE}/people/${tech.id}`, { waitUntil: "load" });
+    check("another tech does not see the legal name", await colleague.getByText("Terrence Alan Tech").count(), 0);
+    check("nor the street", await colleague.getByText("412 Oak Ave").count(), 0);
+    check("and is told what is kept from them", await colleague.getByText("Not shown to you").isVisible(), true);
+    check("but sees the home region", await colleague.getByText("Visalia, CA 93291").first().isVisible(), true);
+    check("and has no history to read", await colleague.locator("#history").count(), 0);
+
+    // --- the company's levels -------------------------------------------------
+    await bossPage.goto(`${BASE}/settings/roles?tab=privacy`, { waitUntil: "load" });
+    await bossPage.getByLabel("Who sees voip").selectOption("FEDERATED");
+    await bossPage.getByText("One field differs").waitFor({ timeout: 15_000 });
+    // The page says so as the choice is made; the row follows the server.
+    let stored: string | undefined;
+    for (let attempt = 0; attempt < 20 && !stored; attempt++) {
+      stored = (await db.profilePrivacy.findUnique({ where: { field: "voipPhone" } }))?.level;
+      if (!stored) await bossPage.waitForTimeout(250);
+    }
+    check("a change is saved", stored, "FEDERATED");
+    await bossPage.getByRole("button", { name: "Restore optimized defaults" }).click();
+    await bossPage.getByRole("alertdialog").getByRole("button", { name: "Restore" }).click();
+    await bossPage.getByText("Every field is on its optimized default.").waitFor({ timeout: 15_000 });
+    check("restoring forgets every change", await db.profilePrivacy.count(), 0);
+  } finally {
+    await browser.close();
+  }
+}
+
+async function main() {
+  await rules();
+  await audienceAndCards();
+  await requests();
+  await nextcloudPicture();
+  if (process.env.SKIP_PAGES !== "1") await pages();
+
+  // What this left waiting would sit in every other suite's approvals inbox.
+  const tech = await db.user.findUniqueOrThrow({ where: { email: "tech@417group.org" } });
+  for (const request of await db.profileRequest.findMany({ where: { status: "PENDING" } })) {
+    if (request.picturePath) await deleteFile(request.picturePath);
+  }
+  await db.profileRequest.deleteMany({ where: { status: "PENDING" } });
+  await db.user.update({ where: { id: tech.id }, data: { avatarVisibility: "FEDERATED" } });
+  await db.user.updateMany({ where: { email: "outside-profile@example.com" }, data: { active: false } });
+
+  console.log(failures === 0 ? "\nAll profile checks passed." : `\n${failures} profile check(s) failed.`);
+  await db.$disconnect();
+  process.exit(failures === 0 ? 0 : 1);
+}
+
+main().catch(async (error) => {
+  console.error(error);
+  await db.$disconnect();
+  process.exit(1);
+});

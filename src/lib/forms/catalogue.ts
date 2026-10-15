@@ -2,6 +2,7 @@ import { formatAddress } from "@/lib/address";
 import { usDateInZone, usTimeInZone } from "@/lib/datetime";
 import type { JobExportData } from "@/lib/exports/job-data";
 import { returnTracking, workSummary } from "@/lib/exports/text-report";
+import { phonesLine, preferredPhoneLine } from "@/lib/profile";
 import { jobTickets, ticketList } from "@/lib/tickets";
 import { visitTotals } from "@/lib/time-tracking";
 
@@ -52,6 +53,13 @@ export function initials(name: string): string {
     .filter(Boolean)
     .map((word) => word[0]?.toUpperCase() ?? "")
     .join("");
+}
+
+/** The lead's Public contact details, when there is a crew. */
+function leadContact(context: FormFillContext) {
+  const lead = context.data.job.assignments[0];
+  // Optional chaining for data assembled by hand rather than by the loader.
+  return lead ? (context.data.contacts?.get(lead.userId) ?? null) : null;
 }
 
 function techNames(context: FormFillContext): string[] {
@@ -111,6 +119,20 @@ const SOURCES: FormSource[] = [
   { group: "Tech", key: "tech.initials", label: "Tech initials",
     resolve: (context) =>
       techNames(context).map(initials).join(", ") || null },
+  // The lead's contact details as the client may have them: only what their
+  // profile makes Public, the preferred phone first.
+  { group: "Tech", key: "tech.leadPhone", label: "Lead tech phone (preferred)",
+    resolve: (context) => {
+      const card = leadContact(context);
+      return card ? preferredPhoneLine(card) : null;
+    } },
+  { group: "Tech", key: "tech.leadPhones", label: "Lead tech phones, VoIP too",
+    resolve: (context) => {
+      const card = leadContact(context);
+      return card ? phonesLine(card) : null;
+    } },
+  { group: "Tech", key: "tech.leadEmail", label: "Lead tech email",
+    resolve: (context) => leadContact(context)?.email ?? null },
   // Asked for by name on a real billing table: "# Techs".
   { group: "Tech", key: "tech.count", label: "Number of techs",
     resolve: (context) => {

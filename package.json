@@ -25,6 +25,7 @@
     "verify:draft": "tsx --tsconfig tsconfig.json scripts/verify-job-draft.ts",
     "verify:form-pages": "tsx --tsconfig tsconfig.json scripts/verify-form-pages.ts",
     "verify:images": "tsx --tsconfig tsconfig.json scripts/verify-images.ts",
+    "verify:profiles": "tsx --tsconfig tsconfig.json scripts/verify-profiles.ts",
     "verify:signin": "tsx --tsconfig tsconfig.json scripts/verify-signin.ts",
     "verify:deliverables": "tsx --tsconfig tsconfig.json scripts/verify-deliverables.ts",
     "audit:files": "tsx --tsconfig tsconfig.json scripts/audit-job-files.ts",

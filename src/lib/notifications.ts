@@ -30,6 +30,13 @@ export const NOTIFICATION_KINDS = {
   // crew have had another go at it, or it sits in a queue they stopped
   // watching.
   report_resubmitted: "Report resubmitted",
+  // A legal name or a picture somebody may only ask for, waiting on their
+  // direct supervisor — and the answer, back to whoever asked.
+  profile_request: "Profile change requested",
+  profile_request_answered: "Profile request answered",
+  // Another manager changed something that is the direct supervisor's to
+  // change. They were warned; the supervisor is told.
+  profile_changed: "Profile changed by another manager",
 } as const;
 
 export type NotificationKind = keyof typeof NOTIFICATION_KINDS;

@@ -3,6 +3,7 @@ import { getCompanySettings } from "@/lib/company";
 import { isoDateInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
 import { resolveDeliverableRules, RULE_SELECT } from "@/lib/deliverables";
+import { loadContactCards } from "@/lib/profile";
 import { jobSpan } from "@/lib/time-tracking";
 
 /**
@@ -176,7 +177,11 @@ export async function loadJobForExport(jobId: string) {
 
   if (!job) return null;
 
-  const company = await getCompanySettings();
+  const [company, contacts] = await Promise.all([
+    getCompanySettings(),
+    // What each of the crew lets a client have: their Public lines only.
+    loadContactCards(job.assignments.map((assignment) => assignment.userId)),
+  ]);
   const timeZone = job.site.timeZone ?? company.defaultTimeZone;
   const span = jobSpan(job.assignments.flatMap((a) => a.visits));
 
@@ -185,6 +190,7 @@ export async function loadJobForExport(jobId: string) {
     company,
     timeZone,
     span,
+    contacts,
     /** The fields the job asks for, in the order they are shown. */
     rules: resolveDeliverableRules(
       job.deliverableRules,

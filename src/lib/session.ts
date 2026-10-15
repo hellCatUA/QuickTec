@@ -14,6 +14,12 @@ export type SessionUser = {
   name: string;
   avatarUrl: string | null;
   baseRole: BaseRole;
+  /**
+   * An account held here rather than in NextCloud — a client's coordinator, a
+   * subcontractor. Signed in, but outside the company: of anybody's profile
+   * they see only what is Public.
+   */
+  outside: boolean;
   timeZone: string;
   /** Signed in on a password somebody else chose. Nothing else until it changes. */
   mustChangePassword: boolean;
@@ -47,6 +53,7 @@ const loadSessionUser = cache(async (): Promise<SessionUser | null> => {
       name: true,
       avatarUrl: true,
       baseRole: true,
+      signInMethod: true,
       active: true,
       timeZone: true,
       mustChangePassword: true,
@@ -132,6 +139,7 @@ const loadSessionUser = cache(async (): Promise<SessionUser | null> => {
     name: user.name,
     avatarUrl: user.avatarUrl,
     baseRole: user.baseRole,
+    outside: user.signInMethod === "LOCAL",
     timeZone: user.timeZone,
     mustChangePassword: user.mustChangePassword,
     directSupervisorId: user.directSupervisorId,

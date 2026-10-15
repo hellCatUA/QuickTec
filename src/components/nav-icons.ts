@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   Layers,
   Settings,
+  Users,
   Wallet,
 } from "lucide-react";
 
@@ -24,6 +25,7 @@ export const NAV_ICONS = {
   approvals: Inbox,
   account: CircleUser,
   directory: FolderKanban,
+  people: Users,
   mileage: Car,
   pay: Wallet,
   payroll: Banknote,

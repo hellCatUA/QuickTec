@@ -103,6 +103,9 @@ async function main() {
   await db.changeRequest.deleteMany({
     where: { requestedById: tech.user.id },
   });
+  // Somebody's request for a new legal name or picture is waiting too, and
+  // would sit in the same count.
+  await db.profileRequest.deleteMany({ where: { status: "PENDING" } });
   await db.job.updateMany({
     where: {
       siteId: { not: site.id },
