@@ -3,6 +3,7 @@
 import { Check, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useActionState, useState } from "react";
+import { Avatar } from "@/components/profile/parts";
 import { ReadOnlyValue } from "@/components/profile/parts";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -30,8 +31,11 @@ const ROLE_VARIANT: Record<
 
 export function UserRow({
   user,
+  picture,
   supervisorOptions,
 }: {
+  /** Their picture, or null for their initials. */
+  picture: string | null;
   user: {
     id: string;
     name: string;
@@ -81,6 +85,7 @@ export function UserRow({
           <input type="hidden" name="userId" value={user.id} />
 
           <div className="flex flex-wrap items-center gap-2">
+            <Avatar src={picture} name={user.name} size={36} />
             <div className="min-w-0">
               <div className="truncate text-sm font-semibold">{user.name}</div>
               <div className="truncate text-xs text-muted-foreground">

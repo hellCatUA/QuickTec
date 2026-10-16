@@ -14,6 +14,8 @@ export type SessionUser = {
   email: string;
   name: string;
   avatarUrl: string | null;
+  /** Their own picture as stored here, for the header. */
+  avatarPath: string | null;
   baseRole: BaseRole;
   timeZone: string;
   /** Signed in on a password somebody else chose. Nothing else until it changes. */
@@ -47,6 +49,7 @@ const loadSessionUser = cache(async (): Promise<SessionUser | null> => {
       email: true,
       name: true,
       avatarUrl: true,
+      avatarPath: true,
       baseRole: true,
       active: true,
       timeZone: true,
@@ -132,6 +135,7 @@ const loadSessionUser = cache(async (): Promise<SessionUser | null> => {
     email: user.email,
     name: user.name,
     avatarUrl: user.avatarUrl,
+    avatarPath: user.avatarPath,
     baseRole: user.baseRole,
     timeZone: user.timeZone,
     mustChangePassword: user.mustChangePassword,

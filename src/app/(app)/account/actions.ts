@@ -18,6 +18,7 @@ import { profileChanges, recordProfileEvents } from "@/lib/profile-history";
 import {
   effectivePreferred,
   LEVEL_INFO,
+  narrowest,
   PHONE_LABEL,
   whyNotPreferable,
 } from "@/lib/profile-privacy";
@@ -250,7 +251,10 @@ export async function saveOwnProfile(
   return { ok: true, message: "Saved." };
 }
 
-/** Who sees their picture — the one level a person picks for themselves. */
+/**
+ * Who sees their picture — the one level a person picks for themselves:
+ * Public, as pictures are, or kept to the company where the company lets them.
+ */
 export async function setOwnPictureVisibility(level: string): Promise<ProfileResult> {
   const user = await getSessionUser();
   if (!user) return { ok: false, error: "Not signed in." };
@@ -259,8 +263,8 @@ export async function setOwnPictureVisibility(level: string): Promise<ProfileRes
   }
 
   const settings = await loadPrivacySettings();
-  if (level === "PUBLIC" && !settings.picture.allowPublic) {
-    return { ok: false, error: "The company keeps profile pictures off client paperwork." };
+  if (level === "FEDERATED" && !settings.picture.allowChoice) {
+    return { ok: false, error: "The company shows every profile picture at the same level." };
   }
 
   const before = await db.user.findUnique({
@@ -278,10 +282,10 @@ export async function setOwnPictureVisibility(level: string): Promise<ProfileRes
     changes: [
       {
         field: "picture",
-        // Who sees it, by the level's own name, as the badge beside it says.
-        // "Not Public" is whatever level the company keeps pictures at.
-        from: LEVEL_INFO[before.avatarVisibility === "PUBLIC" ? "PUBLIC" : settings.picture.level].label,
-        to: LEVEL_INFO[level === "PUBLIC" ? "PUBLIC" : settings.picture.level].label,
+        // Who sees it, by the level's own name, as the badge beside it says:
+        // their choice, never wider than the company's level.
+        from: LEVEL_INFO[narrowest(settings.picture.level, before.avatarVisibility)].label,
+        to: LEVEL_INFO[narrowest(settings.picture.level, level)].label,
       },
     ],
   });

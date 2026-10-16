@@ -68,8 +68,17 @@ type FieldDefinition = {
    * not keep.
    */
   minLevel?: PrivacyLevel;
-  /** The field's one switch, where it has one: what it says, and its default. */
-  allowPublic?: { label: string; default: boolean };
+  /**
+   * The field's one switch, where it has one: whether a choice the person
+   * makes is honoured. What it says, its default, how the default reads in the
+   * settings, and the levels at which it means anything.
+   */
+  allowChoice?: {
+    label: string;
+    default: boolean;
+    summary: string;
+    matters: (level: PrivacyLevel) => boolean;
+  };
   /** Who changes it. Said, not configured. */
   changedBy: string;
 };
@@ -78,8 +87,16 @@ export const PROFILE_FIELDS = {
   picture: {
     label: "Profile picture",
     group: "Name & role",
-    level: "FEDERATED",
-    allowPublic: { label: "Let the person make it Public", default: true },
+    // Public, as the face at a client's door is; the person may keep theirs
+    // to the company where the company lets them.
+    level: "PUBLIC",
+    allowChoice: {
+      label: "Let the person keep it to the company",
+      default: true,
+      summary: "the person may keep it to the company",
+      // Keeping it to the company only narrows a Public picture.
+      matters: (level) => level === "PUBLIC",
+    },
     changedBy: "Direct supervisor; the person at onboarding, then by request",
   },
   name: {
@@ -126,7 +143,12 @@ export const PROFILE_FIELDS = {
     label: "Personal phone",
     group: "Phone & email",
     level: "RESTRICTED",
-    allowPublic: { label: "Public while it is the preferred phone", default: true },
+    allowChoice: {
+      label: "Public while it is the preferred phone",
+      default: true,
+      summary: "Public while preferred",
+      matters: (level) => level !== "PUBLIC",
+    },
     changedBy: "The person; managers, on the users page",
   },
   workPhone: {
@@ -219,13 +241,13 @@ export function levelsAllowed(field: ProfileField): PrivacyLevel[] {
 /** The company's level for every field, the defaults filled in. */
 export type PrivacySettings = Record<
   ProfileField,
-  { level: PrivacyLevel; allowPublic: boolean }
+  { level: PrivacyLevel; allowChoice: boolean }
 >;
 
 export type PrivacyOverride = {
   field: string;
   level: PrivacyLevel;
-  allowPublic: boolean | null;
+  allowChoice: boolean | null;
 };
 
 /**
@@ -238,7 +260,7 @@ export function privacySettings(overrides: PrivacyOverride[]): PrivacySettings {
     const definition = fieldDefinition(field);
     settings[field] = {
       level: definition.level,
-      allowPublic: definition.allowPublic?.default ?? false,
+      allowChoice: definition.allowChoice?.default ?? false,
     };
   }
   for (const row of overrides) {
@@ -249,8 +271,8 @@ export function privacySettings(overrides: PrivacyOverride[]): PrivacySettings {
       // the floor, the narrowest it may now be, not thrown open to the
       // default: an email somebody kept off client paperwork stays off it.
       level: levelsAllowed(row.field).includes(row.level) ? row.level : levelsAllowed(row.field)[0],
-      allowPublic: definition.allowPublic
-        ? (row.allowPublic ?? definition.allowPublic.default)
+      allowChoice: definition.allowChoice
+        ? (row.allowChoice ?? definition.allowChoice.default)
         : false,
     };
   }
@@ -260,11 +282,11 @@ export function privacySettings(overrides: PrivacyOverride[]): PrivacySettings {
 /** Whether a field differs from its optimized default. */
 export function differsFromDefault(
   field: ProfileField,
-  value: { level: PrivacyLevel; allowPublic: boolean },
+  value: { level: PrivacyLevel; allowChoice: boolean },
 ): boolean {
   const definition = fieldDefinition(field);
   if (value.level !== definition.level) return true;
-  return Boolean(definition.allowPublic) && value.allowPublic !== definition.allowPublic!.default;
+  return Boolean(definition.allowChoice) && value.allowChoice !== definition.allowChoice!.default;
 }
 
 // ---------------------------------------------------------------------------
@@ -336,23 +358,24 @@ export type PrivacySubject = {
 
 /**
  * The level a field sits at for this person. The same as the company's level
- * except for the two that move: the picture, which is Public when they chose
- * it and the company lets them, and the personal phone, which is Public while
- * it is the preferred one and the company lets it be.
+ * except for the two that move: the picture, which they may keep to the
+ * company where the company lets them, and the personal phone, which is
+ * Public while it is the preferred one and the company lets it be.
  */
 export function levelFor(
   field: ProfileField,
   settings: PrivacySettings,
   subject: PrivacySubject,
 ): PrivacyLevel {
-  const { level, allowPublic } = settings[field];
+  const { level, allowChoice } = settings[field];
 
   if (field === "picture") {
-    return allowPublic && subject.avatarVisibility === "PUBLIC" ? "PUBLIC" : level;
+    // Their choice can only narrow it: never past what the company set.
+    return allowChoice ? narrowest(level, subject.avatarVisibility) : level;
   }
   if (field === "personalPhone") {
     const preferred = effectivePreferred(subject.preferredPhone, subject.phones);
-    return allowPublic && preferred === "PERSONAL" ? "PUBLIC" : level;
+    return allowChoice && preferred === "PERSONAL" ? "PUBLIC" : level;
   }
   if (field === "preferredPhone") {
     // The preferred phone is one of the three numbers, so it can be no more

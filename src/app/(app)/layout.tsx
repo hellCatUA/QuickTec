@@ -12,6 +12,7 @@ import {
   HEADER_WORDMARK_BASE,
 } from "@/lib/brand";
 import { APP_NAME, brandLine } from "@/lib/company";
+import { avatarSrc } from "@/lib/avatar";
 import { db } from "@/lib/db";
 import { buildNavItems, opensSettings } from "@/lib/nav";
 import { ROLE_LABEL } from "@/lib/profile-format";
@@ -110,6 +111,7 @@ export default async function AppLayout({
         <div className="ml-auto flex items-center gap-2">
           <AccountMenu
             name={user.name}
+            picture={avatarSrc(user.id, user.avatarPath)}
             role={ROLE_LABEL[user.baseRole] ?? user.baseRole}
             canManageSettings={canManageSettings}
             signOutAction={async () => {

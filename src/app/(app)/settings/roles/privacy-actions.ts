@@ -26,7 +26,7 @@ export type PrivacyResult = { ok: true } | { ok: false; error: string };
 export async function setFieldPrivacy(input: {
   field: string;
   level: string;
-  allowPublic?: boolean;
+  allowChoice?: boolean;
 }): Promise<PrivacyResult> {
   const actor = await requirePermission("roles.manage", { minScope: "ALL" });
 
@@ -38,25 +38,25 @@ export async function setFieldPrivacy(input: {
   if (!levelsAllowed(field).includes(input.level)) {
     return { ok: false, error: `${definition.label} cannot be kept narrower than that — it is shown across the app.` };
   }
-  const allowPublic = definition.allowPublic
-    ? (input.allowPublic ?? definition.allowPublic.default)
+  const allowChoice = definition.allowChoice
+    ? (input.allowChoice ?? definition.allowChoice.default)
     : false;
 
   const before = await db.profilePrivacy.findUnique({ where: { field } });
-  const value = { level: input.level, allowPublic };
+  const value = { level: input.level, allowChoice };
 
   if (differsFromDefault(field, value)) {
     await db.profilePrivacy.upsert({
       where: { field },
       update: {
         level: value.level,
-        allowPublic: definition.allowPublic ? allowPublic : null,
+        allowChoice: definition.allowChoice ? allowChoice : null,
         updatedById: actor.id,
       },
       create: {
         field,
         level: value.level,
-        allowPublic: definition.allowPublic ? allowPublic : null,
+        allowChoice: definition.allowChoice ? allowChoice : null,
         updatedById: actor.id,
       },
     });
@@ -73,7 +73,7 @@ export async function setFieldPrivacy(input: {
       field: definition.label,
       from: LEVEL_INFO[before?.level ?? definition.level].label,
       to: LEVEL_INFO[value.level].label,
-      ...(definition.allowPublic ? { allowPublic } : {}),
+      ...(definition.allowChoice ? { [definition.allowChoice.label]: allowChoice } : {}),
     },
   });
 

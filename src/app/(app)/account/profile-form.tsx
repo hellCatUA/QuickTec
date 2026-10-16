@@ -278,7 +278,7 @@ export function ProfileForm({
             level={level("personalPhone")}
             field="personalPhone"
             hint={
-              settings.personalPhone.allowPublic
+              settings.personalPhone.allowChoice
                 ? "Restricted, unless it is your preferred phone."
                 : undefined
             }

@@ -2,6 +2,7 @@
 
 import { CircleDollarSign, Loader2, Star, UserPlus, X } from "lucide-react";
 import * as React from "react";
+import { Avatar } from "@/components/profile/parts";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Combobox } from "@/components/ui/combobox";
@@ -18,6 +19,8 @@ export type CrewMember = {
   id: string;
   userId: string;
   name: string;
+  /** Their picture as this reader may see it, or null for their initials. */
+  picture: string | null;
   isLead: boolean;
   onSite: boolean;
   hasWorked: boolean;
@@ -113,7 +116,10 @@ export function CrewPanel({
             className="flex flex-col gap-2 rounded-lg border border-border p-2 text-sm"
           >
             <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium">{member.name}</span>
+            <span className="flex items-center gap-2 font-medium">
+              <Avatar src={member.picture} name={member.name} size={28} />
+              {member.name}
+            </span>
             {member.isLead ? <Badge variant="primary">Lead</Badge> : null}
             {member.onSite ? <Badge variant="success">On site</Badge> : null}
             <span className="text-xs text-muted-foreground">

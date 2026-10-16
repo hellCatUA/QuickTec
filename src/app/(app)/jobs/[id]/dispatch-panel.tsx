@@ -2,6 +2,7 @@
 
 import { Loader2, Mail, Phone, Plus } from "lucide-react";
 import * as React from "react";
+import { Avatar } from "@/components/profile/parts";
 import { Button } from "@/components/ui/button";
 import { formatPhone, formatPhoneAsTyped, telHref } from "@/lib/phone";
 import { capitaliseName } from "@/lib/names";
@@ -22,6 +23,8 @@ export type DispatchEntry = {
   id: string;
   label: string;
   name: string | null;
+  /** For a contact who is somebody here — their picture, or null for initials. */
+  picture?: string | null;
   phone: string | null;
   email: string | null;
   note: string | null;
@@ -116,6 +119,9 @@ export function DispatchPanel({
             key={contact.id}
             className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-border p-2"
           >
+            {contact.picture !== undefined && contact.name ? (
+              <Avatar src={contact.picture} name={contact.name} size={28} />
+            ) : null}
             <span className="text-sm font-medium">{contact.label}</span>
             {contact.name ? (
               <span className="text-xs text-muted-foreground">

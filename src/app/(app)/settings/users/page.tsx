@@ -2,6 +2,7 @@ import { TriangleAlert } from "lucide-react";
 import { redirect } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
 import { db } from "@/lib/db";
+import { loadPrivacySettings, pictureFor } from "@/lib/profile";
 import { can, getSessionUser } from "@/lib/session";
 import { canSupervise, supervisionsToFix } from "@/lib/supervisors";
 import { OutsideAccount } from "./outside-account";
@@ -40,8 +41,16 @@ export default async function UsersSettingsPage() {
       signInMethod: true,
       passwordFallback: true,
       passwordHash: true,
+      avatarPath: true,
+      avatarVisibility: true,
     },
   });
+  const privacy = await loadPrivacySettings();
+  const pictures = new Map(
+    await Promise.all(
+      users.map(async (user) => [user.id, await pictureFor(viewer, user, privacy)] as const),
+    ),
+  );
 
   // Only somebody who can actually approve a week. The list used to be
   // "anyone who is not a tech", which let a week be routed to an account with
@@ -108,9 +117,10 @@ export default async function UsersSettingsPage() {
         </Card>
       ) : (
         <div className="flex flex-col gap-3">
-          {users.map(({ passwordHash, ...user }) => (
+          {users.map(({ passwordHash, avatarPath: _path, avatarVisibility: _visibility, ...user }) => (
             <UserRow
               key={user.id}
+              picture={pictures.get(user.id) ?? null}
               user={{
                 ...user,
                 lastLoginAt: user.lastLoginAt?.toISOString() ?? null,

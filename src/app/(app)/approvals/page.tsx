@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { Avatar } from "@/components/profile/parts";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import {
@@ -18,6 +19,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { EmptyState, PageHeader } from "@/components/ui/page-header";
+import { requestedAvatarSrc } from "@/lib/avatar";
 import { getCompanySettings } from "@/lib/company";
 import { isoDateInZone, usDateTimeInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
@@ -25,7 +27,7 @@ import { JOB_FIELDS, isJobField } from "@/lib/job-fields";
 import { formatMoney } from "@/lib/money";
 import { isGuest } from "@/lib/permissions";
 import { canSupervise } from "@/lib/supervisors";
-import { managesProfiles } from "@/lib/profile";
+import { loadPrivacySettings, managesProfiles, PICTURE_SELECT, pictureFor } from "@/lib/profile";
 import { jobScopeWhere, reportIds } from "@/lib/scope";
 import { getSessionUser, permissionScope } from "@/lib/session";
 import { DecidedList, fieldKind, type DecidedRow } from "./decided";
@@ -183,10 +185,22 @@ export default async function ApprovalsPage({
               field: true,
               value: true,
               createdAt: true,
-              user: { select: { id: true, name: true, legalName: true } },
+              user: { select: { ...PICTURE_SELECT, name: true, legalName: true } },
             },
           }),
     ]);
+
+  // Whose request it is, by face as well as by name.
+  const privacy = profileRequests.length > 0 ? await loadPrivacySettings() : null;
+  const requestPictures = new Map(
+    privacy
+      ? await Promise.all(
+          profileRequests.map(
+            async (request) => [request.id, await pictureFor(user, request.user, privacy)] as const,
+          ),
+        )
+      : [],
+  );
 
   // Notifications are counted apart: the headline is about decisions waiting,
   // and folding "you were put on a job" into that number would overstate it.
@@ -478,7 +492,14 @@ export default async function ApprovalsPage({
                   <Badge variant="warning">
                     {request.field === "PICTURE" ? "Profile picture" : "Legal name"}
                   </Badge>
-                  <span className="font-medium">{request.user.name}</span>
+                  <span className="flex items-center gap-2 font-medium">
+                    <Avatar
+                      src={requestPictures.get(request.id) ?? null}
+                      name={request.user.name}
+                      size={24}
+                    />
+                    {request.user.name}
+                  </span>
                 </div>
                 <div className="flex flex-wrap items-center gap-2 text-xs">
                   {request.field === "LEGAL_NAME" ? (
@@ -490,7 +511,14 @@ export default async function ApprovalsPage({
                       <span>{request.value}</span>
                     </>
                   ) : (
-                    <span>A new picture</span>
+                    <span className="flex items-center gap-1.5">
+                      <Avatar
+                        src={requestedAvatarSrc(request.user.id, request.id)}
+                        name={request.user.name}
+                        size={24}
+                      />
+                      A new picture
+                    </span>
                   )}
                   <span className="text-muted-foreground">
                     · {usDateTimeInZone(request.createdAt, zone)}

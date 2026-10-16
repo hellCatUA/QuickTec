@@ -52,7 +52,7 @@ import { assignmentTerms, describeTerms } from "@/lib/budget";
 import { formatRate } from "@/lib/money";
 import { canOnJob } from "@/lib/scope";
 import { loadTimeline } from "@/lib/timeline-data";
-import { reachableContact } from "@/lib/profile";
+import { loadPrivacySettings, pictureFor, reachableContact } from "@/lib/profile";
 import { can, getSessionUser, permissionScope } from "@/lib/session";
 import { jobLabels } from "@/lib/photo-label";
 import { fileVersion } from "@/lib/storage";
@@ -361,6 +361,8 @@ export default async function JobPage({
               directSupervisor: {
                 select: { id: true, name: true },
               },
+              avatarPath: true,
+              avatarVisibility: true,
             },
           },
           supervisorId: true,
@@ -771,6 +773,16 @@ export default async function JobPage({
         ...(await reachableContact(user, mine.user.directSupervisor.id)),
       }
     : null;
+  // Each of the crew's pictures as this reader may see it.
+  const privacy = await loadPrivacySettings();
+  const crewPictures = new Map(
+    await Promise.all(
+      job.assignments.map(
+        async (assignment) => [assignment.id, await pictureFor(user, assignment.user, privacy)] as const,
+      ),
+    ),
+  );
+
   const dispatch = [
     ...(supervisor
       ? [
@@ -778,6 +790,7 @@ export default async function JobPage({
             id: "supervisor",
             label: "Your supervisor",
             name: supervisor.name,
+            picture: supervisor.picture,
             phone: supervisor.phone,
             email: supervisor.email,
             note: null as string | null,
@@ -1315,6 +1328,7 @@ export default async function JobPage({
                   id: assignment.id,
                   userId: assignment.user.id,
                   name: assignment.user.name,
+                  picture: crewPictures.get(assignment.id) ?? null,
                   // Somebody else's pay reaches the page only for whoever may
                   // see the crew's: a tech sees their own line and no other.
                   payType: payVisible.has(assignment.id) ? assignment.payType : "HOURLY",

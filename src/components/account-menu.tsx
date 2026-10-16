@@ -3,6 +3,7 @@
 import { ChevronDown, CircleUser, LogOut, Settings } from "lucide-react";
 import Link from "next/link";
 import * as React from "react";
+import { Avatar } from "@/components/profile/parts";
 import { cn } from "@/lib/utils";
 
 /**
@@ -14,11 +15,14 @@ import { cn } from "@/lib/utils";
  */
 export function AccountMenu({
   name,
+  picture,
   role,
   canManageSettings,
   signOutAction,
 }: {
   name: string;
+  /** Their own picture, or null for their initials. */
+  picture: string | null;
   role: string;
   canManageSettings: boolean;
   /** A server action: the sign-out has to happen on the server. */
@@ -45,14 +49,6 @@ export function AccountMenu({
     };
   }, [open]);
 
-  const initials =
-    name
-      .split(/\s+/)
-      .filter(Boolean)
-      .slice(0, 2)
-      .map((part) => part[0]?.toUpperCase())
-      .join("") || "?";
-
   return (
     <div ref={rootRef} className="relative">
       <button
@@ -66,9 +62,14 @@ export function AccountMenu({
           open && "bg-muted",
         )}
       >
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary/15 text-xs font-semibold text-primary">
-          {initials}
-        </span>
+        {/* The same picture as on their profile, and the same initials when
+            there is none. */}
+        <Avatar
+          src={picture}
+          name={name}
+          size={32}
+          className={picture ? undefined : "bg-primary/15 text-primary"}
+        />
         <span className="hidden text-left sm:block">
           <span className="block text-xs font-medium leading-tight">{name}</span>
           <span className="block text-[10px] leading-tight text-muted-foreground">

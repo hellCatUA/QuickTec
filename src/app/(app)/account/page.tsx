@@ -92,7 +92,7 @@ export default async function AccountPage({
                 src={avatarSrc(profile.id, profile.avatarPath)}
                 level={levels.picture}
                 baseLevel={settings.picture.level}
-                allowPublic={settings.picture.allowPublic}
+                allowChoice={settings.picture.allowChoice}
                 pending={
                   pendingPicture
                     ? { id: pendingPicture.id, src: requestedAvatarSrc(profile.id, pendingPicture.id) }

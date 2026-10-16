@@ -34,7 +34,7 @@ export function PrivacyMatrix({ initial }: { initial: PrivacySettings }) {
 
   const changed = PROFILE_FIELD_KEYS.filter((field) => differsFromDefault(field, values[field]));
 
-  async function change(field: ProfileField, next: { level: PrivacyLevel; allowPublic: boolean }) {
+  async function change(field: ProfileField, next: { level: PrivacyLevel; allowChoice: boolean }) {
     const previous = values[field];
     setError(null);
     setSaving(field);
@@ -61,7 +61,7 @@ export function PrivacyMatrix({ initial }: { initial: PrivacySettings }) {
           const definition = fieldDefinition(field);
           defaults[field] = {
             level: definition.level,
-            allowPublic: definition.allowPublic?.default ?? false,
+            allowChoice: definition.allowChoice?.default ?? false,
           };
         }
         return defaults;
@@ -73,8 +73,8 @@ export function PrivacyMatrix({ initial }: { initial: PrivacySettings }) {
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-4">
       <p className="text-sm text-muted-foreground">
         Who sees each line of somebody&rsquo;s profile. People see the level of their own lines but
-        cannot change it — except their picture, where they pick between the levels allowed here.
-        Every change here is kept in the audit trail.
+        cannot change it — except their picture, which they may keep to the company where that is
+        allowed here. Every change here is kept in the audit trail.
       </p>
       <LevelsLegend className="grid gap-3 sm:grid-cols-3" />
 
@@ -199,7 +199,7 @@ export function PrivacyMatrix({ initial }: { initial: PrivacySettings }) {
                               onChange={(event) =>
                                 void change(field, {
                                   level: event.target.value as PrivacyLevel,
-                                  allowPublic: value.allowPublic,
+                                  allowChoice: value.allowChoice,
                                 })
                               }
                               className="min-h-9 min-w-36 rounded-md border border-border bg-input px-2 text-xs"
@@ -215,29 +215,23 @@ export function PrivacyMatrix({ initial }: { initial: PrivacySettings }) {
                             <Loader2 className="size-3 shrink-0 animate-spin text-muted-foreground" />
                           ) : null}
                         </div>
-                        {definition.allowPublic && value.level !== "PUBLIC" ? (
+                        {definition.allowChoice && definition.allowChoice.matters(value.level) ? (
                           <label className="mt-2 flex items-center gap-2 text-xs">
                             <input
                               type="checkbox"
-                              checked={value.allowPublic}
+                              checked={value.allowChoice}
                               onChange={(event) =>
-                                void change(field, { level: value.level, allowPublic: event.target.checked })
+                                void change(field, { level: value.level, allowChoice: event.target.checked })
                               }
                               className="size-4 accent-primary"
                             />
-                            {definition.allowPublic.label}
+                            {definition.allowChoice.label}
                           </label>
                         ) : null}
                       </td>
                       <td className="p-3 align-top text-xs text-muted-foreground">
                         {LEVEL_INFO[definition.level].label}
-                        {definition.allowPublic
-                          ? definition.allowPublic.default
-                            ? field === "picture"
-                              ? ", may be made Public"
-                              : ", Public while preferred"
-                            : ""
-                          : ""}
+                        {definition.allowChoice?.default ? `, ${definition.allowChoice.summary}` : ""}
                       </td>
                       <td className="p-3 align-top text-xs text-muted-foreground">{definition.changedBy}</td>
                     </tr>

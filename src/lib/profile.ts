@@ -1,4 +1,5 @@
 import type { BaseRole, PreferredPhone, PrivacyLevel } from "@prisma-client";
+import { avatarSrc } from "@/lib/avatar";
 import { db } from "@/lib/db";
 import { formatPhone } from "@/lib/phone";
 import {
@@ -25,7 +26,7 @@ import { canSupervise } from "@/lib/supervisors";
 
 export async function loadPrivacySettings(): Promise<PrivacySettings> {
   const rows = await db.profilePrivacy.findMany({
-    select: { field: true, level: true, allowPublic: true },
+    select: { field: true, level: true, allowChoice: true },
   });
   return privacySettings(rows);
 }
@@ -370,9 +371,9 @@ export function phonesLine(card: ContactCard): string | null {
 export async function reachableContact(
   viewer: SessionUser,
   userId: string,
-): Promise<{ phone: string | null; email: string | null }> {
+): Promise<{ phone: string | null; email: string | null; picture: string | null }> {
   const profile = await loadProfile(userId);
-  if (!profile) return { phone: null, email: null };
+  if (!profile) return { phone: null, email: null, picture: null };
   const [audience, settings] = await Promise.all([
     audienceFor(viewer, profile),
     loadPrivacySettings(),
@@ -389,7 +390,46 @@ export async function reachableContact(
   return {
     phone: preferred ?? fallback ?? null,
     email: shows(levels, audience, "email") ? profile.email : null,
+    picture: shows(levels, audience, "picture") ? avatarSrc(profile.id, profile.avatarPath) : null,
   };
+}
+
+/** What deciding on somebody's picture needs to know of them. */
+export type PictureSubject = Subject & {
+  avatarPath: string | null;
+  avatarVisibility: PrivacyLevel;
+};
+
+/** The fields to select for `pictureFor`. */
+export const PICTURE_SELECT = {
+  id: true,
+  directSupervisorId: true,
+  baseRole: true,
+  avatarPath: true,
+  avatarVisibility: true,
+} as const;
+
+/**
+ * Somebody's picture as this viewer may see it, or null for their initials:
+ * the question the picture's own route asks, so a list never links a picture
+ * the route would refuse. Only a Restricted picture costs a query.
+ */
+export async function pictureFor(
+  viewer: SessionUser,
+  person: PictureSubject,
+  settings: PrivacySettings,
+): Promise<string | null> {
+  const src = avatarSrc(person.id, person.avatarPath);
+  if (!src || viewer.id === person.id) return src;
+  const level = levelFor("picture", settings, {
+    avatarVisibility: person.avatarVisibility,
+    preferredPhone: null,
+    phones: { personal: null, work: null, voip: null },
+  });
+  if (level === "PUBLIC") return src;
+  if (isGuest(viewer)) return null;
+  if (level === "FEDERATED") return src;
+  return (await seesRestricted(viewer, person)) ? src : null;
 }
 
 /**

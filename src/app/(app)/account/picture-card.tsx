@@ -28,7 +28,7 @@ export function PictureCard({
   src,
   level,
   baseLevel,
-  allowPublic,
+  allowChoice,
   pending,
   reviewer,
   firstPicture,
@@ -38,9 +38,10 @@ export function PictureCard({
   src: string | null;
   /** Where the picture sits now. */
   level: PrivacyLevel;
-  /** The company's level for pictures — the other choice beside Public. */
+  /** The company's level for pictures. */
   baseLevel: PrivacyLevel;
-  allowPublic: boolean;
+  /** Whether the person may keep a Public picture to the company. */
+  allowChoice: boolean;
   pending: { id: string; src: string } | null;
   reviewer: string | null;
   /** No picture has ever been set, so the first one is theirs to set. */
@@ -83,8 +84,10 @@ export function PictureCard({
     });
   }
 
+  // Public, or kept to the company — where pictures are Public and the
+  // company lets them choose. Otherwise the company's level is the only one.
   const choices: PrivacyLevel[] =
-    baseLevel === "PUBLIC" ? ["PUBLIC"] : allowPublic ? [baseLevel, "PUBLIC"] : [baseLevel];
+    baseLevel === "PUBLIC" && allowChoice ? ["PUBLIC", "FEDERATED"] : [baseLevel];
 
   return (
     <div className="flex flex-col items-center gap-3 text-center">
@@ -132,10 +135,7 @@ export function PictureCard({
                 type="button"
                 role="menuitemradio"
                 aria-checked={level === choice}
-                // Stored as Public or not: "not" is whatever the company's level is.
-                onClick={() =>
-                  run(() => setOwnPictureVisibility(choice === "PUBLIC" ? "PUBLIC" : "FEDERATED"))
-                }
+                onClick={() => run(() => setOwnPictureVisibility(choice))}
                 className="flex min-h-11 w-full items-start gap-2.5 px-3 py-2 text-left hover:bg-muted"
               >
                 <LevelIcon level={choice} className="mt-0.5" />

@@ -16,6 +16,7 @@ import { formatRate, toCents } from "@/lib/money";
 import { jobRateNote } from "@/lib/pay-rates";
 import { loadPunchBlocks } from "@/lib/punch-blocks";
 import { canOnJob } from "@/lib/scope";
+import { loadPrivacySettings, PICTURE_SELECT, pictureFor } from "@/lib/profile";
 import { getSessionUser } from "@/lib/session";
 import { CrewPanel } from "../../crew-panel";
 import { BudgetForm } from "./budget-form";
@@ -106,7 +107,7 @@ export default async function ManagePage({
           payOverridden: true,
           travelReimbursement: true,
           supervisor: { select: { name: true } },
-          user: { select: { name: true, defaultPayRate: true } },
+          user: { select: { name: true, defaultPayRate: true, ...PICTURE_SELECT } },
           visits: { select: { clockInAt: true, clockOutAt: true } },
           _count: { select: { deliverables: true } },
         },
@@ -180,6 +181,16 @@ export default async function ManagePage({
         ]),
       )
     : undefined;
+
+  // Each person's picture as this reader may see it.
+  const privacy = await loadPrivacySettings();
+  const crewPictures = new Map(
+    await Promise.all(
+      job.assignments.map(
+        async (assignment) => [assignment.id, await pictureFor(user, assignment.user, privacy)] as const,
+      ),
+    ),
+  );
 
   const crew = job.assignments.map((assignment) => ({
     assignmentId: assignment.id,
@@ -257,6 +268,7 @@ export default async function ManagePage({
                 id: assignment.id,
                 userId: assignment.userId,
                 name: assignment.user.name,
+                picture: crewPictures.get(assignment.id) ?? null,
                 payType: assignment.payType,
                 payRate: assignment.payRate.toString(),
                 travelReimbursement:

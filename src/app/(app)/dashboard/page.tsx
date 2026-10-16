@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { Avatar } from "@/components/profile/parts";
 import { Badge } from "@/components/ui/badge";
 import { formatPhone, telHref } from "@/lib/phone";
 import { buttonVariants } from "@/components/ui/button";
@@ -443,7 +444,10 @@ export default async function DashboardPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-            <span className="font-medium">{supervisor.name}</span>
+            <span className="flex items-center gap-2.5 font-medium">
+              <Avatar src={supervisor.picture} name={supervisor.name} size={32} />
+              {supervisor.name}
+            </span>
             {supervisor.phone ? (
               <a
                 href={telHref(supervisor.phone)}

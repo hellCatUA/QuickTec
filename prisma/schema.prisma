@@ -101,9 +101,10 @@ model User {
   /// NextCloud the first time there is one, otherwise set at onboarding;
   /// after that it changes only with the direct supervisor's say-so.
   avatarPath       String?
-  /// Who sees the picture: the one level a person chooses for themselves,
-  /// between the ones the company allows.
-  avatarVisibility PrivacyLevel @default(FEDERATED)
+  /// Who sees the picture, as the person chose: PUBLIC leaves it at the
+  /// company's level, Public unless the company says otherwise; FEDERATED
+  /// keeps it to the company, where the company lets them.
+  avatarVisibility PrivacyLevel @default(PUBLIC)
 
   /// When they started with the company, which is what years of service is
   /// counted from. Their direct supervisor's to set.
@@ -268,10 +269,10 @@ model ProfilePrivacy {
   /// A key from PROFILE_FIELDS in src/lib/profile-privacy.ts.
   field       String       @id
   level       PrivacyLevel
-  /// The one switch two fields have. The picture: whether a person may make
-  /// theirs Public. The personal phone: whether it is Public while it is the
-  /// preferred one.
-  allowPublic Boolean?
+  /// The one switch two fields have, each honouring a choice the person
+  /// makes. The picture: whether a person may keep theirs to the company. The
+  /// personal phone: whether it is Public while it is the preferred one.
+  allowChoice Boolean?
   updatedById String?
   updatedAt   DateTime     @updatedAt
 }

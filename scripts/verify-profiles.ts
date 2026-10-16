@@ -95,6 +95,7 @@ async function sessionOf(email: string): Promise<SessionUser> {
     email: user.email,
     name: user.name,
     avatarUrl: null,
+    avatarPath: null,
     baseRole: user.baseRole,
     timeZone: user.timeZone,
     mustChangePassword: false,
@@ -140,7 +141,7 @@ async function rules() {
     null,
   );
 
-  const subject = (preferredPhone: "PERSONAL" | "WORK" | "VOIP" | null, avatarVisibility: "FEDERATED" | "PUBLIC" = "FEDERATED") => ({
+  const subject = (preferredPhone: "PERSONAL" | "WORK" | "VOIP" | null, avatarVisibility: "FEDERATED" | "PUBLIC" = "PUBLIC") => ({
     preferredPhone,
     phones: { ...phones, work: preferredPhone === "PERSONAL" ? null : phones.work },
     avatarVisibility,
@@ -151,7 +152,7 @@ async function rules() {
     "unless the company says otherwise",
     levelFor(
       "personalPhone",
-      privacySettings([{ field: "personalPhone", level: "RESTRICTED", allowPublic: false }]),
+      privacySettings([{ field: "personalPhone", level: "RESTRICTED", allowChoice: false }]),
       subject("PERSONAL"),
     ),
     "RESTRICTED",
@@ -160,36 +161,45 @@ async function rules() {
     "and then the preferred phone is kept off the paperwork with it",
     levelFor(
       "preferredPhone",
-      privacySettings([{ field: "personalPhone", level: "RESTRICTED", allowPublic: false }]),
+      privacySettings([{ field: "personalPhone", level: "RESTRICTED", allowChoice: false }]),
       subject("PERSONAL"),
     ),
     "RESTRICTED",
   );
-  check("the picture is Federated", levelFor("picture", defaults, subject("WORK")), "FEDERATED");
-  check("until its owner makes it Public", levelFor("picture", defaults, subject("WORK", "PUBLIC")), "PUBLIC");
+  check("the picture is Public", levelFor("picture", defaults, subject("WORK")), "PUBLIC");
+  check("until its owner keeps it to the company", levelFor("picture", defaults, subject("WORK", "FEDERATED")), "FEDERATED");
   check(
-    "which the company can take away",
+    "which the company can refuse them",
     levelFor(
       "picture",
-      privacySettings([{ field: "picture", level: "FEDERATED", allowPublic: false }]),
+      privacySettings([{ field: "picture", level: "PUBLIC", allowChoice: false }]),
+      subject("WORK", "FEDERATED"),
+    ),
+    "PUBLIC",
+  );
+  check(
+    "and a choice never opens it past the company's level",
+    levelFor(
+      "picture",
+      privacySettings([{ field: "picture", level: "FEDERATED", allowChoice: true }]),
       subject("WORK", "PUBLIC"),
     ),
     "FEDERATED",
   );
   check(
     "a name the whole app shows cannot be kept narrower than Public",
-    privacySettings([{ field: "name", level: "RESTRICTED", allowPublic: null }]).name.level,
+    privacySettings([{ field: "name", level: "RESTRICTED", allowChoice: null }]).name.level,
     "PUBLIC",
   );
   check(
     "a stored level below a field's floor is raised to the floor, not to the default",
-    privacySettings([{ field: "email", level: "RESTRICTED", allowPublic: null }]).email.level,
+    privacySettings([{ field: "email", level: "RESTRICTED", allowChoice: null }]).email.level,
     "FEDERATED",
   );
   check("and the settings offer only what is allowed", levelsAllowed("role").join(","), "FEDERATED,PUBLIC");
   check(
     "a field the code no longer knows is ignored",
-    Object.keys(privacySettings([{ field: "shoeSize", level: "PUBLIC", allowPublic: null }])).includes("shoeSize"),
+    Object.keys(privacySettings([{ field: "shoeSize", level: "PUBLIC", allowChoice: null }])).includes("shoeSize"),
     false,
   );
   check("years count whole years", yearsLabel(new Date("2019-03-04T00:00:00Z"), new Date("2026-03-03T00:00:00Z")), "6 years");
@@ -502,7 +512,7 @@ async function pages() {
       state: "CA",
       postalCode: "93291",
       serviceStartDate: new Date("2019-03-04T00:00:00Z"),
-      avatarVisibility: "FEDERATED",
+      avatarVisibility: "FEDERATED", // kept to the company, to start
     },
   });
   await db.profileRequest.deleteMany({ where: { userId: tech.id } });
@@ -631,10 +641,10 @@ async function pages() {
 
     const colleague = await pageAs(browser, "tech2@417group.org");
     const seen = await colleague.request.get(`${BASE}/api/avatars/${tech.id}`);
-    check("a Federated picture is there for anybody signed in", seen.status(), 200);
+    check("a picture kept to the company is there for anybody signed in", seen.status(), 200);
     const guest = await pageAs(browser, "guest-profile@example.com");
     const hidden = await guest.request.get(`${BASE}/api/avatars/${tech.id}`);
-    check("and not for a guest", hidden.status(), 404);
+    check("but not, kept to the company, for a guest", hidden.status(), 404);
     const directory = await guest.goto(`${BASE}/people`, { waitUntil: "load" });
     check("who has no people directory either", directory?.status(), 404);
     await guest.goto(`${BASE}/dashboard`, { waitUntil: "load" });
@@ -651,6 +661,11 @@ async function pages() {
     check("nor to the jobs list by its address", guest.url().includes("/jobs") && jobs?.status() === 200, false);
 
     await own.goto(`${BASE}/account`, { waitUntil: "load" });
+    check(
+      "their picture is in the header",
+      (await own.locator('button[aria-label="Account"] img').getAttribute("src"))?.startsWith(`/api/avatars/${tech.id}`),
+      true,
+    );
     await own.locator('input[aria-label="Choose a picture"]').setInputFiles({
       name: "new.jpg",
       mimeType: "image/jpeg",
@@ -670,11 +685,16 @@ async function pages() {
 
     await own.getByRole("button", { name: "Picture settings" }).click();
     await own.getByRole("menuitemradio", { name: /^Public/ }).click();
-    await own.waitForTimeout(800);
+    let visibility: string | null = null;
+    for (let attempt = 0; attempt < 40 && visibility !== "PUBLIC"; attempt++) {
+      visibility = (await db.user.findUniqueOrThrow({ where: { id: tech.id } })).avatarVisibility;
+      if (visibility !== "PUBLIC") await own.waitForTimeout(250);
+    }
+    check("who sees the picture is theirs to choose", visibility, "PUBLIC");
     check(
-      "who sees the picture is theirs to choose",
-      (await db.user.findUniqueOrThrow({ where: { id: tech.id } })).avatarVisibility,
-      "PUBLIC",
+      "and a Public picture is there for a guest",
+      (await guest.request.get(`${BASE}/api/avatars/${tech.id}`)).status(),
+      200,
     );
 
     // --- what another tech sees ---------------------------------------------
@@ -718,7 +738,7 @@ async function main() {
     if (request.picturePath) await deleteFile(request.picturePath);
   }
   await db.profileRequest.deleteMany({ where: { status: "PENDING" } });
-  await db.user.update({ where: { id: tech.id }, data: { avatarVisibility: "FEDERATED" } });
+  await db.user.update({ where: { id: tech.id }, data: { avatarVisibility: "PUBLIC" } });
   await db.user.updateMany({
     where: { email: { in: ["guest-profile@example.com", "peer-profile@example.com"] } },
     data: { active: false },
