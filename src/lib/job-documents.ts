@@ -166,6 +166,8 @@ export async function attachTemplatesToOpenJobs(
   uploadedById: string,
   /** Narrow it to one template; otherwise every default the company has. */
   templateId?: string,
+  /** Narrow it to one job — one just moved onto this company. */
+  jobId?: string,
 ): Promise<TemplateRollout> {
   const templates = await db.clientDocumentTemplate.findMany({
     where: {
@@ -179,7 +181,7 @@ export async function attachTemplatesToOpenJobs(
   if (templates.length === 0) return { jobs: 0, copies: 0 };
 
   const jobs = await db.job.findMany({
-    where: { clientId, lifecycle: { in: [...OPEN_LIFECYCLES] } },
+    where: { clientId, lifecycle: { in: [...OPEN_LIFECYCLES] }, ...(jobId ? { id: jobId } : {}) },
     select: {
       id: true,
       documents: {

@@ -1735,22 +1735,74 @@ async function main() {
     false,
   );
 
-  // --- the job's own details: its title and rep company ---------------------
+  // --- Job management: the job's title and its companies --------------------
+  await managerPage.goto(`${BASE}/jobs/${bySup!.id}/manage`, { waitUntil: "load" });
+  check(
+    "the Manager Portal has a Job management tab",
+    await managerPage.getByRole("link", { name: /Job management/ }).count() > 0,
+    true,
+  );
   await managerPage.goto(`${BASE}/jobs/${bySup!.id}/edit`, { waitUntil: "load" });
+  check(
+    "and Job details no longer holds the title or the rep company",
+    (await managerPage.locator("#detail-title").count()) + (await managerPage.locator("#detail-rep").count()),
+    0,
+  );
+  await managerPage.goto(`${BASE}/jobs/${bySup!.id}/manage/job`, { waitUntil: "load" });
   await managerPage.waitForTimeout(1000);
-  await managerPage.locator("#detail-title").fill("Raised by the supervisor, renamed");
-  await managerPage.locator("#detail-rep").selectOption(repCompany.id);
+  await managerPage.locator("#manage-title").fill("Raised by the supervisor, renamed");
+  await managerPage.locator("#manage-rep").selectOption(repCompany.id);
+  await managerPage.locator("#manage-client").selectOption(otherClient.id);
+  check(
+    "a new paying company says what comes with it before saving",
+    await managerPage.getByText(/Moving the job to Verify Paying Co/).isVisible(),
+    true,
+  );
   await managerPage.getByRole("button", { name: "Save changes" }).click();
-  await managerPage.waitForTimeout(2000);
+  await managerPage.getByText(/Changed on the job:/).waitFor({ timeout: 15_000 });
   const renamed = await db.job.findUniqueOrThrow({
     where: { id: bySup!.id },
-    select: { title: true, repCompanyId: true },
+    select: { title: true, repCompanyId: true, clientId: true },
   });
   check(
-    "a job's title and rep company can be corrected on its details page",
-    `${renamed.title} · ${renamed.repCompanyId === repCompany.id}`,
-    "Raised by the supervisor, renamed · true",
+    "a job's title, rep company and paying company are set under Job management",
+    `${renamed.title} · ${renamed.repCompanyId === repCompany.id} · ${renamed.clientId === otherClient.id}`,
+    "Raised by the supervisor, renamed · true · true",
   );
+  check(
+    "the paying company still shows what was saved after saving",
+    await managerPage.locator("#manage-client").inputValue(),
+    otherClient.id,
+  );
+  check(
+    "and the change is on the job's timeline",
+    await db.auditEvent.count({
+      where: { jobId: bySup!.id, action: "field_edited", detail: { path: ["field"], equals: "Paying company" } },
+    }) > 0,
+    true,
+  );
+  // A job whose paying company has its work order attached keeps it.
+  const order = await db.attachment.create({
+    data: {
+      jobDocumentId: bySup!.id,
+      jobDocumentKind: "CLIENT_WORK_ORDER",
+      originalName: "their-wo.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 10,
+      storagePath: `verify/${bySup!.id}/their-wo.pdf`,
+      uploadedById: boss.user.id,
+    },
+  });
+  try {
+    await managerPage.goto(`${BASE}/jobs/${bySup!.id}/manage/job`, { waitUntil: "load" });
+    check(
+      "a job with their work order attached keeps its paying company",
+      await managerPage.locator("#manage-client").isDisabled(),
+      true,
+    );
+  } finally {
+    await db.attachment.delete({ where: { id: order.id } });
+  }
 
   // --- a tech's rate on one project, set where rates are set ----------------
   // Saving one threw every time — one half of the key is always empty — so no

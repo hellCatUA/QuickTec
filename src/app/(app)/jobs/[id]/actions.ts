@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { siteLabel } from "@/lib/address";
 import { recordAudit } from "@/lib/audit";
+import { attachTemplatesToOpenJobs } from "@/lib/job-documents";
+import { payingCompanyFixed } from "@/lib/job-paying-company";
 import {
   describeTerms,
   normaliseTerms,
@@ -55,7 +57,7 @@ import { capitaliseName, FULL_NAME_NEEDED, isFullName } from "@/lib/names";
 import { MAX_WORK_SUMMARY } from "@/lib/work-summary";
 import { formatPhone } from "@/lib/phone";
 import { notify } from "@/lib/notifications";
-import { canOnJob, resolveJobSupervisor } from "@/lib/scope";
+import { canOnJob, canOnProject, resolveJobSupervisor } from "@/lib/scope";
 import {
   getSessionUser,
   permissionScope,
@@ -1475,6 +1477,8 @@ const detailsSchema = z.object({
   title: z.string().trim().optional(),
   /** Picked from the directory; empty is "none". Planners only. */
   repCompanyId: z.string().trim().optional(),
+  /** Picked from the directory; a job always has one. Planners only. */
+  clientId: z.string().trim().optional(),
   siteId: z.string().trim().optional(),
   externalAssignmentId: z.string().trim().optional(),
   ticketNumber: z.string().trim().optional(),
@@ -1493,6 +1497,8 @@ export type DetailsResult = ActionResult & {
   saved?: string[];
   /** Gone to a supervisor instead. */
   suggested?: string[];
+  /** What a change brought with it that somebody should know about. */
+  notes?: string[];
 };
 
 /**
@@ -1542,6 +1548,13 @@ export async function saveJobDetails(
       title: true,
       repCompanyId: true,
       repCompany: { select: { name: true } },
+      clientId: true,
+      client: { select: { name: true } },
+      pmContact: { select: { clientId: true } },
+      projectId: true,
+      project: { select: { client: { select: { id: true, name: true } } } },
+      payType: true,
+      budgetType: true,
       siteId: true,
       externalAssignmentId: true,
       ticketNumber: true,
@@ -1572,6 +1585,37 @@ export async function saveJobDetails(
       : null;
   if (repChange && wantedRep && !newRep) {
     return fail("That rep company is not in the directory.");
+  }
+
+  // Who pays for the job. Also a planner's decision, and refused outright
+  // once the job is that company's on paper: signed off, their work order
+  // attached, or a week on it through payroll.
+  const wantedClient = parsed.data.clientId;
+  const clientChange = wantedClient !== undefined && wantedClient !== current.clientId;
+  // On a project, also somebody who runs the project: a supervisor on the
+  // crew plans the job but does not decide who the project's work is for.
+  if (
+    clientChange &&
+    (!canEditPlanned ||
+      (current.projectId !== null && !canOnProject(user, "project.manage", current.projectId)))
+  ) {
+    return fail("Only somebody who plans this job, and runs its project, can change its paying company.");
+  }
+  if (clientChange && !wantedClient) {
+    return fail("A job always has a paying company.");
+  }
+  if (clientChange) {
+    const fixed = await payingCompanyFixed(jobId);
+    if (fixed) return fail(`The paying company can no longer change. ${fixed}`);
+  }
+  const newClient = clientChange
+    ? await db.client.findFirst({
+        where: { id: wantedClient, active: true },
+        select: { name: true },
+      })
+    : null;
+  if (clientChange && !newClient) {
+    return fail("That paying company is not in the directory.");
   }
 
   const saved: string[] = [];
@@ -1660,12 +1704,14 @@ export async function saveJobDetails(
       },
     });
     saved.push(JOB_FIELDS[field].label);
-    // A different site, a different time or a different length: whatever is on
-    // a calendar for this job is now wrong.
+    // A different site, a different time or a different length — or a new
+    // title, which names the event: whatever is on a calendar for this job is
+    // now wrong.
     if (
       field === "siteId" ||
       field === "scheduledStart" ||
-      field === "estimateMinutes"
+      field === "estimateMinutes" ||
+      field === "title"
     ) {
       scheduleTouched = true;
     }
@@ -1692,13 +1738,123 @@ export async function saveJobDetails(
     saved.push("Rep company");
   }
 
+  const notes: string[] = [];
+  if (clientChange && newClient) {
+    // Their coordinator works for the old company, not the new one.
+    const dropCoordinator = current.pmContact?.clientId === current.clientId;
+    await db.job.update({
+      where: { id: jobId },
+      data: { clientId: wantedClient, ...(dropCoordinator ? { pmContactId: null } : {}) },
+    });
+    await recordAudit({
+      actorId: user.id,
+      entityType: "Job",
+      entityId: jobId,
+      jobId,
+      action: "field_edited",
+      detail: { field: "Paying company", from: current.client.name, to: newClient.name },
+    });
+    saved.push("Paying company");
+    // The calendar event says who the job is for.
+    scheduleTouched = true;
+
+    const from = current.client.name;
+    const to = newClient.name;
+    if (dropCoordinator) {
+      notes.push(`${from}'s coordinator is no longer on the job.`);
+    }
+
+    // The new company's standing forms, as a job raised for them would carry
+    // them — the crew must not arrive without the sign-off sheet.
+    const rollout = await attachTemplatesToOpenJobs(wantedClient!, user.id, undefined, jobId);
+    if (rollout.copies > 0) {
+      notes.push(`${rollout.copies === 1 ? "One form" : `${rollout.copies} forms`} of ${to}'s attached.`);
+    }
+    // Blanks already copied from the old company's templates are paperwork
+    // somebody may have started on, so they stay; the answer says so.
+    const oldBlanks = await db.attachment.count({
+      where: {
+        jobDocumentId: jobId,
+        generated: false,
+        sourceTemplate: { clientId: current.clientId },
+      },
+    });
+    if (oldBlanks > 0) {
+      notes.push(
+        `${oldBlanks === 1 ? "One blank" : `${oldBlanks} blanks`} from ${from}'s templates ${oldBlanks === 1 ? "is" : "are"} still attached.`,
+      );
+    }
+
+    // Numbers copied from the old company's standing list when the job was
+    // raised are the job's own rows now, with nothing linking them back; a
+    // stale NOC line is worse than none, so the answer names them.
+    const [ownNumbers, theirNumbers] = await Promise.all([
+      db.dispatchContact.findMany({ where: { jobId }, select: { label: true, phone: true } }),
+      db.dispatchContact.findMany({
+        where: { clientId: current.clientId },
+        select: { label: true, phone: true },
+      }),
+    ]);
+    const stale = ownNumbers.filter((own) =>
+      theirNumbers.some(
+        (theirs) =>
+          theirs.label.trim().toLowerCase() === own.label.trim().toLowerCase() &&
+          (theirs.phone ?? "") === (own.phone ?? ""),
+      ),
+    );
+    if (stale.length > 0) {
+      notes.push(
+        `Dispatch info still lists ${from}'s ${stale.map((one) => one.label).join(", ")} — change or remove ${stale.length === 1 ? "it" : "them"} on the job page.`,
+      );
+    }
+
+    // Crew paid at the old company's own rate for them. Not changed here —
+    // that is somebody's pay — but said, so whoever pays the job decides.
+    if (!current.payType && !current.budgetType) {
+      const crew = await db.jobAssignment.findMany({
+        where: { jobId, payOverridden: false },
+        select: { userId: true, payType: true, payRate: true, user: { select: { name: true } } },
+      });
+      const onOldRate: string[] = [];
+      for (const member of crew) {
+        const was = await resolvePayRate(member.userId, current.projectId, current.clientId);
+        if (
+          was.source !== "client" ||
+          was.payType !== member.payType ||
+          Number(was.rate) !== Number(member.payRate)
+        ) {
+          continue;
+        }
+        const now = await resolvePayRate(member.userId, current.projectId, wantedClient!);
+        if (now.payType !== was.payType || Number(now.rate) !== Number(was.rate)) {
+          onOldRate.push(member.user.name);
+        }
+      }
+      if (onOldRate.length > 0) {
+        notes.push(
+          `${onOldRate.join(", ")} ${onOldRate.length === 1 ? "is" : "are"} still paid at ${from}'s rate for them — change it under Schedule & Budget if ${to}'s applies.`,
+        );
+      }
+    }
+
+    const projectClient = current.project?.client;
+    if (projectClient && projectClient.id !== wantedClient) {
+      notes.push(`Its project is still paid by ${projectClient.name}.`);
+    }
+  }
+
   if (saved.length === 0 && suggested.length === 0) {
     return fail("Nothing was changed.");
   }
 
   if (scheduleTouched) syncJobInBackground(jobId);
   touch(jobId);
-  return { ok: true, saved, suggested };
+  // The portal's tiles say what the job is paid by and called, and the two
+  // pages that change it show it.
+  revalidatePath(`/jobs/${jobId}/manage`);
+  revalidatePath(`/jobs/${jobId}/manage/job`);
+  revalidatePath(`/jobs/${jobId}/edit`);
+  return { ok: true, saved, suggested, ...(notes.length > 0 ? { notes } : {}) };
 }
 
 // ---------------------------------------------------------------------------

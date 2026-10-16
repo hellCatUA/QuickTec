@@ -59,9 +59,10 @@ export default async function RevisitPage({
       },
       deliverablesOwn: true,
       deliverableRules: { where: { enabled: true }, select: { id: true } },
+      clientId: true,
       documents: {
         where: { jobDocumentKind: "SIGN_OFF", sourceTemplateId: { not: null } },
-        select: { id: true },
+        select: { sourceTemplate: { select: { clientId: true } } },
       },
       project: { select: { managerId: true } },
       assignments: {
@@ -166,7 +167,12 @@ export default async function RevisitPage({
               coordinator: Boolean(job.pmContactId),
               dispatch: job._count.dispatchContacts,
               contacts: job._count.pointsOfContact,
-              signOff: job.documents.length > 0,
+              // Only a blank of the company the job is for now: the revisit
+              // copies those and no other, so one left from a company the job
+              // has since moved off is not promised.
+              signOff: job.documents.some(
+                (document) => document.sourceTemplate?.clientId === job.clientId,
+              ),
             }}
           />
         </CardContent>

@@ -3,14 +3,13 @@
 import { useActionState, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Combobox, type ComboOption } from "@/components/ui/combobox";
-import { Field, Input, Select } from "@/components/ui/field";
+import { Field, Input } from "@/components/ui/field";
 import { MarkdownEditor } from "@/components/ui/markdown-editor";
 import { cn } from "@/lib/utils";
 import { Marker, routeOf, type Route } from "../field-routing";
 import { saveJobDetails, type DetailsResult } from "../actions";
 
 export type DetailValues = {
-  title: string;
   siteId: string;
   externalAssignmentId: string;
   ticketNumber: string;
@@ -39,14 +38,13 @@ export type SiteOption = ComboOption & {
  *
  * When the crew is due, how long it should take and how many go are *not*
  * here. They are the job's schedule, and they live with the crew and the
- * budget under Schedule & Budget.
+ * budget under Schedule & Budget. Nor are its title and companies: what the
+ * job is called and who it is for are under Job management.
  */
 export function DetailsForm({
   jobId,
   values,
   sites,
-  repCompanies,
-  repCompanyId: savedRepCompanyId,
   canEditPlanned,
   canFillMissing,
   canSuggest,
@@ -55,17 +53,12 @@ export function DetailsForm({
   jobId: string;
   values: DetailValues;
   sites: SiteOption[];
-  /** The directory's rep companies, for a planner to set the job's. */
-  repCompanies: { id: string; name: string }[];
-  repCompanyId: string;
   canEditPlanned: boolean;
   canFillMissing: boolean;
   canSuggest: boolean;
   /** What this person already has waiting on a supervisor, by field. */
   pending: Partial<Record<keyof DetailValues, string>>;
 }) {
-  const [title, setTitle] = useState(values.title);
-  const [repCompanyId, setRepCompanyId] = useState(savedRepCompanyId);
   const [siteId, setSiteId] = useState(values.siteId);
   const [customerId, setCustomerId] = useState(
     sites.find((site) => site.value === values.siteId)?.customerId ?? "",
@@ -108,7 +101,6 @@ export function DetailsForm({
   }
 
   const routes = {
-    title: route("title", title),
     siteId: route("siteId", siteId),
     externalAssignmentId: route("externalAssignmentId", assignmentId),
     ticketNumber: route("ticketNumber", ticket),
@@ -116,56 +108,13 @@ export function DetailsForm({
     scopeOfWork: route("scopeOfWork", scope),
   };
   const anySuggested = Object.values(routes).includes("suggest");
-  const repChanged = repCompanyId !== savedRepCompanyId;
-  const anyChanged =
-    repChanged || Object.values(routes).some((one) => one !== "unchanged");
+  const anyChanged = Object.values(routes).some((one) => one !== "unchanged");
 
   return (
     <form action={action} className="flex flex-col gap-4">
       <input type="hidden" name="jobId" value={jobId} />
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <div className="flex flex-col gap-1 sm:col-span-2">
-          <Field label="Job title" htmlFor="detail-title">
-            <Input
-              id="detail-title"
-              name="title"
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-            />
-          </Field>
-          <Marker field="title" going={routes.title} waiting={pendingSuggestions.title} />
-        </div>
-
-        {/* Who represented the work is often learned after the job is
-            raised. A planner's call, so it is only offered to one. */}
-        <div className="flex flex-col gap-1 sm:col-span-2">
-          <Field
-            label="Rep company"
-            htmlFor="detail-rep"
-            hint={
-              canEditPlanned
-                ? "Who represents the customer above the paying company."
-                : "Set by whoever plans the job."
-            }
-          >
-            <Select
-              id="detail-rep"
-              name="repCompanyId"
-              value={repCompanyId}
-              onChange={(event) => setRepCompanyId(event.target.value)}
-              disabled={!canEditPlanned}
-            >
-              <option value="">— none —</option>
-              {repCompanies.map((repCompany) => (
-                <option key={repCompany.id} value={repCompany.id}>
-                  {repCompany.name}
-                </option>
-              ))}
-            </Select>
-          </Field>
-        </div>
-
         <div className="flex flex-col gap-1">
           <Field
             label="Customer"
@@ -360,8 +309,6 @@ export function DetailsForm({
             type="button"
             variant="ghost"
             onClick={() => {
-              setTitle(values.title);
-              setRepCompanyId(savedRepCompanyId);
               setSiteId(values.siteId);
               setCustomerId(
                 sites.find((site) => site.value === values.siteId)

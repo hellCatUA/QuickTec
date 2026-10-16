@@ -717,9 +717,24 @@ export default async function JobPage({
             href: `/jobs/${job.id}/edit`,
             label: "Edit job details",
             hint: canEditPlanned
-              ? "The site, and the numbers the job was raised with."
+              ? "The site, the numbers the job was raised with and its scope."
               : "Changing a field that already holds a value is submitted for approval. Empty fields you complete yourself.",
             icon: "details" as const,
+            ...(canEditPlanned ? {} : { pill: "Requires approval" }),
+          },
+        ]
+      : []),
+    // What the job is called and who it is for. Somebody who may only suggest
+    // keeps a way to suggest a new title, as Job details used to give them.
+    ...(canEditPlanned || canSuggest
+      ? [
+          {
+            href: `/jobs/${job.id}/manage/job`,
+            label: "Job management",
+            hint: canEditPlanned
+              ? "The job's title, its paying company and its rep company."
+              : "A new title is submitted for approval. The companies are set by whoever plans the job.",
+            icon: "management" as const,
             ...(canEditPlanned ? {} : { pill: "Requires approval" }),
           },
         ]

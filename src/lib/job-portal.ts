@@ -26,6 +26,7 @@ import { can } from "@/lib/session";
 export type PortalIcon =
   | "requests"
   | "review"
+  | "management"
   | "details"
   | "schedule"
   | "revisit";
@@ -100,6 +101,8 @@ export async function loadPortal(
       budgetFlat: true,
       budgetFlatHours: true,
       budgetHourly: true,
+      client: { select: { name: true } },
+      repCompany: { select: { name: true } },
       project: { select: { managerId: true } },
       assignments: {
         select: {
@@ -241,6 +244,21 @@ export async function loadPortal(
   }
 
   // --- the job itself ------------------------------------------------------
+
+  // What the job is called and who it is for. The title can be suggested;
+  // the two companies are a planner's.
+  if (canEditPlanned || canSuggest) {
+    items.push({
+      key: "management",
+      href: `/jobs/${job.id}/manage/job`,
+      label: "Job management",
+      state: `${job.client.name} · ${job.repCompany ? `Rep ${job.repCompany.name}` : "no rep company"}`,
+      group: "admin",
+      icon: "management",
+      locked: null,
+      needsApproval: !canEditPlanned,
+    });
+  }
 
   if (canEditPlanned || canFillMissing || canSuggest) {
     const blank = [

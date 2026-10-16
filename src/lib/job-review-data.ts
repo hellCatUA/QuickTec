@@ -133,11 +133,14 @@ async function detailChanges(
   );
 
   const changes: DetailChange[] = [];
+  // Recorded by their names rather than as job fields, and as much a change a
+  // reviewer weighs: the job moved to somebody else's money mid-way.
+  const COMPANY_FIELDS = new Set(["Paying company", "Rep company"]);
 
   for (const event of events) {
     const detail = (event.detail ?? {}) as Record<string, unknown>;
     const field = detail.field;
-    if (typeof field !== "string" || !isJobField(field)) continue;
+    if (typeof field !== "string" || !(isJobField(field) || COMPANY_FIELDS.has(field))) continue;
 
     const from = typeof detail.from === "string" ? detail.from : "";
     const to = typeof detail.to === "string" ? detail.to : "";
@@ -148,7 +151,7 @@ async function detailChanges(
       field === "siteId" ? (siteNames.get(value) ?? value) : value;
 
     changes.push({
-      label: JOB_FIELDS[field].label,
+      label: isJobField(field) ? JOB_FIELDS[field].label : field,
       from: show(from),
       to: show(to),
       who: event.actor?.name ?? "Someone since removed",

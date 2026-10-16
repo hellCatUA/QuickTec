@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  BriefcaseBusiness,
   CircleCheck,
   ClipboardCheck,
   MoreHorizontal,
@@ -17,7 +18,7 @@ export type JobMenuItem = {
   href: string;
   label: string;
   hint: string;
-  icon: "portal" | "revisit" | "approval" | "checkout" | "details";
+  icon: "portal" | "revisit" | "approval" | "checkout" | "details" | "management";
   /**
    * Said on the line, before it is pressed. A tech finding out that their
    * correction was only ever a request *after* filling the form in is how
@@ -28,6 +29,7 @@ export type JobMenuItem = {
 
 const ICONS = {
   details: PencilLine,
+  management: BriefcaseBusiness,
   portal: ManagerIcon,
   revisit: Repeat,
   approval: CircleCheck,

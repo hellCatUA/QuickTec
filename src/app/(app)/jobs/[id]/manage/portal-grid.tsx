@@ -1,4 +1,5 @@
 import {
+  BriefcaseBusiness,
   ChevronRight,
   CircleCheck,
   Lock,
@@ -14,6 +15,7 @@ import { cn } from "@/lib/utils";
 const ICONS: Record<PortalIcon, React.ComponentType<{ className?: string }>> = {
   requests: MessageSquarePlus,
   review: CircleCheck,
+  management: BriefcaseBusiness,
   details: PencilLine,
   schedule: ScheduleBudgetIcon,
   revisit: Repeat,
