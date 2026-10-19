@@ -280,9 +280,6 @@ model ProfilePrivacy {
   updatedAt   DateTime     @updatedAt
 }
 
-/// A change somebody asked for to their own legal name or picture, waiting on
-/// their direct supervisor or a manager. Withdrawing one deletes it; its story
-/// stays in the audit trail.
 /// A picture somebody's profile has carried, kept so an earlier one can be
 /// put back. Its file stays on the volume while the row exists; the profile's
 /// current picture is the one whose path User.avatarPath holds.
@@ -307,11 +304,19 @@ model ProfilePicture {
   /// somebody with no direct supervisor to approve it.
   approvedBySystem Boolean @default(false)
 
+  /// Taken down by a supervisor or manager, for a reason: theirs to put back,
+  /// not the person's.
+  takenDownAt   DateTime?
+  takenDownById String?
+
   createdAt DateTime @default(now())
 
   @@index([userId, createdAt])
 }
 
+/// A change somebody asked for to their own legal name or picture, waiting on
+/// their direct supervisor or a manager. Withdrawing one deletes it, and it
+/// leaves no history: nothing changed.
 model ProfileRequest {
   id     String @id @default(cuid())
   userId String

@@ -220,6 +220,11 @@ export async function answerProfileRequest(input: {
   if (request.field === "LEGAL_NAME") {
     from = subject.legalName;
     to = request.value;
+    // Already what was asked for — set directly meanwhile: answered, but
+    // nothing changes and nothing is history.
+    if (input.approve && request.value === subject.legalName) {
+      return { ok: true };
+    }
     if (input.approve) {
       await db.user.update({
         where: { id: subject.id },
@@ -227,9 +232,9 @@ export async function answerProfileRequest(input: {
       });
     }
   } else {
-    // A picture has no value to show; whether there was one says added or
-    // updated.
-    from = subject.avatarPath ? "Picture" : null;
+    // A picture has no value to show. Added or updated is what was asked
+    // for: a request with a reason was for a first picture.
+    from = request.reason ? null : subject.avatarPath ? "Picture" : null;
     to = "Picture";
     source = PICTURE_SOURCE.manual(request.requestedBy.name);
     if (input.approve && request.picturePath) {

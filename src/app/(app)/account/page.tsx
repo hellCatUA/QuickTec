@@ -47,8 +47,9 @@ export default async function AccountPage() {
       where: { userId: user.id, status: "PENDING" },
       select: { id: true, field: true, value: true },
     }),
+    // Not one a supervisor took down for a reason: that is theirs to put back.
     db.profilePicture.findMany({
-      where: { userId: user.id },
+      where: { userId: user.id, takenDownAt: null },
       orderBy: { createdAt: "desc" },
       select: { id: true, path: true, source: true, createdAt: true },
     }),

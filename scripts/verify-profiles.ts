@@ -780,11 +780,9 @@ async function pages() {
       `${removed?.action} · ${removed?.by} · ${removed?.reason}`,
       `Profile picture removed · ${boss.name} · Not a clear photo`,
     );
-    check(
-      "and it stays among their earlier pictures",
-      await db.profilePicture.count({ where: { userId: tech.id, path: withPicture.avatarPath ?? "" } }),
-      1,
-    );
+    const kept = await db.profilePicture.findFirst({ where: { userId: tech.id, path: withPicture.avatarPath ?? "" } });
+    check("and it stays among their earlier pictures", Boolean(kept), true);
+    check("marked as taken down, so it is not theirs to put back", Boolean(kept?.takenDownAt), true);
 
     // --- the company's levels -------------------------------------------------
     await bossPage.goto(`${BASE}/settings/roles?tab=privacy`, { waitUntil: "load" });

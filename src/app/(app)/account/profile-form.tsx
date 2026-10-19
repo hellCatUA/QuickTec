@@ -4,6 +4,7 @@ import type { PreferredPhone, PrivacyLevel } from "@prisma-client";
 import { Check, Loader2, Mail, MapPin, Phone, Route, X } from "lucide-react";
 import * as React from "react";
 import { useActionState } from "react";
+import { historyChanged } from "@/components/profile/history";
 import { ReadOnlyValue } from "@/components/profile/parts";
 import { ProfileRow } from "@/components/profile/row";
 import { Button } from "@/components/ui/button";
@@ -151,7 +152,10 @@ export function ProfileForm({
   const [state, formAction, pending] = useActionState<ProfileResult | null, FormData>(
     async (previous, formData) => {
       const result = await saveOwnProfile(previous, formData);
-      if (result.ok) setOpened(openedFrom(formData));
+      if (result.ok) {
+        setOpened(openedFrom(formData));
+        historyChanged();
+      }
       return result;
     },
     null,
@@ -569,7 +573,10 @@ function LegalName({ profile }: { profile: OwnProfile }) {
               formData.set("legalName", value);
               const answer = await requestOwnLegalName(null, formData);
               setResult(answer);
-              if (answer.ok) setAsking(false);
+              if (answer.ok) {
+                setAsking(false);
+                historyChanged();
+              }
             })
           }
         />

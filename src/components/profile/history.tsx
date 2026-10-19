@@ -17,6 +17,12 @@ import { cn } from "@/lib/utils";
  * of the page. The entries are asked for when it opens — most never are.
  */
 
+/** Said by whatever saves a profile, so an open history shows what was just done. */
+const STALE = "profile-history-stale";
+export function historyChanged() {
+  window.dispatchEvent(new Event(STALE));
+}
+
 /** Whose history the lines below belong to; absent where it is not the reader's to read. */
 const HistoryOf = React.createContext<string | null>(null);
 
@@ -82,6 +88,13 @@ export function HistoryPanel({
   const [error, setError] = React.useState<string | null>(null);
   const [all, setAll] = React.useState(false);
 
+  const [version, setVersion] = React.useState(0);
+  React.useEffect(() => {
+    const again = () => setVersion((was) => was + 1);
+    window.addEventListener(STALE, again);
+    return () => window.removeEventListener(STALE, again);
+  }, []);
+
   React.useEffect(() => {
     let live = true;
     loadFieldHistory(userId, field).then(
@@ -95,7 +108,7 @@ export function HistoryPanel({
     return () => {
       live = false;
     };
-  }, [userId, field]);
+  }, [userId, field, version]);
 
   const shown = entries ? (all ? entries : entries.slice(0, FIRST)) : [];
 
@@ -164,5 +177,45 @@ function Fact({ label, value }: { label: string; value: string | null }) {
       <dt className="text-muted-foreground">{label}:</dt>
       <dd className="break-words">{value}</dd>
     </>
+  );
+}
+
+/**
+ * Every line's history by name, for a page that does not draw every line —
+ * a number since taken off, a name shown only in the header — so nothing
+ * recorded is out of reach.
+ */
+export function HistoryIndex({ lines }: { lines: { field: HistoryField; label: string }[] }) {
+  const userId = useHistoryOf();
+  const [open, setOpen] = React.useState<HistoryField | null>(null);
+  if (!userId) return null;
+  return (
+    <section className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4">
+      <div>
+        <h2 className="flex items-center gap-2 text-sm font-semibold">
+          <History className="size-4 text-muted-foreground" /> History by line
+        </h2>
+        <p className="text-xs text-muted-foreground">
+          Every line&rsquo;s history, including lines not shown above.
+        </p>
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {lines.map((line) => (
+          <button
+            key={line.field}
+            type="button"
+            aria-expanded={open === line.field}
+            onClick={() => setOpen((was) => (was === line.field ? null : line.field))}
+            className={cn(
+              "inline-flex min-h-10 items-center rounded-md border border-border px-3 text-xs hover:bg-muted sm:min-h-8",
+              open === line.field && "bg-muted text-foreground",
+            )}
+          >
+            {line.label}
+          </button>
+        ))}
+      </div>
+      {open ? <HistoryPanel key={open} userId={userId} field={open} /> : null}
+    </section>
   );
 }

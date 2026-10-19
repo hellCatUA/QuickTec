@@ -3,7 +3,7 @@
 import type { PrivacyLevel } from "@prisma-client";
 import { Camera, Check, Loader2, MoreHorizontal, RotateCcw, Trash2 } from "lucide-react";
 import * as React from "react";
-import { HistoryButton, HistoryPanel, useHistoryOf } from "@/components/profile/history";
+import { HistoryButton, HistoryPanel, historyChanged, useHistoryOf } from "@/components/profile/history";
 import { Avatar, LevelBadge, LevelIcon } from "@/components/profile/parts";
 import { Button } from "@/components/ui/button";
 import { prepareForUpload } from "@/lib/photo-upload";
@@ -87,7 +87,10 @@ export function PictureCard({
     startTransition(async () => {
       const answer = await work();
       setResult(answer);
-      if (answer.ok) setPanel(null);
+      if (answer.ok) {
+        setPanel((was) => (was === "history" ? was : null));
+        historyChanged();
+      }
     });
   }
 

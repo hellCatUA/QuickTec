@@ -1,7 +1,8 @@
 import { Lock, Mail, Phone, ShieldCheck } from "lucide-react";
 import { notFound, redirect } from "next/navigation";
-import { HistoryProvider } from "@/components/profile/history";
+import { HistoryIndex, HistoryProvider } from "@/components/profile/history";
 import { Line } from "@/components/profile/line";
+import { HISTORY_FIELDS, type HistoryField } from "@/lib/profile-history";
 import { Avatar } from "@/components/profile/parts";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
@@ -100,7 +101,7 @@ export default async function PersonPage({
       ? db.profilePicture.findMany({
           where: { userId: profile.id },
           orderBy: { createdAt: "desc" },
-          select: { id: true, path: true, source: true, createdAt: true },
+          select: { id: true, path: true, source: true, createdAt: true, takenDownAt: true },
         })
       : [],
   ]);
@@ -331,6 +332,14 @@ export default async function PersonPage({
             </p>
           ) : null}
 
+          {history ? (
+            <HistoryIndex
+              lines={(Object.entries(HISTORY_FIELDS) as [HistoryField, string][])
+                .filter(([field]) => field !== "defaultPayRate" || payVisible)
+                .map(([field, label]) => ({ field, label }))}
+            />
+          ) : null}
+
           {editable ? (
             <ManagerPanel
               subject={{
@@ -363,6 +372,7 @@ export default async function PersonPage({
                   src: archivedAvatarSrc(profile.id, picture.id),
                   at: monthYear(picture.createdAt) ?? "",
                   source: picture.source,
+                  takenDown: picture.takenDownAt !== null,
                 }))}
               levels={{
                 legalName: levels.legalName,

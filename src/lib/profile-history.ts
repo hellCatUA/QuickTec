@@ -228,7 +228,7 @@ function entriesFrom(
   event: RawEvent,
   subjectName: string,
   names: Map<string, string>,
-): HistoryEntry[] {
+): Array<HistoryEntry & { legacyPart?: boolean }> {
   const detail = (event.detail ?? {}) as Record<string, unknown>;
   const actor = event.actor?.name ?? "System";
 
@@ -240,6 +240,7 @@ function entriesFrom(
       ? detail.field
       : (LEGACY_FIELDS[String(detail.field)] ?? null);
     if (!field) return [];
+    const legacyPart = !isHistoryField(detail.field);
 
     let from = text(detail.from);
     let to = text(detail.to);
@@ -304,6 +305,7 @@ function entriesFrom(
         approvedBy,
         source,
         reason: reasons.length > 0 ? reasons.join(" · ") : null,
+        ...(legacyPart ? { legacyPart: true } : {}),
       },
     ];
   }
@@ -313,7 +315,12 @@ function entriesFrom(
   // of its own is marked, and left to that history.
   if (event.action !== "updated" && event.action !== "contact_updated") return [];
   if (detail._profile === true) return [];
-  const entries: HistoryEntry[] = [];
+  // The old account form recorded only the new values; a value it cleared
+  // says nothing worth reading.
+  const valuesOnly = event.action === "contact_updated";
+  // Columns that are one line now — city, state and ZIP; the two street
+  // lines — become one entry, their parts joined as the line reads.
+  const parts = new Map<HistoryField, { from: string[]; to: string[] }>();
   for (const [column, value] of Object.entries(detail)) {
     const field = LEGACY_COLUMNS[column];
     if (!field) continue;
@@ -327,20 +334,58 @@ function entriesFrom(
     const ids = column === "directSupervisorId";
     const from = ids ? person(diff.from) : text(diff.from);
     const to = ids ? person(diff.to) : text(diff.to);
-    entries.push({
-      id: `${event.id}:${column}`,
+    if (valuesOnly && !to) continue;
+    const line = parts.get(field) ?? { from: [], to: [] };
+    if (from) line.from.push(from);
+    if (to) line.to.push(to);
+    parts.set(field, line);
+  }
+  return [...parts].map(([field, line]) => {
+    const from = line.from.length > 0 ? line.from.join(", ") : null;
+    const to = line.to.length > 0 ? line.to.join(", ") : null;
+    return {
+      id: `${event.id}:${field}`,
       at: event.createdAt,
       field,
-      action: heading(field, verbOf(from, to), from),
+      action: heading(field, valuesOnly ? "updated" : verbOf(from, to), from),
       from,
       to,
       by: actor,
       approvedBy: null,
       source: null,
       reason: null,
-    });
+    };
+  });
+}
+
+/**
+ * Home region parts recorded as separate events before the line was one —
+ * city, state and ZIP saved together — read back as one entry.
+ */
+function joinLegacyParts(entries: Array<HistoryEntry & { legacyPart?: boolean }>): HistoryEntry[] {
+  const joined: Array<HistoryEntry & { legacyPart?: boolean }> = [];
+  for (const entry of entries) {
+    const last = joined[joined.length - 1];
+    if (
+      entry.legacyPart &&
+      last?.legacyPart &&
+      last.field === entry.field &&
+      last.by === entry.by &&
+      Math.abs(last.at.getTime() - entry.at.getTime()) < 2000
+    ) {
+      const from = [last.from, entry.from].filter(Boolean).join(", ") || null;
+      const to = [last.to, entry.to].filter(Boolean).join(", ") || null;
+      joined[joined.length - 1] = {
+        ...last,
+        from,
+        to,
+        action: heading(entry.field, verbOf(from, to), from),
+      };
+      continue;
+    }
+    joined.push(entry);
   }
-  return entries;
+  return joined.map(({ legacyPart: _part, ...entry }) => entry);
 }
 
 /** Newest first. Pass a line for that line's story alone. */
@@ -348,13 +393,26 @@ export async function profileHistory(
   userId: string,
   field?: HistoryField | null,
 ): Promise<HistoryEntry[]> {
+  // One line's story is asked for by its name — and the names it had before
+  // it was one line — so a busy line does not push a quiet one's out.
+  const fieldNames = field
+    ? [field, ...Object.entries(LEGACY_FIELDS).filter(([, to]) => to === field).map(([from]) => from)]
+    : null;
   const [subject, events] = await Promise.all([
     db.user.findUnique({ where: { id: userId }, select: { name: true } }),
     db.auditEvent.findMany({
       where: {
         entityType: "User",
         entityId: userId,
-        OR: [{ action: { startsWith: "profile." } }, { action: { in: ["updated", "contact_updated"] } }],
+        OR: [
+          {
+            action: { startsWith: "profile." },
+            ...(fieldNames
+              ? { OR: fieldNames.map((name) => ({ detail: { path: ["field"], equals: name } })) }
+              : {}),
+          },
+          { action: { in: ["updated", "contact_updated"] } },
+        ],
       },
       orderBy: { createdAt: "desc" },
       take: 500,
@@ -385,6 +443,8 @@ export async function profileHistory(
       : [];
   const names = new Map(people.map((person) => [person.id, person.name]));
 
-  const entries = events.flatMap((event) => entriesFrom(event, subject?.name ?? "", names));
+  const entries = joinLegacyParts(
+    events.flatMap((event) => entriesFrom(event, subject?.name ?? "", names)),
+  );
   return field ? entries.filter((entry) => entry.field === field) : entries;
 }

@@ -66,16 +66,16 @@ export async function putUpPicture(input: {
 
 /**
  * Who approved an earlier picture, for the entry that puts it back: whoever
- * approved it, or whoever put it up when nobody else had to, or QuickTec.
+ * approved it, or whoever put it up when nobody else had to, or QuickTec —
+ * and nobody, when that is the person putting it back.
  */
-export function approvalOf(picture: {
-  approvedById: string | null;
-  approvedBySystem: boolean;
-  addedById: string | null;
-}): Approval | null {
+export function approvalOf(
+  picture: { approvedById: string | null; approvedBySystem: boolean; addedById: string | null },
+  actorId: string,
+): Approval | null {
   if (picture.approvedBySystem) return { bySystem: true };
   const byId = picture.approvedById ?? picture.addedById;
-  return byId ? { byId } : null;
+  return byId && byId !== actorId ? { byId } : null;
 }
 
 /** Big enough for any real photo, small enough that nobody fills the volume with one. */
@@ -134,6 +134,12 @@ export async function importNextcloudPicture(userId: string, url: string): Promi
       select: { avatarPath: true, pictureSetAt: true },
     });
     if (!current || current.avatarPath || current.pictureSetAt) return;
+    // A picture they have asked for is theirs to have answered, not to be
+    // overtaken by NextCloud's.
+    const asked = await db.profileRequest.count({
+      where: { userId, field: "PICTURE", status: "PENDING" },
+    });
+    if (asked > 0) return;
 
     const response = await fetch(source, {
       signal: AbortSignal.timeout(5000),
@@ -151,20 +157,24 @@ export async function importNextcloudPicture(userId: string, url: string): Promi
     const path = await storeAvatar(userId, await processAvatar(data, type));
 
     // Only into an empty slot: a picture set while this was on its way —
-    // by them, or by their supervisor — wins.
-    const taken = await db.user.updateMany({
-      where: { id: userId, avatarPath: null, pictureSetAt: null },
-      data: { avatarPath: path, pictureSetAt: new Date() },
+    // by them, or by their supervisor — wins. Kept in the archive in the same
+    // breath, approved by QuickTec as anything NextCloud hands over is, so a
+    // picture never goes up without its record.
+    const taken = await db.$transaction(async (tx) => {
+      const slot = await tx.user.updateMany({
+        where: { id: userId, avatarPath: null, pictureSetAt: null },
+        data: { avatarPath: path, pictureSetAt: new Date() },
+      });
+      if (slot.count === 0) return false;
+      await tx.profilePicture.create({
+        data: { userId, path, source: PICTURE_SOURCE.nextcloud, approvedBySystem: true },
+      });
+      return true;
     });
-    if (taken.count === 0) {
+    if (!taken) {
       await deleteFile(path);
       return;
     }
-    // Approved by QuickTec, as anything NextCloud hands over is: an earlier
-    // picture put back later says so.
-    await db.profilePicture.create({
-      data: { userId, path, source: PICTURE_SOURCE.nextcloud, approvedBySystem: true },
-    });
 
     await recordProfileEvents({
       actorId: null,

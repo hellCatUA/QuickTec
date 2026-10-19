@@ -3,7 +3,7 @@
 import type { PrivacyLevel, ProfileRequestField } from "@prisma-client";
 import { Camera, Check, Loader2, RotateCcw, TriangleAlert, X } from "lucide-react";
 import * as React from "react";
-import { HistoryButton, HistoryPanel, useHistoryOf } from "@/components/profile/history";
+import { HistoryButton, HistoryPanel, historyChanged, useHistoryOf } from "@/components/profile/history";
 import { Avatar, LevelBadge } from "@/components/profile/parts";
 import { ProfileRow } from "@/components/profile/row";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -46,7 +46,7 @@ type Request = {
   pictureSrc: string | null;
 };
 
-type Earlier = { id: string; src: string; at: string; source: string };
+type Earlier = { id: string; src: string; at: string; source: string; takenDown: boolean };
 
 /**
  * What a direct supervisor — or, past a warning, another manager — keeps on
@@ -110,14 +110,20 @@ export function ManagerPanel({
             startTransition(async () => {
               const confirmed = await action(formData);
               setResult(confirmed);
-              if (confirmed.ok) setPicturePanel(null);
+              if (confirmed.ok) {
+                setPicturePanel((was) => (was === "history" ? was : null));
+                historyChanged();
+              }
             });
           },
         });
         return;
       }
       setResult(answer);
-      if (answer.ok) setPicturePanel(null);
+      if (answer.ok) {
+        setPicturePanel((was) => (was === "history" ? was : null));
+        historyChanged();
+      }
     });
   }
 
@@ -277,7 +283,10 @@ export function ManagerPanel({
               <li key={picture.id} className="flex items-center gap-3">
                 <Avatar src={picture.src} name={subject.name} size={48} />
                 <span className="min-w-0 flex-1 text-xs">
-                  <span className="block">{picture.at}</span>
+                  <span className="block">
+                    {picture.at}
+                    {picture.takenDown ? <span className="text-danger"> · Taken down</span> : null}
+                  </span>
                   <span className="block truncate text-muted-foreground">{picture.source}</span>
                 </span>
                 <Button

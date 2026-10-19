@@ -20,7 +20,7 @@ import { profileChanges, recordProfileEvents, statesChange } from "@/lib/profile
 import {
   effectivePreferred,
   LEVEL_INFO,
-  narrowest,
+  levelFor,
   PHONE_LABEL,
   whyNotPreferable,
 } from "@/lib/profile-privacy";
@@ -209,6 +209,11 @@ export async function saveOwnProfile(
     voip: before.voipPhone,
   });
   const preferredAfter = effectivePreferred(preferredPhone, phones);
+  // Picked by hand, as the page reads it: flagged so, or simply not the zone
+  // the ZIP is in — a zone set on the users page before profiles existed.
+  const zipZoneBefore = timeZoneForZip(before.postalCode);
+  const wasManual =
+    before.timeZoneManual || (zipZoneBefore !== null && zipZoneBefore !== before.timeZone);
   const preferredLine = (
     kind: "PERSONAL" | "WORK" | "VOIP" | null,
     numbers: { personal: string | null; work: string | null; voip: string | null },
@@ -254,7 +259,7 @@ export async function saveOwnProfile(
       // a new ZIP is QuickTec's doing, recorded below.
       ...(timeZoneManual
         ? profileChanges({ timeZone: zoneText(before.timeZone) }, { timeZone: zoneText(timeZone) })
-        : before.timeZoneManual
+        : wasManual
           ? [
               {
                 field: "timeZone" as const,
@@ -265,7 +270,7 @@ export async function saveOwnProfile(
           : []),
     ],
   });
-  if (!timeZoneManual && !before.timeZoneManual && timeZone !== before.timeZone) {
+  if (!timeZoneManual && !wasManual && timeZone !== before.timeZone) {
     await recordProfileEvents({
       actorId: null,
       userId: user.id,
@@ -303,6 +308,18 @@ export async function setOwnPictureVisibility(level: string): Promise<ProfileRes
   if (before.avatarVisibility === level) return { ok: true };
 
   await db.user.update({ where: { id: user.id }, data: { avatarVisibility: level } });
+  // Who sees it, as the badge says it: their choice within the company's
+  // level. A choice that changes nobody's view is not history.
+  const shownAs = (choice: typeof level) =>
+    levelFor("picture", settings, {
+      avatarVisibility: choice,
+      preferredPhone: null,
+      phones: { personal: null, work: null, voip: null },
+    });
+  if (shownAs(before.avatarVisibility as typeof level) === shownAs(level)) {
+    revalidatePath("/account");
+    return { ok: true };
+  }
   await recordProfileEvents({
     actorId: user.id,
     userId: user.id,
@@ -310,10 +327,8 @@ export async function setOwnPictureVisibility(level: string): Promise<ProfileRes
       {
         field: "picture",
         verb: "visibility",
-        // Who sees it, by the level's own name, as the badge beside it says:
-        // their choice, never wider than the company's level.
-        from: LEVEL_INFO[narrowest(settings.picture.level, before.avatarVisibility)].label,
-        to: LEVEL_INFO[narrowest(settings.picture.level, level)].label,
+        from: LEVEL_INFO[shownAs(before.avatarVisibility as typeof level)].label,
+        to: LEVEL_INFO[shownAs(level)].label,
       },
     ],
   });
@@ -338,7 +353,13 @@ export async function uploadOwnPicture(formData: FormData): Promise<ProfileResul
   const subject = await loadProfile(user.id);
   if (!subject) return { ok: false, error: "Account not found." };
 
-  const reason = optionalText.parse(formData.get("reason"));
+  // Sending a different picture for a first one asked for already keeps the
+  // reason it was asked for with.
+  const pendingPicture = await db.profileRequest.findFirst({
+    where: { userId: user.id, field: "PICTURE", status: "PENDING" },
+    select: { reason: true },
+  });
+  const reason = optionalText.parse(formData.get("reason")) ?? pendingPicture?.reason ?? null;
   if (!subject.avatarPath && !isPictureReason(reason)) {
     return { ok: false, error: `Say why: ${PICTURE_REASONS.join(", ")}.` };
   }
@@ -347,6 +368,15 @@ export async function uploadOwnPicture(formData: FormData): Promise<ProfileResul
   if (!stored.ok) return stored;
 
   if (!actingSupervisor(subject)) {
+    // Anything they were still waiting on is answered by this one: nobody is
+    // left to approve it, and approving it later would put it over this.
+    for (const waiting of await db.profileRequest.findMany({
+      where: { userId: user.id, field: "PICTURE", status: "PENDING" },
+      select: { id: true, picturePath: true },
+    })) {
+      const gone = await db.profileRequest.deleteMany({ where: { id: waiting.id, status: "PENDING" } });
+      if (gone.count === 1 && waiting.picturePath) await deleteFile(waiting.picturePath);
+    }
     const source = PICTURE_SOURCE.manual(user.name);
     try {
       await putUpPicture({
@@ -423,6 +453,10 @@ export async function restoreOwnPicture(pictureId: string): Promise<ProfileResul
     where: { id: pictureId, userId: user.id },
   });
   if (!picture) return { ok: false, error: "That picture is no longer kept." };
+  // Taken down for a reason by a supervisor or manager: theirs to put back.
+  if (picture.takenDownAt) {
+    return { ok: false, error: "That picture was taken down by a supervisor; only they can put it back." };
+  }
 
   const current = await db.user.findUniqueOrThrow({
     where: { id: user.id },
@@ -430,15 +464,18 @@ export async function restoreOwnPicture(pictureId: string): Promise<ProfileResul
   });
   if (current.avatarPath === picture.path) return { ok: true };
 
-  await db.user.update({
-    where: { id: user.id },
+  // Only over the picture they were looking at: one approved a moment ago
+  // is not quietly replaced.
+  const swapped = await db.user.updateMany({
+    where: { id: user.id, avatarPath: current.avatarPath },
     data: { avatarPath: picture.path, pictureSetAt: new Date() },
   });
+  if (swapped.count === 0) return { ok: false, error: "Your picture changed meanwhile. Reload and try again." };
   await recordProfileEvents({
     actorId: user.id,
     userId: user.id,
     changes: [{ field: "picture", verb: "restored", from: null, to: "Picture" }],
-    approval: approvalOf(picture),
+    approval: approvalOf(picture, user.id),
     source: picture.source,
   });
   revalidatePath("/account");

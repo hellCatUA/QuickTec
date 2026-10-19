@@ -270,21 +270,21 @@ export async function updateUser(
     data: { ...rest, ...nameChange, ...zoneChange, ...preferredChange },
   });
 
-  await recordAudit({
-    actorId: actor.id,
-    entityType: "User",
-    entityId: userId,
-    action: "updated",
-    // Marked: the person's own history is written below, line by line, and
-    // reading this diff there as well would say everything twice.
-    detail: {
-      ...diffFields(
-        before as unknown as Record<string, unknown>,
-        { ...rest, ...nameChange, ...zoneChange, ...preferredChange } as unknown as Record<string, unknown>,
-      ),
-      _profile: true,
-    },
-  });
+  const diff = diffFields(
+    before as unknown as Record<string, unknown>,
+    { ...rest, ...nameChange, ...zoneChange, ...preferredChange } as unknown as Record<string, unknown>,
+  );
+  if (Object.keys(diff).length > 0) {
+    await recordAudit({
+      actorId: actor.id,
+      entityType: "User",
+      entityId: userId,
+      action: "updated",
+      // Marked: the person's own history is written below, line by line, and
+      // reading this diff there as well would say everything twice.
+      detail: { ...diff, _profile: true },
+    });
+  }
 
   // Their profile's history, as the profile itself writes it.
   const supervisors = await db.user.findMany({
@@ -333,27 +333,38 @@ export async function updateUser(
       source: `Auto: ZIP ${rest.postalCode ?? ""}`.trim(),
     });
   }
-  // The phone clients get changed, and they did not change it.
-  if ("preferredPhone" in preferredChange) {
-    const after = effectivePreferred(null, {
-      personal: rest.phone,
-      work: before.workPhone,
-      voip: before.voipPhone,
-    });
-    const number = (kind: "PERSONAL" | "WORK" | "VOIP") =>
-      phoneDisplay(kind === "PERSONAL" ? rest.phone : kind === "WORK" ? before.workPhone : before.voipPhone);
-    await recordProfileEvents({
-      actorId: actor.id,
-      userId,
-      changes: [
-        {
-          field: "preferredPhone",
-          from: `${PHONE_LABEL.PERSONAL}: ${phoneDisplay(before.phone)}`,
-          to: after ? `${PHONE_LABEL[after]}: ${number(after)}` : null,
-        },
-      ],
-      reason: "Personal phone changed",
-    });
+  // The phone clients get, when the change moved it — and only then: a
+  // stored choice of Personal that a work phone already overrode changes
+  // nothing for them.
+  if (!samePhone(rest.phone ?? "", before.phone ?? "")) {
+    const line = (
+      kind: "PERSONAL" | "WORK" | "VOIP" | null,
+      personal: string | null,
+    ) =>
+      kind
+        ? `${PHONE_LABEL[kind]}: ${phoneDisplay(kind === "PERSONAL" ? personal : kind === "WORK" ? before.workPhone : before.voipPhone)}`
+        : null;
+    const was = line(
+      effectivePreferred(before.preferredPhone, { personal: before.phone, work: before.workPhone, voip: before.voipPhone }),
+      before.phone,
+    );
+    const now = line(
+      effectivePreferred("preferredPhone" in preferredChange ? null : before.preferredPhone, {
+        personal: rest.phone,
+        work: before.workPhone,
+        voip: before.voipPhone,
+      }),
+      rest.phone,
+    );
+    const moved = profileChanges({ preferredPhone: was }, { preferredPhone: now });
+    if (moved.length > 0) {
+      await recordProfileEvents({
+        actorId: actor.id,
+        userId,
+        changes: moved,
+        reason: "Personal phone changed",
+      });
+    }
   }
 
   revalidatePath("/settings/users");
