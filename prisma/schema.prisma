@@ -231,6 +231,9 @@ model User {
   profileRequests       ProfileRequest[]     @relation("ProfileRequestSubject")
   requestedProfiles     ProfileRequest[]     @relation("ProfileRequester")
   reviewedProfiles      ProfileRequest[]     @relation("ProfileRequestReviewer")
+  profilePictures       ProfilePicture[]     @relation("ProfilePictures")
+  picturesAdded         ProfilePicture[]     @relation("ProfilePicturesAdded")
+  picturesApproved      ProfilePicture[]     @relation("ProfilePicturesApproved")
 
   @@index([baseRole, active])
   @@index([directSupervisorId])
@@ -280,6 +283,35 @@ model ProfilePrivacy {
 /// A change somebody asked for to their own legal name or picture, waiting on
 /// their direct supervisor or a manager. Withdrawing one deletes it; its story
 /// stays in the audit trail.
+/// A picture somebody's profile has carried, kept so an earlier one can be
+/// put back. Its file stays on the volume while the row exists; the profile's
+/// current picture is the one whose path User.avatarPath holds.
+model ProfilePicture {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation("ProfilePictures", fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Path relative to the uploads volume.
+  path   String @unique
+  /// Where it came from, as the history says it: "Manual Import: Terry Tech",
+  /// "Manual Import: ID", "Auto-Import: NC".
+  source String
+
+  /// Who put it up, or asked for it.
+  addedById        String?
+  addedBy          User?   @relation("ProfilePicturesAdded", fields: [addedById], references: [id], onDelete: SetNull)
+  /// Who approved it, when somebody other than whoever put it up did.
+  approvedById     String?
+  approvedBy       User?   @relation("ProfilePicturesApproved", fields: [approvedById], references: [id], onDelete: SetNull)
+  /// Approved by QuickTec itself: copied from NextCloud, or put up by
+  /// somebody with no direct supervisor to approve it.
+  approvedBySystem Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
 model ProfileRequest {
   id     String @id @default(cuid())
   userId String
@@ -291,6 +323,8 @@ model ProfileRequest {
   /// The picture asked for, on the uploads volume. Removed when it is turned
   /// down; becomes the picture when it is not.
   picturePath String?
+  /// Why a first picture: Pre-hire, Hire, or Original pic unavailable.
+  reason      String?
 
   requestedById String
   requestedBy   User   @relation("ProfileRequester", fields: [requestedById], references: [id], onDelete: Cascade)

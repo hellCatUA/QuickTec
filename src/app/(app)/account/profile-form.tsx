@@ -360,7 +360,7 @@ export function ProfileForm({
             note="City, state, ZIP"
             htmlFor="own-city"
             level={level("city")}
-            field="city"
+            field="homeRegion"
             hint={
               level("city") === "PUBLIC"
                 ? "Everybody else sees these three — never the street."

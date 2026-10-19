@@ -62,3 +62,10 @@ export function homeRegion(parts: {
 export function streetText(line1: string | null, line2: string | null): string | null {
   return [line1, line2].filter(Boolean).join(", ") || null;
 }
+
+/** Why somebody with no picture puts one up — asked with the picture. */
+export const PICTURE_REASONS = ["Pre-hire", "Hire", "Original pic unavailable"] as const;
+
+export function isPictureReason(value: unknown): value is (typeof PICTURE_REASONS)[number] {
+  return typeof value === "string" && (PICTURE_REASONS as readonly string[]).includes(value);
+}

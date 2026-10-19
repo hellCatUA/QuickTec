@@ -1,23 +1,27 @@
 import type { ProfileRequestField } from "@prisma-client";
+import { PICTURE_SOURCE, putUpPicture } from "@/lib/avatar";
 import { db } from "@/lib/db";
 import { notify } from "@/lib/notifications";
 import { actingSupervisor } from "@/lib/profile";
-import { recordProfileEvents } from "@/lib/profile-history";
-import type { ProfileField } from "@/lib/profile-privacy";
+import { recordProfileEvents, type HistoryField } from "@/lib/profile-history";
 import { deleteFile } from "@/lib/storage";
 import { SUPERVISOR_ROLES } from "@/lib/supervisors";
 
 /**
  * Asking for a change to your own legal name or picture, and answering.
  *
- * Both are set once — at onboarding, or from NextCloud — and after that are
- * the direct supervisor's: a legal name is what payroll pays and what gets
- * signed, and a picture is how a client knows who is at their door. So the
- * person asks, and their supervisor (or, past a warning, another manager)
- * answers.
+ * A legal name is set once, at onboarding, and after that is the direct
+ * supervisor's: it is what payroll pays and what gets signed. A picture the
+ * person puts up is always asked for — it is how a client knows who is at
+ * their door. So the person asks, and their supervisor (or, past a warning,
+ * another manager) answers.
+ *
+ * Asking is not history yet, nor is taking it back. Approved, it is one
+ * entry: by whoever asked, approved by whoever answered. Turned down, it is
+ * an entry of its own, with the reason.
  */
 
-export const REQUEST_FIELD: Record<ProfileRequestField, ProfileField> = {
+export const REQUEST_FIELD: Record<ProfileRequestField, HistoryField> = {
   LEGAL_NAME: "legalName",
   PICTURE: "picture",
 };
@@ -85,6 +89,8 @@ export async function fileProfileRequest(input: {
   field: ProfileRequestField;
   value?: string | null;
   picturePath?: string | null;
+  /** Why a first picture: Pre-hire, Hire, Original pic unavailable. */
+  reason?: string | null;
 }): Promise<{ id: string; reviewer: string | null }> {
   const superseded = await db.profileRequest.findMany({
     where: { userId: input.subject.id, field: input.field, status: "PENDING" },
@@ -106,22 +112,10 @@ export async function fileProfileRequest(input: {
       field: input.field,
       value: input.value ?? null,
       picturePath: input.picturePath ?? null,
+      reason: input.reason ?? null,
       requestedById: input.requesterId,
     },
     select: { id: true },
-  });
-
-  await recordProfileEvents({
-    actorId: input.requesterId,
-    userId: input.subject.id,
-    kind: "requested",
-    changes: [
-      {
-        field: REQUEST_FIELD[input.field],
-        from: null,
-        to: input.field === "PICTURE" ? "New picture" : (input.value ?? null),
-      },
-    ],
   });
 
   const reviewers = await reviewersOf(input.subject);
@@ -142,7 +136,7 @@ export async function fileProfileRequest(input: {
   return { id: created.id, reviewer: reviewers.name };
 }
 
-/** Takes back a request that has not been answered. */
+/** Takes back a request that has not been answered. Not history: nothing changed. */
 export async function withdrawProfileRequest(input: {
   requestId: string;
   userId: string;
@@ -161,13 +155,6 @@ export async function withdrawProfileRequest(input: {
   });
   if (gone.count === 0) return false;
   if (request.picturePath) await deleteFile(request.picturePath);
-
-  await recordProfileEvents({
-    actorId: input.actorId,
-    userId: input.userId,
-    kind: "withdrawn",
-    changes: [{ field: REQUEST_FIELD[request.field], from: null, to: null }],
-  });
   return true;
 }
 
@@ -191,8 +178,10 @@ export async function answerProfileRequest(input: {
       field: true,
       value: true,
       picturePath: true,
+      reason: true,
       status: true,
       requestedById: true,
+      requestedBy: { select: { name: true } },
       user: {
         select: {
           id: true,
@@ -226,6 +215,7 @@ export async function answerProfileRequest(input: {
 
   let from: string | null = null;
   let to: string | null = null;
+  let source: string | null = null;
 
   if (request.field === "LEGAL_NAME") {
     from = subject.legalName;
@@ -237,14 +227,20 @@ export async function answerProfileRequest(input: {
       });
     }
   } else {
-    from = subject.avatarPath ? "Previous picture" : null;
-    to = "New picture";
+    // A picture has no value to show; whether there was one says added or
+    // updated.
+    from = subject.avatarPath ? "Picture" : null;
+    to = "Picture";
+    source = PICTURE_SOURCE.manual(request.requestedBy.name);
     if (input.approve && request.picturePath) {
-      await db.user.update({
-        where: { id: subject.id },
-        data: { avatarPath: request.picturePath, pictureSetAt: new Date() },
+      // The one it replaces stays in their archive, to be put back.
+      await putUpPicture({
+        userId: subject.id,
+        path: request.picturePath,
+        source,
+        addedById: request.requestedById,
+        approval: { byId: input.reviewerId },
       });
-      if (subject.avatarPath) await deleteFile(subject.avatarPath);
     } else if (request.picturePath) {
       await deleteFile(request.picturePath);
     }
@@ -255,12 +251,17 @@ export async function answerProfileRequest(input: {
     });
   }
 
+  // By whoever asked; approved — or turned down — by whoever answered.
   await recordProfileEvents({
-    actorId: input.reviewerId,
+    actorId: request.requestedById,
     userId: subject.id,
-    kind: input.approve ? "approved" : "denied",
     changes: [{ field: REQUEST_FIELD[request.field], from, to }],
-    note: input.note,
+    denied: !input.approve,
+    approval: { byId: input.reviewerId },
+    source,
+    // Turned down, the reason given; approved, why the first picture was
+    // asked for, where it was.
+    reason: input.approve ? request.reason : input.note,
     warned: input.warned,
   });
 

@@ -2,19 +2,21 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { storeUploadedAvatar } from "@/lib/avatar";
+import { approvalOf, PICTURE_SOURCE, putUpPicture, storeUploadedAvatar } from "@/lib/avatar";
 import { db } from "@/lib/db";
 import { changedSinceOpened, optionalText, phoneText, samePhone } from "@/lib/form";
 import { capitaliseName, isFullName } from "@/lib/names";
-import { loadPrivacySettings, loadProfile } from "@/lib/profile";
+import { actingSupervisor, loadPrivacySettings, loadProfile } from "@/lib/profile";
 import {
+  homeRegion,
+  isPictureReason,
   phoneText as phoneDisplay,
+  PICTURE_REASONS,
   stateText,
-  statesText,
   streetText,
   zoneText,
 } from "@/lib/profile-format";
-import { profileChanges, recordProfileEvents } from "@/lib/profile-history";
+import { profileChanges, recordProfileEvents, statesChange } from "@/lib/profile-history";
 import {
   effectivePreferred,
   LEVEL_INFO,
@@ -207,44 +209,70 @@ export async function saveOwnProfile(
     voip: before.voipPhone,
   });
   const preferredAfter = effectivePreferred(preferredPhone, phones);
+  const preferredLine = (
+    kind: "PERSONAL" | "WORK" | "VOIP" | null,
+    numbers: { personal: string | null; work: string | null; voip: string | null },
+  ) =>
+    kind
+      ? `${PHONE_LABEL[kind]}: ${phoneDisplay(kind === "PERSONAL" ? numbers.personal : kind === "WORK" ? numbers.work : numbers.voip)}`
+      : null;
 
   await recordProfileEvents({
     actorId: user.id,
     userId: user.id,
-    kind: "changed",
-    changes: profileChanges(
-      {
-        name: before.name,
-        legalName: before.legalName,
-        personalPhone: phoneDisplay(before.phone),
-        workPhone: phoneDisplay(before.workPhone),
-        voipPhone: phoneDisplay(before.voipPhone),
-        preferredPhone: preferredBefore ? PHONE_LABEL[preferredBefore] : null,
-        street: streetText(before.addressLine1, before.addressLine2),
-        city: before.city,
-        state: stateText(before.state),
-        zip: before.postalCode,
-        timeZone: zoneText(before.timeZone),
-        primaryRegion: stateText(before.primaryRegion),
-        statesOfOperation: statesText(before.statesOfOperation),
-      },
-      {
-        name,
-        legalName,
-        personalPhone: phoneDisplay(phone),
-        workPhone: phoneDisplay(workPhone),
-        voipPhone: phoneDisplay(voipPhone),
-        preferredPhone: preferredAfter ? PHONE_LABEL[preferredAfter] : null,
-        street: streetText(addressLine1, addressLine2),
-        city,
-        state: stateText(state),
-        zip: postalCode,
-        timeZone: zoneText(timeZone),
-        primaryRegion: stateText(primaryRegion),
-        statesOfOperation: statesText(states),
-      },
-    ),
+    changes: [
+      ...profileChanges(
+        {
+          name: before.name,
+          legalName: before.legalName,
+          personalPhone: phoneDisplay(before.phone),
+          workPhone: phoneDisplay(before.workPhone),
+          voipPhone: phoneDisplay(before.voipPhone),
+          preferredPhone: preferredLine(preferredBefore, {
+            personal: before.phone,
+            work: before.workPhone,
+            voip: before.voipPhone,
+          }),
+          street: streetText(before.addressLine1, before.addressLine2),
+          homeRegion: homeRegion({ city: before.city, state: before.state, zip: before.postalCode }),
+          primaryRegion: stateText(before.primaryRegion),
+        },
+        {
+          name,
+          legalName,
+          personalPhone: phoneDisplay(phone),
+          workPhone: phoneDisplay(workPhone),
+          voipPhone: phoneDisplay(voipPhone),
+          preferredPhone: preferredLine(preferredAfter, phones),
+          street: streetText(addressLine1, addressLine2),
+          homeRegion: homeRegion({ city, state, zip: postalCode }),
+          primaryRegion: stateText(primaryRegion),
+        },
+      ),
+      ...statesChange(before.statesOfOperation, states, (code) => stateText(code) ?? code),
+      // Picked by hand, or handed back to the ZIP. A zone that only followed
+      // a new ZIP is QuickTec's doing, recorded below.
+      ...(timeZoneManual
+        ? profileChanges({ timeZone: zoneText(before.timeZone) }, { timeZone: zoneText(timeZone) })
+        : before.timeZoneManual
+          ? [
+              {
+                field: "timeZone" as const,
+                from: `Manual: ${zoneText(before.timeZone)}`,
+                to: `Auto (ZIP): ${zoneText(timeZone)}`,
+              },
+            ]
+          : []),
+    ],
   });
+  if (!timeZoneManual && !before.timeZoneManual && timeZone !== before.timeZone) {
+    await recordProfileEvents({
+      actorId: null,
+      userId: user.id,
+      changes: [{ field: "timeZone", from: zoneText(before.timeZone), to: zoneText(timeZone) }],
+      source: `Auto: ZIP ${postalCode ?? ""}`.trim(),
+    });
+  }
 
   revalidatePath("/account");
   revalidatePath(`/people/${user.id}`);
@@ -278,10 +306,10 @@ export async function setOwnPictureVisibility(level: string): Promise<ProfileRes
   await recordProfileEvents({
     actorId: user.id,
     userId: user.id,
-    kind: "changed",
     changes: [
       {
         field: "picture",
+        verb: "visibility",
         // Who sees it, by the level's own name, as the badge beside it says:
         // their choice, never wider than the company's level.
         from: LEVEL_INFO[narrowest(settings.picture.level, before.avatarVisibility)].label,
@@ -295,8 +323,10 @@ export async function setOwnPictureVisibility(level: string): Promise<ProfileRes
 }
 
 /**
- * A new picture. The first one is theirs to set; after that it waits on
- * their direct supervisor.
+ * A new picture, asked for. Their direct supervisor approves it; somebody
+ * with no direct supervisor to approve it has it approved by QuickTec, at
+ * once. Where there is no picture, the request says why: before they were
+ * hired, at hiring, or the one they had is gone.
  */
 export async function uploadOwnPicture(formData: FormData): Promise<ProfileResult> {
   const user = await getSessionUser();
@@ -305,42 +335,51 @@ export async function uploadOwnPicture(formData: FormData): Promise<ProfileResul
   const file = formData.get("picture");
   if (!(file instanceof File)) return { ok: false, error: "Pick a photo first." };
 
-  const subject = await db.user.findUnique({
-    where: { id: user.id },
-    select: { id: true, name: true, avatarPath: true, pictureSetAt: true, directSupervisorId: true },
-  });
+  const subject = await loadProfile(user.id);
   if (!subject) return { ok: false, error: "Account not found." };
+
+  const reason = optionalText.parse(formData.get("reason"));
+  if (!subject.avatarPath && !isPictureReason(reason)) {
+    return { ok: false, error: `Say why: ${PICTURE_REASONS.join(", ")}.` };
+  }
 
   const stored = await storeUploadedAvatar(user.id, file);
   if (!stored.ok) return stored;
 
-  // The first picture is theirs to set. One taken down by a manager is not
-  // a first picture: the next one is asked for.
-  if (!subject.avatarPath && !subject.pictureSetAt) {
-    const taken = await db.user.updateMany({
-      where: { id: user.id, avatarPath: null, pictureSetAt: null },
-      data: { avatarPath: stored.path, pictureSetAt: new Date() },
-    });
-    if (taken.count === 1) {
-      await recordProfileEvents({
-        actorId: user.id,
+  if (!actingSupervisor(subject)) {
+    const source = PICTURE_SOURCE.manual(user.name);
+    try {
+      await putUpPicture({
         userId: user.id,
-        kind: "changed",
-        changes: [{ field: "picture", from: null, to: "Picture added" }],
+        path: stored.path,
+        source,
+        addedById: user.id,
+        approval: { bySystem: true },
       });
-      revalidatePath("/account");
-      return { ok: true, message: "Your picture is set." };
+    } catch (error) {
+      await deleteFile(stored.path);
+      throw error;
     }
-    // Somebody set one in the meantime, so this one is now a request.
+    await recordProfileEvents({
+      actorId: user.id,
+      userId: user.id,
+      changes: [{ field: "picture", from: subject.avatarPath ? "Picture" : null, to: "Picture" }],
+      approval: { bySystem: true },
+      source,
+      reason: subject.avatarPath ? null : reason,
+    });
+    revalidatePath("/account");
+    return { ok: true, message: "Your picture is set." };
   }
 
   let sent: { reviewer: string | null };
   try {
     sent = await fileProfileRequest({
-      subject,
+      subject: { id: subject.id, name: subject.name, directSupervisorId: subject.directSupervisorId },
       requesterId: user.id,
       field: "PICTURE",
       picturePath: stored.path,
+      reason: subject.avatarPath ? null : reason,
     });
   } catch (error) {
     await deleteFile(stored.path);
@@ -349,6 +388,61 @@ export async function uploadOwnPicture(formData: FormData): Promise<ProfileResul
 
   revalidatePath("/account");
   return { ok: true, message: `Sent to ${sent.reviewer ?? "a manager"}. It shows once approved.` };
+}
+
+/** Takes their own picture down. It stays among their earlier pictures. */
+export async function removeOwnPicture(): Promise<ProfileResult> {
+  const user = await getSessionUser();
+  if (!user) return { ok: false, error: "Not signed in." };
+
+  const taken = await db.user.updateMany({
+    where: { id: user.id, avatarPath: { not: null } },
+    data: { avatarPath: null },
+  });
+  if (taken.count === 0) return { ok: true };
+
+  await recordProfileEvents({
+    actorId: user.id,
+    userId: user.id,
+    changes: [{ field: "picture", from: "Picture", to: null }],
+  });
+  revalidatePath("/account");
+  return { ok: true, message: "Your picture is taken down." };
+}
+
+/**
+ * Puts back a picture they had before. It was approved once, so it needs no
+ * approval again: the entry names whoever approved it then, and where it
+ * came from.
+ */
+export async function restoreOwnPicture(pictureId: string): Promise<ProfileResult> {
+  const user = await getSessionUser();
+  if (!user) return { ok: false, error: "Not signed in." };
+
+  const picture = await db.profilePicture.findFirst({
+    where: { id: pictureId, userId: user.id },
+  });
+  if (!picture) return { ok: false, error: "That picture is no longer kept." };
+
+  const current = await db.user.findUniqueOrThrow({
+    where: { id: user.id },
+    select: { avatarPath: true },
+  });
+  if (current.avatarPath === picture.path) return { ok: true };
+
+  await db.user.update({
+    where: { id: user.id },
+    data: { avatarPath: picture.path, pictureSetAt: new Date() },
+  });
+  await recordProfileEvents({
+    actorId: user.id,
+    userId: user.id,
+    changes: [{ field: "picture", verb: "restored", from: null, to: "Picture" }],
+    approval: approvalOf(picture),
+    source: picture.source,
+  });
+  revalidatePath("/account");
+  return { ok: true, message: "Your earlier picture is back." };
 }
 
 /**
@@ -384,8 +478,7 @@ export async function requestOwnLegalName(
     await recordProfileEvents({
       actorId: user.id,
       userId: user.id,
-      kind: "changed",
-      changes: [{ field: "legalName", from: null, to: value }],
+      changes: [{ field: "legalName", from: subject.legalName, to: value }],
     });
     revalidatePath("/account");
     return { ok: true, message: "Saved." };

@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { recordAudit } from "@/lib/audit";
+import { formatRate } from "@/lib/money";
+import { profileChanges, recordProfileEvents } from "@/lib/profile-history";
 import { getCompanySettings } from "@/lib/company";
 import { parseZonedDate } from "@/lib/datetime";
 import { db } from "@/lib/db";
@@ -476,9 +478,26 @@ export async function savePayRate(
   // No project and no client means this is the tech's own default, which lives
   // on the user rather than as a rate row.
   if (!projectId && !clientId) {
+    const before = await db.user.findUnique({
+      where: { id: userId },
+      select: { defaultPayType: true, defaultPayRate: true },
+    });
     await db.user.update({
       where: { id: userId },
       data: { defaultPayType: payType, defaultPayRate: rate },
+    });
+    // On their profile's history, which only those who may see the rate read.
+    const shown = (type: string | null | undefined, amount: { toString(): string } | string | null | undefined) =>
+      type && amount !== null && amount !== undefined
+        ? formatRate(type as Parameters<typeof formatRate>[0], amount.toString())
+        : null;
+    await recordProfileEvents({
+      actorId: user.id,
+      userId,
+      changes: profileChanges(
+        { defaultPayRate: shown(before?.defaultPayType, before?.defaultPayRate) },
+        { defaultPayRate: shown(payType, rate) },
+      ),
     });
   } else {
     // Found and then written rather than upserted. A rate is held against a

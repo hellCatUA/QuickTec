@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { looksLikeImage, processAvatar } from "@/lib/images";
-import { recordProfileEvents } from "@/lib/profile-history";
+import { recordProfileEvents, type Approval } from "@/lib/profile-history";
 import { deleteFile, fileVersion, storeAvatar } from "@/lib/storage";
 
 /**
@@ -19,6 +19,63 @@ export function avatarSrc(userId: string, avatarPath: string | null): string | n
 /** Where a picture waiting on an answer is shown to whoever gives it. */
 export function requestedAvatarSrc(userId: string, requestId: string): string {
   return `/api/avatars/${userId}?request=${encodeURIComponent(requestId)}`;
+}
+
+/** Where an earlier picture is shown to whoever may put it back. */
+export function archivedAvatarSrc(userId: string, pictureId: string): string {
+  return `/api/avatars/${userId}?picture=${encodeURIComponent(pictureId)}`;
+}
+
+/** Where a picture came from, as its history says it. */
+export const PICTURE_SOURCE = {
+  manual: (name: string) => `Manual Import: ${name}`,
+  photoId: "Manual Import: ID",
+  nextcloud: "Auto-Import: NC",
+} as const;
+
+/**
+ * Makes a stored picture somebody's picture, and keeps it in their archive so
+ * it can be put back after it has been replaced or taken down. The picture it
+ * replaces stays in the archive too: nothing approved is thrown away.
+ */
+export async function putUpPicture(input: {
+  userId: string;
+  path: string;
+  source: string;
+  addedById: string | null;
+  approval?: Approval | null;
+}): Promise<void> {
+  await db.$transaction([
+    db.profilePicture.create({
+      data: {
+        userId: input.userId,
+        path: input.path,
+        source: input.source,
+        addedById: input.addedById,
+        approvedById:
+          input.approval && "byId" in input.approval ? input.approval.byId : null,
+        approvedBySystem: Boolean(input.approval && "bySystem" in input.approval),
+      },
+    }),
+    db.user.update({
+      where: { id: input.userId },
+      data: { avatarPath: input.path, pictureSetAt: new Date() },
+    }),
+  ]);
+}
+
+/**
+ * Who approved an earlier picture, for the entry that puts it back: whoever
+ * approved it, or whoever put it up when nobody else had to, or QuickTec.
+ */
+export function approvalOf(picture: {
+  approvedById: string | null;
+  approvedBySystem: boolean;
+  addedById: string | null;
+}): Approval | null {
+  if (picture.approvedBySystem) return { bySystem: true };
+  const byId = picture.approvedById ?? picture.addedById;
+  return byId ? { byId } : null;
 }
 
 /** Big enough for any real photo, small enough that nobody fills the volume with one. */
@@ -103,13 +160,17 @@ export async function importNextcloudPicture(userId: string, url: string): Promi
       await deleteFile(path);
       return;
     }
+    // Approved by QuickTec, as anything NextCloud hands over is: an earlier
+    // picture put back later says so.
+    await db.profilePicture.create({
+      data: { userId, path, source: PICTURE_SOURCE.nextcloud, approvedBySystem: true },
+    });
 
     await recordProfileEvents({
       actorId: null,
       userId,
-      kind: "imported",
-      changes: [{ field: "picture", from: null, to: "Picture from NextCloud" }],
-      source: "NextCloud",
+      changes: [{ field: "picture", from: null, to: "Picture" }],
+      source: PICTURE_SOURCE.nextcloud,
     });
   } catch (error) {
     console.error("[avatar] could not copy the NextCloud picture:", error);

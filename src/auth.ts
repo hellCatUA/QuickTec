@@ -6,6 +6,8 @@ import NextAuth, {
 } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import { importNextcloudPicture } from "@/lib/avatar";
+import { ROLE_LABEL } from "@/lib/profile-format";
+import { profileChanges, recordProfileEvents } from "@/lib/profile-history";
 import { db } from "@/lib/db";
 import { extractGroups, resolveBaseRole } from "@/lib/nextcloud-groups";
 import {
@@ -435,6 +437,9 @@ export const authConfig: NextAuthConfig = {
           signInMethod: true,
           nextcloudSub: true,
           nameOverridden: true,
+          name: true,
+          email: true,
+          baseRole: true,
         },
       });
 
@@ -470,6 +475,29 @@ export const authConfig: NextAuthConfig = {
             lastLoginAt: new Date(),
           },
         });
+        // What NextCloud brought that differs is on their profile's history,
+        // QuickTec's doing at its word. Never in the way of signing in.
+        try {
+          await recordProfileEvents({
+            actorId: null,
+            userId: existing.id,
+            changes: profileChanges(
+              {
+                name: existing.nameOverridden ? null : existing.name,
+                email: existing.email,
+                role: ROLE_LABEL[existing.baseRole] ?? existing.baseRole,
+              },
+              {
+                name: existing.nameOverridden ? null : name,
+                email,
+                role: ROLE_LABEL[role] ?? role,
+              },
+            ),
+            source: "Auto-Import: NC",
+          });
+        } catch (error) {
+          console.error("[auth] could not record what NextCloud changed:", error);
+        }
       } else {
         const created = await db.user.create({
           data: {

@@ -1,8 +1,9 @@
 "use client";
 
 import type { PrivacyLevel, ProfileRequestField } from "@prisma-client";
-import { Camera, Check, Loader2, TriangleAlert, X } from "lucide-react";
+import { Camera, Check, Loader2, RotateCcw, TriangleAlert, X } from "lucide-react";
 import * as React from "react";
+import { HistoryButton, HistoryPanel, useHistoryOf } from "@/components/profile/history";
 import { Avatar, LevelBadge } from "@/components/profile/parts";
 import { ProfileRow } from "@/components/profile/row";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -17,6 +18,7 @@ import { cn } from "@/lib/utils";
 import {
   answerRequest,
   removePictureAsManager,
+  restorePictureAsManager,
   saveProfileAsManager,
   setPictureAsManager,
   type ManagerResult,
@@ -38,9 +40,13 @@ type Request = {
   id: string;
   field: ProfileRequestField;
   value: string | null;
+  /** Why a first picture was asked for. */
+  reason: string | null;
   at: string;
   pictureSrc: string | null;
 };
+
+type Earlier = { id: string; src: string; at: string; source: string };
 
 /**
  * What a direct supervisor — or, past a warning, another manager — keeps on
@@ -56,6 +62,7 @@ export function ManagerPanel({
   notTheirEmployee,
   requests,
   currentPicture,
+  earlier,
   levels,
 }: {
   subject: Subject;
@@ -63,6 +70,8 @@ export function ManagerPanel({
   notTheirEmployee: boolean;
   requests: Request[];
   currentPicture: string | null;
+  /** Pictures they had before, to put back. */
+  earlier: Earlier[];
   levels: Record<
     | "legalName"
     | "yearsOfService"
@@ -77,6 +86,12 @@ export function ManagerPanel({
   const [warning, setWarning] = React.useState<{ message: string; go: () => void } | null>(null);
   const [result, setResult] = React.useState<ManagerResult | null>(null);
   const [busy, startTransition] = React.useTransition();
+  const historyOf = useHistoryOf();
+  // One thing open under the picture at a time.
+  const [picturePanel, setPicturePanel] = React.useState<"remove" | "restore" | "history" | null>(null);
+  const [removeReason, setRemoveReason] = React.useState("");
+  const togglePanel = (next: typeof picturePanel) =>
+    setPicturePanel((was) => (was === next ? null : next));
 
   /**
    * Runs an action, and when the server wants the warning answered first,
@@ -92,12 +107,17 @@ export function ManagerPanel({
           go: () => {
             setWarning(null);
             formData.set("confirmed", "1");
-            startTransition(async () => setResult(await action(formData)));
+            startTransition(async () => {
+              const confirmed = await action(formData);
+              setResult(confirmed);
+              if (confirmed.ok) setPicturePanel(null);
+            });
           },
         });
         return;
       }
       setResult(answer);
+      if (answer.ok) setPicturePanel(null);
     });
   }
 
@@ -159,6 +179,13 @@ export function ManagerPanel({
         <div className="flex flex-wrap items-center gap-2 border-t border-border p-4">
           <span className="flex w-full items-center gap-2 text-sm font-medium sm:mr-auto sm:w-auto">
             Profile picture <LevelBadge level={levels.picture} iconOnly />
+            {historyOf ? (
+              <HistoryButton
+                label="Profile picture"
+                open={picturePanel === "history"}
+                onToggle={() => togglePanel("history")}
+              />
+            ) : null}
           </span>
           <PicturePicker
             label="From a Photo ID"
@@ -185,24 +212,97 @@ export function ManagerPanel({
               }, setPictureAsManager)
             }
           />
+          {earlier.length > 0 ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={busy}
+              aria-expanded={picturePanel === "restore"}
+              onClick={() => togglePanel("restore")}
+            >
+              <RotateCcw /> Earlier pictures
+            </Button>
+          ) : null}
           {subject.hasPicture ? (
             <Button
               type="button"
               variant="ghost"
               size="sm"
               disabled={busy}
-              onClick={() =>
-                submit(() => {
-                  const formData = new FormData();
-                  formData.set("userId", subject.id);
-                  return formData;
-                }, removePictureAsManager)
-              }
+              aria-expanded={picturePanel === "remove"}
+              onClick={() => togglePanel("remove")}
             >
               Remove
             </Button>
           ) : null}
         </div>
+        {picturePanel === "remove" ? (
+          <div className="flex flex-col gap-2 border-t border-border p-4">
+            <label htmlFor="m-remove-reason" className="text-xs font-medium text-muted-foreground">
+              Why is it taken down? It goes on their history.
+            </label>
+            <Input
+              id="m-remove-reason"
+              value={removeReason}
+              onChange={(event) => setRemoveReason(event.target.value)}
+              placeholder="Not a clear photo of their face"
+            />
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="danger"
+                disabled={busy || !removeReason.trim()}
+                onClick={() =>
+                  submit(() => {
+                    const formData = new FormData();
+                    formData.set("userId", subject.id);
+                    formData.set("reason", removeReason);
+                    return formData;
+                  }, removePictureAsManager)
+                }
+              >
+                Take it down
+              </Button>
+              <Button type="button" size="sm" variant="ghost" onClick={() => setPicturePanel(null)}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        ) : null}
+        {picturePanel === "restore" ? (
+          <ul className="flex flex-col gap-2 border-t border-border p-4">
+            {earlier.map((picture) => (
+              <li key={picture.id} className="flex items-center gap-3">
+                <Avatar src={picture.src} name={subject.name} size={48} />
+                <span className="min-w-0 flex-1 text-xs">
+                  <span className="block">{picture.at}</span>
+                  <span className="block truncate text-muted-foreground">{picture.source}</span>
+                </span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  disabled={busy}
+                  onClick={() =>
+                    submit(() => {
+                      const formData = new FormData();
+                      formData.set("userId", subject.id);
+                      formData.set("pictureId", picture.id);
+                      return formData;
+                    }, restorePictureAsManager)
+                  }
+                >
+                  Put back
+                </Button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {picturePanel === "history" && historyOf ? (
+          <HistoryPanel userId={historyOf} field="picture" className="mx-4 mb-4" />
+        ) : null}
         {result ? (
           <p
             role={result.ok ? "status" : "alert"}
@@ -237,6 +337,7 @@ function ManagerFields({
   onSave: (formData: FormData) => void;
 }) {
   const [primary, setPrimary] = React.useState(subject.primaryRegion ?? "");
+  const [legalCleared, setLegalCleared] = React.useState(false);
   const [states, setStates] = React.useState(subject.statesOfOperation);
   const [adding, setAdding] = React.useState("");
 
@@ -262,7 +363,24 @@ function ManagerFields({
         value={[...subject.statesOfOperation].sort().join(",")}
       />
       <ProfileRow label="Legal name" htmlFor="m-legal" level={levels.legalName} field="legalName">
-        <NameInput id="m-legal" name="legalName" defaultValue={subject.legalName} placeholder="As on their ID" />
+        <div
+          className="flex flex-col gap-2"
+          onInput={(event) => {
+            const target = event.target as HTMLInputElement;
+            if (target.name === "legalName") setLegalCleared(Boolean(subject.legalName) && !target.value.trim());
+          }}
+        >
+          <NameInput id="m-legal" name="legalName" defaultValue={subject.legalName} placeholder="As on their ID" />
+          {/* Taking a legal name off says why, as taking a picture down does. */}
+          {legalCleared ? (
+            <Input
+              name="legalNameReason"
+              aria-label="Why is the legal name taken off?"
+              placeholder="Why is it taken off? It goes on their history."
+              required
+            />
+          ) : null}
+        </div>
       </ProfileRow>
       <ProfileRow
         label="Started"
@@ -363,7 +481,10 @@ function RequestRow({
     <div className="flex flex-col gap-3 rounded-lg border border-border p-3">
       <div className="text-sm">
         {request.field === "PICTURE" ? (
-          <>{subject.name} asked for a new profile picture.</>
+          <>
+            {subject.name} asked for {currentPicture ? "a new profile picture" : "a profile picture"}.
+            {request.reason ? <span className="text-muted-foreground"> Reason: {request.reason}.</span> : null}
+          </>
         ) : (
           <>
             {subject.name} asked to change their legal name from{" "}

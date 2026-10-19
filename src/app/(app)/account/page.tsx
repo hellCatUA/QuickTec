@@ -1,7 +1,7 @@
 import { BriefcaseBusiness, Clock, DollarSign, LogOut, MapPin } from "lucide-react";
 import { redirect } from "next/navigation";
 import { signOut } from "@/auth";
-import { ProfileHistory } from "@/components/profile/history";
+import { HistoryProvider } from "@/components/profile/history";
 import { EditableKey, LevelsLegend, ReadOnlyValue } from "@/components/profile/parts";
 import { ProfileRow } from "@/components/profile/row";
 import { ThemeToggle } from "@/components/theme";
@@ -14,14 +14,13 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
-import { avatarSrc, requestedAvatarSrc } from "@/lib/avatar";
+import { archivedAvatarSrc, avatarSrc, requestedAvatarSrc } from "@/lib/avatar";
 import { db } from "@/lib/db";
 import { formatRate } from "@/lib/money";
 import { isGuest } from "@/lib/permissions";
 import { actingSupervisor, levelsFor, loadPrivacySettings, loadProfile } from "@/lib/profile";
 import { homeRegion, monthYear, ROLE_LABEL } from "@/lib/profile-format";
-import { profileHistory } from "@/lib/profile-history";
-import { isProfileField, yearsLabel } from "@/lib/profile-privacy";
+import { yearsLabel } from "@/lib/profile-privacy";
 import { getSessionUser } from "@/lib/session";
 import { timeZoneForZip, timeZoneLabel } from "@/lib/us-regions";
 import { PictureCard } from "./picture-card";
@@ -37,25 +36,22 @@ export const metadata = { title: "Your profile" };
  * never again, so a permanent control on every screen was three taps of dead
  * space on a phone.
  */
-export default async function AccountPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ history?: string }>;
-}) {
+export default async function AccountPage() {
   const user = await getSessionUser();
   if (!user) redirect("/signin");
 
-  const { history } = await searchParams;
-  const historyField = isProfileField(history) ? history : null;
-
-  const [profile, settings, requests, entries] = await Promise.all([
+  const [profile, settings, requests, archive] = await Promise.all([
     loadProfile(user.id),
     loadPrivacySettings(),
     db.profileRequest.findMany({
       where: { userId: user.id, status: "PENDING" },
       select: { id: true, field: true, value: true },
     }),
-    profileHistory(user.id, historyField),
+    db.profilePicture.findMany({
+      where: { userId: user.id },
+      orderBy: { createdAt: "desc" },
+      select: { id: true, path: true, source: true, createdAt: true },
+    }),
   ]);
   if (!profile) redirect("/signin");
 
@@ -76,6 +72,7 @@ export default async function AccountPage({
   const place = homeRegion({ city: profile.city, state: profile.state, zip: profile.postalCode });
 
   return (
+    <HistoryProvider userId={profile.id}>
     <div className="mx-auto flex max-w-5xl flex-col gap-4">
       <PageHeader
         title="Your profile"
@@ -99,7 +96,14 @@ export default async function AccountPage({
                     : null
                 }
                 reviewer={reviewer}
-                firstPicture={!profile.pictureSetAt}
+                earlier={archive
+                  .filter((picture) => picture.path !== profile.avatarPath)
+                  .map((picture) => ({
+                    id: picture.id,
+                    src: archivedAvatarSrc(profile.id, picture.id),
+                    at: monthYear(picture.createdAt) ?? "",
+                    source: picture.source,
+                  }))}
               >
                 <div>
                   <div className="text-lg font-semibold">{profile.name}</div>
@@ -180,11 +184,10 @@ export default async function AccountPage({
                   <DollarSign className="size-4 text-muted-foreground" /> Pay
                 </CardTitle>
               </CardHeader>
-              {/* No history link: a rate is set on the pay pages and kept in
-                  their own record, not on the profile's timeline. */}
               <ProfileRow
                 label="Default pay rate"
                 level={levels.defaultPayRate}
+                field="defaultPayRate"
                 hint="Set by managers. A job or a project with its own rate pays that instead."
               >
                 <ReadOnlyValue empty="Not set">
@@ -198,14 +201,6 @@ export default async function AccountPage({
               </ProfileRow>
             </Card>
           )}
-
-          <ProfileHistory
-            entries={entries}
-            field={historyField}
-            all={history === "all"}
-            timeZone={user.timeZone}
-            basePath="/account"
-          />
 
           <Card>
             <CardHeader>
@@ -243,5 +238,6 @@ export default async function AccountPage({
         </div>
       </div>
     </div>
+    </HistoryProvider>
   );
 }

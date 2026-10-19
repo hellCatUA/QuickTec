@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { storeUploadedAvatar } from "@/lib/avatar";
+import { approvalOf, PICTURE_SOURCE, putUpPicture, storeUploadedAvatar } from "@/lib/avatar";
 import { usDateInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
 import { changedSinceOpened, optionalText, phoneText, samePhone } from "@/lib/form";
@@ -10,7 +10,7 @@ import { capitaliseName, isFullName } from "@/lib/names";
 import { notify } from "@/lib/notifications";
 import { actingSupervisor, loadProfile, mayEditProfileOf, notTheirEmployee, type ProfileRecord } from "@/lib/profile";
 import { isoDate, monthYear, phoneText as phoneDisplay, stateText, statesText } from "@/lib/profile-format";
-import { profileChanges, recordProfileEvents, type ProfileChange } from "@/lib/profile-history";
+import { profileChanges, recordProfileEvents, statesChange, type ProfileChange } from "@/lib/profile-history";
 import { answerProfileRequest } from "@/lib/profile-requests";
 import { getSessionUser } from "@/lib/session";
 import { deleteFile } from "@/lib/storage";
@@ -43,6 +43,8 @@ const managerSchema = z.object({
   workPhone: phoneText,
   voipPhone: phoneText,
   primaryRegion: optionalText.refine(isState, "That is not a state."),
+  /** Why a legal name is taken off — asked only then. */
+  legalNameReason: optionalText,
   confirmed: optionalText,
 });
 
@@ -94,6 +96,11 @@ export async function saveProfileAsManager(formData: FormData): Promise<ManagerR
     : before.legalName;
   if (legalName && legalName !== before.legalName && !isFullName(legalName)) {
     return { ok: false, error: "Write the legal name in full — first and last." };
+  }
+  // Taking a legal name off says why, as taking a picture down does.
+  const legalRemoved = Boolean(before.legalName) && !legalName;
+  if (legalRemoved && !data.legalNameReason) {
+    return { ok: false, error: "Say why the legal name is taken off." };
   }
 
   const startText = touched("serviceStartDate", data.serviceStartDate)
@@ -157,44 +164,43 @@ export async function saveProfileAsManager(formData: FormData): Promise<ManagerR
     },
   });
 
-  // Stored the way it reads: a start date is "March 2019" in the history —
-  // or, moved within its month, the dates themselves, so the change is not
-  // "March 2019 → March 2019".
+  // Stored the way it reads: "Since March 2019" — or, moved within its
+  // month, the dates themselves, so the change is not "March 2019 → March 2019".
   const sameMonth = monthYear(before.serviceStartDate) === monthYear(start);
+  const since = (date: Date | null) =>
+    date ? `Since ${sameMonth ? usDateInZone(date, "UTC") : monthYear(date)}` : null;
   const readable = (change: ProfileChange): ProfileChange =>
     change.field === "yearsOfService"
-      ? {
-          field: change.field,
-          from: sameMonth ? usDateInZone(before.serviceStartDate!, "UTC") : monthYear(before.serviceStartDate),
-          to: sameMonth ? usDateInZone(start!, "UTC") : monthYear(start),
-        }
+      ? { field: change.field, from: since(before.serviceStartDate), to: since(start) }
       : change;
 
+  for (const change of sensitive) {
+    await recordProfileEvents({
+      actorId: actor.id,
+      userId: before.id,
+      changes: [readable(change)],
+      reason: change.field === "legalName" && legalRemoved ? data.legalNameReason : null,
+      warned,
+    });
+  }
   await recordProfileEvents({
     actorId: actor.id,
     userId: before.id,
-    kind: "changed",
-    changes: sensitive.map(readable),
-    warned,
-  });
-  await recordProfileEvents({
-    actorId: actor.id,
-    userId: before.id,
-    kind: "changed",
-    changes: profileChanges(
-      {
-        workPhone: phoneDisplay(before.workPhone),
-        voipPhone: phoneDisplay(before.voipPhone),
-        primaryRegion: stateText(before.primaryRegion),
-        statesOfOperation: statesText(before.statesOfOperation),
-      },
-      {
-        workPhone: phoneDisplay(workPhone),
-        voipPhone: phoneDisplay(voipPhone),
-        primaryRegion: stateText(primaryRegion),
-        statesOfOperation: statesText(states),
-      },
-    ),
+    changes: [
+      ...profileChanges(
+        {
+          workPhone: phoneDisplay(before.workPhone),
+          voipPhone: phoneDisplay(before.voipPhone),
+          primaryRegion: stateText(before.primaryRegion),
+        },
+        {
+          workPhone: phoneDisplay(workPhone),
+          voipPhone: phoneDisplay(voipPhone),
+          primaryRegion: stateText(primaryRegion),
+        },
+      ),
+      ...statesChange(before.statesOfOperation, states, (code) => stateText(code) ?? code),
+    ],
   });
 
   if (warned) {
@@ -234,23 +240,22 @@ export async function setPictureAsManager(formData: FormData): Promise<ManagerRe
   const stored = await storeUploadedAvatar(subject.id, file);
   if (!stored.ok) return stored;
 
-  await db.user.update({
-    where: { id: subject.id },
-    data: { avatarPath: stored.path, pictureSetAt: subject.pictureSetAt ?? new Date() },
-  });
-  if (subject.avatarPath) await deleteFile(subject.avatarPath);
+  // Theirs to set, so nobody else approves it. The one it replaces stays in
+  // the archive, to be put back.
+  const source =
+    formData.get("source") === "photo-id" ? PICTURE_SOURCE.photoId : PICTURE_SOURCE.manual(actor.name);
+  try {
+    await putUpPicture({ userId: subject.id, path: stored.path, source, addedById: actor.id });
+  } catch (error) {
+    await deleteFile(stored.path);
+    throw error;
+  }
 
   await recordProfileEvents({
     actorId: actor.id,
     userId: subject.id,
-    kind: "changed",
-    changes: [
-      {
-        field: "picture",
-        from: subject.avatarPath ? "Previous picture" : null,
-        to: formData.get("source") === "photo-id" ? "Picture from the Photo ID" : "New picture",
-      },
-    ],
+    changes: [{ field: "picture", from: subject.avatarPath ? "Picture" : null, to: "Picture" }],
+    source,
     warned,
   });
   if (warned) await tellSupervisor({ subject, actor, what: "the profile picture" });
@@ -259,7 +264,7 @@ export async function setPictureAsManager(formData: FormData): Promise<ManagerRe
   return { ok: true, message: "Picture set." };
 }
 
-/** Takes somebody's picture down. */
+/** Takes somebody's picture down, saying why. It stays among their earlier pictures. */
 export async function removePictureAsManager(formData: FormData): Promise<ManagerResult> {
   const actor = await getSessionUser();
   if (!actor) return { ok: false, error: "Not signed in." };
@@ -271,6 +276,9 @@ export async function removePictureAsManager(formData: FormData): Promise<Manage
   }
   if (!subject.avatarPath) return { ok: true };
 
+  const reason = optionalText.parse(formData.get("reason"));
+  if (!reason) return { ok: false, error: "Say why the picture is taken down." };
+
   const warned = notTheirEmployee(actor, subject);
   if (warned && formData.get("confirmed") !== "1") {
     return {
@@ -280,18 +288,64 @@ export async function removePictureAsManager(formData: FormData): Promise<Manage
   }
 
   await db.user.update({ where: { id: subject.id }, data: { avatarPath: null } });
-  await deleteFile(subject.avatarPath);
   await recordProfileEvents({
     actorId: actor.id,
     userId: subject.id,
-    kind: "changed",
-    changes: [{ field: "picture", from: "Previous picture", to: null }],
+    changes: [{ field: "picture", from: "Picture", to: null }],
+    reason,
     warned,
   });
   if (warned) await tellSupervisor({ subject, actor, what: "the profile picture" });
 
   revalidatePath(`/people/${subject.id}`);
   return { ok: true, message: "Picture removed." };
+}
+
+/**
+ * Puts back a picture somebody had before. It was approved once, so it needs
+ * no approval again: the entry names whoever approved it then, and where it
+ * came from. Another manager is warned first, as for setting one.
+ */
+export async function restorePictureAsManager(formData: FormData): Promise<ManagerResult> {
+  const actor = await getSessionUser();
+  if (!actor) return { ok: false, error: "Not signed in." };
+
+  const subject = await loadProfile(String(formData.get("userId") ?? ""));
+  if (!subject) return { ok: false, error: "That person does not exist." };
+  if (!mayEditProfileOf(actor, subject)) {
+    return { ok: false, error: "You cannot change this person's profile." };
+  }
+
+  const picture = await db.profilePicture.findFirst({
+    where: { id: String(formData.get("pictureId") ?? ""), userId: subject.id },
+  });
+  if (!picture) return { ok: false, error: "That picture is no longer kept." };
+  if (picture.path === subject.avatarPath) return { ok: true, message: "That is their picture already." };
+
+  const warned = notTheirEmployee(actor, subject);
+  if (warned && formData.get("confirmed") !== "1") {
+    return {
+      ok: false,
+      confirm: warning(subject.name, actingSupervisor(subject)?.name ?? null, "the profile picture"),
+    };
+  }
+
+  await db.user.update({
+    where: { id: subject.id },
+    data: { avatarPath: picture.path, pictureSetAt: new Date() },
+  });
+  await recordProfileEvents({
+    actorId: actor.id,
+    userId: subject.id,
+    changes: [{ field: "picture", verb: "restored", from: null, to: "Picture" }],
+    approval: approvalOf(picture),
+    source: picture.source,
+    warned,
+  });
+  if (warned) await tellSupervisor({ subject, actor, what: "the profile picture" });
+
+  revalidatePath(`/people/${subject.id}`);
+  return { ok: true, message: "Earlier picture put back." };
 }
 
 /** Approves or turns down somebody's request for a new legal name or picture. */

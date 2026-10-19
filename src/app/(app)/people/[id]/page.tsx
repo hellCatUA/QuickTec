@@ -1,13 +1,13 @@
-import type { PrivacyLevel } from "@prisma-client";
 import { Lock, Mail, Phone, ShieldCheck } from "lucide-react";
 import { notFound, redirect } from "next/navigation";
-import { ProfileHistory } from "@/components/profile/history";
-import { Avatar, LevelBadge } from "@/components/profile/parts";
+import { HistoryProvider } from "@/components/profile/history";
+import { Line } from "@/components/profile/line";
+import { Avatar } from "@/components/profile/parts";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
-import { avatarSrc, requestedAvatarSrc } from "@/lib/avatar";
+import { archivedAvatarSrc, avatarSrc, requestedAvatarSrc } from "@/lib/avatar";
 import { usTimeInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
 import { formatRate } from "@/lib/money";
@@ -37,9 +37,7 @@ import {
   statesText,
   streetText,
 } from "@/lib/profile-format";
-import { profileHistory } from "@/lib/profile-history";
 import {
-  isProfileField,
   PHONE_LABEL,
   PROFILE_FIELDS,
   yearsLabel,
@@ -62,10 +60,8 @@ export const metadata = { title: "Profile" };
  */
 export default async function PersonPage({
   params,
-  searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ history?: string }>;
 }) {
   const viewer = await getSessionUser();
   if (!viewer) redirect("/signin");
@@ -90,18 +86,23 @@ export default async function PersonPage({
 
   const editable = mayEditProfileOf(viewer, profile);
   const history = seesHistory(audience);
-  const { history: historyParam } = await searchParams;
-  const historyField = isProfileField(historyParam) ? historyParam : null;
 
-  const [requests, entries] = await Promise.all([
+  const [requests, archive] = await Promise.all([
     editable
       ? db.profileRequest.findMany({
           where: { userId: profile.id, status: "PENDING" },
           orderBy: { createdAt: "asc" },
-          select: { id: true, field: true, value: true, createdAt: true },
+          select: { id: true, field: true, value: true, reason: true, createdAt: true },
         })
       : [],
-    history ? profileHistory(profile.id, historyField) : [],
+    // Pictures they had before, for whoever may put one back.
+    editable
+      ? db.profilePicture.findMany({
+          where: { userId: profile.id },
+          orderBy: { createdAt: "desc" },
+          select: { id: true, path: true, source: true, createdAt: true },
+        })
+      : [],
   ]);
 
   const years = show("yearsOfService") ? yearsLabel(profile.serviceStartDate) : null;
@@ -132,6 +133,7 @@ export default async function PersonPage({
   );
 
   return (
+    <HistoryProvider userId={history ? profile.id : null}>
     <div className="mx-auto flex max-w-5xl flex-col gap-4">
       <PageHeader title={profile.name} backHref="/people" />
       {/* A line of its own rather than beside the name, which it squeezed
@@ -200,6 +202,7 @@ export default async function PersonPage({
                   key={phone.kind}
                   label={phone.preferred ? "Preferred phone" : phone.kind === "VOIP" ? "VoIP" : "Phone"}
                   level={levels[phone.kind === "VOIP" ? "voipPhone" : phone.kind === "WORK" ? "workPhone" : "personalPhone"]}
+                  field={phone.preferred ? "preferredPhone" : phone.kind === "VOIP" ? "voipPhone" : phone.kind === "WORK" ? "workPhone" : "personalPhone"}
                 >
                   <a href={telHref(phone.number)} className="hover:underline">
                     {phoneText(phone.number)}
@@ -214,19 +217,19 @@ export default async function PersonPage({
                 </Line>
               ))}
               {show("workPhone") && profile.workPhone && !phones.some((phone) => phone.kind === "WORK") ? (
-                <Line label="Work phone" level={levels.workPhone}>
+                <Line label="Work phone" level={levels.workPhone} field="workPhone">
                   {phoneText(profile.workPhone)}
                 </Line>
               ) : null}
               {show("email") ? (
-                <Line label="Email" level={levels.email}>
+                <Line label="Email" level={levels.email} field="email">
                   <a href={`mailto:${profile.email}`} className="hover:underline">
                     {profile.email}
                   </a>
                 </Line>
               ) : null}
               {place ? (
-                <Line label="Home region" level={levels.city}>
+                <Line label="Home region" level={levels.city} field="homeRegion">
                   {place}
                 </Line>
               ) : null}
@@ -239,17 +242,17 @@ export default async function PersonPage({
             </CardHeader>
             <dl>
               {show("role") ? (
-                <Line label="Role" level={levels.role}>
+                <Line label="Role" level={levels.role} field="role">
                   {ROLE_LABEL[profile.baseRole] ?? profile.baseRole}
                 </Line>
               ) : null}
               {show("directSupervisor") ? (
-                <Line label="Direct supervisor" level={levels.directSupervisor}>
+                <Line label="Direct supervisor" level={levels.directSupervisor} field="directSupervisor">
                   {profile.directSupervisor?.name ?? <span className="text-muted-foreground">Not set</span>}
                 </Line>
               ) : null}
               {show("yearsOfService") ? (
-                <Line label="Years of service" level={levels.yearsOfService}>
+                <Line label="Years of service" level={levels.yearsOfService} field="yearsOfService">
                   {years ?? <span className="text-muted-foreground">Not set</span>}
                   {profile.serviceStartDate ? (
                     <span className="ml-2 text-xs text-muted-foreground">
@@ -259,7 +262,7 @@ export default async function PersonPage({
                 </Line>
               ) : null}
               {show("primaryRegion") ? (
-                <Line label="Primary region" level={levels.primaryRegion}>
+                <Line label="Primary region" level={levels.primaryRegion} field="primaryRegion">
                   {/* The home state stands in only for somebody who may see it. */}
                   {stateText(profile.primaryRegion ?? (show("state") ? profile.state : null)) ?? (
                     <span className="text-muted-foreground">Not set</span>
@@ -267,7 +270,7 @@ export default async function PersonPage({
                 </Line>
               ) : null}
               {show("statesOfOperation") ? (
-                <Line label="States of operation" level={levels.statesOfOperation}>
+                <Line label="States of operation" level={levels.statesOfOperation} field="statesOfOperation">
                   {statesText(profile.statesOfOperation) ?? <span className="text-muted-foreground">None listed</span>}
                 </Line>
               ) : null}
@@ -283,26 +286,26 @@ export default async function PersonPage({
               </CardHeader>
               <dl>
                 {show("legalName") ? (
-                  <Line label="Legal name" level={levels.legalName}>
+                  <Line label="Legal name" level={levels.legalName} field="legalName">
                     {profile.legalName ?? <span className="text-muted-foreground">Not set</span>}
                   </Line>
                 ) : null}
                 {show("street") ? (
-                  <Line label="Street address" level={levels.street}>
+                  <Line label="Street address" level={levels.street} field="street">
                     {streetText(profile.addressLine1, profile.addressLine2) ?? (
                       <span className="text-muted-foreground">Not on file</span>
                     )}
                   </Line>
                 ) : null}
                 {show("personalPhone") && profile.phone && !phones.some((phone) => phone.kind === "PERSONAL") ? (
-                  <Line label="Personal phone" level={levels.personalPhone}>
+                  <Line label="Personal phone" level={levels.personalPhone} field="personalPhone">
                     <a href={telHref(profile.phone)} className="hover:underline">
                       {phoneText(profile.phone)}
                     </a>
                   </Line>
                 ) : null}
                 {show("defaultPayRate") ? (
-                  <Line label="Default pay rate" level={levels.defaultPayRate}>
+                  <Line label="Default pay rate" level={levels.defaultPayRate} field="defaultPayRate">
                     {profile.defaultPayType && profile.defaultPayRate ? (
                       formatRate(
                         profile.defaultPayType as Parameters<typeof formatRate>[0],
@@ -348,10 +351,19 @@ export default async function PersonPage({
                 field: request.field,
                 value: request.value,
                 at: request.createdAt.toISOString(),
+                reason: request.reason,
                 pictureSrc:
                   request.field === "PICTURE" ? requestedAvatarSrc(profile.id, request.id) : null,
               }))}
               currentPicture={avatarSrc(profile.id, profile.avatarPath)}
+              earlier={archive
+                .filter((picture) => picture.path !== profile.avatarPath)
+                .map((picture) => ({
+                  id: picture.id,
+                  src: archivedAvatarSrc(profile.id, picture.id),
+                  at: monthYear(picture.createdAt) ?? "",
+                  source: picture.source,
+                }))}
               levels={{
                 legalName: levels.legalName,
                 yearsOfService: levels.yearsOfService,
@@ -364,36 +376,10 @@ export default async function PersonPage({
             />
           ) : null}
 
-          {history ? (
-            <ProfileHistory
-              entries={entries}
-              field={historyField}
-              all={historyParam === "all"}
-              timeZone={viewer.timeZone}
-              basePath={`/people/${profile.id}`}
-            />
-          ) : null}
         </div>
       </div>
     </div>
-  );
-}
-
-function Line({
-  label,
-  level,
-  children,
-}: {
-  label: string;
-  level: PrivacyLevel;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="grid gap-1 border-t border-border px-4 py-3 text-sm first:border-t-0 sm:grid-cols-[10rem_minmax(0,1fr)_auto] sm:items-center sm:gap-4">
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className="min-w-0 break-words">{children}</dd>
-      <LevelBadge level={level} iconOnly className="hidden sm:inline-flex" />
-    </div>
+    </HistoryProvider>
   );
 }
 

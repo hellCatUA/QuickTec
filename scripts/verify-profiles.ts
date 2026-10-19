@@ -420,8 +420,30 @@ async function requests() {
   check("an answered request cannot be answered twice", again.ok, false);
 
   const history = await profileHistory(tech.id, "legalName");
-  check("the history has the request and the answer", history.slice(0, 2).map((entry) => entry.kind).join(","), "approved,requested");
+  check("an approved request is one entry", history[0].action, "Legal name updated");
+  check("by whoever asked", history[0].by, tech.name);
+  check("approved by whoever answered", history[0].approvedBy, boss.name);
   check("with the value asked for", history[0].to, "Terrence Allen Tech");
+  check(
+    "and asking, by itself, is not history",
+    history.filter((entry) => entry.action.includes("request") && !entry.action.endsWith("denied")).length,
+    0,
+  );
+
+  // Turned down, it is an entry of its own, with the reason.
+  const third = await fileProfileRequest({ subject, requesterId: tech.id, field: "LEGAL_NAME", value: "Terry Q Tech" });
+  await answerProfileRequest({
+    requestId: third.id,
+    reviewerId: boss.id,
+    reviewerName: boss.name,
+    approve: false,
+    note: "Use the name on your ID",
+    warned: false,
+  });
+  const denied = (await profileHistory(tech.id, "legalName"))[0];
+  check("a request turned down is its own entry", denied.action, "Legal name update request denied");
+  check("with who turned it down", denied.approvedBy, boss.name);
+  check("and why", denied.reason, "Use the name on your ID");
 }
 
 async function nextcloudPicture() {
@@ -434,6 +456,10 @@ async function nextcloudPicture() {
   await db.auditEvent.deleteMany({
     where: { entityType: "User", entityId: tech2.id, action: { startsWith: "profile." } },
   });
+  for (const kept of await db.profilePicture.findMany({ where: { userId: tech2.id } })) {
+    await deleteFile(kept.path);
+  }
+  await db.profilePicture.deleteMany({ where: { userId: tech2.id } });
 
   const picture = await jpeg("#336699");
   const server = createServer((request, response) => {
@@ -468,6 +494,17 @@ async function nextcloudPicture() {
     await importNextcloudPicture(tech2.id, `http://127.0.0.1:${port}/chosen`);
     const copied = (await db.user.findUniqueOrThrow({ where: { id: tech2.id } })).avatarPath;
     check("a picture they chose is", Boolean(copied), true);
+    const imported = (await profileHistory(tech2.id, "picture"))[0];
+    check(
+      "and the history says QuickTec copied it from NextCloud",
+      `${imported?.action} · ${imported?.by} · ${imported?.source}`,
+      "Profile picture added · System · Auto-Import: NC",
+    );
+    check(
+      "kept as approved by QuickTec, for putting back later",
+      (await db.profilePicture.findFirst({ where: { userId: tech2.id, path: copied ?? "" } }))?.approvedBySystem,
+      true,
+    );
     await importNextcloudPicture(tech2.id, `http://127.0.0.1:${port}/again`);
     check(
       "and only the once",
@@ -588,7 +625,13 @@ async function pages() {
       (await db.user.findUniqueOrThrow({ where: { id: tech.id } })).legalName,
       "Terrence Allen Tech",
     );
-    check("and the box shows it", await bossPage.locator("#m-legal").inputValue(), "Terrence Allen Tech");
+    // The panel opens afresh on what is stored once the answer comes back.
+    let shownName = "";
+    for (let attempt = 0; attempt < 40 && shownName !== "Terrence Allen Tech"; attempt++) {
+      shownName = await bossPage.locator("#m-legal").inputValue();
+      if (shownName !== "Terrence Allen Tech") await bossPage.waitForTimeout(250);
+    }
+    check("and the box shows it", shownName, "Terrence Allen Tech");
     // Saving something else from the same page must not put the old name back.
     await bossPage.locator("#m-start").fill("2019-03-05");
     await bossPage.getByRole("button", { name: "Save", exact: true }).click();
@@ -626,7 +669,11 @@ async function pages() {
       1,
     );
     const latest = (await profileHistory(tech.id, "legalName"))[0];
-    check("the history marks it as past the warning", latest.warned, true);
+    check(
+      "the history says it was past the warning",
+      latest.reason,
+      "Not their direct supervisor — changed past the warning",
+    );
 
     // --- pictures -----------------------------------------------------------
     await bossPage.goto(`${BASE}/people/${tech.id}`, { waitUntil: "load" });
@@ -691,6 +738,12 @@ async function pages() {
       if (visibility !== "PUBLIC") await own.waitForTimeout(250);
     }
     check("who sees the picture is theirs to choose", visibility, "PUBLIC");
+    const shown = (await profileHistory(tech.id, "picture"))[0];
+    check(
+      "and the change is in the picture's history by level",
+      `${shown?.action}: ${shown?.from} → ${shown?.to}`,
+      "Profile picture visibility changed: Federated → Public",
+    );
     check(
       "and a Public picture is there for a guest",
       (await guest.request.get(`${BASE}/api/avatars/${tech.id}`)).status(),
@@ -703,7 +756,35 @@ async function pages() {
     check("nor the street", await colleague.getByText("412 Oak Ave").count(), 0);
     check("and is told what is kept from them", await colleague.getByText("Not shown to you").isVisible(), true);
     check("but sees the home region", await colleague.getByText("Visalia, CA 93291").first().isVisible(), true);
-    check("and has no history to read", await colleague.locator("#history").count(), 0);
+    check(
+      "and has no history to read",
+      await colleague.getByRole("button", { name: /^History of / }).count(),
+      0,
+    );
+
+    // --- a line's history opens under the line --------------------------------
+    await own.goto(`${BASE}/account`, { waitUntil: "load" });
+    await own.getByRole("button", { name: "History of legal name" }).first().click();
+    await own.getByText("Legal name updated").first().waitFor({ timeout: 15_000 });
+    check("a line's history opens under it", await own.getByText("Approved By:").first().isVisible(), true);
+
+    // --- a supervisor takes a picture down, saying why -------------------------
+    await bossPage.goto(`${BASE}/people/${tech.id}`, { waitUntil: "load" });
+    await bossPage.getByRole("button", { name: "Remove", exact: true }).click();
+    await bossPage.locator("#m-remove-reason").fill("Not a clear photo");
+    await bossPage.getByRole("button", { name: "Take it down" }).click();
+    await bossPage.getByRole("status").filter({ hasText: "Picture removed." }).waitFor({ timeout: 15_000 });
+    const removed = (await profileHistory(tech.id, "picture"))[0];
+    check(
+      "a picture taken down says who and why",
+      `${removed?.action} · ${removed?.by} · ${removed?.reason}`,
+      `Profile picture removed · ${boss.name} · Not a clear photo`,
+    );
+    check(
+      "and it stays among their earlier pictures",
+      await db.profilePicture.count({ where: { userId: tech.id, path: withPicture.avatarPath ?? "" } }),
+      1,
+    );
 
     // --- the company's levels -------------------------------------------------
     await bossPage.goto(`${BASE}/settings/roles?tab=privacy`, { waitUntil: "load" });
@@ -725,12 +806,104 @@ async function pages() {
   }
 }
 
+/** A picture's whole life on somebody's own page: asked for, approved, taken down, put back. */
+async function pictureFlows() {
+  console.log("\n— pictures, from the person's own page —");
+  const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH });
+  try {
+    // Nobody to approve it: QuickTec does, at once.
+    const guest = await db.user.findUniqueOrThrow({ where: { email: "guest-profile@example.com" } });
+    await db.user.update({
+      where: { id: guest.id },
+      data: { active: true, avatarPath: null, pictureSetAt: null, directSupervisorId: null },
+    });
+    await db.profilePicture.deleteMany({ where: { userId: guest.id } });
+    const page = await pageAs(browser, guest.email);
+    await page.goto(`${BASE}/account`, { waitUntil: "load" });
+    await page.getByRole("button", { name: "Picture settings" }).click();
+    await page.getByRole("menuitem", { name: "Add a picture" }).click();
+    await page.getByRole("radio", { name: "Hire", exact: true }).check();
+    await page.locator('input[aria-label="Choose a picture"]').setInputFiles({
+      name: "me.jpg",
+      mimeType: "image/jpeg",
+      buffer: await jpeg("#448866"),
+    });
+    await page.getByRole("status").filter({ hasText: "Your picture is set." }).waitFor({ timeout: 15_000 });
+    const first = (await profileHistory(guest.id, "picture"))[0];
+    check(
+      "with no supervisor, a first picture is approved by QuickTec at once",
+      `${first?.action} · ${first?.by} · ${first?.approvedBy} · ${first?.source} · ${first?.reason}`,
+      `Profile picture added · ${guest.name} · System · Manual Import: ${guest.name} · Hire`,
+    );
+    const firstPath = (await db.user.findUniqueOrThrow({ where: { id: guest.id } })).avatarPath;
+
+    await page.getByRole("button", { name: "Picture settings" }).click();
+    await page.getByRole("menuitem", { name: "Take my picture down" }).click();
+    await page.getByRole("button", { name: "Take it down" }).click();
+    await page.getByRole("status").filter({ hasText: "taken down" }).waitFor({ timeout: 15_000 });
+    check("the person may take their own picture down", (await db.user.findUniqueOrThrow({ where: { id: guest.id } })).avatarPath, null);
+    check("and the history says so", (await profileHistory(guest.id, "picture"))[0]?.action, "Profile picture removed");
+
+    await page.getByRole("button", { name: "Picture settings" }).click();
+    await page.getByRole("menuitem", { name: "Put back an earlier picture" }).click();
+    await page.getByRole("button", { name: "Put back" }).first().click();
+    await page.getByRole("status").filter({ hasText: "earlier picture is back" }).waitFor({ timeout: 15_000 });
+    check("and put an earlier one back", (await db.user.findUniqueOrThrow({ where: { id: guest.id } })).avatarPath, firstPath);
+    const restored = (await profileHistory(guest.id, "picture"))[0];
+    check(
+      "which names who approved it then, and where it came from",
+      `${restored?.action} · ${restored?.approvedBy} · ${restored?.source}`,
+      `Profile picture restored · System · Manual Import: ${guest.name}`,
+    );
+
+    // A supervisor to approve it: asked for, with the reason, and approved.
+    const tech2 = await db.user.findUniqueOrThrow({ where: { email: "tech2@417group.org" } });
+    const admin = await db.user.findUniqueOrThrow({ where: { email: "admin@417group.org" } });
+    await db.user.update({ where: { id: tech2.id }, data: { avatarPath: null } });
+    await db.profileRequest.deleteMany({ where: { userId: tech2.id } });
+    const own = await pageAs(browser, tech2.email);
+    await own.goto(`${BASE}/account`, { waitUntil: "load" });
+    await own.getByRole("button", { name: "Picture settings" }).click();
+    await own.getByRole("menuitem", { name: "Add a picture" }).click();
+    await own.getByRole("radio", { name: "Pre-hire", exact: true }).check();
+    await own.locator('input[aria-label="Choose a picture"]').setInputFiles({
+      name: "me.jpg",
+      mimeType: "image/jpeg",
+      buffer: await jpeg("#884466"),
+    });
+    await own.getByText(`waiting on ${admin.name}`).waitFor({ timeout: 15_000 });
+    const asked = await db.profileRequest.findFirstOrThrow({
+      where: { userId: tech2.id, field: "PICTURE", status: "PENDING" },
+    });
+    check("a first picture is asked for, with why", asked.reason, "Pre-hire");
+    await answerProfileRequest({
+      requestId: asked.id,
+      reviewerId: admin.id,
+      reviewerName: admin.name,
+      approve: true,
+      note: null,
+      warned: false,
+    });
+    const approved = (await profileHistory(tech2.id, "picture"))[0];
+    check(
+      "approved, it is one entry: by them, approved by their supervisor",
+      `${approved?.action} · ${approved?.by} · ${approved?.approvedBy} · ${approved?.source} · ${approved?.reason}`,
+      `Profile picture added · ${tech2.name} · ${admin.name} · Manual Import: ${tech2.name} · Pre-hire`,
+    );
+  } finally {
+    await browser.close();
+  }
+}
+
 async function main() {
   await rules();
   await audienceAndCards();
   await requests();
   await nextcloudPicture();
-  if (process.env.SKIP_PAGES !== "1") await pages();
+  if (process.env.SKIP_PAGES !== "1") {
+    await pages();
+    await pictureFlows();
+  }
 
   // What this left waiting would sit in every other suite's approvals inbox.
   const tech = await db.user.findUniqueOrThrow({ where: { email: "tech@417group.org" } });

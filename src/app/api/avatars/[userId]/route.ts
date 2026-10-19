@@ -19,7 +19,8 @@ import { absolutePath, fileExists, fileVersion } from "@/lib/storage";
  * question is asked here as on the page that shows it: a Federated picture is
  * for people signed in to QuickTec, and not for a guest. A picture
  * still waiting on an answer is shown to the person who sent it and to whoever
- * may answer it, nobody else.
+ * may answer it, nobody else — and so is an earlier picture, to whoever may
+ * put it back.
  */
 export async function GET(
   request: Request,
@@ -32,10 +33,20 @@ export async function GET(
   const profile = await loadProfile(userId);
   if (!profile) return new NextResponse("Not found", { status: 404 });
 
-  const requestId = new URL(request.url).searchParams.get("request");
+  const query = new URL(request.url).searchParams;
+  const requestId = query.get("request");
+  const pictureId = query.get("picture");
   let storagePath: string | null = null;
 
-  if (requestId) {
+  if (pictureId) {
+    const earlier = await db.profilePicture.findFirst({
+      where: { id: pictureId, userId },
+      select: { path: true },
+    });
+    const allowed = viewer.id === userId || mayEditProfileOf(viewer, profile);
+    if (!earlier || !allowed) return new NextResponse("Not found", { status: 404 });
+    storagePath = earlier.path;
+  } else if (requestId) {
     const pending = await db.profileRequest.findFirst({
       where: { id: requestId, userId, field: "PICTURE", status: "PENDING" },
       select: { picturePath: true },

@@ -1,138 +1,168 @@
-import { History } from "lucide-react";
-import Link from "next/link";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { usDateTimeInZone } from "@/lib/datetime";
-import type { HistoryEntry, ProfileEventKind } from "@/lib/profile-history";
-import { PROFILE_FIELDS, type ProfileField } from "@/lib/profile-privacy";
+"use client";
 
-const KIND: Record<
-  ProfileEventKind,
-  { label: string; variant: "neutral" | "primary" | "success" | "warning" | "danger" }
-> = {
-  changed: { label: "Changed", variant: "neutral" },
-  requested: { label: "Requested", variant: "warning" },
-  withdrawn: { label: "Withdrawn", variant: "neutral" },
-  approved: { label: "Approved", variant: "success" },
-  denied: { label: "Denied", variant: "danger" },
-  imported: { label: "NextCloud", variant: "primary" },
-};
-
-function who(entry: HistoryEntry): string {
-  const actor = entry.actor ?? (entry.source ? `Imported from ${entry.source}` : "QuickTec");
-  switch (entry.kind) {
-    case "requested":
-      return `Requested by ${actor}`;
-    case "withdrawn":
-      return `Withdrawn by ${actor}`;
-    case "approved":
-      return `Approved by ${actor}`;
-    case "denied":
-      return `Denied by ${actor}`;
-    case "imported":
-      return entry.actor ? `Imported by ${actor}` : actor;
-    default:
-      return entry.actor ? `By ${actor}` : actor;
-  }
-}
-
-/** How many changes are shown before somebody asks for the rest. */
-const RECENT = 10;
-
-/** The links between views of the history: small text, a thumb's height. */
-const LINK = "inline-flex min-h-10 items-center text-xs font-medium text-primary hover:underline";
+import { ArrowRight, History, Loader2 } from "lucide-react";
+import * as React from "react";
+import {
+  loadFieldHistory,
+  type FieldHistoryEntry,
+} from "@/app/(app)/people/history-actions";
+import type { HistoryField } from "@/lib/profile-history";
+import { cn } from "@/lib/utils";
 
 /**
- * The history of a profile, newest first: what changed, from what to what,
- * who did it, and what was asked for and how it was answered.
+ * A line's history, opened under the line itself.
+ *
+ * Each line of a profile has its own: the button beside its level opens it in
+ * place, rather than sending somebody to a list of every change at the foot
+ * of the page. The entries are asked for when it opens — most never are.
  */
-export function ProfileHistory({
-  entries,
-  field,
-  all,
-  timeZone,
-  basePath,
+
+/** Whose history the lines below belong to; absent where it is not the reader's to read. */
+const HistoryOf = React.createContext<string | null>(null);
+
+export function HistoryProvider({
+  userId,
+  children,
 }: {
-  entries: HistoryEntry[];
-  field: ProfileField | null;
-  /** Every change rather than the latest few. */
-  all: boolean;
-  timeZone: string;
-  /** The page this sits on, for the links between views of the history. */
-  basePath: string;
+  /** Null when the reader may not read it: no buttons are drawn. */
+  userId: string | null;
+  children: React.ReactNode;
 }) {
-  const shown = field || all ? entries : entries.slice(0, RECENT);
+  return <HistoryOf.Provider value={userId}>{children}</HistoryOf.Provider>;
+}
+
+export function useHistoryOf(): string | null {
+  return React.useContext(HistoryOf);
+}
+
+/** The button that opens and closes a line's history. */
+export function HistoryButton({
+  label,
+  open,
+  onToggle,
+  className,
+}: {
+  label: string;
+  open: boolean;
+  onToggle: () => void;
+  className?: string;
+}) {
   return (
-    <Card id="history" className="scroll-mt-20">
-      <CardHeader className="flex-row flex-wrap items-center gap-2">
-        <CardTitle className="flex items-center gap-2">
-          <History className="size-4 text-muted-foreground" />
-          {field ? `History — ${PROFILE_FIELDS[field].label}` : "History"}
-        </CardTitle>
-        {field ? (
-          <Link href={`${basePath}#history`} scroll={false} className={`ml-auto ${LINK}`}>
-            Every field
-          </Link>
-        ) : null}
-      </CardHeader>
-      <CardContent>
-        {entries.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            {field ? "Nothing has changed here yet." : "No changes yet."}
-          </p>
-        ) : (
-          <ol className="flex flex-col">
-            {shown.map((entry) => (
-              <li
-                key={entry.id}
-                className="relative flex flex-col gap-1 border-l border-border pb-4 pl-4 last:pb-0"
-              >
-                <span
-                  aria-hidden
-                  className="absolute -left-[5px] top-1.5 size-2.5 rounded-full bg-muted-foreground/40 ring-2 ring-surface"
-                />
-                <div className="text-xs text-muted-foreground">
-                  {usDateTimeInZone(entry.at, timeZone)}
-                </div>
-                <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
-                  {entry.fieldLabel}
-                  <Badge variant={KIND[entry.kind].variant}>{KIND[entry.kind].label}</Badge>
-                </div>
-                <div className="text-xs text-foreground/80">
-                  {who(entry)}
-                  {entry.warned ? (
-                    <span className="text-warning">
-                      {" "}
-                      — not their direct supervisor, past the warning
-                    </span>
-                  ) : null}
-                  {entry.note ? <span>: &ldquo;{entry.note}&rdquo;</span> : null}
-                </div>
-                {entry.from || entry.to ? (
-                  <div className="mt-0.5 rounded-md bg-muted/60 px-2.5 py-1.5 text-xs">
-                    {entry.from ? (
-                      <>
-                        <s className="text-muted-foreground">{entry.from}</s>
-                        {entry.to ? " → " : null}
-                      </>
-                    ) : null}
-                    {entry.to ?? (entry.from ? <span className="text-muted-foreground">removed</span> : null)}
-                  </div>
-                ) : null}
-              </li>
-            ))}
-          </ol>
-        )}
-        {shown.length < entries.length ? (
-          <Link href={`${basePath}?history=all#history`} scroll={false} className={`mt-1 ${LINK}`}>
-            Show all {entries.length} changes
-          </Link>
-        ) : all && entries.length > RECENT ? (
-          <Link href={`${basePath}#history`} scroll={false} className={`mt-1 ${LINK}`}>
-            Show the latest {RECENT}
-          </Link>
-        ) : null}
-      </CardContent>
-    </Card>
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={open}
+      aria-label={`History of ${label.toLowerCase()}`}
+      title="History"
+      className={cn(
+        "flex size-10 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground sm:size-8",
+        open && "bg-muted text-foreground",
+        className,
+      )}
+    >
+      <History className="size-4" />
+    </button>
+  );
+}
+
+/** How many entries show before somebody asks for the rest. */
+const FIRST = 5;
+
+/** A line's entries, newest first. */
+export function HistoryPanel({
+  userId,
+  field,
+  className,
+}: {
+  userId: string;
+  field: HistoryField;
+  className?: string;
+}) {
+  const [entries, setEntries] = React.useState<FieldHistoryEntry[] | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+  const [all, setAll] = React.useState(false);
+
+  React.useEffect(() => {
+    let live = true;
+    loadFieldHistory(userId, field).then(
+      (result) => {
+        if (!live) return;
+        if (result.ok) setEntries(result.entries);
+        else setError(result.error);
+      },
+      () => live && setError("The history could not be loaded."),
+    );
+    return () => {
+      live = false;
+    };
+  }, [userId, field]);
+
+  const shown = entries ? (all ? entries : entries.slice(0, FIRST)) : [];
+
+  return (
+    <div className={cn("rounded-lg border border-border bg-background/60 p-3", className)}>
+      {error ? (
+        <p className="text-xs text-danger">{error}</p>
+      ) : entries === null ? (
+        <p className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Loader2 className="size-3.5 animate-spin" /> Loading history…
+        </p>
+      ) : entries.length === 0 ? (
+        <p className="text-xs text-muted-foreground">No changes yet.</p>
+      ) : (
+        <ol className="flex flex-col">
+          {shown.map((entry) => (
+            <HistoryItem key={entry.id} entry={entry} />
+          ))}
+        </ol>
+      )}
+      {entries && entries.length > FIRST ? (
+        <button
+          type="button"
+          onClick={() => setAll((was) => !was)}
+          className="mt-1 inline-flex min-h-10 items-center text-xs font-medium text-primary hover:underline"
+        >
+          {all ? "Show fewer" : `Show all ${entries.length} changes`}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function HistoryItem({ entry }: { entry: FieldHistoryEntry }) {
+  return (
+    <li className="relative flex flex-col gap-1 border-l border-border pb-4 pl-4 last:pb-0">
+      <span
+        aria-hidden
+        className="absolute -left-[5px] top-1.5 size-2.5 rounded-full bg-muted-foreground/40 ring-2 ring-surface"
+      />
+      <div className="text-xs text-muted-foreground">{entry.at}</div>
+      <div className="text-sm font-medium">{entry.action}</div>
+      {entry.from || entry.to ? (
+        <div className="flex flex-wrap items-center gap-1.5 text-sm">
+          {entry.from ? <s className="text-muted-foreground">{entry.from}</s> : null}
+          {entry.from && entry.to ? (
+            <ArrowRight aria-label="to" className="size-3.5 shrink-0 text-muted-foreground" />
+          ) : null}
+          {entry.to ? <span>{entry.to}</span> : null}
+        </div>
+      ) : null}
+      <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-0.5 text-xs">
+        <Fact label="By" value={entry.by} />
+        <Fact label="Approved By" value={entry.approvedBy} />
+        <Fact label="Source" value={entry.source} />
+        <Fact label="Reason" value={entry.reason} />
+      </dl>
+    </li>
+  );
+}
+
+function Fact({ label, value }: { label: string; value: string | null }) {
+  if (!value) return null;
+  return (
+    <>
+      <dt className="text-muted-foreground">{label}:</dt>
+      <dd className="break-words">{value}</dd>
+    </>
   );
 }

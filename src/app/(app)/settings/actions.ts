@@ -20,7 +20,14 @@ import {
 import { isLocationIcon } from "@/lib/location-icons";
 import { MAX_LOCATION_NAME } from "@/lib/deliverables";
 import { PERMISSION_KEYS, type Permission } from "@/lib/permissions";
-import { recordProfileEvents } from "@/lib/profile-history";
+import {
+  homeRegion,
+  phoneText as phoneDisplay,
+  ROLE_LABEL,
+  streetText,
+  zoneText,
+} from "@/lib/profile-format";
+import { profileChanges, recordProfileEvents } from "@/lib/profile-history";
 import { effectivePreferred, PHONE_LABEL } from "@/lib/profile-privacy";
 import { can, requirePermission, type SessionUser } from "@/lib/session";
 import { canSupervise } from "@/lib/supervisors";
@@ -268,30 +275,84 @@ export async function updateUser(
     entityType: "User",
     entityId: userId,
     action: "updated",
-    detail: diffFields(
-      before as unknown as Record<string, unknown>,
-      { ...rest, ...nameChange, ...zoneChange, ...preferredChange } as unknown as Record<string, unknown>,
-    ),
+    // Marked: the person's own history is written below, line by line, and
+    // reading this diff there as well would say everything twice.
+    detail: {
+      ...diffFields(
+        before as unknown as Record<string, unknown>,
+        { ...rest, ...nameChange, ...zoneChange, ...preferredChange } as unknown as Record<string, unknown>,
+      ),
+      _profile: true,
+    },
   });
-  // On their own history too, by name: the phone clients get changed, and
-  // they did not change it.
+
+  // Their profile's history, as the profile itself writes it.
+  const supervisors = await db.user.findMany({
+    where: { id: { in: [before.directSupervisorId, rest.directSupervisorId].filter((id): id is string => Boolean(id)) } },
+    select: { id: true, name: true },
+  });
+  const supervisorName = (id: string | null) =>
+    id ? (supervisors.find((one) => one.id === id)?.name ?? null) : null;
+  const finalZone = "timeZone" in zoneChange && zoneChange.timeZone ? zoneChange.timeZone : rest.timeZone;
+  await recordProfileEvents({
+    actorId: actor.id,
+    userId,
+    changes: [
+      ...profileChanges(
+        {
+          name: before.name,
+          personalPhone: phoneDisplay(before.phone),
+          street: streetText(before.addressLine1, before.addressLine2),
+          homeRegion: homeRegion({ city: before.city, state: before.state, zip: before.postalCode }),
+          directSupervisor: supervisorName(before.directSupervisorId),
+        },
+        {
+          name: "name" in nameChange && nameChange.name ? nameChange.name : before.name,
+          personalPhone: phoneDisplay(rest.phone),
+          street: streetText(rest.addressLine1, rest.addressLine2),
+          homeRegion: homeRegion({ city: rest.city, state: rest.state, zip: rest.postalCode }),
+          directSupervisor: supervisorName(rest.directSupervisorId),
+        },
+      ),
+      // Cleared here, the name is NextCloud's again from the next sign-in.
+      ...(!name && before.nameOverridden
+        ? [{ field: "name" as const, verb: "reset" as const, from: before.name, to: null }]
+        : []),
+      // A zone typed here is a choice.
+      ...(rest.timeZone !== before.timeZone
+        ? profileChanges({ timeZone: zoneText(before.timeZone) }, { timeZone: zoneText(rest.timeZone) })
+        : []),
+    ],
+  });
+  // One that followed a new ZIP is QuickTec's doing.
+  if (rest.timeZone === before.timeZone && finalZone !== before.timeZone) {
+    await recordProfileEvents({
+      actorId: null,
+      userId,
+      changes: [{ field: "timeZone", from: zoneText(before.timeZone), to: zoneText(finalZone) }],
+      source: `Auto: ZIP ${rest.postalCode ?? ""}`.trim(),
+    });
+  }
+  // The phone clients get changed, and they did not change it.
   if ("preferredPhone" in preferredChange) {
     const after = effectivePreferred(null, {
       personal: rest.phone,
       work: before.workPhone,
       voip: before.voipPhone,
     });
+    const number = (kind: "PERSONAL" | "WORK" | "VOIP") =>
+      phoneDisplay(kind === "PERSONAL" ? rest.phone : kind === "WORK" ? before.workPhone : before.voipPhone);
     await recordProfileEvents({
       actorId: actor.id,
       userId,
-      kind: "changed",
       changes: [
         {
           field: "preferredPhone",
-          from: PHONE_LABEL.PERSONAL,
-          to: after ? PHONE_LABEL[after] : null,
+          from: `${PHONE_LABEL.PERSONAL}: ${phoneDisplay(before.phone)}`,
+          to: after ? `${PHONE_LABEL[after]}: ${number(after)}` : null,
         },
       ],
+      reason: "Personal phone changed",
     });
   }
 
@@ -507,6 +568,12 @@ export async function createOutsideUser(
       field: "Sign-in",
       to: password ? "password set" : "link issued",
     },
+  });
+  // Its role is set here, once, rather than read from NextCloud groups.
+  await recordProfileEvents({
+    actorId: actor.id,
+    userId: user.id,
+    changes: [{ field: "role", from: null, to: ROLE_LABEL[baseRole] ?? baseRole }],
   });
 
   revalidatePath("/settings/users");

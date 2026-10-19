@@ -1,9 +1,11 @@
+"use client";
+
 import type { PrivacyLevel } from "@prisma-client";
-import { Cloud, History } from "lucide-react";
-import Link from "next/link";
+import { Cloud } from "lucide-react";
 import * as React from "react";
+import { HistoryButton, HistoryPanel, useHistoryOf } from "@/components/profile/history";
 import { LevelBadge } from "@/components/profile/parts";
-import type { ProfileField } from "@/lib/profile-privacy";
+import type { HistoryField } from "@/lib/profile-history";
 import { cn } from "@/lib/utils";
 
 /**
@@ -36,13 +38,16 @@ export function ProfileRow({
   source?: string | null;
   note?: string;
   level: PrivacyLevel;
-  /** For the way into this line's history. Left out where there is none. */
-  field?: ProfileField;
+  /** The line's history, opened under it. Left out where there is none. */
+  field?: HistoryField;
   hint?: React.ReactNode;
   highlight?: boolean;
   children: React.ReactNode;
 }) {
   const Tag = htmlFor ? "label" : "span";
+  const userId = useHistoryOf();
+  const [open, setOpen] = React.useState(false);
+  const history = userId && field ? { open, onToggle: () => setOpen((was) => !was) } : null;
   return (
     <div
       className={cn("@container border-t border-border first:border-t-0", highlight && "bg-primary/5")}
@@ -61,7 +66,7 @@ export function ProfileRow({
               <span className="text-xs text-muted-foreground">{note}</span>
             ) : null}
           </div>
-          <LevelControls level={level} field={field} label={label} className="@2xl:hidden" />
+          <LevelControls level={level} history={history} label={label} className="@2xl:hidden" />
         </div>
         <div className="@container min-w-0">
           {children}
@@ -69,51 +74,39 @@ export function ProfileRow({
         </div>
         <LevelControls
           level={level}
-          field={field}
+          history={history}
           label={label}
           className="hidden @2xl:flex @2xl:self-start @2xl:pt-1.5"
         />
       </div>
+      {history && open ? (
+        <HistoryPanel userId={userId!} field={field!} className="mx-4 mb-4" />
+      ) : null}
     </div>
   );
 }
 
 function LevelControls({
   level,
-  field,
+  history,
   label,
   className,
 }: {
   level: PrivacyLevel;
-  field?: ProfileField;
+  history: { open: boolean; onToggle: () => void } | null;
   label: string;
   className?: string;
 }) {
   return (
     <div className={cn("flex shrink-0 items-center justify-end gap-1", className)}>
       <LevelBadge level={level} />
-      {field ? (
-        <HistoryLink field={field} label={label} />
+      {history ? (
+        <HistoryButton label={label} open={history.open} onToggle={history.onToggle} />
       ) : (
         // Holds the place, so a line without a history ends where the
         // others do.
         <span aria-hidden className="size-10 sm:size-8" />
       )}
     </div>
-  );
-}
-
-/** The way into one line's history, on whichever page it is. */
-export function HistoryLink({ field, label }: { field: ProfileField; label: string }) {
-  return (
-    <Link
-      href={`?history=${field}#history`}
-      scroll={false}
-      aria-label={`History of ${label.toLowerCase()}`}
-      title="History"
-      className="flex size-10 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground sm:size-8"
-    >
-      <History className="size-4" />
-    </Link>
   );
 }
