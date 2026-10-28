@@ -128,11 +128,18 @@ export async function saveOwnProfile(
   const postalCode = pick("postalCode", data.postalCode, data.postalCode, before.postalCode);
 
   // The zone follows the ZIP until somebody picks one; picking "from my ZIP"
-  // hands it back.
+  // hands it back. Left as it was, it does what is stored, not what the page
+  // showed when it was opened: an administrator may have picked one since.
+  // A zone picked by hand stays, and is flagged as picked from now on.
   let timeZone = before.timeZone;
   let timeZoneManual = before.timeZoneManual;
-  const zoneTouched = touched("timeZone", data.timeZone) || touched("postalCode", data.postalCode);
-  if (zoneTouched) {
+  const byHandBefore = zonePickedByHand(before);
+  const zonePicked = touched("timeZone", data.timeZone);
+  const zipMoved = touched("postalCode", data.postalCode);
+  if (!zonePicked && zipMoved) {
+    if (byHandBefore) timeZoneManual = true;
+    else timeZone = timeZoneForZip(postalCode) ?? before.timeZone;
+  } else if (zonePicked) {
     if (data.timeZone === "auto") {
       timeZoneManual = false;
       timeZone = timeZoneForZip(postalCode) ?? before.timeZone;
@@ -206,9 +213,8 @@ export async function saveOwnProfile(
 
   // Picked by hand or handed back to the ZIP, it is their doing; left to
   // follow the ZIP and moved with a new one, it is QuickTec's.
-  const byHandBefore = zonePickedByHand(before);
-  const byHandAfter = zoneTouched && data.timeZone ? timeZoneManual : byHandBefore;
-  const zoneFollowedZip = zoneTouched && !byHandAfter && !byHandBefore;
+  const byHandAfter = zonePicked && data.timeZone ? timeZoneManual : byHandBefore;
+  const zoneByThem = zonePicked && (byHandBefore || byHandAfter);
 
   await recordProfileEvents({
     actorId: user.id,
@@ -246,7 +252,7 @@ export async function saveOwnProfile(
         { chosen: preferredPhone, ...phones },
       ),
       ...statesChange(before.statesOfOperation, states, (code) => stateText(code) ?? code),
-      ...(zoneTouched && !zoneFollowedZip
+      ...(zoneByThem
         ? profileChanges(
             { timeZone: zoneLine(before.timeZone, byHandBefore) },
             { timeZone: zoneLine(timeZone, byHandAfter) },
@@ -254,7 +260,7 @@ export async function saveOwnProfile(
         : []),
     ],
   });
-  if (zoneFollowedZip && timeZone !== before.timeZone) {
+  if (!zoneByThem && timeZone !== before.timeZone) {
     await recordProfileEvents({
       actorId: null,
       userId: user.id,

@@ -133,7 +133,9 @@ export function profileChanges(
  * the two read side by side. The history marks what went and what came.
  */
 export function statesChange(before: string[], after: string[], name: (code: string) => string): ProfileChange[] {
-  if (before.length === after.length && before.every((code) => after.includes(code))) return [];
+  const was = new Set(before);
+  const now = new Set(after);
+  if (was.size === now.size && [...was].every((code) => now.has(code))) return [];
   const list = (codes: string[]) =>
     codes.length > 0
       ? codes
@@ -141,7 +143,7 @@ export function statesChange(before: string[], after: string[], name: (code: str
           .sort((a, b) => a.localeCompare(b))
           .join(", ")
       : null;
-  return [{ field: "statesOfOperation", from: list(before), to: list(after) }];
+  return [{ field: "statesOfOperation", from: list([...was]), to: list([...now]) }];
 }
 
 type PhoneSet = {

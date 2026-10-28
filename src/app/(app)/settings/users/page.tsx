@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
 import { db } from "@/lib/db";
 import { loadPrivacySettings, pictureFor } from "@/lib/profile";
+import { zonePickedByHand } from "@/lib/profile-format";
 import { can, getSessionUser } from "@/lib/session";
 import { canSupervise, supervisionsToFix } from "@/lib/supervisors";
 import { OutsideAccount } from "./outside-account";
@@ -29,6 +30,7 @@ export default async function UsersSettingsPage() {
       baseRole: true,
       active: true,
       timeZone: true,
+      timeZoneManual: true,
       phone: true,
       addressLine1: true,
       addressLine2: true,
@@ -117,12 +119,13 @@ export default async function UsersSettingsPage() {
         </Card>
       ) : (
         <div className="flex flex-col gap-3">
-          {users.map(({ passwordHash, avatarPath: _path, avatarVisibility: _visibility, ...user }) => (
+          {users.map(({ passwordHash, avatarPath: _path, avatarVisibility: _visibility, timeZoneManual, ...user }) => (
             <UserRow
               key={user.id}
               picture={pictures.get(user.id) ?? null}
               user={{
                 ...user,
+                zoneByHand: zonePickedByHand({ ...user, timeZoneManual }),
                 lastLoginAt: user.lastLoginAt?.toISOString() ?? null,
                 // Pulled out of the spread rather than trusted to it. UserRow
                 // is a client component, so anything handed to it is

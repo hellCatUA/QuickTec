@@ -12,7 +12,7 @@ import { Combobox } from "@/components/ui/combobox";
 import { Field, Input } from "@/components/ui/field";
 import { PhoneInput } from "@/components/ui/phone-input";
 import { StatePicker } from "@/components/ui/state-picker";
-import { US_TIME_ZONES, timeZoneForZip } from "@/lib/us-regions";
+import { US_TIME_ZONES, timeZoneForZip, timeZoneLabel } from "@/lib/us-regions";
 import { updateUser, type ActionResult } from "../actions";
 import { PasswordFallback } from "./password-fallback";
 import { ResetPassword } from "./reset-password";
@@ -45,6 +45,8 @@ export function UserRow({
     baseRole: string;
     active: boolean;
     timeZone: string;
+    /** Their zone was picked rather than left to follow their ZIP. */
+    zoneByHand: boolean;
     phone: string | null;
     addressLine1: string | null;
     addressLine2: string | null;
@@ -77,6 +79,9 @@ export function UserRow({
   const [zip, setZip] = useState(user.postalCode ?? "");
   const suggested = timeZoneForZip(zip);
   const zoneMatchesZip = !suggested || suggested === zone;
+  // A zone left to follow the ZIP moves with it when saved; there is nothing
+  // to offer. Only one picked — before, or here just now — is kept.
+  const follows = !user.zoneByHand && zone === user.timeZone;
 
   return (
     <Card>
@@ -189,7 +194,7 @@ export function UserRow({
               label="Time zone"
               htmlFor={`tz-${user.id}`}
               hint={
-                zoneMatchesZip
+                zoneMatchesZip || follows
                   ? undefined
                   : "Their ZIP says otherwise — set from the button below, or leave it if you know better."
               }
@@ -268,7 +273,9 @@ export function UserRow({
                 hint={
                   zoneMatchesZip
                     ? undefined
-                    : "This ZIP is on another clock."
+                    : follows
+                      ? `Their zone follows the ZIP: saved, it moves to ${timeZoneLabel(suggested)}.`
+                      : "This ZIP is on another clock."
                 }
               >
                 <Input
@@ -293,7 +300,7 @@ export function UserRow({
             {/* Offered rather than applied: the table works off ZIP prefixes
                 and the real boundaries follow county lines, so the last word
                 belongs to whoever knows the address. */}
-            {suggested && !zoneMatchesZip ? (
+            {suggested && !zoneMatchesZip && !follows ? (
               <Button
                 type="button"
                 variant="secondary"

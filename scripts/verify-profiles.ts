@@ -946,30 +946,34 @@ async function lineEntries() {
 
   if (process.env.SKIP_PAGES === "1") return;
   const tech = await db.user.findUniqueOrThrow({ where: { email: "tech@417group.org" } });
+  const admin = await db.user.findUniqueOrThrow({ where: { email: "admin@417group.org" } });
+  const following = { postalCode: "93291", timeZone: "America/Los_Angeles", timeZoneManual: false };
   await db.user.update({
     where: { id: tech.id },
     data: {
-      postalCode: "93291",
-      timeZone: "America/Los_Angeles",
-      timeZoneManual: false,
+      ...following,
       phone: "559-555-0142",
       workPhone: "559-555-0110",
       voipPhone: null,
       preferredPhone: "WORK",
     },
   });
-  const count = async (field: HistoryField) => (await profileHistory(tech.id, field)).length;
+  // The newest entry of a line, and whether a newer one has come since: a
+  // count would stop growing once the history reads only its newest events.
   const latest = async (field: HistoryField) => (await profileHistory(tech.id, field))[0];
+  const newest = async (field: HistoryField) => (await latest(field))?.id ?? null;
+  const movedOn = (field: HistoryField, since: string | null) => async () => (await newest(field)) !== since;
+  const stored = () => db.user.findUniqueOrThrow({ where: { id: tech.id } });
 
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH });
   try {
     const own = await pageAs(browser, "tech@417group.org");
 
     // --- a zone picked, then handed back to the ZIP ----------------------------
-    let zones = await count("timeZone");
+    let zone = await newest("timeZone");
     await own.goto(`${BASE}/account`, { waitUntil: "load" });
     await own.locator("#own-zone").selectOption("America/Denver");
-    await saveOwn(own, async () => (await count("timeZone")) > zones);
+    check("a zone picked is saved", await saveOwn(own, movedOn("timeZone", zone)), true);
     const picked = await latest("timeZone");
     check(
       "a zone picked by hand reads as one",
@@ -977,10 +981,10 @@ async function lineEntries() {
       `Auto (ZIP): Pacific ➔ Manual: Mountain · ${tech.name}`,
     );
 
-    zones = await count("timeZone");
+    zone = await newest("timeZone");
     await own.goto(`${BASE}/account`, { waitUntil: "load" });
     await own.locator("#own-zone").selectOption("auto");
-    await saveOwn(own, async () => (await count("timeZone")) > zones);
+    check("handing it back is saved", await saveOwn(own, movedOn("timeZone", zone)), true);
     const handedBack = await latest("timeZone");
     check(
       "and handed back to the ZIP, as theirs",
@@ -991,22 +995,95 @@ async function lineEntries() {
     // A zone set before profiles existed, not its ZIP's: a save of something
     // else is not a change of zone.
     await db.user.update({ where: { id: tech.id }, data: { timeZone: "America/Denver", timeZoneManual: false } });
-    zones = await count("timeZone");
-    const streets = await count("street");
+    zone = await newest("timeZone");
+    const street = await newest("street");
     await own.goto(`${BASE}/account`, { waitUntil: "load" });
     await own.locator("#own-street").fill("9 Elm St");
-    await saveOwn(own, async () => (await count("street")) > streets);
-    check("saving something else writes nothing about the zone", await count("timeZone"), zones);
-    await db.user.update({ where: { id: tech.id }, data: { timeZone: "America/Los_Angeles" } });
+    check("a street is saved", await saveOwn(own, movedOn("street", street)), true);
+    check("saving something else writes nothing about the zone", await newest("timeZone"), zone);
+
+    // The page opened while the zone followed the ZIP; an administrator picks
+    // one meanwhile. A new ZIP from the stale page keeps their pick, and is
+    // not the person handing it back.
+    await db.user.update({ where: { id: tech.id }, data: following });
+    await own.goto(`${BASE}/account`, { waitUntil: "load" });
+    await db.user.update({ where: { id: tech.id }, data: { timeZone: "America/Chicago", timeZoneManual: true } });
+    zone = await newest("timeZone");
+    const region = await newest("homeRegion");
+    await own.getByRole("textbox", { name: "ZIP" }).fill("93292");
+    check("a new ZIP is saved", await saveOwn(own, movedOn("homeRegion", region)), true);
+    const kept = await stored();
+    check("a zone picked meanwhile is kept", `${kept.timeZone} ${kept.timeZoneManual}`, "America/Chicago true");
+    check("and nothing says the person handed it back", await newest("timeZone"), zone);
+
+    // --- the users page ---------------------------------------------------------
+    const adminPage = await pageAs(browser, "admin@417group.org");
+    const row = () =>
+      adminPage.locator("form").filter({ has: adminPage.locator(`input[name="userId"][value="${tech.id}"]`) });
+    const saveRow = async (done: () => Promise<boolean>) => {
+      await row().getByRole("button", { name: "Save", exact: true }).click();
+      for (let attempt = 0; attempt < 60; attempt++) {
+        if (await done()) return true;
+        await adminPage.waitForTimeout(250);
+      }
+      return false;
+    };
+
+    // Following the ZIP, it moves with a new one, as QuickTec's doing.
+    await db.user.update({ where: { id: tech.id }, data: following });
+    await adminPage.goto(`${BASE}/settings/users`, { waitUntil: "load" });
+    await adminPage.locator(`#zip-${tech.id}`).fill("80202");
+    check(
+      "the users page says a following zone moves with the ZIP",
+      await row().getByText("Their zone follows the ZIP: saved, it moves to Mountain.").isVisible(),
+      true,
+    );
+    check("and offers nothing to click", await row().getByRole("button", { name: /^Use the zone for/ }).count(), 0);
+    zone = await newest("timeZone");
+    check("a new ZIP there is saved", await saveRow(movedOn("timeZone", zone)), true);
+    const followed = await latest("timeZone");
+    check(
+      "the zone that followed it is QuickTec's",
+      `${followed?.from} ➔ ${followed?.to} · ${followed?.by} · ${followed?.source}`,
+      "Auto (ZIP): Pacific ➔ Auto (ZIP): Mountain · System · Auto: ZIP 80202",
+    );
+    check("and still follows the ZIP", (await stored()).timeZoneManual, false);
+
+    // Picked by hand, the ZIP's own zone hands it back to the ZIP.
+    await db.user.update({ where: { id: tech.id }, data: { timeZone: "America/Chicago", timeZoneManual: true } });
+    await adminPage.goto(`${BASE}/settings/users`, { waitUntil: "load" });
+    await row().getByRole("button", { name: "Use the zone for 80202" }).click();
+    zone = await newest("timeZone");
+    check("the ZIP's zone is saved", await saveRow(movedOn("timeZone", zone)), true);
+    const backToZip = await latest("timeZone");
+    check(
+      "the ZIP's own zone, clicked, follows the ZIP again",
+      `${backToZip?.from} ➔ ${backToZip?.to} · ${backToZip?.by}`,
+      `Manual: Central ➔ Auto (ZIP): Mountain · ${admin.name}`,
+    );
+    check("and is not a pick", (await stored()).timeZoneManual, false);
+
+    // Set before profiles existed and not its ZIP's: a new ZIP keeps it, and
+    // from then on it is flagged as the pick it was.
+    await db.user.update({ where: { id: tech.id }, data: { timeZone: "America/Chicago", timeZoneManual: false } });
+    await adminPage.goto(`${BASE}/settings/users`, { waitUntil: "load" });
+    await adminPage.locator(`#zip-${tech.id}`).fill("93291");
+    zone = await newest("timeZone");
+    const regionThere = await newest("homeRegion");
+    check("a new ZIP for it is saved", await saveRow(movedOn("homeRegion", regionThere)), true);
+    const legacy = await stored();
+    check("an old pick is kept and flagged", `${legacy.timeZone} ${legacy.timeZoneManual}`, "America/Chicago true");
+    check("with nothing written about the zone", await newest("timeZone"), zone);
+    await db.user.update({ where: { id: tech.id }, data: following });
 
     // --- a new number for the preferred phone ----------------------------------
-    const preferred = await count("preferredPhone");
-    const works = await count("workPhone");
+    const preferred = await newest("preferredPhone");
+    const work = await newest("workPhone");
     await own.goto(`${BASE}/account`, { waitUntil: "load" });
     await own.locator("#own-work").fill("559-555-0111");
-    await saveOwn(own, async () => (await count("workPhone")) > works);
+    check("a new work number is saved", await saveOwn(own, movedOn("workPhone", work)), true);
     check("the work phone's new number is its own entry", (await latest("workPhone"))?.action, "Work phone updated");
-    check("and not a change of preferred phone", await count("preferredPhone"), preferred);
+    check("and not a change of preferred phone", await newest("preferredPhone"), preferred);
 
     // --- states, whole lists, what went and what came marked -------------------
     await recordProfileEvents({
@@ -1018,11 +1095,14 @@ async function lineEntries() {
     await own.getByRole("button", { name: "History of states of operation" }).first().click();
     const entry = own.locator("li", { hasText: "States of operation updated" }).first();
     await entry.waitFor({ timeout: 15_000 });
-    check("the state taken off is struck through", await entry.locator("s").allInnerTexts(), "Nevada");
-    check("the state added is in bold", await entry.locator("strong").allInnerTexts(), "Arizona");
+    check("the state taken off is struck through", await entry.locator("s").allTextContents(), "Nevada (removed)");
+    check("the state added is in bold", await entry.locator("strong").allTextContents(), "Arizona (added)");
+    const entryText = await entry.textContent();
     check(
       "and every state is on each side",
-      (await entry.innerText()).replace(/\s+/g, " ").includes("California, Nevada"),
+      ["California, Nevada (removed)", "Arizona (added), California"].every((side) =>
+        (entryText ?? "").includes(side),
+      ),
       true,
     );
   } finally {

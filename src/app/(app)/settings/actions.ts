@@ -246,18 +246,24 @@ export async function updateUser(
           : {};
 
   // A zone set here is a choice, and a later change of address must not
-  // quietly replace it with the one its ZIP is in. Left alone while the ZIP
-  // moved, it follows the ZIP — as it would on their own profile — unless it
-  // was a choice already — and a zone that is not its ZIP's was one, even
-  // when nobody flagged it.
+  // quietly replace it with the one its ZIP is in — unless it is the ZIP's
+  // own zone, which is following the ZIP, whoever clicked it. Left alone
+  // while the ZIP moved, it follows the ZIP — as it would on their own
+  // profile — unless it was a choice already; a zone that is not its ZIP's
+  // was one even when nobody flagged it, and is flagged from now on.
   const zipZone = timeZoneForZip(rest.postalCode);
   const byHandBefore = zonePickedByHand(before);
-  const zoneChange =
-    rest.timeZone !== before.timeZone
-      ? { timeZoneManual: true }
-      : rest.postalCode !== before.postalCode && !byHandBefore && zipZone
-        ? { timeZone: zipZone }
-        : {};
+  const zoneTyped = rest.timeZone !== before.timeZone;
+  const byHandAfter = zoneTyped ? rest.timeZone !== zipZone : byHandBefore;
+  const zoneChange = zoneTyped
+    ? { timeZoneManual: byHandAfter }
+    : rest.postalCode !== before.postalCode
+      ? byHandBefore
+        ? { timeZoneManual: true }
+        : zipZone
+          ? { timeZone: zipZone }
+          : {}
+      : {};
 
   // A personal phone somebody picked as the one clients call is theirs to
   // pick: replaced by a manager, it stops being the preferred one, rather than
@@ -296,6 +302,9 @@ export async function updateUser(
   const supervisorName = (id: string | null) =>
     id ? (supervisors.find((one) => one.id === id)?.name ?? null) : null;
   const finalZone = "timeZone" in zoneChange && zoneChange.timeZone ? zoneChange.timeZone : rest.timeZone;
+  // Picked here, or handed back to the ZIP, it is the administrator's doing;
+  // moved to the ZIP's zone when it followed the ZIP anyway, it is QuickTec's.
+  const zoneByThem = zoneTyped && (byHandBefore || byHandAfter);
   await recordProfileEvents({
     actorId: actor.id,
     userId,
@@ -320,17 +329,15 @@ export async function updateUser(
       ...(!name && before.nameOverridden
         ? [{ field: "name" as const, verb: "reset" as const, from: before.name, to: null }]
         : []),
-      // A zone typed here is a choice.
-      ...(rest.timeZone !== before.timeZone
+      ...(zoneByThem
         ? profileChanges(
             { timeZone: zoneLine(before.timeZone, byHandBefore) },
-            { timeZone: zoneLine(rest.timeZone, true) },
+            { timeZone: zoneLine(rest.timeZone, byHandAfter) },
           )
         : []),
     ],
   });
-  // One that followed a new ZIP is QuickTec's doing.
-  if (rest.timeZone === before.timeZone && finalZone !== before.timeZone) {
+  if (!zoneByThem && finalZone !== before.timeZone) {
     await recordProfileEvents({
       actorId: null,
       userId,
@@ -355,7 +362,7 @@ export async function updateUser(
       actorId: actor.id,
       userId,
       changes: moved,
-      reason: "Personal phone changed",
+      reason: rest.phone ? "Personal phone changed" : "Personal phone removed",
     });
   }
 
@@ -552,6 +559,9 @@ export async function createOutsideUser(
       email,
       baseRole,
       timeZone,
+      // Picked by whoever made the account, with no ZIP to follow yet: a
+      // ZIP put in later must not quietly replace it.
+      timeZoneManual: true,
       signInMethod: "LOCAL",
       // A password the administrator typed is one they still know, so it is
       // good for exactly one sign-in.
@@ -581,6 +591,7 @@ export async function createOutsideUser(
       { field: "name", from: null, to: name },
       { field: "email", from: null, to: email },
       { field: "role", from: null, to: ROLE_LABEL[baseRole] ?? baseRole },
+      { field: "timeZone", from: null, to: zoneLine(timeZone, true) },
     ],
   });
 

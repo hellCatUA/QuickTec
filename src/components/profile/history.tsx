@@ -182,7 +182,14 @@ function ListLine({ list }: { list: NonNullable<FieldHistoryEntry["list"]> }) {
           {list.from.map((item, index) => (
             <React.Fragment key={item.text}>
               {index > 0 ? ", " : null}
-              {item.gone ? <s className="text-muted-foreground">{item.text}</s> : item.text}
+              {item.gone ? (
+                <s className="text-muted-foreground">
+                  {item.text}
+                  <span className="sr-only"> (removed)</span>
+                </s>
+              ) : (
+                item.text
+              )}
             </React.Fragment>
           ))}
         </span>
@@ -195,7 +202,14 @@ function ListLine({ list }: { list: NonNullable<FieldHistoryEntry["list"]> }) {
           {list.to.map((item, index) => (
             <React.Fragment key={item.text}>
               {index > 0 ? ", " : null}
-              {item.added ? <strong className="font-semibold">{item.text}</strong> : item.text}
+              {item.added ? (
+                <strong className="font-semibold">
+                  {item.text}
+                  <span className="sr-only"> (added)</span>
+                </strong>
+              ) : (
+                item.text
+              )}
             </React.Fragment>
           ))}
         </span>
