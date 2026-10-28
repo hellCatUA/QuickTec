@@ -2,7 +2,7 @@
 
 import { pad, zonedParts } from "@/lib/datetime";
 import { audienceFor, loadProfile, seesHistory, seesPayOf } from "@/lib/profile";
-import { isHistoryField, profileHistory } from "@/lib/profile-history";
+import { isHistoryField, profileHistory, type HistoryEntry } from "@/lib/profile-history";
 import { getSessionUser } from "@/lib/session";
 
 export type FieldHistoryEntry = {
@@ -12,6 +12,7 @@ export type FieldHistoryEntry = {
   action: string;
   from: string | null;
   to: string | null;
+  list: HistoryEntry["list"];
   requested: string | null;
   by: string;
   approvedBy: string | null;

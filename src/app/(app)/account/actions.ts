@@ -14,16 +14,16 @@ import {
   PICTURE_REASONS,
   stateText,
   streetText,
-  zoneText,
+  zoneLine,
+  zonePickedByHand,
 } from "@/lib/profile-format";
-import { profileChanges, recordProfileEvents, statesChange } from "@/lib/profile-history";
 import {
-  effectivePreferred,
-  LEVEL_INFO,
-  levelFor,
-  PHONE_LABEL,
-  whyNotPreferable,
-} from "@/lib/profile-privacy";
+  preferredPhoneChange,
+  profileChanges,
+  recordProfileEvents,
+  statesChange,
+} from "@/lib/profile-history";
+import { LEVEL_INFO, levelFor, PHONE_LABEL, whyNotPreferable } from "@/lib/profile-privacy";
 import {
   fileProfileRequest,
   withdrawProfileRequest,
@@ -131,7 +131,8 @@ export async function saveOwnProfile(
   // hands it back.
   let timeZone = before.timeZone;
   let timeZoneManual = before.timeZoneManual;
-  if (touched("timeZone", data.timeZone) || touched("postalCode", data.postalCode)) {
+  const zoneTouched = touched("timeZone", data.timeZone) || touched("postalCode", data.postalCode);
+  if (zoneTouched) {
     if (data.timeZone === "auto") {
       timeZoneManual = false;
       timeZone = timeZoneForZip(postalCode) ?? before.timeZone;
@@ -203,24 +204,11 @@ export async function saveOwnProfile(
     if (given.count === 1) legalName = legalTyped;
   }
 
-  const preferredBefore = effectivePreferred(before.preferredPhone, {
-    personal: before.phone,
-    work: before.workPhone,
-    voip: before.voipPhone,
-  });
-  const preferredAfter = effectivePreferred(preferredPhone, phones);
-  // Picked by hand, as the page reads it: flagged so, or simply not the zone
-  // the ZIP is in — a zone set on the users page before profiles existed.
-  const zipZoneBefore = timeZoneForZip(before.postalCode);
-  const wasManual =
-    before.timeZoneManual || (zipZoneBefore !== null && zipZoneBefore !== before.timeZone);
-  const preferredLine = (
-    kind: "PERSONAL" | "WORK" | "VOIP" | null,
-    numbers: { personal: string | null; work: string | null; voip: string | null },
-  ) =>
-    kind
-      ? `${PHONE_LABEL[kind]}: ${phoneDisplay(kind === "PERSONAL" ? numbers.personal : kind === "WORK" ? numbers.work : numbers.voip)}`
-      : null;
+  // Picked by hand or handed back to the ZIP, it is their doing; left to
+  // follow the ZIP and moved with a new one, it is QuickTec's.
+  const byHandBefore = zonePickedByHand(before);
+  const byHandAfter = zoneTouched && data.timeZone ? timeZoneManual : byHandBefore;
+  const zoneFollowedZip = zoneTouched && !byHandAfter && !byHandBefore;
 
   await recordProfileEvents({
     actorId: user.id,
@@ -233,11 +221,6 @@ export async function saveOwnProfile(
           personalPhone: phoneDisplay(before.phone),
           workPhone: phoneDisplay(before.workPhone),
           voipPhone: phoneDisplay(before.voipPhone),
-          preferredPhone: preferredLine(preferredBefore, {
-            personal: before.phone,
-            work: before.workPhone,
-            voip: before.voipPhone,
-          }),
           street: streetText(before.addressLine1, before.addressLine2),
           homeRegion: homeRegion({ city: before.city, state: before.state, zip: before.postalCode }),
           primaryRegion: stateText(before.primaryRegion),
@@ -248,33 +231,34 @@ export async function saveOwnProfile(
           personalPhone: phoneDisplay(phone),
           workPhone: phoneDisplay(workPhone),
           voipPhone: phoneDisplay(voipPhone),
-          preferredPhone: preferredLine(preferredAfter, phones),
           street: streetText(addressLine1, addressLine2),
           homeRegion: homeRegion({ city, state, zip: postalCode }),
           primaryRegion: stateText(primaryRegion),
         },
       ),
+      ...preferredPhoneChange(
+        {
+          chosen: before.preferredPhone,
+          personal: before.phone,
+          work: before.workPhone,
+          voip: before.voipPhone,
+        },
+        { chosen: preferredPhone, ...phones },
+      ),
       ...statesChange(before.statesOfOperation, states, (code) => stateText(code) ?? code),
-      // Picked by hand, or handed back to the ZIP. A zone that only followed
-      // a new ZIP is QuickTec's doing, recorded below.
-      ...(timeZoneManual
-        ? profileChanges({ timeZone: zoneText(before.timeZone) }, { timeZone: zoneText(timeZone) })
-        : wasManual
-          ? [
-              {
-                field: "timeZone" as const,
-                from: `Manual: ${zoneText(before.timeZone)}`,
-                to: `Auto (ZIP): ${zoneText(timeZone)}`,
-              },
-            ]
-          : []),
+      ...(zoneTouched && !zoneFollowedZip
+        ? profileChanges(
+            { timeZone: zoneLine(before.timeZone, byHandBefore) },
+            { timeZone: zoneLine(timeZone, byHandAfter) },
+          )
+        : []),
     ],
   });
-  if (!timeZoneManual && !wasManual && timeZone !== before.timeZone) {
+  if (zoneFollowedZip && timeZone !== before.timeZone) {
     await recordProfileEvents({
       actorId: null,
       userId: user.id,
-      changes: [{ field: "timeZone", from: zoneText(before.timeZone), to: zoneText(timeZone) }],
+      changes: [{ field: "timeZone", from: zoneLine(before.timeZone, false), to: zoneLine(timeZone, false) }],
       source: `Auto: ZIP ${postalCode ?? ""}`.trim(),
     });
   }

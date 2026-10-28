@@ -1,5 +1,5 @@
 import { formatPhone } from "@/lib/phone";
-import { stateName, timeZoneLabel } from "@/lib/us-regions";
+import { stateName, timeZoneForZip, timeZoneLabel } from "@/lib/us-regions";
 
 /**
  * How profile values read — on the page and in the history, which stores them
@@ -45,6 +45,25 @@ export function statesText(codes: string[]): string | null {
 
 export function zoneText(zone: string | null): string | null {
   return zone ? timeZoneLabel(zone) : null;
+}
+
+/**
+ * Whether somebody's zone was picked by hand: flagged so, or simply not the
+ * zone their ZIP is in — a zone set on the users page before profiles existed.
+ */
+export function zonePickedByHand(profile: {
+  timeZone: string | null;
+  timeZoneManual: boolean;
+  postalCode: string | null;
+}): boolean {
+  const zipZone = timeZoneForZip(profile.postalCode);
+  return profile.timeZoneManual || (zipZone !== null && zipZone !== profile.timeZone);
+}
+
+/** "Manual: Pacific" or "Auto (ZIP): Pacific" — a zone as its history says it, and how it was set. */
+export function zoneLine(zone: string | null, byHand: boolean): string | null {
+  const label = zoneText(zone);
+  return label ? `${byHand ? "Manual" : "Auto (ZIP)"}: ${label}` : null;
 }
 
 /** "Visalia, CA 93291" — the home region as everybody else sees it. */

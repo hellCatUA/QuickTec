@@ -1,7 +1,8 @@
-import type { Prisma } from "@prisma-client";
+import type { PreferredPhone, Prisma } from "@prisma-client";
 import { recordAudit } from "@/lib/audit";
 import { db } from "@/lib/db";
-import { LEVEL_INFO } from "@/lib/profile-privacy";
+import { phoneText } from "@/lib/profile-format";
+import { LEVEL_INFO, PHONE_LABEL, effectivePreferred } from "@/lib/profile-privacy";
 
 /**
  * The history of somebody's profile, line by line.
@@ -128,20 +129,45 @@ export function profileChanges(
 }
 
 /**
- * States of operation as what was added and what was taken off, rather than
- * two lists to compare by eye.
+ * States of operation, the whole list before and after, in the same order so
+ * the two read side by side. The history marks what went and what came.
  */
 export function statesChange(before: string[], after: string[], name: (code: string) => string): ProfileChange[] {
-  const added = after.filter((code) => !before.includes(code)).map(name);
-  const removed = before.filter((code) => !after.includes(code)).map(name);
-  if (added.length === 0 && removed.length === 0) return [];
-  return [
-    {
-      field: "statesOfOperation",
-      from: removed.length > 0 ? removed.join(", ") : null,
-      to: added.length > 0 ? added.join(", ") : null,
-    },
-  ];
+  if (before.length === after.length && before.every((code) => after.includes(code))) return [];
+  const list = (codes: string[]) =>
+    codes.length > 0
+      ? codes
+          .map(name)
+          .sort((a, b) => a.localeCompare(b))
+          .join(", ")
+      : null;
+  return [{ field: "statesOfOperation", from: list(before), to: list(after) }];
+}
+
+type PhoneSet = {
+  /** The one they picked, which may no longer be one they can have. */
+  chosen: PreferredPhone | null;
+  personal: string | null;
+  work: string | null;
+  voip: string | null;
+};
+
+/**
+ * The phone clients get, when which phone it is changed — Personal to Work,
+ * or none to VoIP. A new number for the same phone is that phone's own entry,
+ * not this line's.
+ */
+export function preferredPhoneChange(before: PhoneSet, after: PhoneSet): ProfileChange[] {
+  const line = (set: PhoneSet) => {
+    const kind = effectivePreferred(set.chosen, set);
+    if (!kind) return null;
+    const number = kind === "PERSONAL" ? set.personal : kind === "WORK" ? set.work : set.voip;
+    return { kind, text: `${PHONE_LABEL[kind]}: ${phoneText(number)}` };
+  };
+  const was = line(before);
+  const now = line(after);
+  if (was?.kind === now?.kind) return [];
+  return [{ field: "preferredPhone", from: was?.text ?? null, to: now?.text ?? null }];
 }
 
 export type HistoryEntry = {
@@ -153,6 +179,15 @@ export type HistoryEntry = {
   /** The value line: the old one struck through, the new one after an arrow. */
   from: string | null;
   to: string | null;
+  /**
+   * A list's value line item by item, for a line that is a list: every item
+   * before, those that went struck through; every item after, those that
+   * came in bold. Null for a line that is one value.
+   */
+  list: {
+    from: { text: string; gone: boolean }[];
+    to: { text: string; added: boolean }[];
+  } | null;
   /**
    * What a request turned down asked for. Said as its own line, not as the
    * value line, so it cannot be read as a change that was made.
@@ -181,6 +216,22 @@ function heading(field: HistoryField, verb: HistoryVerb, from: string | null): s
     default:
       return `${label} ${verb}`;
   }
+}
+
+/**
+ * A list's two sides, item by item. Read the same way for the entries that
+ * recorded only what went and what came: everything on the left went, and
+ * everything on the right came.
+ */
+function listOf(from: string | null, to: string | null): HistoryEntry["list"] {
+  const items = (value: string | null) => (value ? value.split(", ") : []);
+  const before = items(from);
+  const after = items(to);
+  return {
+    from: before.map((text) => ({ text, gone: !after.includes(text) })),
+    // Nothing is new against an empty list: the whole of it is.
+    to: after.map((text) => ({ text, added: before.length > 0 && !before.includes(text) })),
+  };
 }
 
 function verbOf(from: string | null, to: string | null): HistoryVerb {
@@ -309,6 +360,7 @@ function entriesFrom(
         action: heading(field, verb, text(detail.from)),
         from: denied ? null : from,
         to: denied ? null : to,
+        list: field === "statesOfOperation" && !denied ? listOf(from, to) : null,
         requested: denied ? to : null,
         by,
         approvedBy,
@@ -359,6 +411,7 @@ function entriesFrom(
       action: heading(field, valuesOnly ? "updated" : verbOf(from, to), from),
       from,
       to,
+      list: null,
       requested: null,
       by: actor,
       approvedBy: null,

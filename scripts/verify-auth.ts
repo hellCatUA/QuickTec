@@ -2,6 +2,7 @@ import "dotenv/config";
 import { createPublicKey, generateKeyPairSync, sign } from "node:crypto";
 import { createServer } from "node:http";
 import { db } from "@/lib/db";
+import { profileHistory } from "@/lib/profile-history";
 
 /**
  * Drives the whole OpenID Connect handshake against a stand-in NextCloud.
@@ -306,6 +307,19 @@ async function main() {
   const fromIdToken = await db.user.findUnique({ where: { email: emails[0] } });
   check("the account is provisioned", fromIdToken?.name, "Ivy IdToken");
   check("with the role from their group", fromIdToken?.baseRole, "MANAGER");
+  // What NextCloud started them with is on their history from the first line.
+  for (const [field, action, value] of [
+    ["name", "Preferred name added", "Ivy IdToken"],
+    ["email", "Work email added", emails[0]],
+    ["role", "Role added", "Manager"],
+  ] as const) {
+    const entry = (await profileHistory(fromIdToken!.id, field))[0];
+    check(
+      `a new account's history starts with: ${action}`,
+      `${entry?.action} · ${entry?.to} · ${entry?.by} · ${entry?.source}`,
+      `${action} · ${value} · System · Auto-Import: NC`,
+    );
+  }
 
   // --- a name corrected in QuickTec ----------------------------------------
   // NextCloud is asked for the name on every sign-in and it is written

@@ -511,6 +511,22 @@ export const authConfig: NextAuthConfig = {
           select: { id: true },
         });
         userId = created.id;
+        // What NextCloud started them with is on their history from the
+        // first line. Never in the way of signing in.
+        try {
+          await recordProfileEvents({
+            actorId: null,
+            userId: created.id,
+            changes: [
+              { field: "name", from: null, to: name },
+              { field: "email", from: null, to: email },
+              { field: "role", from: null, to: ROLE_LABEL[role] ?? role },
+            ],
+            source: "Auto-Import: NC",
+          });
+        } catch (error) {
+          console.error("[auth] could not record the new account:", error);
+        }
       }
 
       // Their NextCloud picture becomes their profile picture the first time

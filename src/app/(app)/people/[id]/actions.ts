@@ -10,8 +10,13 @@ import { capitaliseName, isFullName } from "@/lib/names";
 import { notify } from "@/lib/notifications";
 import { actingSupervisor, loadProfile, mayEditProfileOf, notTheirEmployee, type ProfileRecord } from "@/lib/profile";
 import { isoDate, monthYear, phoneText as phoneDisplay, stateText, statesText } from "@/lib/profile-format";
-import { profileChanges, recordProfileEvents, statesChange, type ProfileChange } from "@/lib/profile-history";
-import { effectivePreferred, PHONE_LABEL } from "@/lib/profile-privacy";
+import {
+  preferredPhoneChange,
+  profileChanges,
+  recordProfileEvents,
+  statesChange,
+  type ProfileChange,
+} from "@/lib/profile-history";
 import { answerProfileRequest } from "@/lib/profile-requests";
 import { getSessionUser } from "@/lib/session";
 import { deleteFile } from "@/lib/storage";
@@ -204,17 +209,12 @@ export async function saveProfileAsManager(formData: FormData): Promise<ManagerR
     ],
   });
 
-  // The phone clients get, when a change here moved it: a work phone added
-  // over a preferred personal one, or the preferred number itself changed.
-  const preferredLine = (numbers: { personal: string | null; work: string | null; voip: string | null }) => {
-    const kind = effectivePreferred(before.preferredPhone, numbers);
-    if (!kind) return null;
-    const number = kind === "PERSONAL" ? numbers.personal : kind === "WORK" ? numbers.work : numbers.voip;
-    return `${PHONE_LABEL[kind]}: ${phoneDisplay(number)}`;
-  };
-  const preferredChanges = profileChanges(
-    { preferredPhone: preferredLine({ personal: before.phone, work: before.workPhone, voip: before.voipPhone }) },
-    { preferredPhone: preferredLine({ personal: before.phone, work: workPhone, voip: voipPhone }) },
+  // The phone clients get, when a change here moved it to another phone: a
+  // work phone added over a preferred personal one, or the preferred one
+  // taken off. A new number for it is the phone's own entry above.
+  const preferredChanges = preferredPhoneChange(
+    { chosen: before.preferredPhone, personal: before.phone, work: before.workPhone, voip: before.voipPhone },
+    { chosen: before.preferredPhone, personal: before.phone, work: workPhone, voip: voipPhone },
   );
   if (preferredChanges.length > 0) {
     await recordProfileEvents({

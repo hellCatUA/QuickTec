@@ -25,10 +25,10 @@ import {
   phoneText as phoneDisplay,
   ROLE_LABEL,
   streetText,
-  zoneText,
+  zoneLine,
+  zonePickedByHand,
 } from "@/lib/profile-format";
-import { profileChanges, recordProfileEvents } from "@/lib/profile-history";
-import { effectivePreferred, PHONE_LABEL } from "@/lib/profile-privacy";
+import { preferredPhoneChange, profileChanges, recordProfileEvents } from "@/lib/profile-history";
 import { can, requirePermission, type SessionUser } from "@/lib/session";
 import { canSupervise } from "@/lib/supervisors";
 import { timeZoneForZip, US_STATES } from "@/lib/us-regions";
@@ -248,12 +248,14 @@ export async function updateUser(
   // A zone set here is a choice, and a later change of address must not
   // quietly replace it with the one its ZIP is in. Left alone while the ZIP
   // moved, it follows the ZIP — as it would on their own profile — unless it
-  // was a choice already.
+  // was a choice already — and a zone that is not its ZIP's was one, even
+  // when nobody flagged it.
   const zipZone = timeZoneForZip(rest.postalCode);
+  const byHandBefore = zonePickedByHand(before);
   const zoneChange =
     rest.timeZone !== before.timeZone
       ? { timeZoneManual: true }
-      : rest.postalCode !== before.postalCode && !before.timeZoneManual && zipZone
+      : rest.postalCode !== before.postalCode && !byHandBefore && zipZone
         ? { timeZone: zipZone }
         : {};
 
@@ -320,7 +322,10 @@ export async function updateUser(
         : []),
       // A zone typed here is a choice.
       ...(rest.timeZone !== before.timeZone
-        ? profileChanges({ timeZone: zoneText(before.timeZone) }, { timeZone: zoneText(rest.timeZone) })
+        ? profileChanges(
+            { timeZone: zoneLine(before.timeZone, byHandBefore) },
+            { timeZone: zoneLine(rest.timeZone, true) },
+          )
         : []),
     ],
   });
@@ -329,42 +334,29 @@ export async function updateUser(
     await recordProfileEvents({
       actorId: null,
       userId,
-      changes: [{ field: "timeZone", from: zoneText(before.timeZone), to: zoneText(finalZone) }],
+      changes: [{ field: "timeZone", from: zoneLine(before.timeZone, false), to: zoneLine(finalZone, false) }],
       source: `Auto: ZIP ${rest.postalCode ?? ""}`.trim(),
     });
   }
-  // The phone clients get, when the change moved it — and only then: a
-  // stored choice of Personal that a work phone already overrode changes
-  // nothing for them.
-  if (!samePhone(rest.phone ?? "", before.phone ?? "")) {
-    const line = (
-      kind: "PERSONAL" | "WORK" | "VOIP" | null,
-      personal: string | null,
-    ) =>
-      kind
-        ? `${PHONE_LABEL[kind]}: ${phoneDisplay(kind === "PERSONAL" ? personal : kind === "WORK" ? before.workPhone : before.voipPhone)}`
-        : null;
-    const was = line(
-      effectivePreferred(before.preferredPhone, { personal: before.phone, work: before.workPhone, voip: before.voipPhone }),
-      before.phone,
-    );
-    const now = line(
-      effectivePreferred("preferredPhone" in preferredChange ? null : before.preferredPhone, {
-        personal: rest.phone,
-        work: before.workPhone,
-        voip: before.voipPhone,
-      }),
-      rest.phone,
-    );
-    const moved = profileChanges({ preferredPhone: was }, { preferredPhone: now });
-    if (moved.length > 0) {
-      await recordProfileEvents({
-        actorId: actor.id,
-        userId,
-        changes: moved,
-        reason: "Personal phone changed",
-      });
-    }
+  // The phone clients get, when the change moved it to another phone — and
+  // only then: a stored choice of Personal that a work phone already
+  // overrode changes nothing for them.
+  const moved = preferredPhoneChange(
+    { chosen: before.preferredPhone, personal: before.phone, work: before.workPhone, voip: before.voipPhone },
+    {
+      chosen: "preferredPhone" in preferredChange ? null : before.preferredPhone,
+      personal: rest.phone,
+      work: before.workPhone,
+      voip: before.voipPhone,
+    },
+  );
+  if (moved.length > 0) {
+    await recordProfileEvents({
+      actorId: actor.id,
+      userId,
+      changes: moved,
+      reason: "Personal phone changed",
+    });
   }
 
   revalidatePath("/settings/users");
@@ -580,11 +572,16 @@ export async function createOutsideUser(
       to: password ? "password set" : "link issued",
     },
   });
-  // Its role is set here, once, rather than read from NextCloud groups.
+  // What the account starts with is on its history from the first line. Its
+  // role is set here, once, rather than read from NextCloud groups.
   await recordProfileEvents({
     actorId: actor.id,
     userId: user.id,
-    changes: [{ field: "role", from: null, to: ROLE_LABEL[baseRole] ?? baseRole }],
+    changes: [
+      { field: "name", from: null, to: name },
+      { field: "email", from: null, to: email },
+      { field: "role", from: null, to: ROLE_LABEL[baseRole] ?? baseRole },
+    ],
   });
 
   revalidatePath("/settings/users");

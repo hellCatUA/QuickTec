@@ -16,7 +16,14 @@ import {
   preferredPhoneLine,
   seesPayOf,
 } from "@/lib/profile";
-import { profileHistory } from "@/lib/profile-history";
+import { stateText, zoneLine } from "@/lib/profile-format";
+import {
+  preferredPhoneChange,
+  profileHistory,
+  recordProfileEvents,
+  statesChange,
+  type HistoryField,
+} from "@/lib/profile-history";
 import {
   effectivePreferred,
   levelFor,
@@ -902,6 +909,127 @@ async function pictureFlows() {
   }
 }
 
+/** Saves the person's own profile and waits until what it should have done is there. */
+async function saveOwn(page: Page, done: () => Promise<boolean>): Promise<boolean> {
+  await page.getByRole("button", { name: "Save changes" }).click();
+  for (let attempt = 0; attempt < 60; attempt++) {
+    if (await done()) return true;
+    await page.waitForTimeout(250);
+  }
+  return false;
+}
+
+async function lineEntries() {
+  console.log("\n— how lines read in the history —");
+  const stateName = (code: string) => stateText(code) ?? code;
+
+  const states = statesChange(["NV", "CA"], ["CA", "AZ"], stateName)[0];
+  check("states keep the whole list on each side", `${states?.from} | ${states?.to}`, "California, Nevada | Arizona, California");
+  check("the same states in another order are no change", statesChange(["CA", "NV"], ["NV", "CA"], stateName).length, 0);
+
+  check(
+    "a new number for the preferred phone is not a preferred-phone change",
+    preferredPhoneChange(
+      { chosen: "WORK", personal: null, work: "559-555-0110", voip: null },
+      { chosen: "WORK", personal: null, work: "559-555-0111", voip: null },
+    ).length,
+    0,
+  );
+  const moved = preferredPhoneChange(
+    { chosen: "PERSONAL", personal: "559-555-0100", work: null, voip: null },
+    { chosen: "PERSONAL", personal: "559-555-0100", work: "559-555-0110", voip: null },
+  )[0];
+  check("another phone is", `${moved?.from} ➔ ${moved?.to}`, "Personal: 559-555-0100 ➔ Work: 559-555-0110");
+
+  check("a zone picked by hand says so", zoneLine("America/Denver", true), "Manual: Mountain");
+  check("one that follows the ZIP says so", zoneLine("America/Los_Angeles", false), "Auto (ZIP): Pacific");
+
+  if (process.env.SKIP_PAGES === "1") return;
+  const tech = await db.user.findUniqueOrThrow({ where: { email: "tech@417group.org" } });
+  await db.user.update({
+    where: { id: tech.id },
+    data: {
+      postalCode: "93291",
+      timeZone: "America/Los_Angeles",
+      timeZoneManual: false,
+      phone: "559-555-0142",
+      workPhone: "559-555-0110",
+      voipPhone: null,
+      preferredPhone: "WORK",
+    },
+  });
+  const count = async (field: HistoryField) => (await profileHistory(tech.id, field)).length;
+  const latest = async (field: HistoryField) => (await profileHistory(tech.id, field))[0];
+
+  const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH });
+  try {
+    const own = await pageAs(browser, "tech@417group.org");
+
+    // --- a zone picked, then handed back to the ZIP ----------------------------
+    let zones = await count("timeZone");
+    await own.goto(`${BASE}/account`, { waitUntil: "load" });
+    await own.locator("#own-zone").selectOption("America/Denver");
+    await saveOwn(own, async () => (await count("timeZone")) > zones);
+    const picked = await latest("timeZone");
+    check(
+      "a zone picked by hand reads as one",
+      `${picked?.from} ➔ ${picked?.to} · ${picked?.by}`,
+      `Auto (ZIP): Pacific ➔ Manual: Mountain · ${tech.name}`,
+    );
+
+    zones = await count("timeZone");
+    await own.goto(`${BASE}/account`, { waitUntil: "load" });
+    await own.locator("#own-zone").selectOption("auto");
+    await saveOwn(own, async () => (await count("timeZone")) > zones);
+    const handedBack = await latest("timeZone");
+    check(
+      "and handed back to the ZIP, as theirs",
+      `${handedBack?.from} ➔ ${handedBack?.to} · ${handedBack?.by}`,
+      `Manual: Mountain ➔ Auto (ZIP): Pacific · ${tech.name}`,
+    );
+
+    // A zone set before profiles existed, not its ZIP's: a save of something
+    // else is not a change of zone.
+    await db.user.update({ where: { id: tech.id }, data: { timeZone: "America/Denver", timeZoneManual: false } });
+    zones = await count("timeZone");
+    const streets = await count("street");
+    await own.goto(`${BASE}/account`, { waitUntil: "load" });
+    await own.locator("#own-street").fill("9 Elm St");
+    await saveOwn(own, async () => (await count("street")) > streets);
+    check("saving something else writes nothing about the zone", await count("timeZone"), zones);
+    await db.user.update({ where: { id: tech.id }, data: { timeZone: "America/Los_Angeles" } });
+
+    // --- a new number for the preferred phone ----------------------------------
+    const preferred = await count("preferredPhone");
+    const works = await count("workPhone");
+    await own.goto(`${BASE}/account`, { waitUntil: "load" });
+    await own.locator("#own-work").fill("559-555-0111");
+    await saveOwn(own, async () => (await count("workPhone")) > works);
+    check("the work phone's new number is its own entry", (await latest("workPhone"))?.action, "Work phone updated");
+    check("and not a change of preferred phone", await count("preferredPhone"), preferred);
+
+    // --- states, whole lists, what went and what came marked -------------------
+    await recordProfileEvents({
+      actorId: tech.id,
+      userId: tech.id,
+      changes: statesChange(["CA", "NV"], ["CA", "AZ"], stateName),
+    });
+    await own.goto(`${BASE}/account`, { waitUntil: "load" });
+    await own.getByRole("button", { name: "History of states of operation" }).first().click();
+    const entry = own.locator("li", { hasText: "States of operation updated" }).first();
+    await entry.waitFor({ timeout: 15_000 });
+    check("the state taken off is struck through", await entry.locator("s").allInnerTexts(), "Nevada");
+    check("the state added is in bold", await entry.locator("strong").allInnerTexts(), "Arizona");
+    check(
+      "and every state is on each side",
+      (await entry.innerText()).replace(/\s+/g, " ").includes("California, Nevada"),
+      true,
+    );
+  } finally {
+    await browser.close();
+  }
+}
+
 async function main() {
   await rules();
   await audienceAndCards();
@@ -911,6 +1039,7 @@ async function main() {
     await pages();
     await pictureFlows();
   }
+  await lineEntries();
 
   // What this left waiting would sit in every other suite's approvals inbox.
   const tech = await db.user.findUniqueOrThrow({ where: { email: "tech@417group.org" } });

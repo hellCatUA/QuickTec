@@ -151,7 +151,9 @@ function HistoryItem({ entry }: { entry: FieldHistoryEntry }) {
       />
       <div className="text-xs text-muted-foreground">{entry.at}</div>
       <div className="text-sm font-medium">{entry.action}</div>
-      {entry.from || entry.to ? (
+      {entry.list ? (
+        <ListLine list={entry.list} />
+      ) : entry.from || entry.to ? (
         <div className="flex flex-wrap items-center gap-1.5 text-sm">
           {entry.from ? <s className="text-muted-foreground">{entry.from}</s> : null}
           {entry.from && entry.to ? (
@@ -168,6 +170,37 @@ function HistoryItem({ entry }: { entry: FieldHistoryEntry }) {
         <Fact label="Reason" value={entry.reason} />
       </dl>
     </li>
+  );
+}
+
+/** A list before and after: what went struck through, what came in bold. */
+function ListLine({ list }: { list: NonNullable<FieldHistoryEntry["list"]> }) {
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 text-sm">
+      {list.from.length > 0 ? (
+        <span>
+          {list.from.map((item, index) => (
+            <React.Fragment key={item.text}>
+              {index > 0 ? ", " : null}
+              {item.gone ? <s className="text-muted-foreground">{item.text}</s> : item.text}
+            </React.Fragment>
+          ))}
+        </span>
+      ) : null}
+      {list.from.length > 0 && list.to.length > 0 ? (
+        <ArrowRight aria-label="to" className="size-3.5 shrink-0 text-muted-foreground" />
+      ) : null}
+      {list.to.length > 0 ? (
+        <span>
+          {list.to.map((item, index) => (
+            <React.Fragment key={item.text}>
+              {index > 0 ? ", " : null}
+              {item.added ? <strong className="font-semibold">{item.text}</strong> : item.text}
+            </React.Fragment>
+          ))}
+        </span>
+      ) : null}
+    </div>
   );
 }
 

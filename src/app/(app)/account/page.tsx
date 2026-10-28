@@ -19,10 +19,10 @@ import { db } from "@/lib/db";
 import { formatRate } from "@/lib/money";
 import { isGuest } from "@/lib/permissions";
 import { actingSupervisor, levelsFor, loadPrivacySettings, loadProfile } from "@/lib/profile";
-import { homeRegion, monthYear, ROLE_LABEL } from "@/lib/profile-format";
+import { homeRegion, monthYear, ROLE_LABEL, zonePickedByHand } from "@/lib/profile-format";
 import { yearsLabel } from "@/lib/profile-privacy";
 import { getSessionUser } from "@/lib/session";
-import { timeZoneForZip, timeZoneLabel } from "@/lib/us-regions";
+import { timeZoneLabel } from "@/lib/us-regions";
 import { PictureCard } from "./picture-card";
 import { ProfileForm } from "./profile-form";
 
@@ -68,8 +68,7 @@ export default async function AccountPage() {
   const since = monthYear(profile.serviceStartDate);
   // "From the ZIP" only when it still is: a zone somebody set on the users
   // page before profiles existed is a choice, even though nobody flagged it.
-  const zipZone = timeZoneForZip(profile.postalCode);
-  const zoneManual = profile.timeZoneManual || (zipZone !== null && zipZone !== profile.timeZone);
+  const zoneManual = zonePickedByHand(profile);
   const place = homeRegion({ city: profile.city, state: profile.state, zip: profile.postalCode });
 
   return (
