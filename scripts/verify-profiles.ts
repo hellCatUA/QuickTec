@@ -444,6 +444,8 @@ async function requests() {
   check("a request turned down is its own entry", denied.action, "Legal name update request denied");
   check("with who turned it down", denied.approvedBy, boss.name);
   check("and why", denied.reason, "Use the name on your ID");
+  check("saying what was asked for", denied.requested, "Terry Q Tech");
+  check("with no value line, since nothing changed", `${denied.from}|${denied.to}`, "null|null");
 }
 
 async function nextcloudPicture() {
@@ -767,6 +769,13 @@ async function pages() {
     await own.getByRole("button", { name: "History of legal name" }).first().click();
     await own.getByText("Legal name updated").first().waitFor({ timeout: 15_000 });
     check("a line's history opens under it", await own.getByText("Approved By:").first().isVisible(), true);
+    const turnedDown = own.locator("li", { hasText: "Legal name update request denied" }).first();
+    check(
+      "a request turned down says what was asked for, not a change",
+      (await turnedDown.innerText()).replace(/\s+/g, " ").includes("Requested: Terry Q Tech"),
+      true,
+    );
+    check("and draws no value line", await turnedDown.locator("s").count(), 0);
 
     // --- a supervisor takes a picture down, saying why -------------------------
     await bossPage.goto(`${BASE}/people/${tech.id}`, { waitUntil: "load" });

@@ -12,6 +12,7 @@ export type FieldHistoryEntry = {
   action: string;
   from: string | null;
   to: string | null;
+  requested: string | null;
   by: string;
   approvedBy: string | null;
   source: string | null;

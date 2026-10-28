@@ -161,6 +161,7 @@ function HistoryItem({ entry }: { entry: FieldHistoryEntry }) {
         </div>
       ) : null}
       <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-0.5 text-xs">
+        <Fact label="Requested" value={entry.requested} />
         <Fact label="By" value={entry.by} />
         <Fact label="Approved By" value={entry.approvedBy} />
         <Fact label="Source" value={entry.source} />

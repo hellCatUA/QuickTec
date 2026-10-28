@@ -153,6 +153,11 @@ export type HistoryEntry = {
   /** The value line: the old one struck through, the new one after an arrow. */
   from: string | null;
   to: string | null;
+  /**
+   * What a request turned down asked for. Said as its own line, not as the
+   * value line, so it cannot be read as a change that was made.
+   */
+  requested: string | null;
   by: string;
   approvedBy: string | null;
   source: string | null;
@@ -293,14 +298,18 @@ function entriesFrom(
       detail.warned === true ? PAST_THE_WARNING : null,
     ].filter(Boolean);
 
+    // Turned down, nothing changed: what was asked for, and no value line.
+    const denied = verb === "denied";
+
     return [
       {
         id: event.id,
         at: event.createdAt,
         field,
         action: heading(field, verb, text(detail.from)),
-        from: verb === "denied" && field === "picture" ? null : from,
-        to,
+        from: denied ? null : from,
+        to: denied ? null : to,
+        requested: denied ? to : null,
         by,
         approvedBy,
         source,
@@ -350,6 +359,7 @@ function entriesFrom(
       action: heading(field, valuesOnly ? "updated" : verbOf(from, to), from),
       from,
       to,
+      requested: null,
       by: actor,
       approvedBy: null,
       source: null,
