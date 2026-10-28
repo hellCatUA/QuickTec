@@ -16,7 +16,7 @@ import {
   preferredPhoneLine,
   seesPayOf,
 } from "@/lib/profile";
-import { stateText, zoneLine } from "@/lib/profile-format";
+import { stateText, zoneLine, zonePickedByHand } from "@/lib/profile-format";
 import {
   preferredPhoneChange,
   profileHistory,
@@ -941,8 +941,16 @@ async function lineEntries() {
   )[0];
   check("another phone is", `${moved?.from} ➔ ${moved?.to}`, "Personal: 559-555-0100 ➔ Work: 559-555-0110");
 
-  check("a zone picked by hand says so", zoneLine("America/Denver", true), "Manual: Mountain");
-  check("one that follows the ZIP says so", zoneLine("America/Los_Angeles", false), "Auto (ZIP): Pacific");
+  check("a zone picked by hand says so", zoneLine("America/Denver", true, "93291"), "Manual: Mountain");
+  check("one that follows the ZIP says so", zoneLine("America/Los_Angeles", false, "93291"), "Auto (ZIP): Pacific");
+  check("the starting zone with no ZIP is the default", zoneLine("America/Los_Angeles", false, null), "Default: Pacific");
+  check("and so beside a ZIP on another clock", zoneLine("America/Los_Angeles", false, "80202"), "Default: Pacific");
+  const handPicked = (timeZone: string, postalCode: string | null) =>
+    zonePickedByHand({ timeZone, timeZoneManual: false, postalCode });
+  check("the starting zone beside another ZIP was never picked", handPicked("America/Los_Angeles", "80202"), false);
+  check("another zone beside another ZIP was", handPicked("America/Chicago", "80202"), true);
+  check("as was a zone other than the starting one with no ZIP", handPicked("America/New_York", null), true);
+  check("the ZIP's own zone was not", handPicked("America/Denver", "80202"), false);
 
   if (process.env.SKIP_PAGES === "1") return;
   const tech = await db.user.findUniqueOrThrow({ where: { email: "tech@417group.org" } });

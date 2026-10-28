@@ -1,3 +1,4 @@
+import { DEFAULT_TIME_ZONE } from "@/lib/datetime";
 import { formatPhone } from "@/lib/phone";
 import { stateName, timeZoneForZip, timeZoneLabel } from "@/lib/us-regions";
 
@@ -48,22 +49,30 @@ export function zoneText(zone: string | null): string | null {
 }
 
 /**
- * Whether somebody's zone was picked by hand: flagged so, or simply not the
- * zone their ZIP is in — a zone set on the users page before profiles existed.
+ * Whether somebody's zone was picked by hand: flagged so, or neither their
+ * ZIP's zone nor the one every account starts with — a zone set on the
+ * users page before profiles existed. The starting zone left beside a ZIP
+ * on another clock was never picked: nobody chose it, it was just there.
  */
 export function zonePickedByHand(profile: {
   timeZone: string | null;
   timeZoneManual: boolean;
   postalCode: string | null;
 }): boolean {
-  const zipZone = timeZoneForZip(profile.postalCode);
-  return profile.timeZoneManual || (zipZone !== null && zipZone !== profile.timeZone);
+  if (profile.timeZoneManual) return true;
+  return profile.timeZone !== timeZoneForZip(profile.postalCode) && profile.timeZone !== DEFAULT_TIME_ZONE;
 }
 
-/** "Manual: Pacific" or "Auto (ZIP): Pacific" — a zone as its history says it, and how it was set. */
-export function zoneLine(zone: string | null, byHand: boolean): string | null {
+/**
+ * A zone as its history says it, and how it was set: "Manual: Mountain"
+ * when picked, "Auto (ZIP): Pacific" when it is the ZIP's, and "Default:
+ * Pacific" when it is neither — the one the account started with.
+ */
+export function zoneLine(zone: string | null, byHand: boolean, zip: string | null): string | null {
   const label = zoneText(zone);
-  return label ? `${byHand ? "Manual" : "Auto (ZIP)"}: ${label}` : null;
+  if (!label) return null;
+  const how = byHand ? "Manual" : zone === timeZoneForZip(zip) ? "Auto (ZIP)" : "Default";
+  return `${how}: ${label}`;
 }
 
 /** "Visalia, CA 93291" — the home region as everybody else sees it. */

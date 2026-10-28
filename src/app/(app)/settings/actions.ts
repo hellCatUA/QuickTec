@@ -331,8 +331,8 @@ export async function updateUser(
         : []),
       ...(zoneByThem
         ? profileChanges(
-            { timeZone: zoneLine(before.timeZone, byHandBefore) },
-            { timeZone: zoneLine(rest.timeZone, byHandAfter) },
+            { timeZone: zoneLine(before.timeZone, byHandBefore, before.postalCode) },
+            { timeZone: zoneLine(rest.timeZone, byHandAfter, rest.postalCode) },
           )
         : []),
     ],
@@ -341,7 +341,13 @@ export async function updateUser(
     await recordProfileEvents({
       actorId: null,
       userId,
-      changes: [{ field: "timeZone", from: zoneLine(before.timeZone, false), to: zoneLine(finalZone, false) }],
+      changes: [
+        {
+          field: "timeZone",
+          from: zoneLine(before.timeZone, false, before.postalCode),
+          to: zoneLine(finalZone, false, rest.postalCode),
+        },
+      ],
       source: `Auto: ZIP ${rest.postalCode ?? ""}`.trim(),
     });
   }
@@ -591,7 +597,7 @@ export async function createOutsideUser(
       { field: "name", from: null, to: name },
       { field: "email", from: null, to: email },
       { field: "role", from: null, to: ROLE_LABEL[baseRole] ?? baseRole },
-      { field: "timeZone", from: null, to: zoneLine(timeZone, true) },
+      { field: "timeZone", from: null, to: zoneLine(timeZone, true, null) },
     ],
   });
 

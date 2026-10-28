@@ -254,8 +254,8 @@ export async function saveOwnProfile(
       ...statesChange(before.statesOfOperation, states, (code) => stateText(code) ?? code),
       ...(zoneByThem
         ? profileChanges(
-            { timeZone: zoneLine(before.timeZone, byHandBefore) },
-            { timeZone: zoneLine(timeZone, byHandAfter) },
+            { timeZone: zoneLine(before.timeZone, byHandBefore, before.postalCode) },
+            { timeZone: zoneLine(timeZone, byHandAfter, postalCode) },
           )
         : []),
     ],
@@ -264,7 +264,13 @@ export async function saveOwnProfile(
     await recordProfileEvents({
       actorId: null,
       userId: user.id,
-      changes: [{ field: "timeZone", from: zoneLine(before.timeZone, false), to: zoneLine(timeZone, false) }],
+      changes: [
+        {
+          field: "timeZone",
+          from: zoneLine(before.timeZone, false, before.postalCode),
+          to: zoneLine(timeZone, false, postalCode),
+        },
+      ],
       source: `Auto: ZIP ${postalCode ?? ""}`.trim(),
     });
   }
