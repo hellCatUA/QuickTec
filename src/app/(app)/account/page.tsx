@@ -1,8 +1,8 @@
-import { BriefcaseBusiness, Clock, DollarSign, LogOut, MapPin } from "lucide-react";
+import { BriefcaseBusiness, Clock, DollarSign, IdCard, LogOut, MapPin, UserCheck } from "lucide-react";
 import { redirect } from "next/navigation";
 import { signOut } from "@/auth";
 import { HistoryProvider } from "@/components/profile/history";
-import { EditableKey, LevelsLegend, ReadOnlyValue } from "@/components/profile/parts";
+import { EditableKey, LevelsLegend, QuickFacts, ReadOnlyValue } from "@/components/profile/parts";
 import { ProfileRow } from "@/components/profile/row";
 import { ThemeToggle } from "@/components/theme";
 import { Button } from "@/components/ui/button";
@@ -105,29 +105,16 @@ export default async function AccountPage() {
                     source: picture.source,
                   }))}
               >
-                <div>
-                  <div className="text-lg font-semibold">{profile.name}</div>
-                  <div className="text-sm text-muted-foreground">
-                    {ROLE_LABEL[profile.baseRole] ?? profile.baseRole}
-                    {supervisor ? ` · reports to ${supervisor}` : ""}
-                  </div>
-                </div>
-                <ul className="flex flex-col items-center gap-1 text-sm text-foreground/80">
-                  {place ? (
-                    <li className="flex items-center gap-1.5">
-                      <MapPin className="size-3.5 text-muted-foreground" /> {place}
-                    </li>
-                  ) : null}
-                  <li className="flex items-center gap-1.5">
-                    <Clock className="size-3.5 text-muted-foreground" /> {timeZoneLabel(profile.timeZone)}
-                  </li>
-                  {years ? (
-                    <li className="flex items-center gap-1.5">
-                      <BriefcaseBusiness className="size-3.5 text-muted-foreground" /> {years} with
-                      the company
-                    </li>
-                  ) : null}
-                </ul>
+                <div className="text-lg font-semibold">{profile.name}</div>
+                <QuickFacts
+                  facts={[
+                    { icon: IdCard, text: ROLE_LABEL[profile.baseRole] ?? profile.baseRole },
+                    ...(supervisor ? [{ icon: UserCheck, text: `Reports to ${supervisor}` }] : []),
+                    ...(years ? [{ icon: BriefcaseBusiness, text: `${years} with the company` }] : []),
+                    ...(place ? [{ icon: MapPin, text: place }] : []),
+                    { icon: Clock, text: timeZoneLabel(profile.timeZone) },
+                  ]}
+                />
               </PictureCard>
             </CardContent>
           </Card>

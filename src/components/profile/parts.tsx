@@ -1,5 +1,5 @@
 import type { PrivacyLevel } from "@prisma-client";
-import { Globe, Lock, PencilOff, Users } from "lucide-react";
+import { Globe, Lock, PencilOff, Users, type LucideIcon } from "lucide-react";
 import * as React from "react";
 import { LEVEL_INFO } from "@/lib/profile-privacy";
 import { cn } from "@/lib/utils";
@@ -127,6 +127,31 @@ export function EditableKey() {
         Read-only — set by others, or by request
       </span>
     </div>
+  );
+}
+
+/**
+ * The few facts under somebody's name, each with its icon — what they do,
+ * who they report to, how long they have been here, where and when they are.
+ * Facts with nothing to say are left out by whoever builds the list.
+ */
+export function QuickFacts({
+  facts,
+  className,
+}: {
+  facts: { icon: LucideIcon; text: React.ReactNode; muted?: boolean }[];
+  className?: string;
+}) {
+  if (facts.length === 0) return null;
+  return (
+    <ul className={cn("flex flex-col items-center gap-1 text-sm text-foreground/80", className)}>
+      {facts.map((fact, index) => (
+        <li key={index} className={cn("flex items-center gap-1.5", fact.muted && "text-muted-foreground")}>
+          <fact.icon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+          <span>{fact.text}</span>
+        </li>
+      ))}
+    </ul>
   );
 }
 

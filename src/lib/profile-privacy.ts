@@ -414,9 +414,20 @@ export function yearsSince(start: Date, today: Date = new Date()): number {
   return Math.max(0, years);
 }
 
+/** Whole months since a date, turning on the day of the month as years do. */
+function monthsSince(start: Date, today: Date): number {
+  let months =
+    (today.getUTCFullYear() - start.getUTCFullYear()) * 12 + today.getUTCMonth() - start.getUTCMonth();
+  if (today.getUTCDate() < start.getUTCDate()) months -= 1;
+  return Math.max(0, months);
+}
+
+/** "3 years", or under a year the months, so a first year counts up rather than standing still. */
 export function yearsLabel(start: Date | null, today: Date = new Date()): string | null {
   if (!start) return null;
   const years = yearsSince(start, today);
-  if (years === 0) return "Less than a year";
-  return years === 1 ? "1 year" : `${years} years`;
+  if (years > 0) return years === 1 ? "1 year" : `${years} years`;
+  const months = monthsSince(start, today);
+  if (months === 0) return "Less than a month";
+  return months === 1 ? "1 month" : `${months} months`;
 }

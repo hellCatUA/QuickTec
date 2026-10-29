@@ -1,9 +1,18 @@
-import { Lock, Mail, Phone, ShieldCheck } from "lucide-react";
+import {
+  BriefcaseBusiness,
+  Clock,
+  IdCard,
+  Lock,
+  Mail,
+  MapPin,
+  Phone,
+  ShieldCheck,
+  UserCheck,
+} from "lucide-react";
 import { notFound, redirect } from "next/navigation";
-import { HistoryIndex, HistoryProvider } from "@/components/profile/history";
+import { HistoryProvider } from "@/components/profile/history";
 import { Line } from "@/components/profile/line";
-import { HISTORY_FIELDS, type HistoryField } from "@/lib/profile-history";
-import { Avatar } from "@/components/profile/parts";
+import { Avatar, QuickFacts } from "@/components/profile/parts";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -155,25 +164,26 @@ export default async function PersonPage({
         <Card>
           <CardContent className="flex flex-col items-center gap-3 text-center">
             <Avatar src={picture} name={profile.name} size={128} />
-            <div>
-              <h2 className="text-lg font-semibold">{profile.name}</h2>
-              <p className="text-sm text-muted-foreground">
-                {[show("role") ? (ROLE_LABEL[profile.baseRole] ?? profile.baseRole) : null, years ? `${years} with the company` : null]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </p>
-            </div>
-            {place || show("timeZone") ? (
-              <ul className="flex flex-col gap-1 text-sm text-foreground/80">
-                {place ? <li>{place}</li> : null}
-                {show("timeZone") ? (
-                  <li className="text-muted-foreground">
-                    {usTimeInZone(new Date(), profile.timeZone)} there ·{" "}
-                    {timeZoneLabel(profile.timeZone)}
-                  </li>
-                ) : null}
-              </ul>
-            ) : null}
+            <h2 className="text-lg font-semibold">{profile.name}</h2>
+            <QuickFacts
+              facts={[
+                ...(show("role") ? [{ icon: IdCard, text: ROLE_LABEL[profile.baseRole] ?? profile.baseRole }] : []),
+                ...(show("directSupervisor") && profile.directSupervisor
+                  ? [{ icon: UserCheck, text: `Reports to ${profile.directSupervisor.name}` }]
+                  : []),
+                ...(years ? [{ icon: BriefcaseBusiness, text: `${years} with the company` }] : []),
+                ...(place ? [{ icon: MapPin, text: place }] : []),
+                ...(show("timeZone")
+                  ? [
+                      {
+                        icon: Clock,
+                        text: `${usTimeInZone(new Date(), profile.timeZone)} there · ${timeZoneLabel(profile.timeZone)}`,
+                        muted: true,
+                      },
+                    ]
+                  : []),
+              ]}
+            />
             <div className="grid w-full grid-cols-2 gap-2">
               {phones[0] ? (
                 <a href={telHref(phones[0].number)} className={buttonVariants({ size: "sm" })}>
@@ -330,14 +340,6 @@ export default async function PersonPage({
                 Only {profile.name}, their direct supervisor and their managers see them.
               </span>
             </p>
-          ) : null}
-
-          {history ? (
-            <HistoryIndex
-              lines={(Object.entries(HISTORY_FIELDS) as [HistoryField, string][])
-                .filter(([field]) => field !== "defaultPayRate" || payVisible)
-                .map(([field, label]) => ({ field, label }))}
-            />
           ) : null}
 
           {editable ? (

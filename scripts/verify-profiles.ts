@@ -211,6 +211,10 @@ async function rules() {
   );
   check("years count whole years", yearsLabel(new Date("2019-03-04T00:00:00Z"), new Date("2026-03-03T00:00:00Z")), "6 years");
   check("and turn on the day", yearsLabel(new Date("2019-03-04T00:00:00Z"), new Date("2026-03-04T00:00:00Z")), "7 years");
+  check("under a year it counts months", yearsLabel(new Date("2026-01-15T00:00:00Z"), new Date("2026-09-14T00:00:00Z")), "7 months");
+  check("which turn on the day too", yearsLabel(new Date("2026-01-15T00:00:00Z"), new Date("2026-09-15T00:00:00Z")), "8 months");
+  check("one month is one", yearsLabel(new Date("2026-08-31T00:00:00Z"), new Date("2026-10-01T00:00:00Z")), "1 month");
+  check("and the first weeks say so", yearsLabel(new Date("2026-10-01T00:00:00Z"), new Date("2026-10-20T00:00:00Z")), "Less than a month");
 }
 
 async function audienceAndCards() {
