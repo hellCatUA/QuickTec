@@ -177,7 +177,7 @@ export default async function PersonPage({
                   ? [
                       {
                         icon: Clock,
-                        text: `${usTimeInZone(new Date(), profile.timeZone)} there · ${timeZoneLabel(profile.timeZone)}`,
+                        text: `${usTimeInZone(new Date(), profile.timeZone)} · ${timeZoneLabel(profile.timeZone)}`,
                         muted: true,
                       },
                     ]
