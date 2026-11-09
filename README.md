@@ -217,8 +217,12 @@ Both are bind mounts, so OMV's own snapshot and backup jobs cover them. Stop the
 stack or use `pg_dump` for a consistent database copy:
 
 ```bash
-docker compose exec db pg_dump -U quicktec quicktec | gzip > backup-$(date +%F).sql.gz
+set -o pipefail
+docker compose exec -T db pg_dump -U quicktec quicktec | gzip > backup-$(date +%F).sql.gz
 ```
+
+Checking that a copy is whole, and restoring one — only ever into an empty
+database: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#backups).
 
 ---
 

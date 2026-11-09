@@ -533,16 +533,36 @@ Both data paths are bind mounts, so OMV's own snapshot and rsync jobs cover
 them. For a consistent database copy without stopping the stack:
 
 ```bash
+mkdir -p /tank/backups
+set -o pipefail
 docker compose exec -T db pg_dump -U quicktec quicktec \
   | gzip > /tank/backups/quicktec-$(date +%F).sql.gz
+zcat /tank/backups/quicktec-$(date +%F).sql.gz | grep -c 'PostgreSQL database dump complete'
 ```
 
-Restoring:
+`pipefail` is what makes a failed dump fail. Without it the line reports how
+`gzip` got on, and `gzip` is perfectly happy to write a 20-byte file of
+nothing. The check must print `1`. It searches rather than reading the last
+lines because recent `pg_dump` releases end a dump with an `\unrestrict` line
+after that one.
+
+Restoring goes into an **empty** database. The dump creates every table, so
+poured over the live one it fails on the first that already exists — or,
+without `ON_ERROR_STOP`, carries on through hundreds of errors and leaves a
+database that is neither the copy nor what was there. Everything changed since
+the copy is lost:
 
 ```bash
-gunzip -c quicktec-2026-07-28.sql.gz \
-  | docker compose exec -T db psql -U quicktec -d quicktec
+F=/tank/backups/quicktec-2026-07-28.sql.gz
+gzip -t "$F" && docker compose stop app \
+ && docker compose exec -T db dropdb -U quicktec --force quicktec \
+ && docker compose exec -T db createdb -U quicktec quicktec \
+ && gunzip -c "$F" | docker compose exec -T db psql -U quicktec -d quicktec -v ON_ERROR_STOP=1 \
+ && docker compose up -d app
 ```
+
+`gzip -t` checks the file before anything is dropped, so a mistyped name stops
+it there rather than after the database is gone.
 
 Uploads are **not** served from the filesystem — every read goes through
 `/api/files/<id>`, which applies the same job-scope check as the page linking
