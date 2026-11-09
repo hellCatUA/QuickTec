@@ -6,6 +6,7 @@ import NextAuth, {
 } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import { importNextcloudPicture } from "@/lib/avatar";
+import { shareCalendarsInBackground } from "@/lib/calendar/sync";
 import { ROLE_LABEL } from "@/lib/profile-format";
 import { profileChanges, recordProfileEvents } from "@/lib/profile-history";
 import { db } from "@/lib/db";
@@ -35,6 +36,8 @@ export const SIGNIN_ERRORS = {
     "An account with this address already signs in with a QuickTec password. An administrator has to join the two before SSO will work for it.",
   SsoAccount:
     "This email belongs to a company account. Sign in with SSO instead.",
+  EmailInUse:
+    "This email address already belongs to another QuickTec account. An administrator has to check which account is yours before you can sign in.",
 } as const;
 
 // The trailing slash matters: it is compared against the `issuer` in the
@@ -401,9 +404,12 @@ export const authConfig: NextAuthConfig = {
         // Defence in depth rather than the answer: this fires when they try
         // SSO, and somebody who knows they have been let go will not. Leaving
         // is still a reason to deactivate the account here.
+        //
+        // Theirs means the account the sign-in below would let them into: an
+        // address on somebody else's linked account is not theirs to lock.
         const stranded = await db.user.updateMany({
           where: {
-            OR: [{ nextcloudSub: sub }, { email }],
+            OR: [{ nextcloudSub: sub }, { email, nextcloudSub: null }],
             passwordFallback: true,
           },
           data: {
@@ -429,19 +435,48 @@ export const authConfig: NextAuthConfig = {
         (claims.preferred_username as string) ||
         email;
 
-      const existing = await db.user.findFirst({
-        where: { OR: [{ nextcloudSub: sub }, { email }] },
-        select: {
-          id: true,
-          active: true,
-          signInMethod: true,
-          nextcloudSub: true,
-          nameOverridden: true,
-          name: true,
-          email: true,
-          baseRole: true,
-        },
-      });
+      const select = {
+        id: true,
+        active: true,
+        signInMethod: true,
+        nextcloudSub: true,
+        nameOverridden: true,
+        name: true,
+        email: true,
+        baseRole: true,
+      } as const;
+
+      // The account linked to this NextCloud user is theirs; failing that,
+      // one with their address that is linked to nobody yet. An address alone
+      // never moves an account from one NextCloud user to another: NextCloud
+      // lets two users carry the same address, and an administrator can type
+      // any address on anybody, so following it would hand whoever had it the
+      // account it reached — their pay, their jobs, their picture.
+      const linked = await db.user.findUnique({ where: { nextcloudSub: sub }, select });
+      const byEmail = linked
+        ? null
+        : await db.user.findUnique({ where: { email }, select });
+
+      if (byEmail?.nextcloudSub) {
+        explain(
+          `${email} belongs to the account linked to NextCloud user "${byEmail.nextcloudSub}", not "${sub}"`,
+        );
+        return `/signin?error=EmailInUse`;
+      }
+
+      // Their address in NextCloud has become one another account here has.
+      // Said, rather than left to fail on the unique address below.
+      if (linked && linked.email !== email) {
+        const holder = await db.user.findUnique({ where: { email }, select: { id: true } });
+        if (holder) {
+          explain(
+            `NextCloud user "${sub}" now has the address ${email}, which another account here already has`,
+          );
+          return `/signin?error=EmailInUse`;
+        }
+      }
+
+      const existing = linked ?? byEmail;
 
       if (existing && !existing.active) return `/signin?error=Inactive`;
 
@@ -534,6 +569,12 @@ export const authConfig: NextAuthConfig = {
       // a slow NextCloud must not hold somebody at the sign-in page, and the
       // copy only ever fills an empty slot.
       if (picture) void importNextcloudPicture(userId, picture);
+
+      // The calendars kept for them, and for their crew, are shared under the
+      // name NextCloud has just signed them in with — the one name that is
+      // certainly theirs. Until now it may only have been guessed. Not
+      // awaited, for the same reason as the picture.
+      shareCalendarsInBackground(userId);
 
       return true;
     },

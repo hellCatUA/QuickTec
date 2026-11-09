@@ -20,7 +20,7 @@ export type CalDavResult = {
   ok: boolean;
   /** Zero when the request never reached the server. */
   status: number;
-  /** What the server sent back, on failure. */
+  /** What the server sent back: on failure, or when the answer was asked for. */
   body?: string;
   /** Our own account of it, where the status on its own would mislead. */
   detail?: string;
@@ -64,7 +64,12 @@ async function request(
   config: CalDavConfig,
   method: string,
   url: string,
-  options: { body?: string; headers?: Record<string, string> } = {},
+  options: {
+    body?: string;
+    headers?: Record<string, string>;
+    /** Keep a successful answer's body, for the requests whose answer is the point. */
+    readBody?: boolean;
+  } = {},
 ): Promise<CalDavResult> {
   let response: Response;
   try {
@@ -87,14 +92,20 @@ async function request(
     };
   }
 
-  // Bodies are only read on failure: a successful PUT returns nothing useful
-  // and reading it would just add a round trip. Truncated because a proxy's
-  // error page is a whole HTML document and this gets stored and displayed.
-  const body = response.ok
-    ? undefined
-    : (await response.text().catch(() => "")).slice(0, 500);
+  // A successful body is read only when asked for: a PUT returns nothing
+  // useful and reading it would just add a round trip, while a PROPFIND's
+  // answer is the whole point of it. A failure's is truncated because a
+  // proxy's error page is a whole HTML document and this gets stored and
+  // displayed.
+  if (response.ok) {
+    const body = options.readBody
+      ? await response.text().catch(() => "")
+      : undefined;
+    return { ok: true, status: response.status, body };
+  }
 
-  return { ok: response.ok, status: response.status, body };
+  const body = (await response.text().catch(() => "")).slice(0, 500);
+  return { ok: false, status: response.status, body };
 }
 
 /**
@@ -237,6 +248,98 @@ export async function shareCalendar(
   });
 }
 
+/** Where NextCloud keeps a user as somebody things can be shared with. */
+export function principalUrl(config: CalDavConfig, username: string): string {
+  return `${config.baseUrl.replace(/\/$/, "")}/remote.php/dav/principals/users/${encodeURIComponent(
+    username,
+  )}/`;
+}
+
+/**
+ * Looks a NextCloud user up by username.
+ *
+ * The share request cannot be asked this: NextCloud answers it with success
+ * for a username nobody has, and shares with nobody. A PROPFIND on the
+ * principal is a 404 when there is no such user, and otherwise carries the
+ * address they have in NextCloud — which is what says whether a username
+ * guessed from somebody's email is really them.
+ */
+export async function findPrincipal(
+  config: CalDavConfig,
+  username: string,
+): Promise<
+  { found: true; email: string | null } | { found: false; result: CalDavResult }
+> {
+  const result = await request(config, "PROPFIND", principalUrl(config, username), {
+    body: `<?xml version="1.0" encoding="utf-8" ?>
+<D:propfind xmlns:D="DAV:" xmlns:S="http://sabredav.org/ns"><D:prop><S:email-address/></D:prop></D:propfind>`,
+    headers: {
+      "Content-Type": "application/xml; charset=utf-8",
+      Depth: "0",
+    },
+    readBody: true,
+  });
+
+  if (result.status !== 207) return { found: false, result };
+
+  // A user with no address answers with an empty element under a 404
+  // propstat, which this does not match: nothing between the tags.
+  const email = /<(?:[\w-]+:)?email-address(?:\s[^>]*)?>([^<]+)</i.exec(
+    result.body ?? "",
+  )?.[1];
+  return { found: true, email: email ? unescapeXml(email).trim().toLowerCase() : null };
+}
+
+/**
+ * The NextCloud usernames a calendar is shared with, lowercased.
+ *
+ * Read back rather than assumed, for the same reason as findPrincipal: a share
+ * NextCloud did not keep — a username it does not have, or a sharing policy
+ * that rules the person out — is answered with success all the same.
+ */
+export async function calendarSharees(
+  config: CalDavConfig,
+  slug: string,
+): Promise<{ ok: true; usernames: Set<string> } | { ok: false; result: CalDavResult }> {
+  const result = await request(config, "PROPFIND", calendarUrl(config, slug), {
+    body: `<?xml version="1.0" encoding="utf-8" ?>
+<D:propfind xmlns:D="DAV:" xmlns:O="http://owncloud.org/ns"><D:prop><O:invite/></D:prop></D:propfind>`,
+    headers: {
+      "Content-Type": "application/xml; charset=utf-8",
+      Depth: "0",
+    },
+    readBody: true,
+  });
+
+  if (result.status !== 207) return { ok: false, result };
+
+  // Each sharee is a <user> carrying the principal it was shared with.
+  const usernames = new Set<string>();
+  const users = (result.body ?? "").matchAll(
+    /<(?:[\w-]+:)?user(?:\s[^>]*)?>([\s\S]*?)<\/(?:[\w-]+:)?user>/gi,
+  );
+  for (const [, user] of users) {
+    const name = /principal:principals\/users\/([^<]+?)\/?\s*</.exec(user)?.[1];
+    if (name) usernames.add(shareKey(unescapeXml(name)));
+  }
+  return { ok: true, usernames };
+}
+
+/**
+ * How a username is compared with the ones a calendar is shared with.
+ * NextCloud matches usernames without regard to case, and names a share by
+ * the user's own spelling rather than the one it was asked for.
+ */
+export function shareKey(username: string): string {
+  let name = username.trim();
+  try {
+    name = decodeURIComponent(name);
+  } catch {
+    // Not encoded after all; NextCloud usernames cannot contain a "%".
+  }
+  return name.toLowerCase();
+}
+
 function escapeXml(value: string): string {
   return value
     .replace(/&/g, "&amp;")
@@ -244,6 +347,24 @@ function escapeXml(value: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&apos;");
+}
+
+function unescapeXml(value: string): string {
+  return value.replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi, (whole, entity: string) => {
+    const named: Record<string, string> = {
+      amp: "&",
+      lt: "<",
+      gt: ">",
+      quot: '"',
+      apos: "'",
+    };
+    const lower = entity.toLowerCase();
+    if (lower in named) return named[lower];
+    const code = lower.startsWith("#x")
+      ? Number.parseInt(lower.slice(2), 16)
+      : Number.parseInt(lower.slice(1), 10);
+    return Number.isFinite(code) ? String.fromCodePoint(code) : whole;
+  });
 }
 
 /** Reads the client config from the environment, or null when unconfigured. */

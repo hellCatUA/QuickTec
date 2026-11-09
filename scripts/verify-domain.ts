@@ -5240,6 +5240,33 @@ async function main() {
   let mkcalendarCalls = 0;
   /** Paths this pretend NextCloud has actually been asked to create. */
   const calendars = new Set<string>();
+  /**
+   * Its users, by lowercased username: the spelling NextCloud keeps and the
+   * address it has for them. Looked up without regard to case, as NextCloud
+   * looks them up.
+   */
+  const principals = new Map<string, { username: string; email: string | null }>();
+  const addPrincipal = (username: string, email: string | null) =>
+    principals.set(username.toLowerCase(), { username, email });
+  /** Who each calendar is shared with, in NextCloud's spelling of them. */
+  const shares = new Map<string, Set<string>>();
+  /** Users a sharing policy rules out: a share with them is answered, not kept. */
+  const unshareable = new Set<string>();
+  const xmlEscape = (value: string) =>
+    value
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/'/g, "&apos;")
+      .replace(/"/g, "&quot;");
+  const xmlUnescape = (value: string) =>
+    value
+      .replace(/&apos;/g, "'")
+      .replace(/&quot;/g, '"')
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&amp;/g, "&");
+  const PRINCIPALS = "/remote.php/dav/principals/users/";
 
   const CALDAV_USER = "417-sys";
   const CALDAV_PASS = "app-password";
@@ -5250,10 +5277,11 @@ async function main() {
     req.on("data", (chunk: Buffer) => chunks.push(chunk));
     req.on("end", () => {
       const authorized = req.headers.authorization === expectedAuth;
+      const body = Buffer.concat(chunks).toString("utf8");
       recorded.push({
         method: req.method ?? "",
         url: req.url ?? "",
-        body: Buffer.concat(chunks).toString("utf8"),
+        body,
         authorized,
       });
 
@@ -5262,6 +5290,57 @@ async function main() {
         return;
       }
       const path = req.url ?? "";
+      if (req.method === "PROPFIND" && path.startsWith(PRINCIPALS)) {
+        const name = decodeURIComponent(path.slice(PRINCIPALS.length).replace(/\/$/, ""));
+        const principal = principals.get(name.toLowerCase());
+        if (!principal) {
+          res.writeHead(404).end();
+          return;
+        }
+        const propstat = principal.email
+          ? `<d:propstat><d:prop><s:email-address>${xmlEscape(principal.email)}</s:email-address></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat>`
+          : `<d:propstat><d:prop><s:email-address/></d:prop><d:status>HTTP/1.1 404 Not Found</d:status></d:propstat>`;
+        res
+          .writeHead(207)
+          .end(
+            `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:" xmlns:s="http://sabredav.org/ns"><d:response><d:href>${path}</d:href>${propstat}</d:response></d:multistatus>`,
+          );
+        return;
+      }
+      if (req.method === "PROPFIND" && body.includes("invite")) {
+        if (!calendars.has(path)) {
+          res.writeHead(404).end();
+          return;
+        }
+        const users = [...(shares.get(path) ?? [])]
+          .map(
+            (username) =>
+              `<oc:user><d:href>principal:principals/users/${xmlEscape(username)}</d:href><oc:common-name>${xmlEscape(username)}</oc:common-name><oc:invite-accepted/><oc:access><oc:read/></oc:access></oc:user>`,
+          )
+          .join("");
+        res
+          .writeHead(207)
+          .end(
+            `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns"><d:response><d:href>${path}/</d:href><d:propstat><d:prop><oc:invite>${users}</oc:invite></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>`,
+          );
+        return;
+      }
+      if (req.method === "POST" && body.includes(":share")) {
+        // What NextCloud does: success, whoever the share names, and a share
+        // kept only for a user it has and may share with.
+        if (!calendars.has(path)) {
+          res.writeHead(404).end();
+          return;
+        }
+        const name = /principal:principals\/users\/([^<]+)</.exec(body)?.[1];
+        const principal = name ? principals.get(xmlUnescape(name).toLowerCase()) : undefined;
+        if (principal && !unshareable.has(principal.username.toLowerCase())) {
+          if (!shares.has(path)) shares.set(path, new Set());
+          shares.get(path)!.add(principal.username);
+        }
+        res.writeHead(200).end();
+        return;
+      }
       if (req.method === "MKCALENDAR") {
         mkcalendarCalls += 1;
         // NextCloud answers 405 for a collection that already exists.
@@ -5417,6 +5496,12 @@ async function main() {
     data: { jobId: calJob.id, userId: tech.id, payType: "HOURLY", payRate: "45" },
   });
 
+  // The tech and their supervisor, as the NextCloud they sign in through
+  // knows them.
+  addPrincipal("sub-tech", "tech@417group.org");
+  addPrincipal("sub-boss", "boss@417group.org");
+  const techCalendar = `/remote.php/dav/calendars/417-sys/${calendarSlug(tech.email)}`;
+
   // Only the traffic this job causes, not the probes above.
   recorded.length = 0;
 
@@ -5478,6 +5563,11 @@ async function main() {
     ).length,
     2,
   );
+  check(
+    "under the usernames NextCloud signs them in with",
+    [...(shares.get(techCalendar) ?? [])].sort().join(","),
+    "sub-boss,sub-tech",
+  );
 
   const unchanged = await syncJob(calJob.id);
   check(
@@ -5500,6 +5590,11 @@ async function main() {
 
   const afterClockOut = await syncJob(calJob.id);
   check("clocking out re-pushes the event", afterClockOut.pushed, 1);
+  check(
+    "a calendar already shared is not shared again on the next push",
+    recorded.filter((entry) => entry.method === "POST").length,
+    2,
+  );
   check(
     "the event now runs for the real time",
     `${icsProp(lastPutBody(), "DTSTART")} ${icsProp(lastPutBody(), "DTEND")}`,
@@ -5687,10 +5782,16 @@ async function main() {
   );
   check("which is not counted as a failure", recentOnly.failures.length, 0);
 
+  const mkcalendarsBefore = mkcalendarCalls;
   const everything = await syncAll(sup.id, "everything");
   check(
     "rebuilding from every job reaches it",
     await db.calendarEvent.count({ where: { jobId: old.id } }),
+    1,
+  );
+  check(
+    "a sweep makes each calendar ready once, however many of its jobs it pushes",
+    mkcalendarCalls - mkcalendarsBefore,
     1,
   );
   // The fingerprint is of what we last sent, not of what is on the server, so
@@ -5701,6 +5802,188 @@ async function main() {
     everything.pushed >= 2 && everything.reasons.unchanged === undefined,
     true,
   );
+
+  // --- sharing with the person meant ---------------------------------------
+  // NextCloud answers a share with success for a username it does not have,
+  // and shares with nobody. Taking that at its word is how a crew moved to a
+  // NextCloud whose usernames were not their addresses would have calendars
+  // nobody could see, with every sync reporting that all was well.
+  const { ensureUserCalendar, shareCalendarsOnSignIn } = await import(
+    "@/lib/calendar/sync"
+  );
+  const sharePeople = [
+    "share-guess@417networks.com",
+    "share-local@417networks.com",
+    "o'brien@417networks.com",
+    "share-other@417networks.com",
+    "share-dropped@417networks.com",
+    "share-stale@417networks.com",
+    "share-boss@417networks.com",
+    "share-elsewhere@417networks.com",
+    "share-nobody@417networks.com",
+  ];
+  await db.user.deleteMany({ where: { email: { in: sharePeople } } });
+  const sharePerson = (
+    email: string,
+    data: { nextcloudSub?: string; calendarUrl?: string; directSupervisorId?: string } = {},
+  ) =>
+    db.user.create({
+      data: { email, name: email.split("@")[0], baseRole: "TECH", ...data },
+    });
+  const calendarOf = (email: string) =>
+    `/remote.php/dav/calendars/${CALDAV_USER}/${calendarSlug(email)}`;
+  const sharedWith = (email: string) =>
+    [...(shares.get(calendarOf(email)) ?? [])].sort().join(",");
+  const sharesSentTo = (email: string) =>
+    recorded.filter((entry) => entry.method === "POST" && entry.url === calendarOf(email))
+      .length;
+  const shareReasons = (result: Awaited<ReturnType<typeof ensureUserCalendar>>) =>
+    "error" in result
+      ? `error: ${result.error}`
+      : result.shareFailures.map((failure) => failure.reason).join(" | ");
+
+  const guess = await sharePerson("share-guess@417networks.com");
+  check(
+    "a username NextCloud does not have is reported, not taken as shared",
+    shareReasons(await ensureUserCalendar(config, guess.id)),
+    'NextCloud has no user "share-guess@417networks.com" or "share-guess". It will be shared once they sign in to QuickTec through NextCloud.',
+  );
+  check("and no share is sent to nobody", sharesSentTo(guess.email), 0);
+
+  // A NextCloud whose usernames are the addresses, spelt its own way.
+  addPrincipal("Share-Guess@417networks.com", "share-guess@417networks.com");
+  check(
+    "a username that is their address is shared with",
+    shareReasons(await ensureUserCalendar(config, guess.id)),
+    "",
+  );
+  check(
+    "and NextCloud's own spelling of it is read back as theirs",
+    sharedWith(guess.email),
+    "Share-Guess@417networks.com",
+  );
+  await ensureUserCalendar(config, guess.id);
+  check("a calendar already shared with them is not shared again", sharesSentTo(guess.email), 1);
+
+  // The part before the @, believed because that user's address is theirs.
+  const local = await sharePerson("share-local@417networks.com");
+  addPrincipal("share-local", "Share-Local@417networks.com");
+  check(
+    "the name before the @ is shared with when its address in NextCloud is theirs",
+    shareReasons(await ensureUserCalendar(config, local.id)),
+    "",
+  );
+  check("under that name", sharedWith(local.email), "share-local");
+
+  const obrien = await sharePerson("o'brien@417networks.com");
+  addPrincipal("o'brien", "o'brien@417networks.com");
+  check(
+    "an apostrophe in a username survives the XML both ways",
+    `${shareReasons(await ensureUserCalendar(config, obrien.id))}|${sharedWith(obrien.email)}`,
+    "|o'brien",
+  );
+
+  // ...and not when it is somebody else's. A calendar carries the sites, the
+  // times and the dispatch numbers; a namesake is not who they go to.
+  const other = await sharePerson("share-other@417networks.com");
+  addPrincipal("share-other", "someone.else@417networks.com");
+  check(
+    "a name before the @ that belongs to somebody else is not shared with",
+    shareReasons(await ensureUserCalendar(config, other.id)),
+    'NextCloud has no user "share-other@417networks.com"; "share-other" in NextCloud has the address someone.else@417networks.com, so is not taken to be them. It will be shared once they sign in to QuickTec through NextCloud.',
+  );
+  check("nothing was sent to the namesake", sharesSentTo(other.email), 0);
+
+  // A share NextCloud answers and does not keep: a sharing policy, say.
+  const dropped = await sharePerson("share-dropped@417networks.com", {
+    nextcloudSub: "nc-dropped",
+  });
+  addPrincipal("nc-dropped", "share-dropped@417networks.com");
+  unshareable.add("nc-dropped");
+  check(
+    "a share NextCloud answers but does not keep is reported",
+    shareReasons(await ensureUserCalendar(config, dropped.id)).includes("did not keep it"),
+    true,
+  );
+
+  // A username from a NextCloud they have since left: their address still
+  // finds them in this one.
+  const stale = await sharePerson("share-stale@417networks.com", {
+    nextcloudSub: "nc-old-name",
+  });
+  addPrincipal("share-stale@417networks.com", "share-stale@417networks.com");
+  check(
+    "a username from an old NextCloud falls back to their address",
+    `${shareReasons(await ensureUserCalendar(config, stale.id))}|${sharedWith(stale.email)}`,
+    "|share-stale@417networks.com",
+  );
+
+  // Signing in is where a guess stops being one. Their crew's calendars come
+  // with them; one not made in this NextCloud yet waits for its next push.
+  const crewBoss = await sharePerson("share-boss@417networks.com", {
+    nextcloudSub: "nc-boss",
+  });
+  addPrincipal("nc-boss", "share-boss@417networks.com");
+  await db.user.updateMany({
+    where: { id: { in: [local.id, other.id] } },
+    data: { directSupervisorId: crewBoss.id },
+  });
+  const elsewhere = await sharePerson("share-elsewhere@417networks.com", {
+    directSupervisorId: crewBoss.id,
+    calendarUrl: `https://cloud.417group.org/remote.php/dav/calendars/417-sys/${calendarSlug("share-elsewhere@417networks.com")}`,
+  });
+  const bossMissed = await shareCalendarsOnSignIn(crewBoss.id);
+  check(
+    "signing in shares the crew's calendars with whoever supervises them",
+    `${sharedWith(local.email)} | ${sharedWith(other.email)} | ${bossMissed.length}`,
+    "nc-boss,share-local | nc-boss | 0",
+  );
+  check(
+    "a crew calendar not made in this NextCloud yet is left for its next push",
+    recorded.some((entry) => entry.url.includes(calendarSlug(elsewhere.email))),
+    false,
+  );
+
+  // The namesake guess missed; their own sign-in puts it right.
+  await db.user.update({ where: { id: other.id }, data: { nextcloudSub: "nc-other" } });
+  addPrincipal("nc-other", "share-other@417networks.com");
+  const otherMissed = await shareCalendarsOnSignIn(other.id);
+  check(
+    "somebody a guess missed has their calendar once they sign in",
+    `${sharedWith(other.email)} | ${otherMissed.length}`,
+    "nc-boss,nc-other | 0",
+  );
+
+  // A sweep says a calendar has not reached somebody once, not once for each
+  // of their jobs: its result shows ten lines, and one person on forty jobs
+  // would fill them all.
+  const nobody = await sharePerson("share-nobody@417networks.com");
+  const theirJobs = await Promise.all(
+    [9005, 9006].map((sequence) =>
+      db.job.create({
+        data: {
+          ...base,
+          title: `Unseen ${sequence}`,
+          intWoId: `2607-0000-${sequence}`,
+          intWoSequence: sequence,
+          scheduledStart: new Date(Date.now() + 2 * 24 * 60 * 60_000),
+          estimateMinutes: 60,
+          assignments: { create: { userId: nobody.id, payType: "HOURLY", payRate: "45" } },
+        },
+      }),
+    ),
+  );
+  const unseen = await syncAll(sup.id);
+  check(
+    "a calendar that reached nobody is one failure a sweep, however many jobs it holds",
+    `${unseen.failures.filter((failure) => failure.target === nobody.email).length} of ${
+      (await db.calendarEvent.count({ where: { userId: nobody.id } }))
+    } events written`,
+    "1 of 2 events written",
+  );
+  await db.job.deleteMany({ where: { id: { in: theirJobs.map((job) => job.id) } } });
+
+  await db.user.deleteMany({ where: { email: { in: sharePeople } } });
 
   // An unreachable server is a failed sync, not a crash — the events are
   // simply a few minutes behind until it comes back.

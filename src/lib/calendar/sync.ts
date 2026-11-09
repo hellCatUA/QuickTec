@@ -3,13 +3,16 @@ import { formatAddress, siteLabel } from "@/lib/address";
 import { recordAudit } from "@/lib/audit";
 import {
   calDavConfigFromEnv,
+  calendarSharees,
   calendarSlug,
   calendarUrl,
   deleteEvent,
   describeFailure,
   ensureCalendar,
+  findPrincipal,
   putEvent,
   shareCalendar,
+  shareKey,
   type CalDavConfig,
 } from "@/lib/calendar/caldav";
 import { buildCalendar, eventFileName, eventUid } from "@/lib/calendar/ical";
@@ -148,18 +151,25 @@ function eventWindow(
   return { start, end: new Date(start.getTime() + minutes * 60_000) };
 }
 
+/** Somebody a calendar is shared with, as QuickTec knows them. */
+type Sharee = { email: string; nextcloudSub: string | null };
+
+/** Why a calendar is not in front of somebody, said so a person can act on it. */
+export type ShareFailure = { email: string; reason: string };
+
 /** Provisions the calendar for one tech and shares it with their supervisor. */
 export async function ensureUserCalendar(
   config: CalDavConfig,
   userId: string,
-): Promise<{ slug: string; shareFailures: string[] } | { error: string }> {
+): Promise<{ slug: string; shareFailures: ShareFailure[] } | { error: string }> {
   const user = await db.user.findUnique({
     where: { id: userId },
     select: {
       id: true,
       email: true,
+      nextcloudSub: true,
       calendarUrl: true,
-      directSupervisor: { select: { email: true } },
+      directSupervisor: { select: { email: true, nextcloudSub: true } },
     },
   });
   if (!user) return { error: "User not found" };
@@ -185,39 +195,145 @@ export async function ensureUserCalendar(
   // The tech reads their own calendar; the supervisor reads their crew's.
   // A failure here does not fail the sync — the events are still written, and
   // a calendar nobody can see is a better outcome than a job nobody has.
-  const shareWith = [user.email, user.directSupervisor?.email].filter(
-    (email): email is string => Boolean(email),
-  );
-
-  const shareFailures: string[] = [];
-  for (const email of shareWith) {
-    if (!(await share(config, slug, email))) shareFailures.push(email);
-  }
+  const shareFailures = await shareCalendarWith(config, slug, [
+    { email: user.email, nextcloudSub: user.nextcloudSub },
+    ...(user.directSupervisor ? [user.directSupervisor] : []),
+  ]);
 
   return { slug, shareFailures };
 }
 
 /**
- * Shares with a NextCloud user, whose username we have to guess at.
+ * Makes sure a calendar is shared with each of these people, and says why for
+ * anybody it is not.
  *
- * QuickTec knows people by email; NextCloud knows them by a username that is
- * usually one of two things — the whole email, or the part before the @. Both
- * are tried rather than picking one and leaving the other set of installs with
- * calendars their techs cannot see.
+ * Who it is shared with already is read first, so a calendar that is fine —
+ * nearly every one, on every push — costs a single request rather than a
+ * share for each person every time an event moves.
  */
-async function share(
+async function shareCalendarWith(
   config: CalDavConfig,
   slug: string,
-  email: string,
-): Promise<boolean> {
-  const candidates = [email, email.split("@")[0]].filter(Boolean);
-
-  for (const username of candidates) {
-    const result = await shareCalendar(config, slug, username).catch(() => null);
-    if (result?.ok) return true;
+  sharees: Sharee[],
+): Promise<ShareFailure[]> {
+  const current = await calendarSharees(config, slug);
+  if (!current.ok) {
+    const reason = `QuickTec could not read who the calendar is shared with (${describeFailure(current.result)}).`;
+    return sharees.map((sharee) => ({ email: sharee.email, reason }));
   }
-  return false;
+
+  const failures: ShareFailure[] = [];
+  for (const sharee of sharees) {
+    const reason = await shareWithOne(config, slug, sharee, current.usernames);
+    if (reason) failures.push({ email: sharee.email, reason });
+  }
+  return failures;
 }
+
+/**
+ * The NextCloud usernames somebody might have, surest first.
+ *
+ * The one NextCloud signed them in with is theirs for certain. Before that
+ * QuickTec only has their address, and installs give people one of two names:
+ * the whole address, which is theirs too, or the part before the @ — which on
+ * a NextCloud of any size can be somebody else's, and is only believed when
+ * that user's address in NextCloud is theirs.
+ */
+function shareCandidates(sharee: Sharee): { username: string; sure: boolean }[] {
+  const candidates: { username: string; sure: boolean }[] = [];
+  if (sharee.nextcloudSub) candidates.push({ username: sharee.nextcloudSub, sure: true });
+  candidates.push({ username: sharee.email, sure: true });
+  const localPart = sharee.email.split("@")[0];
+  if (localPart) candidates.push({ username: localPart, sure: false });
+
+  // The surer spelling wins where two are the same name.
+  const seen = new Set<string>();
+  return candidates.filter((candidate) => {
+    const key = shareKey(candidate.username);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/**
+ * Shares a calendar with one person, or says why it could not be.
+ *
+ * The share request is never taken at its word. NextCloud answers it with
+ * success for a username nobody has, and for a user its sharing policy rules
+ * out, and in both cases shares with nobody — so the user is looked up before
+ * anything is sent, and the share is read back afterwards.
+ *
+ * Returns null when they can see it, and the reason otherwise.
+ */
+async function shareWithOne(
+  config: CalDavConfig,
+  slug: string,
+  sharee: Sharee,
+  current: Set<string>,
+): Promise<string | null> {
+  const candidates = shareCandidates(sharee);
+
+  // Already shared under a name that is certainly theirs: nothing to send.
+  if (candidates.some((c) => c.sure && current.has(shareKey(c.username)))) return null;
+
+  const missing: string[] = [];
+  const somebodyElse: string[] = [];
+
+  for (const candidate of candidates) {
+    const principal = await findPrincipal(config, candidate.username);
+    if (!principal.found) {
+      if (principal.result.status === 404) {
+        missing.push(candidate.username);
+        continue;
+      }
+      return `QuickTec could not look up "${candidate.username}" in NextCloud (${describeFailure(principal.result)}).`;
+    }
+
+    if (!candidate.sure && principal.email !== sharee.email.toLowerCase()) {
+      somebodyElse.push(
+        `"${candidate.username}" in NextCloud has ${principal.email ? `the address ${principal.email}` : "no address"}, so is not taken to be them`,
+      );
+      continue;
+    }
+
+    // A guess just confirmed, under which it was already shared.
+    if (current.has(shareKey(candidate.username))) return null;
+
+    const sent = await shareCalendar(config, slug, candidate.username);
+    if (!sent.ok) {
+      return `NextCloud refused to share it with "${candidate.username}" (${describeFailure(sent)}).`;
+    }
+
+    const after = await calendarSharees(config, slug);
+    if (!after.ok) {
+      return `QuickTec could not check the share with "${candidate.username}" (${describeFailure(after.result)}).`;
+    }
+    // Kept up to date for whoever is shared with next.
+    for (const username of after.usernames) current.add(username);
+
+    if (after.usernames.has(shareKey(candidate.username))) return null;
+    return `NextCloud answered the share with "${candidate.username}" but did not keep it — check that ${config.username} may share with them; NextCloud can limit sharing to people in the same group.`;
+  }
+
+  const findings = [
+    missing.length > 0
+      ? `NextCloud has no user ${missing.map((name) => `"${name}"`).join(" or ")}`
+      : null,
+    ...somebodyElse,
+  ].filter(Boolean);
+  const later = sharee.nextcloudSub
+    ? ""
+    : " It will be shared once they sign in to QuickTec through NextCloud.";
+  return `${findings.join("; ")}.${later}`;
+}
+
+/**
+ * The calendars made ready during one sweep, by tech. A tech on forty jobs has
+ * one calendar, and a sweep asks NextCloud about it once rather than forty
+ * times.
+ */
+type CalendarsReady = Map<string, ReturnType<typeof ensureUserCalendar>>;
 
 /**
  * Pushes one job to everyone assigned, and removes it from anyone who is not.
@@ -227,7 +343,7 @@ async function share(
  */
 export async function syncJob(
   jobId: string,
-  options: { force?: boolean } = {},
+  options: { force?: boolean; calendars?: CalendarsReady } = {},
 ): Promise<SyncOutcome> {
   const outcome = emptyOutcome();
   const config = calDavConfigFromEnv();
@@ -345,7 +461,13 @@ export async function syncJob(
       continue;
     }
 
-    const calendar = await ensureUserCalendar(config, assignment.userId);
+    let ready = options.calendars?.get(assignment.userId);
+    const firstInSweep = !ready;
+    if (!ready) {
+      ready = ensureUserCalendar(config, assignment.userId);
+      options.calendars?.set(assignment.userId, ready);
+    }
+    const calendar = await ready;
     if ("error" in calendar) {
       outcome.failures.push({
         target: assignment.user.email,
@@ -354,12 +476,16 @@ export async function syncJob(
       continue;
     }
 
-    for (const email of calendar.shareFailures) {
-      outcome.failures.push({
-        target: email,
-        reason:
-          "The calendar was written but could not be shared with them — NextCloud did not recognise that username.",
-      });
+    // Said once a sweep. A calendar not reaching somebody is one problem
+    // however many jobs are pushed to it, and repeated for each it would fill
+    // the few lines a sweep's result shows, hiding everybody else's.
+    if (firstInSweep) {
+      for (const failure of calendar.shareFailures) {
+        outcome.failures.push({
+          target: failure.email,
+          reason: `The calendar was written but could not be shared with them: ${failure.reason}`,
+        });
+      }
     }
 
     const fileName = eventFileName(job.id, assignment.userId);
@@ -460,6 +586,70 @@ export function syncJobInBackground(jobId: string): void {
   });
 }
 
+/**
+ * Shares the calendars somebody should see — their own, and their crew's if
+ * they supervise one — under the username NextCloud has just signed them in
+ * with.
+ *
+ * A calendar is shared as its events are pushed, under whatever QuickTec then
+ * knows the person by. Until they have signed in through this NextCloud that
+ * is a guess from their address, and a guess can miss: a whole crew moved to a
+ * new NextCloud is exactly that, all at once. Signing in is where it stops
+ * being a guess. Only calendars already in this NextCloud are touched; one
+ * QuickTec has not made here yet is shared when the next push makes it.
+ *
+ * Returns what could not be shared, by calendar.
+ */
+export async function shareCalendarsOnSignIn(
+  userId: string,
+): Promise<(ShareFailure & { calendar: string })[]> {
+  const config = calDavConfigFromEnv();
+  if (!config) return [];
+
+  const person = await db.user.findUnique({
+    where: { id: userId },
+    select: {
+      email: true,
+      nextcloudSub: true,
+      calendarUrl: true,
+      directReports: { select: { email: true, calendarUrl: true } },
+    },
+  });
+  if (!person) return [];
+
+  const failures: (ShareFailure & { calendar: string })[] = [];
+  for (const owner of [person, ...person.directReports]) {
+    const slug = calendarSlug(owner.email);
+    // Where it would be made now is where a calendar made here was made.
+    if (owner.calendarUrl !== calendarUrl(config, slug)) continue;
+
+    const missed = await shareCalendarWith(config, slug, [
+      { email: person.email, nextcloudSub: person.nextcloudSub },
+    ]);
+    failures.push(...missed.map((failure) => ({ ...failure, calendar: slug })));
+  }
+  return failures;
+}
+
+/**
+ * Fire-and-forget shareCalendarsOnSignIn, for the sign-in itself: a slow or
+ * unreachable NextCloud calendar must not hold somebody at the door.
+ */
+export function shareCalendarsInBackground(userId: string): void {
+  if (!calDavConfigFromEnv()) return;
+  void shareCalendarsOnSignIn(userId)
+    .then((failures) => {
+      for (const failure of failures) {
+        console.error(
+          `[calendar] ${failure.calendar} is not shared with ${failure.email}: ${failure.reason}`,
+        );
+      }
+    })
+    .catch((error: unknown) => {
+      console.error(`[calendar] sharing at sign-in failed for ${userId}:`, error);
+    });
+}
+
 /** How far back a sweep reaches. */
 export type SyncScope =
   /** The month around today: everything anybody is looking at. */
@@ -518,10 +708,14 @@ export async function syncAll(
     select: { id: true },
   });
 
+  const calendars: CalendarsReady = new Map();
   for (const job of jobs) {
     // A rebuild is what somebody presses when the calendars are wrong, so it
     // writes every event again rather than trusting the fingerprints.
-    const outcome = await syncJob(job.id, { force: scope === "everything" });
+    const outcome = await syncJob(job.id, {
+      force: scope === "everything",
+      calendars,
+    });
     total.pushed += outcome.pushed;
     total.removed += outcome.removed;
     total.skipped += outcome.skipped;

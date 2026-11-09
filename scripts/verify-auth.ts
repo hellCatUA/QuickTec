@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { createPublicKey, generateKeyPairSync, sign } from "node:crypto";
-import { createServer } from "node:http";
+import { createServer, type ServerResponse } from "node:http";
+import { calendarSlug } from "@/lib/calendar/caldav";
 import { db } from "@/lib/db";
 import { profileHistory } from "@/lib/profile-history";
 
@@ -23,10 +24,13 @@ import { profileHistory } from "@/lib/profile-history";
  * Needs the app running on BASE_URL, with NEXTCLOUD_ISSUER pointing here and
  * AUTH_URL set to the public address — a real hostname, because `next start`
  * canonicalises a loopback address to `localhost` and the redirect URI check
- * would then compare two spellings of the same thing:
+ * would then compare two spellings of the same thing. The stand-in also
+ * answers the few DAV requests a sign-in makes to share somebody's calendar,
+ * so the app needs a CalDAV account too:
  *
  *   NEXTCLOUD_ISSUER=http://127.0.0.1:9999 \
  *   NEXTCLOUD_CLIENT_ID=dev-client NEXTCLOUD_CLIENT_SECRET=dev-secret \
+ *   CALDAV_USERNAME=417-sys CALDAV_PASSWORD=app-password \
  *   AUTH_URL=https://quicktec.417group.org npm start
  *
  *   AUTH_URL=https://quicktec.417group.org npm run verify:auth
@@ -93,10 +97,74 @@ let idTokenClaims: Record<string, unknown> = {};
 let userInfoClaims: Record<string, unknown> | null = null;
 const requested: string[] = [];
 
+/** The CalDAV account the app shares calendars from. */
+const CALDAV_USER = process.env.CALDAV_USERNAME || "417-sys";
+/** DAV requests the app has made, in order. */
+const dav: { method: string; url: string; body: string }[] = [];
+/** Who the stand-in has been asked to share a calendar with, and kept. */
+const davShares = new Set<string>();
+
+/**
+ * Enough of NextCloud's DAV for a calendar shared at sign-in: every user
+ * exists, a share is kept, and the calendar says who it is shared with.
+ */
+function answerDav(method: string, url: string, body: string, res: ServerResponse) {
+  dav.push({ method, url, body });
+  if (method === "PROPFIND" && url.startsWith("/remote.php/dav/principals/users/")) {
+    res
+      .writeHead(207)
+      .end(
+        `<d:multistatus xmlns:d="DAV:"><d:response><d:href>${url}</d:href></d:response></d:multistatus>`,
+      );
+    return;
+  }
+  if (method === "PROPFIND") {
+    const users = [...davShares]
+      .map(
+        (name) =>
+          `<oc:user><d:href>principal:principals/users/${name}</d:href><oc:access><oc:read/></oc:access></oc:user>`,
+      )
+      .join("");
+    res
+      .writeHead(207)
+      .end(
+        `<d:multistatus xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns"><d:response><d:href>${url}/</d:href><d:propstat><d:prop><oc:invite>${users}</oc:invite></d:prop></d:propstat></d:response></d:multistatus>`,
+      );
+    return;
+  }
+  if (method === "POST") {
+    const name = /principal:principals\/users\/([^<]+)</.exec(body)?.[1];
+    if (name) davShares.add(name);
+    res.writeHead(200).end();
+    return;
+  }
+  res.writeHead(404).end();
+}
+
+/** Waits for something the app does after answering, like a background share. */
+async function waitFor<T>(probe: () => T | undefined, ms = 5000): Promise<T | undefined> {
+  const until = Date.now() + ms;
+  while (Date.now() < until) {
+    const found = probe();
+    if (found) return found;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return probe();
+}
+
 function startFakeNextCloud() {
   const server = createServer((req, res) => {
     const url = req.url ?? "";
     requested.push(url);
+
+    if (url.startsWith("/remote.php/dav/")) {
+      const chunks: Buffer[] = [];
+      req.on("data", (chunk: Buffer) => chunks.push(chunk));
+      req.on("end", () =>
+        answerDav(req.method ?? "", url, Buffer.concat(chunks).toString("utf8"), res),
+      );
+      return;
+    }
 
     // What a stock NextCloud does with the address the spec suggests.
     if (url === "/.well-known/openid-configuration") {
@@ -214,7 +282,11 @@ async function main() {
     "oidc-userinfo@417group.org",
     "oidc-nogroup@417group.org",
   ];
-  await db.user.deleteMany({ where: { email: { in: emails } } });
+  const linkedEmail = "oidc-linked@417group.org";
+  const unlinkedEmail = "oidc-unlinked@417group.org";
+  const takenEmail = "oidc-taken@417group.org";
+  const everyone = [...emails, linkedEmail, unlinkedEmail, takenEmail];
+  await db.user.deleteMany({ where: { email: { in: everyone } } });
 
   // --- the authorization request ------------------------------------------
   idTokenClaims = {
@@ -353,6 +425,148 @@ async function main() {
     "Ivy IdToken",
   );
 
+  // --- their calendar, at sign-in -------------------------------------------
+  // Until somebody signs in through a NextCloud, QuickTec can only guess their
+  // username there from their address — and after a move to a new NextCloud,
+  // that is everybody at once. Signing in is where it learns the real one,
+  // and the calendar it keeps for them is shared under it.
+  const ivysCalendar = `/remote.php/dav/calendars/${CALDAV_USER}/${calendarSlug(emails[0])}`;
+  await db.user.update({
+    where: { id: fromIdToken!.id },
+    data: { calendarUrl: `${NC}${ivysCalendar}` },
+  });
+  dav.length = 0;
+  await signInRoundTrip();
+  const sharedAtSignIn = await waitFor(() =>
+    dav.find((entry) => entry.method === "POST" && entry.url === ivysCalendar),
+  );
+  check(
+    "signing in shares their calendar under their NextCloud username (needs CALDAV_USERNAME and CALDAV_PASSWORD on the app)",
+    sharedAtSignIn?.body.includes("principal:principals/users/u-idtoken"),
+    true,
+  );
+
+  dav.length = 0;
+  await signInRoundTrip();
+  await waitFor(() => dav.find((entry) => entry.method === "PROPFIND" && entry.url === ivysCalendar));
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  check(
+    "and only checks it, without sharing again, when they sign in once more",
+    dav.filter((entry) => entry.method === "POST").length,
+    0,
+  );
+  await db.user.update({ where: { id: fromIdToken!.id }, data: { calendarUrl: null } });
+
+  // --- an address alone does not move an account ----------------------------
+  // NextCloud lets two users carry the same address, and an administrator can
+  // type any address on anybody. Following the address from one NextCloud
+  // user to another would hand over whatever account it reached.
+  const owner = await db.user.create({
+    data: {
+      email: linkedEmail,
+      name: "Lin Linked",
+      nextcloudSub: "u-original",
+      baseRole: "TECH",
+      passwordFallback: true,
+      passwordHash: "scrypt$placeholder",
+    },
+  });
+
+  idTokenClaims = {
+    sub: "u-impostor",
+    email: linkedEmail,
+    name: "Ima Impostor",
+    roles: ["quicktec-tech"],
+  };
+  userInfoClaims = null;
+  const impostor = await signInRoundTrip();
+  check(
+    "another NextCloud user with the same address is turned away",
+    new URL(impostor.location).searchParams.get("error"),
+    "EmailInUse",
+  );
+  const afterImpostor = await db.user.findUniqueOrThrow({ where: { id: owner.id } });
+  check(
+    "and the account stays its owner's",
+    `${afterImpostor.nextcloudSub} · ${afterImpostor.name}`,
+    "u-original · Lin Linked",
+  );
+
+  // Nor may they lock its owner out by turning up with no group: the spare
+  // key that strips is the one on the account a sign-in would let them into.
+  idTokenClaims = { sub: "u-impostor", email: linkedEmail, name: "Ima Impostor" };
+  userInfoClaims = { sub: "u-impostor", email: linkedEmail, groups: ["users"] };
+  await signInRoundTrip();
+  const afterNoGroup = await db.user.findUniqueOrThrow({ where: { id: owner.id } });
+  check(
+    "an impostor with no group does not take the owner's password away",
+    `${afterNoGroup.passwordFallback} · ${afterNoGroup.passwordHash !== null}`,
+    "true · true",
+  );
+
+  idTokenClaims = {
+    sub: "u-original",
+    email: linkedEmail,
+    name: "Lin Linked",
+    roles: ["quicktec-tech"],
+  };
+  userInfoClaims = null;
+  check(
+    "while the owner signs in as before",
+    (await signInRoundTrip()).location,
+    `${PUBLIC}/dashboard`,
+  );
+
+  // A move to a new NextCloud clears every link, and the first sign-in joins
+  // each account on its address again. That must go on working.
+  const unlinked = await db.user.create({
+    data: { email: unlinkedEmail, name: "Una Unlinked", baseRole: "TECH" },
+  });
+  idTokenClaims = {
+    sub: "u-unlinked",
+    email: unlinkedEmail,
+    name: "Una Unlinked",
+    roles: ["quicktec-tech"],
+  };
+  const joined = await signInRoundTrip();
+  check(
+    "an account linked to nobody is joined on its address at the first sign-in",
+    `${joined.location} · ${(await db.user.findUniqueOrThrow({ where: { id: unlinked.id } })).nextcloudSub}`,
+    `${PUBLIC}/dashboard · u-unlinked`,
+  );
+
+  // Their NextCloud address changed to one another account here has: said,
+  // where it used to fail on the unique address with nothing on screen.
+  await db.user.create({
+    data: { email: takenEmail, name: "Tia Taken", baseRole: "TECH" },
+  });
+  idTokenClaims = {
+    sub: "u-unlinked",
+    email: takenEmail,
+    name: "Una Unlinked",
+    roles: ["quicktec-tech"],
+  };
+  const movedOnto = await signInRoundTrip();
+  check(
+    "a NextCloud address moved onto another account's is refused with a reason",
+    new URL(movedOnto.location).searchParams.get("error"),
+    "EmailInUse",
+  );
+  check(
+    "and neither account changes",
+    `${(await db.user.findUniqueOrThrow({ where: { id: unlinked.id } })).email} · ${
+      (await db.user.findUniqueOrThrow({ where: { email: takenEmail } })).nextcloudSub
+    }`,
+    `${unlinkedEmail} · null`,
+  );
+
+  const inUsePage = await (await fetch(`${BASE}/signin?error=EmailInUse`)).text();
+  check(
+    "the sign-in page says the address is another account's",
+    inUsePage.includes("already belongs to another QuickTec account"),
+    true,
+  );
+
   // --- claims only in userinfo ---------------------------------------------
   // Auth.js treats the ID token as the whole profile and never asks userinfo,
   // so this is the case that refused entry on a real install.
@@ -426,7 +640,7 @@ async function main() {
   );
 
   stop();
-  await db.user.deleteMany({ where: { email: { in: emails } } });
+  await db.user.deleteMany({ where: { email: { in: everyone } } });
   await db.$disconnect();
 
   console.log(
