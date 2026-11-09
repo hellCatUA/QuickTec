@@ -154,6 +154,17 @@ function eventWindow(
 /** Somebody a calendar is shared with, as QuickTec knows them. */
 type Sharee = { email: string; nextcloudSub: string | null };
 
+/**
+ * Who a calendar can be shared with at all. An outside account signs in with
+ * a QuickTec password and has no NextCloud user, now or ever: asking about one
+ * would report, on every push, a failure nobody can do anything about.
+ */
+function shareable(
+  person: { email: string; nextcloudSub: string | null; signInMethod: string } | null,
+): person is { email: string; nextcloudSub: string | null; signInMethod: string } {
+  return person !== null && person.signInMethod !== "LOCAL";
+}
+
 /** Why a calendar is not in front of somebody, said so a person can act on it. */
 export type ShareFailure = { email: string; reason: string };
 
@@ -168,8 +179,11 @@ export async function ensureUserCalendar(
       id: true,
       email: true,
       nextcloudSub: true,
+      signInMethod: true,
       calendarUrl: true,
-      directSupervisor: { select: { email: true, nextcloudSub: true } },
+      directSupervisor: {
+        select: { email: true, nextcloudSub: true, signInMethod: true },
+      },
     },
   });
   if (!user) return { error: "User not found" };
@@ -195,10 +209,13 @@ export async function ensureUserCalendar(
   // The tech reads their own calendar; the supervisor reads their crew's.
   // A failure here does not fail the sync — the events are still written, and
   // a calendar nobody can see is a better outcome than a job nobody has.
-  const shareFailures = await shareCalendarWith(config, slug, [
-    { email: user.email, nextcloudSub: user.nextcloudSub },
-    ...(user.directSupervisor ? [user.directSupervisor] : []),
-  ]);
+  const sharees: Sharee[] = [];
+  for (const person of [user, user.directSupervisor]) {
+    if (shareable(person)) {
+      sharees.push({ email: person.email, nextcloudSub: person.nextcloudSub });
+    }
+  }
+  const shareFailures = await shareCalendarWith(config, slug, sharees);
 
   return { slug, shareFailures };
 }
@@ -231,13 +248,19 @@ async function shareCalendarWith(
 }
 
 /**
- * The NextCloud usernames somebody might have, surest first.
+ * The NextCloud usernames somebody might have, likeliest first.
  *
- * The one NextCloud signed them in with is theirs for certain. Before that
- * QuickTec only has their address, and installs give people one of two names:
- * the whole address, which is theirs too, or the part before the @ — which on
- * a NextCloud of any size can be somebody else's, and is only believed when
- * that user's address in NextCloud is theirs.
+ * The one NextCloud last signed them in with comes first. Before they have
+ * signed in, QuickTec only has their address, and installs give people one of
+ * two names: the whole address, or the part before the @.
+ *
+ * None of them is taken on trust. A name from a sign-in can be from a
+ * NextCloud they have since left, or deleted and given to somebody else, and
+ * the part before the @ is somebody else's often enough — so every name is
+ * shared with only once that user's address in NextCloud is theirs. `sure`
+ * marks the names under which a share already made counts as made: this code
+ * checked it when it made it, and NextCloud drops a user's shares when the
+ * user goes.
  */
 function shareCandidates(sharee: Sharee): { username: string; sure: boolean }[] {
   const candidates: { username: string; sure: boolean }[] = [];
@@ -290,19 +313,23 @@ async function shareWithOne(
       return `QuickTec could not look up "${candidate.username}" in NextCloud (${describeFailure(principal.result)}).`;
     }
 
-    if (!candidate.sure && principal.email !== sharee.email.toLowerCase()) {
+    if (principal.email !== sharee.email.toLowerCase()) {
       somebodyElse.push(
         `"${candidate.username}" in NextCloud has ${principal.email ? `the address ${principal.email}` : "no address"}, so is not taken to be them`,
       );
       continue;
     }
 
-    // A guess just confirmed, under which it was already shared.
+    // Confirmed theirs, and already shared under it.
     if (current.has(shareKey(candidate.username))) return null;
 
     const sent = await shareCalendar(config, slug, candidate.username);
     if (!sent.ok) {
-      return `NextCloud refused to share it with "${candidate.username}" (${describeFailure(sent)}).`;
+      const limit =
+        sent.status === 429
+          ? ` NextCloud lets ${config.username} share only so many calendars an hour (dav rateLimitShareAddressbookOrCalendar, 100 by default).`
+          : "";
+      return `NextCloud refused to share it with "${candidate.username}" (${describeFailure(sent)}).${limit}`;
     }
 
     const after = await calendarSharees(config, slug);
@@ -313,7 +340,7 @@ async function shareWithOne(
     for (const username of after.usernames) current.add(username);
 
     if (after.usernames.has(shareKey(candidate.username))) return null;
-    return `NextCloud answered the share with "${candidate.username}" but did not keep it — check that ${config.username} may share with them; NextCloud can limit sharing to people in the same group.`;
+    return `NextCloud answered the share with "${candidate.username}" but did not keep it — check that sharing is switched on in NextCloud (Administration settings → Sharing → "Allow apps to use the Share API").`;
   }
 
   const findings = [
@@ -411,6 +438,19 @@ export async function syncJob(
 
   const assignedIds = new Set(job.assignments.map((a) => a.userId));
 
+  /**
+   * What went wrong with this job's own events: a calendar that could not be
+   * made, an event that would not go up or come out. Kept on the job. A
+   * calendar that was written but not shared with somebody is not, because
+   * the job is in it all the same — that is the person's problem, not the
+   * job's, and it is said in the sweep's result.
+   */
+  const jobFailures: SyncOutcome["failures"] = [];
+  const failJob = (failure: SyncOutcome["failures"][number], report = true) => {
+    jobFailures.push(failure);
+    if (report) outcome.failures.push(failure);
+  };
+
   // Nobody to put it in front of. Said out loud, because a job planned but not
   // crewed is the commonest reason a calendar looks empty and the only one the
   // person reading the sweep can do anything about.
@@ -468,17 +508,16 @@ export async function syncJob(
       options.calendars?.set(assignment.userId, ready);
     }
     const calendar = await ready;
+
+    // A calendar's own trouble is said once a sweep. It is one problem however
+    // many jobs are pushed to it, and repeated for each it would fill the few
+    // lines a sweep's result shows, hiding everybody else's. Each job still
+    // keeps it if its event never got written.
     if ("error" in calendar) {
-      outcome.failures.push({
-        target: assignment.user.email,
-        reason: calendar.error,
-      });
+      failJob({ target: assignment.user.email, reason: calendar.error }, firstInSweep);
       continue;
     }
 
-    // Said once a sweep. A calendar not reaching somebody is one problem
-    // however many jobs are pushed to it, and repeated for each it would fill
-    // the few lines a sweep's result shows, hiding everybody else's.
     if (firstInSweep) {
       for (const failure of calendar.shareFailures) {
         outcome.failures.push({
@@ -492,7 +531,7 @@ export async function syncJob(
     const result = await putEvent(config, calendar.slug, fileName, ics);
 
     if (!result.ok) {
-      outcome.failures.push({
+      failJob({
         target: assignment.user.email,
         reason: `Upload failed: ${describeFailure(result)}`,
       });
@@ -536,7 +575,7 @@ export async function syncJob(
       eventFileName(job.id, event.userId),
     );
     if (!result.ok) {
-      outcome.failures.push({
+      failJob({
         target: user.email,
         reason: `Removal failed: ${describeFailure(result)}`,
       });
@@ -552,10 +591,10 @@ export async function syncJob(
   // jobs we have looked at. The reason for a failure is kept on the job for
   // the same purpose: nobody awaits a background sync, so this is the only
   // place its answer survives.
-  if (outcome.failures.length > 0) {
+  if (jobFailures.length > 0) {
     await db.job.update({
       where: { id: job.id },
-      data: { calendarSyncError: outcome.failures[0].reason.slice(0, 500) },
+      data: { calendarSyncError: jobFailures[0].reason.slice(0, 500) },
     });
   } else if (outcome.pushed > 0 || outcome.removed > 0) {
     await db.job.update({
@@ -581,9 +620,17 @@ export async function syncJob(
  */
 export function syncJobInBackground(jobId: string): void {
   if (!calDavConfigFromEnv()) return;
-  void syncJob(jobId).catch((error: unknown) => {
-    console.error(`[calendar] background sync failed for ${jobId}:`, error);
-  });
+  void syncJob(jobId)
+    .then((outcome) => {
+      // A calendar that did not reach somebody is not kept on the job, and
+      // nobody is waiting on this push to be told: the log is where it goes.
+      for (const failure of outcome.failures) {
+        console.error(`[calendar] job ${jobId}, ${failure.target}: ${failure.reason}`);
+      }
+    })
+    .catch((error: unknown) => {
+      console.error(`[calendar] background sync failed for ${jobId}:`, error);
+    });
 }
 
 /**
@@ -611,11 +658,12 @@ export async function shareCalendarsOnSignIn(
     select: {
       email: true,
       nextcloudSub: true,
+      signInMethod: true,
       calendarUrl: true,
       directReports: { select: { email: true, calendarUrl: true } },
     },
   });
-  if (!person) return [];
+  if (!shareable(person)) return [];
 
   const failures: (ShareFailure & { calendar: string })[] = [];
   for (const owner of [person, ...person.directReports]) {

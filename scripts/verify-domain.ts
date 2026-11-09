@@ -5252,6 +5252,8 @@ async function main() {
   const shares = new Map<string, Set<string>>();
   /** Users a sharing policy rules out: a share with them is answered, not kept. */
   const unshareable = new Set<string>();
+  /** What NextCloud answers a new calendar with when it is at a limit. */
+  let refuseCalendars: number | null = null;
   const xmlEscape = (value: string) =>
     value
       .replace(/&/g, "&amp;")
@@ -5346,6 +5348,10 @@ async function main() {
         // NextCloud answers 405 for a collection that already exists.
         if (calendars.has(path)) {
           res.writeHead(405).end();
+          return;
+        }
+        if (refuseCalendars) {
+          res.writeHead(refuseCalendars).end();
           return;
         }
         calendars.add(path);
@@ -5821,11 +5827,20 @@ async function main() {
     "share-boss@417networks.com",
     "share-elsewhere@417networks.com",
     "share-nobody@417networks.com",
+    "share-reissued@417networks.com",
+    "share-taken@417networks.com",
+    "share-outside@417networks.com",
+    "share-limited@417networks.com",
   ];
   await db.user.deleteMany({ where: { email: { in: sharePeople } } });
   const sharePerson = (
     email: string,
-    data: { nextcloudSub?: string; calendarUrl?: string; directSupervisorId?: string } = {},
+    data: {
+      nextcloudSub?: string;
+      calendarUrl?: string;
+      directSupervisorId?: string;
+      signInMethod?: "SSO" | "LOCAL";
+    } = {},
   ) =>
     db.user.create({
       data: { email, name: email.split("@")[0], baseRole: "TECH", ...data },
@@ -5918,6 +5933,38 @@ async function main() {
     "|share-stale@417networks.com",
   );
 
+  // ...and when that old name has since been given to somebody else, it is
+  // that somebody else NextCloud finds. Their address is what tells them apart.
+  const reissued = await sharePerson("share-reissued@417networks.com", {
+    nextcloudSub: "nc-reused",
+  });
+  addPrincipal("nc-reused", "new.person@417networks.com");
+  addPrincipal("share-reissued@417networks.com", "share-reissued@417networks.com");
+  check(
+    "a username now somebody else's is passed over for the one that is theirs",
+    `${shareReasons(await ensureUserCalendar(config, reissued.id))}|${sharedWith(reissued.email)}`,
+    "|share-reissued@417networks.com",
+  );
+
+  const taken = await sharePerson("share-taken@417networks.com", { nextcloudSub: "nc-taken" });
+  addPrincipal("nc-taken", "other.person@417networks.com");
+  const takenReasons = shareReasons(await ensureUserCalendar(config, taken.id));
+  check(
+    "and with no name of theirs left, nobody else is shared with",
+    `${takenReasons.includes('"nc-taken" in NextCloud has the address other.person@417networks.com')} · ${sharesSentTo(taken.email)}`,
+    "true · 0",
+  );
+
+  // An outside account has no NextCloud user to share with, now or ever.
+  const outside = await sharePerson("share-outside@417networks.com", {
+    signInMethod: "LOCAL",
+  });
+  check(
+    "an outside account's calendar is not offered to NextCloud, nor reported as unshared",
+    `${shareReasons(await ensureUserCalendar(config, outside.id))}|${recorded.some((entry) => entry.url.includes("principals/users/share-outside"))}`,
+    "|false",
+  );
+
   // Signing in is where a guess stops being one. Their crew's calendars come
   // with them; one not made in this NextCloud yet waits for its next push.
   const crewBoss = await sharePerson("share-boss@417networks.com", {
@@ -5981,7 +6028,60 @@ async function main() {
     } events written`,
     "1 of 2 events written",
   );
+  // The jobs are in the calendar all the same: who can see it is the
+  // person's problem, not the job's, and a job is not marked as failing for it.
+  const unseenJobs = await db.job.findMany({
+    where: { id: { in: theirJobs.map((job) => job.id) } },
+    select: { calendarSyncError: true, calendarSyncedAt: true },
+  });
+  check(
+    "and its jobs are synced, not failed",
+    unseenJobs.map((job) => `${job.calendarSyncError} ${job.calendarSyncedAt !== null}`).join(", "),
+    "null true, null true",
+  );
   await db.job.deleteMany({ where: { id: { in: theirJobs.map((job) => job.id) } } });
+
+  // A new NextCloud's own limit on calendars made an hour: named for what it
+  // is, said once a sweep, and kept on every job whose event it stopped.
+  const limited = await sharePerson("share-limited@417networks.com");
+  addPrincipal("share-limited@417networks.com", "share-limited@417networks.com");
+  const limitedJobs = await Promise.all(
+    [9007, 9008].map((sequence) =>
+      db.job.create({
+        data: {
+          ...base,
+          title: `Held back ${sequence}`,
+          intWoId: `2607-0000-${sequence}`,
+          intWoSequence: sequence,
+          scheduledStart: new Date(Date.now() + 2 * 24 * 60 * 60_000),
+          estimateMinutes: 60,
+          assignments: { create: { userId: limited.id, payType: "HOURLY", payRate: "45" } },
+        },
+      }),
+    ),
+  );
+  refuseCalendars = 429;
+  const heldBack = await syncAll(sup.id);
+  refuseCalendars = null;
+  const heldBackFailures = heldBack.failures.filter((failure) => failure.target === limited.email);
+  check(
+    "a calendar NextCloud will not make yet is one failure a sweep, named as its limit",
+    `${heldBackFailures.length} · ${heldBackFailures[0]?.reason.includes("rateLimitCalendarCreation")}`,
+    "1 · true",
+  );
+  check(
+    "and every job it held back keeps the reason",
+    (
+      await db.job.findMany({
+        where: { id: { in: limitedJobs.map((job) => job.id) } },
+        select: { calendarSyncError: true },
+      })
+    )
+      .map((job) => Boolean(job.calendarSyncError?.includes("rateLimitCalendarCreation")))
+      .join(","),
+    "true,true",
+  );
+  await db.job.deleteMany({ where: { id: { in: limitedJobs.map((job) => job.id) } } });
 
   await db.user.deleteMany({ where: { email: { in: sharePeople } } });
 

@@ -177,6 +177,26 @@ export async function ensureCalendar(
   const present = await collectionExists(config, url);
   if (present.ok) return { ok: true, status: result.status };
 
+  // NextCloud's own limits on one account, which filling a new NextCloud
+  // meets first: so many calendars made an hour, and so many in all. Named,
+  // because the message below would send somebody off to check the proxy.
+  if (result.status === 429) {
+    return {
+      ok: false,
+      status: 429,
+      body: result.body,
+      detail: `NextCloud refused (HTTP 429): ${config.username} has made as many calendars as it may in an hour (dav rateLimitCalendarCreation, 10 by default). Raise it, or sync again in an hour.`,
+    };
+  }
+  if (result.status === 403) {
+    return {
+      ok: false,
+      status: 403,
+      body: result.body,
+      detail: `NextCloud refused the calendar (HTTP 403). ${config.username} may have as many calendars as one account is allowed (dav maximumCalendarsSubscriptions, 30 by default; -1 lifts it).`,
+    };
+  }
+
   // Said in full, because the two causes need opposite fixes: a rejected
   // MKCALENDAR is a permissions or account problem on NextCloud, and a
   // rejected MKCALENDAR the server never saw is the proxy in front of it.

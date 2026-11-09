@@ -554,15 +554,19 @@ the copy is lost:
 
 ```bash
 F=/tank/backups/quicktec-2026-07-28.sql.gz
-gzip -t "$F" && docker compose stop app \
+[ "$(zcat "$F" | grep -c 'PostgreSQL database dump complete')" = 1 ] \
+ && docker compose stop app \
  && docker compose exec -T db dropdb -U quicktec --force quicktec \
  && docker compose exec -T db createdb -U quicktec quicktec \
- && gunzip -c "$F" | docker compose exec -T db psql -U quicktec -d quicktec -v ON_ERROR_STOP=1 \
+ && gunzip -c "$F" | docker compose exec -T db psql -U quicktec -d quicktec -1 -v ON_ERROR_STOP=1 \
  && docker compose up -d app
 ```
 
-`gzip -t` checks the file before anything is dropped, so a mistyped name stops
-it there rather than after the database is gone.
+The first line checks the copy is whole before anything is dropped. A
+mistyped name stops it there, and so does a dump that was cut short. Such a
+dump still makes a perfectly valid archive, so `gzip -t` would pass it. `-1`
+restores in one transaction, so a copy that fails part-way leaves nothing
+half-restored behind it.
 
 Uploads are **not** served from the filesystem — every read goes through
 `/api/files/<id>`, which applies the same job-scope check as the page linking

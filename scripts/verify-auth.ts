@@ -103,18 +103,26 @@ const CALDAV_USER = process.env.CALDAV_USERNAME || "417-sys";
 const dav: { method: string; url: string; body: string }[] = [];
 /** Who the stand-in has been asked to share a calendar with, and kept. */
 const davShares = new Set<string>();
+/** The address each of the stand-in's users has, by username. */
+const davEmails = new Map<string, string>();
 
 /**
  * Enough of NextCloud's DAV for a calendar shared at sign-in: every user
- * exists, a share is kept, and the calendar says who it is shared with.
+ * exists, with the address it has been given, a share is kept, and the
+ * calendar says who it is shared with.
  */
 function answerDav(method: string, url: string, body: string, res: ServerResponse) {
   dav.push({ method, url, body });
-  if (method === "PROPFIND" && url.startsWith("/remote.php/dav/principals/users/")) {
+  const PRINCIPALS = "/remote.php/dav/principals/users/";
+  if (method === "PROPFIND" && url.startsWith(PRINCIPALS)) {
+    const name = decodeURIComponent(url.slice(PRINCIPALS.length).replace(/\/$/, ""));
+    const email = davEmails.get(name);
     res
       .writeHead(207)
       .end(
-        `<d:multistatus xmlns:d="DAV:"><d:response><d:href>${url}</d:href></d:response></d:multistatus>`,
+        `<d:multistatus xmlns:d="DAV:" xmlns:s="http://sabredav.org/ns"><d:response><d:href>${url}</d:href><d:propstat><d:prop>${
+          email ? `<s:email-address>${email}</s:email-address>` : "<s:email-address/>"
+        }</d:prop></d:propstat></d:response></d:multistatus>`,
       );
     return;
   }
@@ -431,6 +439,7 @@ async function main() {
   // that is everybody at once. Signing in is where it learns the real one,
   // and the calendar it keeps for them is shared under it.
   const ivysCalendar = `/remote.php/dav/calendars/${CALDAV_USER}/${calendarSlug(emails[0])}`;
+  davEmails.set("u-idtoken", emails[0]);
   await db.user.update({
     where: { id: fromIdToken!.id },
     data: { calendarUrl: `${NC}${ivysCalendar}` },
