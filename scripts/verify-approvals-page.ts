@@ -715,7 +715,7 @@ async function main() {
     1,
   );
 
-  await techPage.getByRole("button", { name: "Send back for review" }).click();
+  await techPage.getByRole("button", { name: "Resubmit for review" }).click();
   await techPage.waitForTimeout(2500);
 
   const resubmitted = await db.job.findUniqueOrThrow({
@@ -1465,6 +1465,63 @@ async function main() {
     new URL(supProjects.url()).pathname,
     "/projects",
   );
+
+  // Somebody who only works on a project reads it; they do not run it. The
+  // cards on their Projects page, the project's name on each of their jobs
+  // and the notice telling them they were added all lead to its page, which
+  // used to send them straight back to the list.
+  await db.projectMember.upsert({
+    where: {
+      projectId_userId: { projectId: elsewhere.id, userId: tech.user.id },
+    },
+    update: { role: "TECH" },
+    create: { projectId: elsewhere.id, userId: tech.user.id, role: "TECH" },
+  });
+  const techProject = await pageFor(tech.token);
+  await techProject.goto(`${BASE}/projects/${elsewhere.id}`, { waitUntil: "load" });
+  check(
+    "a tech on a project can open it",
+    new URL(techProject.url()).pathname,
+    `/projects/${elsewhere.id}`,
+  );
+  check(
+    "and reads who is on it",
+    await techProject.getByText("Who is on this project.").isVisible(),
+    true,
+  );
+  check(
+    "without a way into its settings",
+    await techProject.getByRole("link", { name: "Settings" }).count(),
+    0,
+  );
+  check(
+    "or its history",
+    await techProject.getByText("Timeline", { exact: true }).count(),
+    0,
+  );
+  check(
+    "or a job on it that is not theirs",
+    await techProject.getByText("Numbered before project IDs").count(),
+    0,
+  );
+  await techProject.goto(`${BASE}/projects/${elsewhere.id}/settings`, {
+    waitUntil: "load",
+  });
+  check(
+    "and the settings themselves stay shut",
+    new URL(techProject.url()).pathname,
+    "/projects",
+  );
+  await db.projectMember.deleteMany({
+    where: { projectId: elsewhere.id, userId: tech.user.id },
+  });
+  await techProject.goto(`${BASE}/projects/${elsewhere.id}`, { waitUntil: "load" });
+  check(
+    "taken off it, they are turned away again",
+    new URL(techProject.url()).pathname,
+    "/projects",
+  );
+  await techProject.close();
 
   // They ran this one earlier, so it is theirs to open.
   await supProjects.goto(`${BASE}/projects/${project.id}/settings`, {

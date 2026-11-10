@@ -20,17 +20,23 @@ import {
 } from "@/components/ui/card";
 import { EmptyState, PageHeader } from "@/components/ui/page-header";
 import { requestedAvatarSrc } from "@/lib/avatar";
+import {
+  readableRequest,
+  requestKind,
+  siteNamesFor,
+  type StoredRequest,
+} from "@/lib/change-request-display";
 import { getCompanySettings } from "@/lib/company";
 import { isoDateInZone, usDateTimeInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
-import { JOB_FIELDS, isJobField } from "@/lib/job-fields";
+import { OUTCOME_META } from "@/lib/job-status";
 import { formatMoney } from "@/lib/money";
 import { isGuest } from "@/lib/permissions";
 import { canSupervise } from "@/lib/supervisors";
 import { loadPrivacySettings, managesProfiles, PICTURE_SELECT, pictureFor } from "@/lib/profile";
 import { jobScopeWhere, reportIds } from "@/lib/scope";
 import { getSessionUser, permissionScope } from "@/lib/session";
-import { DecidedList, fieldKind, type DecidedRow } from "./decided";
+import { DecidedList, type DecidedRow } from "./decided";
 import { NotificationsPanel } from "./notifications-panel";
 import {
   ApprovalTabs,
@@ -39,6 +45,14 @@ import {
 } from "./tabs";
 
 export const metadata = { title: "Approvals" };
+
+/** The job a request is about, and the clock its times are read on. */
+const REQUEST_JOB = {
+  id: true,
+  title: true,
+  intWoId: true,
+  site: { select: { timeZone: true } },
+} as const;
 
 /**
  * Everything waiting on this person, in one place.
@@ -63,6 +77,20 @@ export default async function ApprovalsPage({
   const company = await getCompanySettings();
   const zone = company.defaultTimeZone;
 
+  /**
+   * The same requests with both sides of the arrow written out: a site by its
+   * number, a time on the job's own clock, a punch as the times asked for.
+   */
+  async function readable<
+    T extends StoredRequest & { job: { site: { timeZone: string | null } } },
+  >(rows: T[]): Promise<T[]> {
+    const sites = await siteNamesFor(rows);
+    return rows.map((row) => ({
+      ...row,
+      ...readableRequest(row, row.job.site.timeZone ?? zone, sites),
+    }));
+  }
+
   // Notifications are personal — no scope involved, they are addressed to you.
   const notifications = await db.notification.findMany({
     where: { userId: user.id, acknowledgedAt: null },
@@ -81,7 +109,7 @@ export default async function ApprovalsPage({
   const changeWhere = await jobScopeWhere(user, "job.approve_change");
   const reportWhere = await jobScopeWhere(user, "job.approve_report");
 
-  const [changeRequests, adHocJobs, pendingReview, payrollPeriods, profileRequests] =
+  const [waitingRequests, adHocJobs, pendingReview, payrollPeriods, profileRequests] =
     await Promise.all([
       changeWhere
         ? db.changeRequest.findMany({
@@ -96,7 +124,7 @@ export default async function ApprovalsPage({
               reason: true,
               createdAt: true,
               requestedBy: { select: { name: true } },
-              job: { select: { id: true, title: true, intWoId: true } },
+              job: { select: REQUEST_JOB },
             },
           })
         : [],
@@ -190,6 +218,8 @@ export default async function ApprovalsPage({
           }),
     ]);
 
+  const changeRequests = await readable(waitingRequests);
+
   // Whose request it is, by face as well as by name.
   const privacy = profileRequests.length > 0 ? await loadPrivacySettings() : null;
   const requestPictures = new Map(
@@ -216,7 +246,7 @@ export default async function ApprovalsPage({
   // but is the person most likely to be wondering where it got to.
   const outgoing: DecidedRow[] =
     active === "outgoing"
-      ? (
+      ? (await readable(
           await db.changeRequest.findMany({
             where: { requestedById: user.id },
             orderBy: [{ status: "asc" }, { createdAt: "desc" }],
@@ -230,13 +260,13 @@ export default async function ApprovalsPage({
               createdAt: true,
               reviewedAt: true,
               reviewedBy: { select: { name: true } },
-              job: { select: { id: true, title: true, intWoId: true } },
+              job: { select: REQUEST_JOB },
             },
-          })
-        ).map((request) => ({
+          }),
+        )).map((request) => ({
           id: request.id,
           href: `/jobs/${request.job.id}`,
-          kind: fieldKind(request.fieldPath),
+          kind: requestKind(request.fieldPath),
           title: request.job.title,
           subtitle: request.job.intWoId,
           from: request.oldValue,
@@ -267,7 +297,7 @@ export default async function ApprovalsPage({
     active === "archive"
       ? [
           ...(changeWhere
-            ? (
+            ? (await readable(
                 await db.changeRequest.findMany({
                   where: { status: { not: "PENDING" }, job: changeWhere },
                   orderBy: { reviewedAt: "desc" },
@@ -282,13 +312,13 @@ export default async function ApprovalsPage({
                     reviewedAt: true,
                     requestedBy: { select: { name: true } },
                     reviewedBy: { select: { name: true } },
-                    job: { select: { id: true, title: true, intWoId: true } },
+                    job: { select: REQUEST_JOB },
                   },
-                })
-              ).map((request) => ({
+                }),
+              )).map((request) => ({
                 id: `change-${request.id}`,
                 href: `/jobs/${request.job.id}`,
-                kind: fieldKind(request.fieldPath),
+                kind: requestKind(request.fieldPath),
                 title: request.job.title,
                 subtitle: request.job.intWoId,
                 from: request.oldValue,
@@ -443,9 +473,7 @@ export default async function ApprovalsPage({
               >
                 <div className="flex flex-wrap items-center gap-2 text-sm">
                   <Badge variant="warning">
-                    {isJobField(request.fieldPath)
-                      ? JOB_FIELDS[request.fieldPath].label
-                      : request.fieldPath}
+                    {requestKind(request.fieldPath)}
                   </Badge>
                   <span className="font-medium">{request.job.title}</span>
                   <span className="tabular text-xs text-muted-foreground">
@@ -458,10 +486,19 @@ export default async function ApprovalsPage({
                   </span>
                   <ArrowRight className="size-3 text-muted-foreground" />
                   <span>{request.newValue || "empty"}</span>
-                  <span className="text-muted-foreground">
-                    · {request.requestedBy.name} ·{" "}
-                    {usDateTimeInZone(request.createdAt, zone)}
-                  </span>
+                </div>
+                {/* Why, where they gave a reason: it is most of what the
+                    answer turns on, and it was only on the job's own page. */}
+                {request.reason ? (
+                  <p className="text-xs text-muted-foreground">
+                    “{request.reason}”
+                  </p>
+                ) : null}
+                {/* A line of its own. Run on after the values it wrapped
+                    under them with its leading dot left hanging. */}
+                <div className="text-xs text-muted-foreground">
+                  {request.requestedBy.name} ·{" "}
+                  {usDateTimeInZone(request.createdAt, zone)}
                 </div>
               </Link>
             ))}
@@ -589,7 +626,9 @@ export default async function ApprovalsPage({
                     {job.intWoId}
                   </span>
                   {job.outcome ? (
-                    <Badge variant="neutral">{job.outcome}</Badge>
+                    <Badge variant={OUTCOME_META[job.outcome].variant}>
+                      {OUTCOME_META[job.outcome].label}
+                    </Badge>
                   ) : null}
                   <span className="text-xs text-muted-foreground">
                     {job.assignments.map((a) => a.user.name).join(", ")}

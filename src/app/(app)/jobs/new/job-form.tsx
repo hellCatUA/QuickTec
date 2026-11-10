@@ -27,6 +27,7 @@ import { MarkdownEditor } from "@/components/ui/markdown-editor";
 import { Section } from "@/components/ui/section";
 import { HoursPicker, Stepper } from "@/components/ui/stepper";
 import { formatIntWo } from "@/lib/int-wo-format";
+import { ROLE_LABEL } from "@/lib/profile-format";
 import { cn } from "@/lib/utils";
 import { createJob, type ActionResult } from "../actions";
 import { DispatchList, type DraftContact } from "./dispatch-list";
@@ -899,7 +900,9 @@ export function JobForm({
                   {projectMembers.includes(id) ? (
                     <Badge variant="primary">On the project</Badge>
                   ) : null}
-                  <Badge variant="neutral">{tech.baseRole}</Badge>
+                  <Badge variant="neutral">
+                    {ROLE_LABEL[tech.baseRole] ?? tech.baseRole}
+                  </Badge>
 
                   <label className="flex items-center gap-1.5 text-xs">
                     <input
@@ -1204,9 +1207,14 @@ export function JobForm({
       {needsApproval ? (
         <div className="flex items-start gap-2 rounded-lg bg-warning/15 p-3 text-sm text-warning ring-1 ring-inset ring-warning/30">
           <Info className="mt-0.5 size-4 shrink-0" />
-          This job was not scheduled by a supervisor, so it will be created as
-          <strong className="mx-1">Pending approval</strong>. You can start work
-          on it straight away — approval catches up afterwards.
+          {/* One element, so the sentence is one flex item. Loose in the row,
+              each run of text and the <strong> became a column of its own and
+              the notice read as three narrow paragraphs side by side. */}
+          <p>
+            This job was not scheduled by a supervisor, so it will be created
+            as <strong>Pending approval</strong>. You can start work on it
+            straight away — approval catches up afterwards.
+          </p>
         </div>
       ) : null}
 

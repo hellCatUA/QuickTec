@@ -19,7 +19,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { WeekSchedule, type ScheduleDay } from "@/components/week-schedule";
-import { siteLabel } from "@/lib/address";
+import { siteLabelOnScreen } from "@/lib/address";
 import { getCompanySettings } from "@/lib/company";
 import {
   endOfWeekMonday,
@@ -71,7 +71,9 @@ export default async function DashboardPage() {
           where: {
             AND: [
               jobWhere,
-              { scheduledStart: { gte: weekStart, lte: weekEnd } },
+              // weekEnd is next Monday's midnight: the first instant of the
+              // week after, not the last of this one.
+              { scheduledStart: { gte: weekStart, lt: weekEnd } },
               { lifecycle: { notIn: ["CLOSED"] } },
             ],
           },
@@ -249,9 +251,7 @@ export default async function DashboardPage() {
       id: job.id,
       intWoId: job.intWoId,
       title: job.title,
-      siteLabel: job.site.numberPending
-        ? `${job.customer.code} — number pending`
-        : siteLabel(job.customer.code, job.site.siteNumber),
+      siteLabel: siteLabelOnScreen(job.customer.code, job.site),
       city: job.site.city,
       state: job.site.state,
       time: usTimeInZone(job.scheduledStart, siteZone),
@@ -301,7 +301,12 @@ export default async function DashboardPage() {
       ].filter((check) => !check.done)
     : [];
 
-  const weekLabel = `${zonedParts(weekStart, zone).month}/${zonedParts(weekStart, zone).day} – ${zonedParts(weekEnd, zone).month}/${zonedParts(weekEnd, zone).day}`;
+  // Monday to Sunday. weekEnd is the Monday after, so the label takes the last
+  // day on the list — the week read "11/9 – 11/16" above seven days ending
+  // on the 15th.
+  const firstDay = zonedParts(weekStart, zone);
+  const lastDay = zonedParts(new Date(weekEnd.getTime() - 12 * 3_600_000), zone);
+  const weekLabel = `${firstDay.month}/${firstDay.day} – ${lastDay.month}/${lastDay.day}`;
 
   return (
     <div className="mx-auto flex max-w-5xl flex-col gap-4">
@@ -329,7 +334,14 @@ export default async function DashboardPage() {
           <CardDescription className="tabular">{weekLabel}</CardDescription>
         </CardHeader>
         <CardContent>
-          <WeekSchedule days={days} />
+          {/* Their own name is left off their own jobs — but only for somebody
+              who sees just their own. On a manager's week every name counts. */}
+          <WeekSchedule
+            days={days}
+            selfName={
+              permissionScope(user, "job.view") === "OWN" ? user.name : undefined
+            }
+          />
         </CardContent>
       </Card>
 

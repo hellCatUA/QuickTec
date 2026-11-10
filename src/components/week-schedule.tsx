@@ -45,7 +45,17 @@ export type ScheduleDay = {
  * information, and a list that silently omits Wednesday reads as a week with
  * no Wednesday in it.
  */
-export function WeekSchedule({ days }: { days: ScheduleDay[] }) {
+export function WeekSchedule({
+  days,
+  selfName,
+}: {
+  days: ScheduleDay[];
+  /**
+   * Whose week this is, when it is one person's. Their own name on every row
+   * of their own schedule says nothing; who else is coming does.
+   */
+  selfName?: string;
+}) {
   const total = days.reduce((count, day) => count + day.jobs.length, 0);
 
   if (total === 0) {
@@ -77,7 +87,9 @@ export function WeekSchedule({ days }: { days: ScheduleDay[] }) {
             {day.jobs.length === 0 ? (
               <p className="pl-1 text-xs text-muted-foreground">—</p>
             ) : (
-              day.jobs.map((job) => <JobRow key={job.id} job={job} />)
+              day.jobs.map((job) => (
+                <JobRow key={job.id} job={job} selfName={selfName} />
+              ))
             )}
           </div>
         ))}
@@ -113,7 +125,9 @@ export function WeekSchedule({ days }: { days: ScheduleDay[] }) {
             {day.jobs.length === 0 ? (
               <span className="text-xs text-muted-foreground">—</span>
             ) : (
-              day.jobs.map((job) => <JobChip key={job.id} job={job} />)
+              day.jobs.map((job) => (
+                <JobChip key={job.id} job={job} selfName={selfName} />
+              ))
             )}
           </div>
         ))}
@@ -122,40 +136,77 @@ export function WeekSchedule({ days }: { days: ScheduleDay[] }) {
   );
 }
 
-function JobRow({ job }: { job: ScheduledJob }) {
+/**
+ * Who is on a job, as one line.
+ *
+ * On somebody's own week their name is dropped and the rest read "with …";
+ * a job that is theirs alone needs no line at all. Null when there is nothing
+ * worth saying, and never for an empty crew — that is said separately, in the
+ * warning colour, because it is the one thing here somebody has to act on.
+ */
+function crewLine(crew: string[], selfName?: string): string | null {
+  if (crew.length === 0) return null;
+  if (!selfName || !crew.includes(selfName)) return crew.join(", ");
+  const others = crew.filter((name) => name !== selfName);
+  return others.length > 0 ? `with ${others.join(", ")}` : null;
+}
+
+/**
+ * One job on a phone.
+ *
+ * The time and the status share the top line and everything else has the
+ * full width under them. The row used to be four things side by side — time,
+ * text, badge, chevron — which at 390px left the title about a hundred
+ * pixels: "POS register r…", "SBUX #10542 ·…", and a time broken over two
+ * lines, on the one screen people open to find out where they are going.
+ */
+function JobRow({ job, selfName }: { job: ScheduledJob; selfName?: string }) {
+  const crew = crewLine(job.crew, selfName);
+
   return (
     <Link
       href={`/jobs/${job.id}`}
-      className="flex items-center gap-3 rounded-lg border border-border bg-surface p-2.5 hover:bg-muted"
+      className="flex items-center gap-2 rounded-lg border border-border bg-surface p-2.5 hover:bg-muted"
     >
-      <span className="tabular w-14 shrink-0 text-sm font-medium">
-        {job.time ?? "—"}
-      </span>
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="flex items-center justify-between gap-2">
+          <span className="tabular whitespace-nowrap text-sm font-semibold">
+            {job.time ?? "No time set"}
+          </span>
+          <Badge variant={LIFECYCLE_META[job.lifecycle].variant}>
+            {LIFECYCLE_META[job.lifecycle].label}
+          </Badge>
+        </span>
 
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-medium">{job.title}</span>
-        <span className="block truncate text-xs text-muted-foreground">
+        <span className="line-clamp-2 text-sm font-medium">{job.title}</span>
+
+        <span className="truncate text-xs text-muted-foreground">
           <MapPin className="mr-1 inline size-3" />
           {job.siteLabel}
           {job.city ? ` · ${job.city}` : ""}
           {job.state ? `, ${job.state}` : ""}
         </span>
-        {job.crew.length > 0 ? (
-          <span className="block truncate text-xs text-muted-foreground">
-            {job.crew.join(", ")}
-          </span>
+
+        {job.crew.length === 0 ? (
+          <span className="text-xs text-warning">Nobody assigned</span>
+        ) : crew ? (
+          <span className="truncate text-xs text-muted-foreground">{crew}</span>
         ) : null}
       </span>
 
-      <Badge variant={LIFECYCLE_META[job.lifecycle].variant}>
-        {LIFECYCLE_META[job.lifecycle].label}
-      </Badge>
       <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
     </Link>
   );
 }
 
-function JobChip({ job }: { job: ScheduledJob }) {
+function JobChip({ job, selfName }: { job: ScheduledJob; selfName?: string }) {
+  // First names: the column is a hundred and fifty pixels and the question
+  // is who, not how they spell it.
+  const crew = crewLine(
+    job.crew.map((name) => name.split(" ")[0]),
+    selfName?.split(" ")[0],
+  );
+
   return (
     <Link
       href={`/jobs/${job.id}`}
@@ -176,6 +227,15 @@ function JobChip({ job }: { job: ScheduledJob }) {
       <span className="truncate text-[10px] text-muted-foreground">
         {job.siteLabel}
       </span>
+      {job.crew.length === 0 ? (
+        <span className="truncate text-[10px] text-warning">
+          Nobody assigned
+        </span>
+      ) : crew ? (
+        <span className="truncate text-[10px] text-muted-foreground">
+          {crew}
+        </span>
+      ) : null}
     </Link>
   );
 }

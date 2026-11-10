@@ -1,4 +1,4 @@
-import { siteLabel } from "@/lib/address";
+import { siteLabelOnScreen } from "@/lib/address";
 import { getCompanySettings } from "@/lib/company";
 import { usDateTimeInZone, usTimeInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
@@ -124,11 +124,7 @@ async function detailChanges(
   const siteNames = new Map(
     sites.map((site) => [
       site.id,
-      `${site.customer.name} · ${
-        site.numberPending
-          ? "number pending"
-          : siteLabel(site.customer.code, site.siteNumber)
-      }`,
+      `${site.customer.name} · ${siteLabelOnScreen(site.customer.code, site)}`,
     ]),
   );
 

@@ -41,6 +41,7 @@ export default async function CustomerSitesPage({
           select: {
             id: true,
             siteNumber: true,
+            numberPending: true,
             name: true,
             addressLine1: true,
             addressLine2: true,

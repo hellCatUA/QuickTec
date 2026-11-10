@@ -73,7 +73,11 @@ import {
 } from "@prisma-client";
 
 export type ActionResult =
-  | { ok: true }
+  | {
+      ok: true;
+      /** What was made, where the caller goes on to refer to it. */
+      id?: string;
+    }
   | {
       ok: false;
       error: string;
@@ -1189,7 +1193,15 @@ export async function suggestChange(
     where: { id: jobId },
     select: { [field]: true } as Record<string, true>,
   });
-  const previous = (current as Record<string, unknown> | null)?.[field] ?? null;
+  const stored = (current as Record<string, unknown> | null)?.[field] ?? null;
+  // A time is held as an instant and typed as the site's wall clock. Compared
+  // and recorded in the shape it was typed in — the same shape the details
+  // form records — or "already on the job" never matches, and the request
+  // keeps "Tue Nov 10 2026 22:00:00 GMT+0000" as what it was changed from.
+  const previous =
+    stored instanceof Date
+      ? toDatetimeLocalInZone(stored, job.timeZone)
+      : stored;
 
   if (String(previous ?? "") === value.trim()) {
     return fail("That is the value already on the job.");
@@ -1900,7 +1912,7 @@ export async function addPointOfContact(
 
   const count = await db.pointOfContact.count({ where: { jobId, type } });
 
-  await db.pointOfContact.create({
+  const contact = await db.pointOfContact.create({
     data: {
       jobId,
       type,
@@ -1911,6 +1923,7 @@ export async function addPointOfContact(
       email: email || null,
       order: count,
     },
+    select: { id: true },
   });
 
   await recordAudit({
@@ -1923,7 +1936,10 @@ export async function addPointOfContact(
   });
 
   touch(jobId);
-  return ok;
+  // Handed back so a signature taken in the same breath — checkout writes the
+  // MOD down and has them sign — is kept against them rather than against
+  // nobody.
+  return { ok: true, id: contact.id };
 }
 
 const contactEditSchema = z.object({

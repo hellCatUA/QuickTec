@@ -27,8 +27,12 @@ export function Line({
   return (
     <div className="border-t border-border first:border-t-0">
       <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-1 px-4 py-3 text-sm sm:grid-cols-[10rem_minmax(0,1fr)_auto] sm:items-center sm:gap-4">
-        <dt className="text-muted-foreground">{label}</dt>
-        <div className="row-start-1 flex items-center justify-end gap-1 sm:col-start-3">
+        {/* Each told its column. With only a row to go on, the grid seated
+            the controls first — in the wide column — and the label in what
+            was left, so on a phone every label sat at the right-hand edge
+            over a value at the left. */}
+        <dt className="col-start-1 text-muted-foreground">{label}</dt>
+        <div className="col-start-2 row-start-1 flex items-center justify-end gap-1 sm:col-start-3">
           <LevelBadge level={level} iconOnly className="hidden sm:inline-flex" />
           {userId && field ? (
             <HistoryButton label={label} open={open} onToggle={() => setOpen((was) => !was)} />

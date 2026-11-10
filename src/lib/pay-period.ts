@@ -1,4 +1,4 @@
-import { formatAddress, siteLabel } from "@/lib/address";
+import { formatAddress, siteLabelOnScreen } from "@/lib/address";
 import {
   isoDateInZone,
   startOfWeekMonday,
@@ -252,6 +252,7 @@ async function jobsInRange(
           site: {
             select: {
               siteNumber: true,
+              numberPending: true,
               addressLine1: true,
               addressLine2: true,
               city: true,
@@ -332,9 +333,9 @@ async function jobsInRange(
       intWoId: assignment.job.intWoId,
       title: assignment.job.title,
       payingCompany: assignment.job.client.name,
-      site: siteLabel(
+      site: siteLabelOnScreen(
         assignment.job.customer.code,
-        assignment.job.site.siteNumber ?? "—",
+        assignment.job.site,
       ),
       address: formatAddress(assignment.job.site),
       outcome: assignment.job.outcome,

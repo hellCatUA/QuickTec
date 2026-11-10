@@ -1,6 +1,8 @@
 import { notFound, redirect } from "next/navigation";
 import { PageHeader } from "@/components/ui/page-header";
 import { formatAddress, siteLabel } from "@/lib/address";
+import { readableRequest, siteNamesFor } from "@/lib/change-request-display";
+import { DEFAULT_TIME_ZONE } from "@/lib/datetime";
 import { db } from "@/lib/db";
 import { detailsEditable } from "@/lib/job-fields";
 import { portalBackHref } from "@/lib/job-portal";
@@ -50,6 +52,7 @@ export default async function EditDetailsPage({
       ticketNumber: true,
       incNumber: true,
       scopeOfWork: true,
+      site: { select: { timeZone: true } },
       assignments: { select: { userId: true } },
       changeRequests: {
         where: { status: "PENDING", requestedById: user.id },
@@ -117,9 +120,18 @@ export default async function EditDetailsPage({
     customerName: site.customer.name,
   }));
 
+  // What they have already asked for, said the way the form says it: a site
+  // by its number, not by the id it is stored under.
+  const asked = job.changeRequests.map((request) => ({
+    ...request,
+    oldValue: null,
+  }));
+  const askedSites = await siteNamesFor(asked);
   const pending: Record<string, string> = {};
-  for (const request of job.changeRequests) {
-    pending[request.fieldPath] = request.newValue ?? "(cleared)";
+  for (const request of asked) {
+    pending[request.fieldPath] =
+      readableRequest(request, job.site.timeZone ?? DEFAULT_TIME_ZONE, askedSites)
+        .newValue ?? "(cleared)";
   }
 
   return (

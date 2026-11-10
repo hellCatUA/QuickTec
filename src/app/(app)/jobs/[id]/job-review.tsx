@@ -52,10 +52,10 @@ type Outcome = "back" | "reject";
  * Signing a job off, one pass at a time.
  *
  * The button on its own asked somebody to vouch for a day they did not see, and
- * the only possible answer was yes. This walks the four things that go wrong —
- * the clock, what was produced, what is being paid back, and what the client is
- * about to be told — with the things that do not look right already found and
- * put in front of them.
+ * the only possible answer was yes. This walks the things that go wrong — what
+ * was changed on the job, the clock, what was produced, what is being paid
+ * back, and what the client is about to be told — with the things that do not
+ * look right already found and put in front of them.
  *
  * Three changes from the version that was only a slideshow. Each pass is ticked
  * and the tick is recorded, so a review survives a phone going to sleep and so
@@ -154,13 +154,13 @@ export function JobReview({
         <CardTitle>Review before approving</CardTitle>
         <CardDescription>
           {outstanding.length === 0
-            ? "All four passes done. Approve, or send it back."
+            ? "Every pass is done. Approve, or send it back."
             : `${outstanding.length} of ${steps.length} still to go through.`}
         </CardDescription>
       </CardHeader>
 
       <CardContent className="flex flex-col gap-4">
-        {/* All four along the top, so it is obvious from the first screen
+        {/* All of them along the top, so it is obvious from the first screen
             whether anything further on needs attention — and which passes have
             already been signed off. */}
         <div className="flex flex-wrap gap-1.5">
@@ -183,7 +183,17 @@ export function JobReview({
                 variant={position === index ? "primary" : "ghost"}
                 onClick={() => setIndex(position)}
               >
-                <Badge variant={level}>
+                {/* On the pass that is open the button is the primary colour,
+                    and a badge in a tint of that same colour is a blank where
+                    its icon should be. There it takes the button's own ink. */}
+                <Badge
+                  variant={level}
+                  className={
+                    position === index
+                      ? "bg-primary-foreground/15 text-primary-foreground ring-primary-foreground/30"
+                      : undefined
+                  }
+                >
                   {one.checked ? (
                     <CircleCheck className="size-3" />
                   ) : one.stale ? (
@@ -451,7 +461,7 @@ export function JobReview({
 
           {outstanding.length > 0 && outcome === null ? (
             <p className="text-xs text-muted-foreground">
-              Approving needs all four passes:{" "}
+              Approving needs every pass:{" "}
               {outstanding.map((one) => one.title).join(", ")} still to go.
             </p>
           ) : null}

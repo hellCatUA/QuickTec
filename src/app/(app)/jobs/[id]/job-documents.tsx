@@ -43,6 +43,7 @@ export function JobDocuments({
   canUpload,
   only,
   heading = true,
+  keepsDirectory = false,
 }: {
   jobId: string;
   documents: JobDocument[];
@@ -66,6 +67,13 @@ export function JobDocuments({
   heading?: boolean;
   /** On the job: allowed to attach, and to remove their own upload. */
   canUpload: boolean;
+  /**
+   * Whether they could add a company's standard sheet in the directory.
+   *
+   * The empty sign-off box used to tell everybody to do that, which for the
+   * tech reading it on site is an instruction to go somewhere they cannot.
+   */
+  keepsDirectory?: boolean;
 }) {
   const [error, setError] = React.useState<string | null>(null);
   const [pending, startTransition] = React.useTransition();
@@ -127,7 +135,13 @@ export function JobDocuments({
           hint="Their blank, filled in and signed on site at the end of the job."
           kind="SIGN_OFF"
           documents={documents.filter((doc) => doc.kind === "SIGN_OFF")}
-          empty="Not attached. If this company has a standard one, add it to them in the directory and it comes across on every job."
+          empty={
+            keepsDirectory
+              ? "Not attached. If this company has a standard one, add it to them in the directory and it comes across on every job."
+              : canUpload
+                ? "Not attached. If you were sent their sheet, attach it here."
+                : "Not attached."
+          }
           canUpload={canUpload}
           pending={pending}
           onUpload={upload}
@@ -242,7 +256,19 @@ function Section({
                   size="icon"
                   aria-label={`Remove ${doc.originalName}`}
                   disabled={pending}
-                  onClick={() => onRemove(doc.id)}
+                  onClick={() => {
+                    // The file itself is deleted, not just taken off the
+                    // list, and the cross is the last thing in a row whose
+                    // first thing is the link that opens it.
+                    if (
+                      !window.confirm(
+                        `Remove ${doc.originalName}? The file is deleted from this job.`,
+                      )
+                    ) {
+                      return;
+                    }
+                    onRemove(doc.id);
+                  }}
                 >
                   <X />
                 </Button>

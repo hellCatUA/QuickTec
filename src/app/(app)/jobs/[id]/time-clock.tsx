@@ -145,7 +145,9 @@ export function TimeClock({
               </p>
             ) : null}
 
-            {totals.unpaidBreakMinutes > 0 ? (
+            {/* From a whole minute up. A break ended as soon as it was started
+                used to announce "0 min of unpaid break deducted from pay". */}
+            {Math.round(totals.unpaidBreakMinutes) >= 1 ? (
               <p className="text-xs text-muted-foreground">
                 {Math.round(totals.unpaidBreakMinutes)} min of unpaid break
                 deducted from pay. The client is still billed for the full
@@ -155,8 +157,16 @@ export function TimeClock({
           </>
         ) : (
           <div className="text-sm text-muted-foreground">
+            {/* Both figures, each called what it is. This line gave the paid
+                hours as "recorded" while Time & schedule further down gave
+                the hours on site with no label either — 3.50 and 3.75 on one
+                page, looking like a mistake in one of them. */}
             {totals.onsiteMinutes > 0
-              ? `Clocked out. ${(totals.paidMinutes / 60).toFixed(2)} hrs recorded so far.`
+              ? `Clocked out. ${(totals.onsiteMinutes / 60).toFixed(2)} hrs on site${
+                  Math.round(totals.unpaidBreakMinutes) >= 1
+                    ? `, ${(totals.paidMinutes / 60).toFixed(2)} paid`
+                    : ""
+                }.`
               : "Not clocked in yet."}
           </div>
         )}

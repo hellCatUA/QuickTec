@@ -1146,6 +1146,36 @@ function RemoveLocation({
   );
 }
 
+type Picked = { key: number; file: File; url: string | null };
+
+/**
+ * One picked file, as a square.
+ *
+ * Its picture where the browser can draw one. A PDF cannot be, and neither
+ * can an iPhone's HEIC anywhere but Safari — those are a name on a tile, which
+ * still says which file it is.
+ */
+function PickedTile({ url, name }: { url: string | null; name: string }) {
+  const [unreadable, setUnreadable] = React.useState(false);
+
+  if (url && !unreadable) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={url}
+        alt={name}
+        onError={() => setUnreadable(true)}
+        className="size-16 rounded-lg border border-border object-cover"
+      />
+    );
+  }
+  return (
+    <span className="flex size-16 items-center justify-center rounded-lg border border-border bg-muted p-1 text-center text-[10px] leading-tight text-muted-foreground [overflow-wrap:anywhere]">
+      <span className="line-clamp-3">{name}</span>
+    </span>
+  );
+}
+
 function UploadForm({
   jobId,
   rule,
@@ -1167,7 +1197,45 @@ function UploadForm({
   onDone: () => void;
   onError: (message: string | null) => void;
 }) {
-  const [files, setFiles] = React.useState<File[]>([]);
+  // What has been picked and not yet sent, each with a picture of itself.
+  //
+  // Picks add up. The control used to hold only the last one: a tech taking
+  // three photos with the camera, one press each, was left with the third and
+  // a line reading "1 file selected" — the same line the first one had got.
+  const [picked, setPicked] = React.useState<Picked[]>([]);
+  const files = picked.map((entry) => entry.file);
+  const pickKey = React.useRef(0);
+  // Every preview address made here and not yet given back to the browser.
+  const previews = React.useRef(new Set<string>());
+  React.useEffect(() => {
+    // The set itself never changes hands, so this is the live one.
+    const made = previews.current;
+    return () => {
+      for (const url of made) URL.revokeObjectURL(url);
+      made.clear();
+    };
+  }, []);
+
+  function pick(chosen: File[]) {
+    const added = chosen.map((file) => {
+      // A PDF has no picture; it is shown by name.
+      const url = file.type.startsWith("image/")
+        ? URL.createObjectURL(file)
+        : null;
+      if (url) previews.current.add(url);
+      return { key: pickKey.current++, file, url };
+    });
+    setPicked((was) => [...was, ...added]);
+  }
+
+  function leaveOut(gone: Picked) {
+    if (gone.url) {
+      URL.revokeObjectURL(gone.url);
+      previews.current.delete(gone.url);
+    }
+    setPicked((was) => was.filter((entry) => entry.key !== gone.key));
+  }
+
   const [text, setText] = React.useState("");
   // Written on each photo in this upload, above its stamp.
   const [label, setLabel] = React.useState("");
@@ -1178,6 +1246,9 @@ function UploadForm({
   const kept = React.useRef<{ itemId: string; text: string } | null>(null);
   const [pending, setPending] = React.useState(false);
   const [done, setDone] = React.useState(0);
+  // How many this attempt set out to send. The list itself shrinks as each
+  // one lands, so it cannot be what "3 of 5" counts against.
+  const [sending, setSending] = React.useState(0);
   const textId = React.useId();
 
   // A return usually goes back in more than one box, and the numbers are long
@@ -1224,6 +1295,8 @@ function UploadForm({
     if ("error" in checked) return onError(checked.error);
     setPending(true);
     setDone(0);
+    const batch = picked;
+    setSending(batch.length);
 
     // The upload is made by the first request and joined by the rest, so the
     // photos land together however many there are.
@@ -1231,7 +1304,8 @@ function UploadForm({
     const textToSend =
       kept.current && kept.current.text === textValue ? "" : textValue;
 
-    for (const [index, original] of files.entries()) {
+    for (const [index, entry] of batch.entries()) {
+      const original = entry.file;
       const prepared = await prepareForUpload(original);
 
       const formData = base();
@@ -1246,9 +1320,14 @@ function UploadForm({
       const result = await saveDeliverable(null, formData);
       if (!result.ok) {
         setPending(false);
-        if (result.id) {
+        // Whichever is known: the one the server names, or the one the
+        // photos before this were already filed under. Without the second a
+        // dropped connection on photo four put photos four to ten in an
+        // upload of their own.
+        const keepId = result.id ?? itemId;
+        if (keepId) {
           kept.current = {
-            itemId: result.id,
+            itemId: keepId,
             text: kept.current?.text ?? textValue,
           };
         }
@@ -1264,6 +1343,10 @@ function UploadForm({
 
       itemId ??= result.id;
       setDone(index + 1);
+      // Saved, so off the list: its square goes as it lands, and trying
+      // again after a failure further on sends what is left rather than
+      // the whole lot a second time.
+      leaveOut(entry);
     }
 
     // Text on its own, with no photos to carry it.
@@ -1371,7 +1454,7 @@ function UploadForm({
           <label className="flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-border px-3 text-sm">
             <Upload className="size-4" />
             {files.length > 0
-              ? `${files.length} file${files.length === 1 ? "" : "s"} selected`
+              ? "Add another photo or file"
               : "Take a photo or choose files"}
             {/* No capture attribute: iOS then offers camera, library and
                 Files from the same control. */}
@@ -1379,12 +1462,43 @@ function UploadForm({
               type="file"
               accept="image/*,application/pdf"
               multiple
+              disabled={pending}
               className="sr-only"
-              onChange={(event) =>
-                setFiles(Array.from(event.target.files ?? []))
-              }
+              onChange={(event) => {
+                pick(Array.from(event.target.files ?? []));
+                // Emptied, so the next pick is always a change — the same
+                // photo can be chosen again after being left out.
+                event.target.value = "";
+              }}
             />
           </label>
+
+          {/* Seen before they are sent. A count said nothing about which
+              photos these were, and the wrong one was only found afterwards,
+              stamped and filed. */}
+          {picked.length > 0 ? (
+            <ul
+              aria-label="Picked, not saved yet"
+              className="flex flex-wrap gap-2.5"
+            >
+              {picked.map((entry) => (
+                <li key={entry.key} className="relative">
+                  <PickedTile url={entry.url} name={entry.file.name} />
+                  <button
+                    type="button"
+                    aria-label={`Leave out ${entry.file.name}`}
+                    disabled={pending}
+                    onClick={() => leaveOut(entry)}
+                    // Drawn small in the corner, pressed over a thumb's
+                    // width of it.
+                    className="absolute -right-2 -top-2 flex size-6 items-center justify-center rounded-full border border-border bg-surface text-muted-foreground shadow before:absolute before:-inset-2.5 before:content-[''] hover:text-danger disabled:opacity-50"
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
 
           {files.length > remaining ? (
             <p className="text-xs text-warning">
@@ -1424,8 +1538,8 @@ function UploadForm({
           {/* Counted, because a spinner on a two-minute upload is
               indistinguishable from one that has stopped. */}
           {pending
-            ? files.length > 1
-              ? `Uploading ${done + 1} of ${files.length}`
+            ? sending > 1
+              ? `Uploading ${Math.min(done + 1, sending)} of ${sending}`
               : "Uploading"
             : "Save"}
         </Button>

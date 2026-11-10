@@ -13,6 +13,7 @@ import { calendarDisplayName } from "@/lib/calendar/sync";
 import { probeImagePipeline } from "@/lib/images";
 import { db } from "@/lib/db";
 import { GROUP_TO_ROLE } from "@/lib/nextcloud-groups";
+import { ROLE_LABEL } from "@/lib/profile-format";
 import { can, getSessionUser } from "@/lib/session";
 import { CalendarPanel } from "./calendar-panel";
 
@@ -26,7 +27,9 @@ function Status({ ok, children }: { ok: boolean; children: React.ReactNode }) {
       ) : (
         <CircleAlert className="mt-0.5 size-4 shrink-0 text-warning" />
       )}
-      <span>{children}</span>
+      {/* An address has nowhere to break, and at phone width the redirect URI
+          pushed the whole page sideways. Let it wrap anywhere. */}
+      <span className="min-w-0 [overflow-wrap:anywhere]">{children}</span>
     </div>
   );
 }
@@ -86,12 +89,12 @@ export default async function IntegrationsPage() {
         <CardContent className="flex flex-col gap-3">
           <Status ok={Boolean(issuer)}>
             Issuer:{" "}
-            <code className="text-xs">{issuer ?? "NEXTCLOUD_ISSUER not set"}</code>
+            <code className="text-xs">{issuer || "NEXTCLOUD_ISSUER not set"}</code>
           </Status>
           <Status ok={Boolean(clientId)}>
             Client ID:{" "}
             <code className="text-xs">
-              {clientId ?? "NEXTCLOUD_CLIENT_ID not set"}
+              {clientId || "NEXTCLOUD_CLIENT_ID not set"}
             </code>
           </Status>
           <Status ok={hasSecret}>
@@ -124,7 +127,7 @@ export default async function IntegrationsPage() {
               className="flex items-center justify-between gap-2 text-sm"
             >
               <code className="text-xs">{group}</code>
-              <Badge variant="neutral">{role}</Badge>
+              <Badge variant="neutral">{ROLE_LABEL[role] ?? role}</Badge>
             </div>
           ))}
           <p className="mt-2 text-xs text-muted-foreground">
@@ -165,7 +168,9 @@ export default async function IntegrationsPage() {
           <Status ok={hasCalDav}>
             System account:{" "}
             <code className="text-xs">
-              {process.env.CALDAV_USERNAME ?? "CALDAV_USERNAME not set"}
+              {/* Set but empty is how docker-compose passes a variable
+                  nobody filled in, and it is no more set than a missing one. */}
+              {process.env.CALDAV_USERNAME || "CALDAV_USERNAME not set"}
             </code>
           </Status>
           <Status ok={provisioned > 0}>

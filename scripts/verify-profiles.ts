@@ -1032,6 +1032,15 @@ async function lineEntries() {
     const adminPage = await pageAs(browser, "admin@417group.org");
     const row = () =>
       adminPage.locator("form").filter({ has: adminPage.locator(`input[name="userId"][value="${tech.id}"]`) });
+    // Every account is a line until it is opened, so the form is reached by
+    // opening theirs — as somebody using the page would.
+    const openUsers = async () => {
+      await adminPage.goto(`${BASE}/settings/users`, { waitUntil: "load" });
+      const toggle = adminPage.locator(`[data-user-row="${tech.id}"] > button`);
+      await toggle.waitFor({ timeout: 15_000 });
+      if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+      await row().waitFor({ state: "visible", timeout: 15_000 });
+    };
     const saveRow = async (done: () => Promise<boolean>) => {
       await row().getByRole("button", { name: "Save", exact: true }).click();
       for (let attempt = 0; attempt < 60; attempt++) {
@@ -1043,7 +1052,7 @@ async function lineEntries() {
 
     // Following the ZIP, it moves with a new one, as QuickTec's doing.
     await db.user.update({ where: { id: tech.id }, data: following });
-    await adminPage.goto(`${BASE}/settings/users`, { waitUntil: "load" });
+    await openUsers();
     await adminPage.locator(`#zip-${tech.id}`).fill("80202");
     check(
       "the users page says a following zone moves with the ZIP",
@@ -1063,7 +1072,7 @@ async function lineEntries() {
 
     // Picked by hand, the ZIP's own zone hands it back to the ZIP.
     await db.user.update({ where: { id: tech.id }, data: { timeZone: "America/Chicago", timeZoneManual: true } });
-    await adminPage.goto(`${BASE}/settings/users`, { waitUntil: "load" });
+    await openUsers();
     await row().getByRole("button", { name: "Use the zone for 80202" }).click();
     zone = await newest("timeZone");
     check("the ZIP's zone is saved", await saveRow(movedOn("timeZone", zone)), true);
@@ -1078,7 +1087,7 @@ async function lineEntries() {
     // Set before profiles existed and not its ZIP's: a new ZIP keeps it, and
     // from then on it is flagged as the pick it was.
     await db.user.update({ where: { id: tech.id }, data: { timeZone: "America/Chicago", timeZoneManual: false } });
-    await adminPage.goto(`${BASE}/settings/users`, { waitUntil: "load" });
+    await openUsers();
     await adminPage.locator(`#zip-${tech.id}`).fill("93291");
     zone = await newest("timeZone");
     const regionThere = await newest("homeRegion");

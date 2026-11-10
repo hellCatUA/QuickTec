@@ -10,13 +10,14 @@ import { Field, Input, Textarea } from "@/components/ui/field";
 import { FormStatus, type SaveState } from "@/components/ui/form-status";
 import { EmptyState } from "@/components/ui/page-header";
 import { StatePicker } from "@/components/ui/state-picker";
-import { formatAddress, mapsUrl, siteLabel } from "@/lib/address";
+import { formatAddress, mapsUrl, siteLabelOnScreen } from "@/lib/address";
 import { US_TIME_ZONES, timeZoneForZip } from "@/lib/us-regions";
 import { saveSite, type ActionResult } from "../../actions";
 
 type SiteRecord = {
   id: string;
   siteNumber: string;
+  numberPending: boolean;
   name: string | null;
   addressLine1: string;
   addressLine2: string | null;
@@ -68,13 +69,23 @@ function SiteForm({
       {site ? <input type="hidden" name="id" value={site.id} /> : null}
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Site number" htmlFor={`num-${key}`}>
+        {/* A site with no number yet holds a placeholder in its place, which
+            is nobody's to read: the box is empty, and may stay empty. */}
+        <Field
+          label="Site number"
+          htmlFor={`num-${key}`}
+          hint={
+            site?.numberPending
+              ? "Not known yet. Leave it blank to keep it pending."
+              : undefined
+          }
+        >
           <Input
             id={`num-${key}`}
             name="siteNumber"
-            defaultValue={site?.siteNumber ?? ""}
-            placeholder="24541"
-            required
+            defaultValue={site?.numberPending ? "" : (site?.siteNumber ?? "")}
+            placeholder={site?.numberPending ? "Number pending" : "24541"}
+            required={!site?.numberPending}
             autoComplete="off"
           />
         </Field>
@@ -285,7 +296,7 @@ export function SiteList({
             <div className="flex flex-wrap items-start gap-2">
               <div className="min-w-0">
                 <div className="truncate text-sm font-semibold">
-                  {siteLabel(customerCode, site.siteNumber)}
+                  {siteLabelOnScreen(customerCode, site)}
                   {site.name ? (
                     <span className="ml-2 text-xs font-normal text-muted-foreground">
                       {site.name}

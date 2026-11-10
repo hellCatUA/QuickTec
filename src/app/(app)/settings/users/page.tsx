@@ -1,13 +1,15 @@
 import { TriangleAlert } from "lucide-react";
 import { redirect } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
+import { getCompanySettings } from "@/lib/company";
+import { usDateTimeInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
 import { loadPrivacySettings, pictureFor } from "@/lib/profile";
 import { zonePickedByHand } from "@/lib/profile-format";
 import { can, getSessionUser } from "@/lib/session";
 import { canSupervise, supervisionsToFix } from "@/lib/supervisors";
 import { OutsideAccount } from "./outside-account";
-import { UserRow } from "./user-row";
+import { UserList } from "./user-list";
 
 export const metadata = { title: "Users" };
 
@@ -63,16 +65,22 @@ export default async function UsersSettingsPage() {
 
   const toFix = await supervisionsToFix();
 
+  // Written out here, in the viewer's own zone. Left to the browser it came
+  // out in a format nothing else in the app uses, and in whatever zone the
+  // device happened to be set to.
+  const company = await getCompanySettings();
+  const zone = viewer.timeZone || company.defaultTimeZone;
+  const nameOf = new Map(users.map((user) => [user.id, user.name]));
+
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-4">
       <div>
         <h1 className="text-lg font-semibold">Users</h1>
         <p className="text-sm text-muted-foreground">
-          Staff roles are read from NextCloud groups on every sign-in and cannot
-          be changed here. What is set here is the direct supervisor — the
-          person who approves and pays this tech, whatever project they work on,
-          which is why only managers and administrators can be picked. Outside
-          accounts are different: they have no groups, so their role is whatever
+          Roles come from NextCloud groups at every sign-in and are not changed
+          here. What is set here is who approves and pays each person — their
+          direct supervisor, always a manager or an administrator — and their
+          contact details. An outside account has no groups and keeps the role
           it was created with.
         </p>
       </div>
@@ -118,16 +126,25 @@ export default async function UsersSettingsPage() {
           </CardContent>
         </Card>
       ) : (
-        <div className="flex flex-col gap-3">
-          {users.map(({ passwordHash, avatarPath: _path, avatarVisibility: _visibility, timeZoneManual, ...user }) => (
-            <UserRow
-              key={user.id}
-              picture={pictures.get(user.id) ?? null}
-              user={{
+        <UserList
+          rows={users.map(
+            ({
+              passwordHash,
+              avatarPath: _path,
+              avatarVisibility: _visibility,
+              timeZoneManual,
+              lastLoginAt,
+              ...user
+            }) => ({
+              picture: pictures.get(user.id) ?? null,
+              supervisorName: user.directSupervisorId
+                ? (nameOf.get(user.directSupervisorId) ?? null)
+                : null,
+              lastLogin: lastLoginAt ? usDateTimeInZone(lastLoginAt, zone) : null,
+              user: {
                 ...user,
                 zoneByHand: zonePickedByHand({ ...user, timeZoneManual }),
-                lastLoginAt: user.lastLoginAt?.toISOString() ?? null,
-                // Pulled out of the spread rather than trusted to it. UserRow
+                // Pulled out of the spread rather than trusted to it. The row
                 // is a client component, so anything handed to it is
                 // serialised into the payload the browser receives — and
                 // `...user` was quietly putting every scrypt hash in there
@@ -135,13 +152,13 @@ export default async function UsersSettingsPage() {
                 // answer to "is there one" crosses, because "invited and never
                 // signed in" reads differently from "forgotten it".
                 hasPassword: passwordHash !== null,
-              }}
-              supervisorOptions={supervisorOptions.filter(
+              },
+              supervisorOptions: supervisorOptions.filter(
                 (option) => option.id !== user.id,
-              )}
-            />
-          ))}
-        </div>
+              ),
+            }),
+          )}
+        />
       )}
     </div>
   );

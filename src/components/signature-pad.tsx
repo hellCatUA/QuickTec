@@ -28,6 +28,8 @@ export function SignaturePad({
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
   const drawing = React.useRef(false);
   const dirty = React.useRef(false);
+  /** How wide the pad was when its backing store was last laid out. */
+  const preparedWidth = React.useRef(0);
   const [hasInk, setHasInk] = React.useState(false);
 
   const prepare = React.useCallback(() => {
@@ -38,6 +40,7 @@ export function SignaturePad({
     // on a phone.
     const ratio = window.devicePixelRatio || 1;
     const width = canvas.clientWidth;
+    preparedWidth.current = width;
 
     canvas.width = Math.round(width * ratio);
     canvas.height = Math.round(height * ratio);
@@ -59,7 +62,15 @@ export function SignaturePad({
 
     // Rotating the phone resizes the canvas, which clears it — redraw the
     // backing store and let the signer know they need to sign again.
+    //
+    // Only when the pad itself changed width. A keyboard sliding up and a
+    // browser toolbar sliding away both fire `resize` and leave the pad
+    // exactly as wide as it was — and wiping the signature for those meant
+    // that typing the MOD's position after they had signed, or scrolling down
+    // to Continue, threw their signature away with nothing on screen to say so.
     function onResize() {
+      const canvas = canvasRef.current;
+      if (canvas && canvas.clientWidth === preparedWidth.current) return;
       prepare();
       dirty.current = false;
       setHasInk(false);

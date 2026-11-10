@@ -61,6 +61,8 @@ export function TimePanel({
     mods: ModOption[];
     techName: string;
     techSigned: boolean;
+    /** Their step was gone through and they did not sign. */
+    techSkipped: boolean;
     releaseCode: string | null;
     noReleaseCode: boolean;
     outcome: JobOutcome | null;
@@ -132,6 +134,7 @@ export function TimePanel({
         mods={checkout.mods}
         techName={checkout.techName}
         techSigned={checkout.techSigned}
+        techSkipped={checkout.techSkipped}
         releaseCode={checkout.releaseCode}
         noReleaseCode={checkout.noReleaseCode}
         outcome={checkout.outcome}

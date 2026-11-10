@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState, PageHeader } from "@/components/ui/page-header";
 import { db } from "@/lib/db";
+import { ROLE_LABEL } from "@/lib/profile-format";
 import { can, getSessionUser, permissionScope } from "@/lib/session";
 import type { Prisma } from "@prisma-client";
 import { nextProjectCode } from "@/lib/project-code";
@@ -16,6 +17,14 @@ const STATUS_VARIANT = {
   ACTIVE: "success",
   ON_HOLD: "warning",
   CLOSED: "neutral",
+} as const;
+
+// Written out the way the project's own page writes it, not the enum in
+// capitals.
+const STATUS_LABEL = {
+  ACTIVE: "Active",
+  ON_HOLD: "On hold",
+  CLOSED: "Closed",
 } as const;
 
 export default async function ProjectsPage() {
@@ -97,7 +106,11 @@ export default async function ProjectsPage() {
     <div className="mx-auto flex max-w-3xl flex-col gap-4">
       <PageHeader
         title="Projects"
-        description="A project carries the client's project ID, the general scope, deliverable defaults and its own work order counter."
+        description={
+          canManage
+            ? "A project carries the client's project ID, the general scope, deliverable defaults and its own work order counter."
+            : "The projects you are on: their scope, who to call, and your jobs under each."
+        }
       />
 
       {canManage ? (
@@ -116,7 +129,7 @@ export default async function ProjectsPage() {
           }))}
           managers={managers.map((manager) => ({
             id: manager.id,
-            label: `${manager.name} · ${manager.baseRole}`,
+            label: `${manager.name} · ${ROLE_LABEL[manager.baseRole] ?? manager.baseRole}`,
           }))}
           contacts={contacts}
           suggestedCode={suggestedCode}
@@ -125,8 +138,12 @@ export default async function ProjectsPage() {
 
       {projects.length === 0 ? (
         <EmptyState
-          title="No projects yet"
-          description="Jobs can be created without a project — they just draw from the global yearly counter instead."
+          title={canManage ? "No projects yet" : "You are not on a project"}
+          description={
+            canManage
+              ? "Jobs can be created without a project — they just draw from the global yearly counter instead."
+              : "Your jobs are on the Jobs page whether they belong to a project or not."
+          }
         />
       ) : null}
 
@@ -141,16 +158,19 @@ export default async function ProjectsPage() {
                       {project.name}
                     </span>
                     <Badge variant={STATUS_VARIANT[project.status]}>
-                      {project.status.replace("_", " ")}
+                      {STATUS_LABEL[project.status]}
                     </Badge>
                   </div>
                   <div className="mt-0.5 truncate text-xs text-muted-foreground">
                     {project.client.name}
                     {project.customer ? ` · ${project.customer.code}` : ""} ·
-                    ID {project.code} ·{" "}
-                    {project._count.jobs} job
-                    {project._count.jobs === 1 ? "" : "s"} · next WO #
-                    {String(project.intWoCounter + 1).padStart(4, "0")}
+                    ID {project.code}
+                    {/* The counter is for whoever raises the jobs. */}
+                    {canManage
+                      ? ` · ${project._count.jobs} job${
+                          project._count.jobs === 1 ? "" : "s"
+                        } · next WO #${String(project.intWoCounter + 1).padStart(4, "0")}`
+                      : ""}
                   </div>
                   <div className="mt-0.5 truncate text-xs text-muted-foreground">
                     PM: {project.manager?.name ?? "not set"} ·{" "}

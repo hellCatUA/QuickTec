@@ -2,7 +2,7 @@ import { CircleCheck, Mail, MapPin, Phone, Printer } from "lucide-react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -59,6 +59,7 @@ import { fileVersion } from "@/lib/storage";
 import { loadJobForExport } from "@/lib/exports/job-data";
 import { buildLegacyWmForm, buildWmForm } from "@/lib/exports/text-report";
 import { wmFormAssignments } from "@/lib/exports/guard";
+import { readableRequest, siteNamesFor } from "@/lib/change-request-display";
 import { jobSpan, visitTotals } from "@/lib/time-tracking";
 import { Timeline } from "@/components/timeline";
 import { approveJob } from "../actions";
@@ -405,6 +406,8 @@ export default async function JobPage({
     })
   ).map((row) => row.label);
   const zone = job.site.timeZone ?? company.defaultTimeZone;
+  // Only a request to move the job names a site; without one this is no query.
+  const requestSites = await siteNamesFor(job.changeRequests);
   const now = new Date();
 
   const [
@@ -847,7 +850,14 @@ export default async function JobPage({
       <PageHeader
         title={job.title}
         backHref="/jobs"
-        description={`${intWoFieldLabel(company)}: ${job.intWoId}`}
+        description={
+          // The number stays in one piece: broken at a hyphen it reads as two
+          // numbers, and it is the one thing on this line people copy down.
+          <>
+            {intWoFieldLabel(company)}:{" "}
+            <span className="tabular whitespace-nowrap">{job.intWoId}</span>
+          </>
+        }
         actions={
           <>
             {/* Two different approvals, and the job is only ever waiting on
@@ -895,6 +905,28 @@ export default async function JobPage({
         ) : null}
       </div>
 
+      {/* The one thing this job is waiting for, said to the person it is
+          waiting on. The read-through has a page of its own, and the way to
+          it was the job's menu and then the Manager Portal — three taps to
+          reach what a reviewer opened the job to do. */}
+      {canApproveJob && job.lifecycle === "PENDING_REVIEW" ? (
+        <Link
+          href={`/jobs/${job.id}/review`}
+          className="flex items-center gap-3 rounded-xl border border-primary/50 bg-primary/10 p-3 transition-colors hover:bg-primary/15"
+        >
+          <CircleCheck className="size-5 shrink-0 text-primary" />
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-semibold">
+              Waiting for your review
+            </span>
+            <span className="block text-xs text-muted-foreground">
+              Read the times, deliverables, money and report, then decide.
+            </span>
+          </span>
+          <span className={buttonVariants({ size: "sm" })}>Review report</span>
+        </Link>
+      ) : null}
+
       {/* Above the work, because that is what it is about. A reviewer's
           objection delivered only as a notification is read in a van and gone
           by the time anybody opens the job to act on it. */}
@@ -938,20 +970,36 @@ export default async function JobPage({
             missingRequired,
             mods: job.pointsOfContact
               .filter((contact) => contact.type === "MOD")
-              .map((contact) => ({
-                id: contact.id,
-                name: contact.name,
-                signed: job.signatures.some(
+              .map((contact) => {
+                // A step gone through without a signature leaves a row too.
+                // That is an answer, but it is not a signature, and checkout
+                // has to be able to tell the two apart.
+                const theirs = job.signatures.filter(
                   (signature) =>
                     signature.kind === "MOD" &&
                     signature.pointOfContactId === contact.id,
-                ),
-              })),
+                );
+                return {
+                  id: contact.id,
+                  name: contact.name,
+                  signed: theirs.some((signature) => !signature.skipped),
+                  skipped:
+                    theirs.length > 0 &&
+                    theirs.every((signature) => signature.skipped),
+                };
+              }),
             techName: user.name,
             techSigned: job.signatures.some(
               (signature) =>
                 signature.kind === "TECH" &&
-                signature.assignment?.userId === user.id,
+                signature.assignment?.userId === user.id &&
+                !signature.skipped,
+            ),
+            techSkipped: job.signatures.some(
+              (signature) =>
+                signature.kind === "TECH" &&
+                signature.assignment?.userId === user.id &&
+                signature.skipped,
             ),
             releaseCode: job.releaseCode,
             noReleaseCode: job.noReleaseCode,
@@ -1006,10 +1054,11 @@ export default async function JobPage({
               requests={job.changeRequests.map((request) => ({
                 id: request.id,
                 fieldPath: request.fieldPath,
-                // A punch request carries instants, and a reviewer asked to
-                // decide one should not be reading an ISO string or a blob of
-                // JSON. Formatted here, where the site's zone is known.
-                ...punchRequestValues(request, zone),
+                // A request holds what the field holds — an instant, a
+                // site's id, a blob of JSON for a punch — and a reviewer asked
+                // to decide one should be reading none of those. Written out
+                // here, where the site's zone is known.
+                ...readableRequest(request, zone, requestSites),
                 reason: request.reason,
                 requestedBy: request.requestedBy.name,
                 createdAt: usDateTimeInZone(request.createdAt, zone),
@@ -1260,7 +1309,7 @@ export default async function JobPage({
               title="Time &amp; schedule"
               summary={
                 span.totalMinutes > 0
-                  ? `${(span.totalMinutes / 60).toFixed(2)} hrs`
+                  ? `${(span.totalMinutes / 60).toFixed(2)} hrs on site`
                   : span.open
                     ? "Still on site"
                     : "Not started"
@@ -1498,6 +1547,7 @@ export default async function JobPage({
                   jobId={job.id}
                   only="SIGN_OFF"
                   canUpload={canUpload}
+                  keepsDirectory={can(user, "client.manage")}
                   documents={job.documents
                     .filter((doc) => doc.jobDocumentKind !== null)
                     .map((doc) => ({
@@ -1639,54 +1689,6 @@ export default async function JobPage({
       />
     </div>
   );
-}
-
-/**
- * Turns a punch request into something readable, or leaves it alone.
- *
- * Job-field requests already hold the value somebody typed. A punch request
- * holds an instant, or two of them in a JSON object, because that is what was
- * being asked for — and neither renders as anything a person can decide from.
- */
-function punchRequestValues(
-  request: {
-    fieldPath: string;
-    oldValue: string | null;
-    newValue: string | null;
-  },
-  zone: string,
-): { oldValue: string | null; newValue: string | null } {
-  if (!request.fieldPath.startsWith("visit.")) {
-    return { oldValue: request.oldValue, newValue: request.newValue };
-  }
-
-  const show = (raw: string | null): string | null => {
-    if (!raw) return null;
-    if (raw.startsWith("{")) {
-      try {
-        const parsed = JSON.parse(raw) as {
-          clockIn?: string | null;
-          clockOut?: string | null;
-        };
-        return [
-          parsed.clockIn
-            ? `in ${usTimeInZone(new Date(parsed.clockIn), zone)}`
-            : null,
-          parsed.clockOut
-            ? `out ${usTimeInZone(new Date(parsed.clockOut), zone)}`
-            : null,
-        ]
-          .filter(Boolean)
-          .join(", ");
-      } catch {
-        return raw;
-      }
-    }
-    const at = new Date(raw);
-    return Number.isNaN(at.getTime()) ? raw : usDateTimeInZone(at, zone);
-  };
-
-  return { oldValue: show(request.oldValue), newValue: show(request.newValue) };
 }
 
 function Static({

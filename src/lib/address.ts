@@ -47,3 +47,20 @@ export function siteLabel(
 ): string {
   return `${customerCode} #${siteNumber}`;
 }
+
+/**
+ * The same, for a screen: a site whose number nobody has read off the door yet
+ * says so, rather than showing the placeholder that stands in for it.
+ *
+ * The placeholder is there to keep two unnumbered sites apart on the unique
+ * key and means nothing to anybody — "SBUX #TBD-3f9a12c0" in a list of jobs
+ * reads as a store number, and is one more thing to wonder about on site.
+ */
+export function siteLabelOnScreen(
+  customerCode: string,
+  site: { siteNumber: string; numberPending: boolean },
+): string {
+  return site.numberPending
+    ? `${customerCode} — number pending`
+    : siteLabel(customerCode, site.siteNumber);
+}

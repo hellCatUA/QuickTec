@@ -8,6 +8,7 @@ import {
 } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
 import { assignmentTerms, describeTerms } from "@/lib/budget";
+import { readableRequest, siteNamesFor } from "@/lib/change-request-display";
 import { getCompanySettings } from "@/lib/company";
 import { toDatetimeLocalInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
@@ -162,9 +163,18 @@ export default async function ManagePage({
   const company = await getCompanySettings();
   const zone = job.site.timeZone ?? company.defaultTimeZone;
 
+  // What they have already asked for, as the form would show it: the time on
+  // the site's clock and the estimate in hours, not the strings they are
+  // stored as.
+  const asked = job.changeRequests.map((request) => ({
+    ...request,
+    oldValue: null,
+  }));
+  const askedSites = await siteNamesFor(asked);
   const pendingByField: Record<string, string> = {};
-  for (const request of job.changeRequests) {
-    pendingByField[request.fieldPath] = request.newValue ?? "(cleared)";
+  for (const request of asked) {
+    pendingByField[request.fieldPath] =
+      readableRequest(request, zone, askedSites).newValue ?? "(cleared)";
   }
 
   // Each person's clocks, to sit under their own row rather than in a second

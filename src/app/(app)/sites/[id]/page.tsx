@@ -10,7 +10,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { EmptyState, PageHeader } from "@/components/ui/page-header";
-import { formatAddress, mapsUrl, siteLabel } from "@/lib/address";
+import { formatAddress, mapsUrl, siteLabelOnScreen } from "@/lib/address";
 import { getCompanySettings } from "@/lib/company";
 import { usDateInZone, usDateTimeInZone, usTimeInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
@@ -20,8 +20,9 @@ import {
   OUTCOME_META,
 } from "@/lib/job-status";
 import { jobScopeWhere } from "@/lib/scope";
-import { getSessionUser } from "@/lib/session";
+import { can, getSessionUser } from "@/lib/session";
 import { jobSpan } from "@/lib/time-tracking";
+import { timeZoneLabel } from "@/lib/us-regions";
 
 export async function generateMetadata({
   params,
@@ -31,10 +32,14 @@ export async function generateMetadata({
   const { id } = await params;
   const site = await db.site.findUnique({
     where: { id },
-    select: { siteNumber: true, customer: { select: { code: true } } },
+    select: {
+      siteNumber: true,
+      numberPending: true,
+      customer: { select: { code: true } },
+    },
   });
   return {
-    title: site ? siteLabel(site.customer.code, site.siteNumber) : "Site",
+    title: site ? siteLabelOnScreen(site.customer.code, site) : "Site",
   };
 }
 
@@ -65,6 +70,7 @@ export default async function SiteHistoryPage({
     select: {
       id: true,
       siteNumber: true,
+      numberPending: true,
       name: true,
       addressLine1: true,
       addressLine2: true,
@@ -80,6 +86,7 @@ export default async function SiteHistoryPage({
   if (!site) notFound();
 
   const zone = site.timeZone ?? company.defaultTimeZone;
+  const now = new Date();
 
   const jobs = await db.job.findMany({
     where: { AND: [scopeWhere, { siteId: site.id }] },
@@ -121,9 +128,16 @@ export default async function SiteHistoryPage({
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4">
+      {/* Back to the customer for somebody who keeps the directory, and to
+          the job list for everybody else: a tech reaches this page from a
+          job, and the directory sends them to the dashboard. */}
       <PageHeader
-        title={siteLabel(site.customer.code, site.siteNumber)}
-        backHref={`/directory/customers/${site.customer.id}`}
+        title={siteLabelOnScreen(site.customer.code, site)}
+        backHref={
+          can(user, "client.manage") || can(user, "project.manage")
+            ? `/directory/customers/${site.customer.id}`
+            : "/jobs"
+        }
         description={site.name ?? site.customer.name}
       />
 
@@ -143,7 +157,7 @@ export default async function SiteHistoryPage({
             <p className="text-xs text-muted-foreground">{site.notes}</p>
           ) : null}
 
-          <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
+          <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1 text-sm">
             <span>
               <span className="text-muted-foreground">Jobs </span>
               <span className="tabular">{jobs.length}</span>
@@ -156,7 +170,9 @@ export default async function SiteHistoryPage({
               <span className="text-muted-foreground">Revisits </span>
               <span className="tabular">{revisits}</span>
             </span>
-            <span className="text-xs text-muted-foreground">{zone}</span>
+            <span className="text-muted-foreground">
+              {timeZoneLabel(zone)} time
+            </span>
           </div>
         </CardContent>
       </Card>
@@ -230,7 +246,13 @@ export default async function SiteHistoryPage({
                       : " – still on site"}
                   </span>
                 ) : (
-                  <span>Never clocked in</span>
+                  // "Never" is for a day that has gone by; a job still to come
+                  // has simply not started.
+                  <span>
+                    {job.scheduledStart && job.scheduledStart > now
+                      ? "Not started yet"
+                      : "Never clocked in"}
+                  </span>
                 )}
                 {span.totalMinutes > 0 ? (
                   <span>{(span.totalMinutes / 60).toFixed(2)} hrs</span>

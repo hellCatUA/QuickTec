@@ -17,6 +17,7 @@ import {
   ruleKey,
 } from "@/lib/deliverables";
 import { OPEN_LIFECYCLES } from "@/lib/job-status";
+import { ROLE_LABEL } from "@/lib/profile-format";
 import { jobsNumberedWith } from "@/lib/project-code";
 import { canOnProject } from "@/lib/scope";
 import { can, getSessionUser } from "@/lib/session";
@@ -250,7 +251,7 @@ export default async function ProjectSettingsPage({
             }))}
             managers={managers.map((manager) => ({
               id: manager.id,
-              label: `${manager.name} · ${manager.baseRole}`,
+              label: `${manager.name} · ${ROLE_LABEL[manager.baseRole] ?? manager.baseRole}`,
             }))}
             contacts={contacts}
           />
@@ -279,7 +280,7 @@ export default async function ProjectSettingsPage({
             }))}
             candidates={staff.map((person) => ({
               id: person.id,
-              label: `${person.name} · ${person.baseRole}`,
+              label: `${person.name} · ${ROLE_LABEL[person.baseRole] ?? person.baseRole}`,
             }))}
           />
         </CardContent>

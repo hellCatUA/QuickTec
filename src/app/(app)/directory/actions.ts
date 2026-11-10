@@ -204,13 +204,31 @@ export async function saveSite(
   const id = String(formData.get("id") ?? "");
 
   try {
+    // A site raised before anybody knew its number holds a placeholder there.
+    // Left blank here it stays pending, placeholder and all; given a number,
+    // it stops being pending — which this used not to do, so a number typed
+    // in the directory was saved and the site went on reading "number
+    // pending" for good.
+    const existing = id
+      ? await db.site.findUnique({
+          where: { id },
+          select: { siteNumber: true, numberPending: true },
+        })
+      : null;
+    const typedNumber = String(formData.get("siteNumber") ?? "").trim();
+    const stillPending = Boolean(existing?.numberPending) && typedNumber === "";
+
     const data = siteSchema.parse({
       ...Object.fromEntries(formData),
+      siteNumber: stillPending ? existing!.siteNumber : typedNumber,
       active: formData.get("active") === "on",
     });
 
     const site = id
-      ? await db.site.update({ where: { id }, data })
+      ? await db.site.update({
+          where: { id },
+          data: { ...data, numberPending: stillPending },
+        })
       : await db.site.create({ data });
 
     await recordAudit({

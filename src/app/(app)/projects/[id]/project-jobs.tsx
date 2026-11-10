@@ -170,11 +170,18 @@ export function ProjectJobs({ jobs }: { jobs: ProjectJob[] }) {
                     </span>
                   </div>
 
-                  <div className="mt-0.5 truncate text-xs text-muted-foreground">
-                    {job.siteLabel}
-                    {job.city ? ` · ${job.city}` : ""}
-                    {job.state ? `, ${job.state}` : ""}
-                    {job.scheduledLabel ? ` · ${job.scheduledLabel}` : ""}
+                  {/* When first, as on the Jobs page, and for the same
+                      reason: closing the line, it was the part a phone cut
+                      — "Bakersfield, CA · 1…". */}
+                  <div className="mt-0.5 flex min-w-0 items-baseline gap-1.5 text-xs">
+                    <span className="tabular shrink-0 font-medium text-foreground">
+                      {job.scheduledLabel ?? "Not scheduled"}
+                    </span>
+                    <span className="truncate text-muted-foreground">
+                      · {job.siteLabel}
+                      {job.city ? ` · ${job.city}` : ""}
+                      {job.state ? `, ${job.state}` : ""}
+                    </span>
                   </div>
 
                   {job.crew.length > 0 ? (

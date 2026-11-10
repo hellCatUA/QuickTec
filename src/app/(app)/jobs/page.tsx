@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState, PageHeader } from "@/components/ui/page-header";
-import { siteLabel } from "@/lib/address";
+import { siteLabelOnScreen } from "@/lib/address";
 import { getCompanySettings } from "@/lib/company";
 import { usDateTimeInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
@@ -73,9 +73,21 @@ export default async function JobsPage({
       revisitNumber: true,
       client: { select: { name: true } },
       customer: { select: { code: true } },
-      site: { select: { siteNumber: true, city: true, state: true, timeZone: true } },
+      site: {
+        select: {
+          siteNumber: true,
+          numberPending: true,
+          city: true,
+          state: true,
+          timeZone: true,
+        },
+      },
       assignments: {
-        select: { isLead: true, user: { select: { name: true } } },
+        select: {
+          isLead: true,
+          userId: true,
+          user: { select: { name: true } },
+        },
       },
     },
   });
@@ -127,8 +139,19 @@ export default async function JobsPage({
       <div className="flex flex-col gap-2">
         {jobs.map((job) => {
           const zone = job.site.timeZone ?? company.defaultTimeZone;
-          const lead = job.assignments.find((a) => a.isLead)?.user.name;
+          const lead = job.assignments.find((a) => a.isLead);
           const others = job.assignments.filter((a) => !a.isLead).length;
+          // On somebody's own list their own name is the one thing they do
+          // not need telling. Leading a job alone says nothing at all; leading
+          // a crew is worth the two words.
+          const crew =
+            lead?.userId === user.id
+              ? others > 0
+                ? `You lead · +${others} tech${others === 1 ? "" : "s"}`
+                : null
+              : `${lead ? `Lead: ${lead.user.name}` : "No lead"}${
+                  others > 0 ? ` +${others} tech${others === 1 ? "" : "s"}` : ""
+                }`;
 
           return (
             <Link key={job.id} href={`/jobs/${job.id}`}>
@@ -161,9 +184,20 @@ export default async function JobsPage({
                       ) : null}
                     </div>
 
-                    <div className="mt-0.5 truncate text-xs text-muted-foreground">
-                      {siteLabel(job.customer.code, job.site.siteNumber)} ·{" "}
-                      {job.site.city}, {job.site.state} · {job.client.name}
+                    {/* When, then where: the two things this list is read
+                        for, and the when is never the part that gets cut. It
+                        used to close a line that opened with two reference
+                        numbers, so on a phone it read "11-07-2026 6:3…". */}
+                    <div className="mt-0.5 flex min-w-0 items-baseline gap-1.5 text-xs">
+                      <span className="tabular shrink-0 font-medium text-foreground">
+                        {job.scheduledStart
+                          ? usDateTimeInZone(job.scheduledStart, zone)
+                          : "Not scheduled"}
+                      </span>
+                      <span className="truncate text-muted-foreground">
+                        · {siteLabelOnScreen(job.customer.code, job.site)} ·{" "}
+                        {job.site.city}, {job.site.state}
+                      </span>
                     </div>
 
                     <div className="mt-0.5 truncate text-xs text-muted-foreground">
@@ -171,23 +205,18 @@ export default async function JobsPage({
                       {job.externalAssignmentId
                         ? ` · ${job.externalAssignmentId}`
                         : ""}
-                      {job.scheduledStart
-                        ? ` · ${usDateTimeInZone(job.scheduledStart, zone)}`
-                        : " · not scheduled"}
+                      {` · ${job.client.name}`}
                     </div>
 
-                    {job.assignments.length > 0 ? (
-                      <div className="mt-0.5 truncate text-xs text-muted-foreground">
-                        {lead ? `Lead: ${lead}` : "No lead"}
-                        {others > 0
-                          ? ` +${others} tech${others === 1 ? "" : "s"}`
-                          : ""}
-                      </div>
-                    ) : (
+                    {job.assignments.length === 0 ? (
                       <div className="mt-0.5 text-xs text-warning">
                         Nobody assigned
                       </div>
-                    )}
+                    ) : crew ? (
+                      <div className="mt-0.5 truncate text-xs text-muted-foreground">
+                        {crew}
+                      </div>
+                    ) : null}
                   </div>
 
                   <ChevronRight className="size-4 shrink-0 text-muted-foreground" />

@@ -1,41 +1,50 @@
 "use client";
 
-import { Check, Loader2 } from "lucide-react";
+import { Check, ChevronDown, Loader2 } from "lucide-react";
 import Link from "next/link";
-import { useActionState, useState } from "react";
+import { useActionState, useState, useSyncExternalStore } from "react";
 import { Avatar } from "@/components/profile/parts";
 import { ReadOnlyValue } from "@/components/profile/parts";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { Combobox } from "@/components/ui/combobox";
 import { Field, Input } from "@/components/ui/field";
 import { PhoneInput } from "@/components/ui/phone-input";
 import { StatePicker } from "@/components/ui/state-picker";
+import { ROLE_LABEL } from "@/lib/profile-format";
 import { US_TIME_ZONES, timeZoneForZip, timeZoneLabel } from "@/lib/us-regions";
+import { cn } from "@/lib/utils";
 import { updateUser, type ActionResult } from "../actions";
 import { PasswordFallback } from "./password-fallback";
 import { ResetPassword } from "./reset-password";
 
+// A role is who somebody is, not how things are going, so none of them is
+// drawn in the colour of an error. The two that run the company share one.
 const ROLE_VARIANT: Record<
   string,
   "neutral" | "primary" | "success" | "warning" | "danger"
 > = {
-  ADMINISTRATOR: "danger",
+  ADMINISTRATOR: "primary",
   MANAGER: "primary",
   SUPERVISOR: "success",
-  ACCOUNTANT: "warning",
+  ACCOUNTANT: "neutral",
   TECH: "neutral",
   GUEST: "neutral",
 };
 
-export function UserRow({
-  user,
-  picture,
-  supervisorOptions,
-}: {
+function subscribeToHash(onChange: () => void) {
+  window.addEventListener("hashchange", onChange);
+  return () => window.removeEventListener("hashchange", onChange);
+}
+
+export type UserRowData = {
   /** Their picture, or null for their initials. */
   picture: string | null;
+  /** Who approves and pays them, by name, for the closed row. */
+  supervisorName: string | null;
+  /** When they last signed in, already written out in the viewer's zone. */
+  lastLogin: string | null;
   user: {
     id: string;
     name: string;
@@ -55,13 +64,43 @@ export function UserRow({
     postalCode: string | null;
     country: string | null;
     directSupervisorId: string | null;
-    lastLoginAt: string | null;
     signInMethod: string;
     passwordFallback: boolean;
     hasPassword: boolean;
   };
   supervisorOptions: { id: string; name: string }[];
-}) {
+};
+
+/**
+ * One account: a line that says who it is, opening onto the form that changes
+ * it.
+ *
+ * Every account used to be the whole form, open, one under another — thirteen
+ * hundred pixels each on a phone, so nine people were twelve thousand and
+ * finding the tenth meant scrolling past the addresses of the other nine. The
+ * line carries what somebody scans this page for: the role, who they report
+ * to, when they were last here. The form is still mounted while it is shut, so
+ * a row half filled in and closed by mistake has lost nothing.
+ */
+export function UserRow({
+  user,
+  picture,
+  supervisorName,
+  lastLogin,
+  supervisorOptions,
+}: UserRowData) {
+  // A link from elsewhere — "give every tech a supervisor" — can name the
+  // account it is about, and lands on it open. Read from the address rather
+  // than copied into state: the address is the one that knows, and it is
+  // whatever was pressed here afterwards that overrides it.
+  const named = useSyncExternalStore(
+    subscribeToHash,
+    () => window.location.hash === `#user-${user.id}`,
+    () => false,
+  );
+  const [pressed, setPressed] = useState<boolean | null>(null);
+  const open = pressed ?? named;
+
   const [state, formAction, pending] = useActionState<
     ActionResult | null,
     FormData
@@ -83,20 +122,30 @@ export function UserRow({
   // to offer. Only one picked — before, or here just now — is kept.
   const follows = !user.zoneByHand && zone === user.timeZone;
 
-  return (
-    <Card>
-      <CardContent>
-        <form action={formAction} className="flex flex-col gap-4">
-          <input type="hidden" name="userId" value={user.id} />
+  // The link that decides who signs off their week. A tech without one cannot
+  // be paid, which is worth seeing without opening anything.
+  const unsupervised = user.baseRole === "TECH" && !user.directSupervisorId;
 
-          <div className="flex flex-wrap items-center gap-2">
-            <Avatar src={picture} name={user.name} size={36} />
-            <div className="min-w-0">
-              <div className="truncate text-sm font-semibold">{user.name}</div>
-              <div className="truncate text-xs text-muted-foreground">
-                {user.email}
-              </div>
-            </div>
+  return (
+    <Card
+      id={`user-${user.id}`}
+      data-user-row={user.id}
+      className={cn("scroll-mt-4", !user.active && "opacity-70")}
+    >
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={`user-panel-${user.id}`}
+        onClick={() => setPressed(!open)}
+        className="flex w-full items-center gap-3 rounded-xl p-3 text-left sm:p-4"
+      >
+        <Avatar src={picture} name={user.name} size={36} />
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="truncate text-sm font-semibold">{user.name}</span>
+            <Badge variant={ROLE_VARIANT[user.baseRole] ?? "neutral"}>
+              {ROLE_LABEL[user.baseRole] ?? user.baseRole}
+            </Badge>
             {user.signInMethod === "LOCAL" ? (
               <Badge variant="warning">
                 {user.hasPassword ? "Outside" : "Invited"}
@@ -108,19 +157,53 @@ export function UserRow({
               // granting.
               <Badge variant="warning">Password too</Badge>
             ) : null}
-            <Badge
-              variant={ROLE_VARIANT[user.baseRole] ?? "neutral"}
-              className="ml-auto"
+            {user.active ? null : <Badge variant="neutral">Deactivated</Badge>}
+          </span>
+          <span className="truncate text-xs text-muted-foreground">
+            {user.email}
+          </span>
+          {/* Two facts side by side where there is room and one under the
+              other where there is not — never one of them cut short. As a
+              single line the date was what a phone dropped: "Last sign-in
+              11-09-202…". */}
+          <span className="flex flex-wrap gap-x-3 text-xs text-muted-foreground">
+            <span
+              className={cn(
+                "min-w-0 [overflow-wrap:anywhere]",
+                !supervisorName && unsupervised && "text-warning",
+              )}
             >
-              {user.baseRole}
-            </Badge>
-            <Link
-              href={`/people/${user.id}`}
-              className="inline-flex min-h-10 items-center text-xs font-medium text-primary hover:underline"
-            >
-              Profile
-            </Link>
-          </div>
+              {supervisorName
+                ? `Reports to ${supervisorName}`
+                : "No direct supervisor"}
+            </span>
+            <span className="whitespace-nowrap">
+              {lastLogin ? `Last sign-in ${lastLogin}` : "Never signed in"}
+            </span>
+          </span>
+        </span>
+        <ChevronDown
+          className={cn(
+            "size-4 shrink-0 text-muted-foreground transition-transform",
+            open && "rotate-180",
+          )}
+        />
+      </button>
+
+      <div
+        id={`user-panel-${user.id}`}
+        hidden={!open}
+        className={cn("border-t border-border p-3 sm:p-4", !open && "hidden")}
+      >
+        <form action={formAction} className="flex flex-col gap-4">
+          <input type="hidden" name="userId" value={user.id} />
+
+          <Link
+            href={`/people/${user.id}`}
+            className="inline-flex min-h-10 items-center self-start text-xs font-medium text-primary hover:underline"
+          >
+            Open their profile
+          </Link>
 
           {/* Two different questions. An outside account's password is the
               only way into it, so the question is "they have lost it". A
@@ -227,12 +310,13 @@ export function UserRow({
           {/* Wanted by payroll and by anybody posting something physical.
               Never on the report a customer reads. */}
           <fieldset className="flex flex-col gap-4">
-            <legend className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Address
-            </legend>
+            {/* A heading over the group, and drawn as one. In the small
+                capitals of a field's own label it sat directly on top of
+                "Street" and read as a second label for the same box. */}
+            <legend className="mb-3 text-sm font-semibold">Address</legend>
 
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Address line 1" htmlFor={`addr1-${user.id}`}>
+              <Field label="Street" htmlFor={`addr1-${user.id}`}>
                 <Input
                   id={`addr1-${user.id}`}
                   name="addressLine1"
@@ -240,7 +324,7 @@ export function UserRow({
                   autoComplete="off"
                 />
               </Field>
-              <Field label="Address line 2" htmlFor={`addr2-${user.id}`}>
+              <Field label="Apt, suite" htmlFor={`addr2-${user.id}`}>
                 <Input
                   id={`addr2-${user.id}`}
                   name="addressLine2"
@@ -250,8 +334,14 @@ export function UserRow({
               </Field>
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-4">
-              <Field label="City" htmlFor={`city-${user.id}`}>
+            {/* State and ZIP are a couple of characters each: side by side
+                on a phone rather than a full-width row apiece. */}
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+              <Field
+                label="City"
+                htmlFor={`city-${user.id}`}
+                className="col-span-2 sm:col-span-1"
+              >
                 <Input
                   id={`city-${user.id}`}
                   name="city"
@@ -287,7 +377,11 @@ export function UserRow({
                   autoComplete="off"
                 />
               </Field>
-              <Field label="Country" htmlFor={`country-${user.id}`}>
+              <Field
+                label="Country"
+                htmlFor={`country-${user.id}`}
+                className="col-span-2 sm:col-span-1"
+              >
                 <Input
                   id={`country-${user.id}`}
                   name="country"
@@ -324,12 +418,6 @@ export function UserRow({
               Active
             </label>
 
-            <span className="text-xs text-muted-foreground">
-              {user.lastLoginAt
-                ? `Last sign-in ${new Date(user.lastLoginAt).toLocaleString("en-US")}`
-                : "Never signed in"}
-            </span>
-
             <div className="ml-auto flex items-center gap-2">
               {state?.ok ? (
                 <span className="flex items-center gap-1 text-xs text-success">
@@ -346,7 +434,7 @@ export function UserRow({
             </div>
           </div>
         </form>
-      </CardContent>
+      </div>
     </Card>
   );
 }

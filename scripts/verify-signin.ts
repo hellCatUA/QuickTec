@@ -329,6 +329,13 @@ async function main() {
   await adminPage.goto(`${BASE}/settings/users`, { waitUntil: "load" });
   await adminPage.waitForTimeout(1200);
 
+  /** Every account is a line until it is opened; this opens the one meant. */
+  const openCard = async () => {
+    const toggle = adminPage.locator(`[data-user-row="${target.id}"] > button`);
+    await toggle.waitFor({ timeout: 15_000 });
+    if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+  };
+
   /**
    * This one person's card, not whichever is drawn first.
    *
@@ -346,6 +353,7 @@ async function main() {
     await card().count(),
     1,
   );
+  await openCard();
 
   await card()
     .getByRole("button", { name: "Allow a QuickTec password too" })
@@ -385,6 +393,7 @@ async function main() {
   // And back off again, from the same page.
   await adminPage.reload({ waitUntil: "load" });
   await adminPage.waitForTimeout(1200);
+  await openCard();
   await card().getByRole("button", { name: "Remove the password" }).click();
   await adminPage.waitForTimeout(400);
   await card().getByRole("button", { name: "Remove", exact: true }).click();

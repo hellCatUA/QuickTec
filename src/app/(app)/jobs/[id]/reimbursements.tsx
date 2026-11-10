@@ -150,6 +150,15 @@ export function Reimbursements({
               aria-label="Remove claim"
               disabled={pending}
               onClick={() => {
+                // The receipts go with the claim, and a receipt photographed
+                // at a counter is not something to take again.
+                if (
+                  !window.confirm(
+                    "Remove this claim? Its receipts are deleted with it.",
+                  )
+                ) {
+                  return;
+                }
                 setError(null);
                 startTransition(async () => {
                   const formData = new FormData();

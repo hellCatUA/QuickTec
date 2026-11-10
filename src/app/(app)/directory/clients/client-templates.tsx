@@ -161,7 +161,20 @@ export function ClientTemplates({
               size="icon"
               aria-label={`Remove ${template.label}`}
               disabled={pending}
-              onClick={() => remove(template.id)}
+              onClick={() => {
+                // The mapping is the part that hurts: an afternoon of
+                // pointing at boxes, gone with the blank it was drawn on.
+                if (
+                  !window.confirm(
+                    template.mappedCount > 0
+                      ? `Remove ${template.label}? Its autofill set-up (${template.mappedCount} of ${template.boxCount} boxes) is deleted with it.`
+                      : `Remove ${template.label}?`,
+                  )
+                ) {
+                  return;
+                }
+                remove(template.id);
+              }}
             >
               <X />
             </Button>

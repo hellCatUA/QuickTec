@@ -14,7 +14,7 @@ import {
 import { Markdown } from "@/components/markdown";
 import { Timeline } from "@/components/timeline";
 import { PageHeader } from "@/components/ui/page-header";
-import { siteLabel } from "@/lib/address";
+import { siteLabelOnScreen } from "@/lib/address";
 import { getCompanySettings } from "@/lib/company";
 import { usDateTimeInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
@@ -24,7 +24,7 @@ import {
   RULE_SELECT,
 } from "@/lib/deliverables";
 import { formatRate } from "@/lib/money";
-import { canOnProject } from "@/lib/scope";
+import { canOnProject, jobScopeWhere } from "@/lib/scope";
 import { can, getSessionUser } from "@/lib/session";
 import { loadTimeline } from "@/lib/timeline-data";
 import { ProjectJobs } from "./project-jobs";
@@ -41,6 +41,13 @@ export async function generateMetadata({
   });
   return { title: project?.name ?? "Project" };
 }
+
+/** A membership as a word on a badge, written the way every other badge is. */
+const MEMBER_ROLE_LABEL = {
+  PROJECT_MANAGER: "PM",
+  SUPERVISOR: "Supervisor",
+  TECH: "Tech",
+} as const;
 
 /** One labelled fact. */
 function Fact({
@@ -73,10 +80,43 @@ export default async function ProjectPage({
   if (!user) redirect("/signin");
 
   const { id } = await params;
-  if (!canOnProject(user, "project.manage", id)) redirect("/projects");
+  // Two readers. Whoever runs the project gets all of it: its settings, every
+  // job, its history. Whoever only works on it gets what the work needs — the
+  // scope, who to ring, who else is on it, their own jobs — and none of the
+  // rest.
+  //
+  // The second reader used to be turned away, back to the list they had come
+  // from. And everything pointed them here: the cards on that list, the
+  // dashboard, the project's name on each of their jobs, and the notice that
+  // said "You are on the … project".
+  const canManage = canOnProject(user, "project.manage", id);
+  const jobWhere = await jobScopeWhere(user, "job.view");
+  if (!canManage) {
+    const [onIt, jobsHere] = await Promise.all([
+      // The rule the Projects page lists by, asked of the database: the
+      // session only carries the projects somebody runs or supervises, so a
+      // tech added to one was on its list and still sent away from its page.
+      db.project.count({
+        where: {
+          id,
+          OR: [
+            { managerId: user.id },
+            { members: { some: { userId: user.id } } },
+          ],
+        },
+      }),
+      // Somebody sent to one job of a project they were never added to
+      // still reads its scope and contacts on that job; the page they are
+      // from is not more than that.
+      jobWhere
+        ? db.job.count({ where: { AND: [jobWhere, { projectId: id }] } })
+        : 0,
+    ]);
+    if (onIt === 0 && jobsHere === 0) redirect("/projects");
+  }
   // What the project pays is for whoever sets pay, not for everybody who
   // runs the work.
-  const canSeePay = can(user, "pay.edit_rates");
+  const canSeePay = canManage && can(user, "pay.edit_rates");
 
   const project = await db.project.findUnique({
     where: { id },
@@ -120,6 +160,9 @@ export default async function ProjectPage({
         select: { id: true, label: true, name: true, phone: true, email: true },
       },
       jobs: {
+        // Every job for whoever runs the project; for anybody else, the ones
+        // they could open from the Jobs page and no others.
+        where: canManage ? {} : (jobWhere ?? { id: { in: [] } }),
         orderBy: [{ scheduledStart: "asc" }, { createdAt: "desc" }],
         select: {
           id: true,
@@ -151,10 +194,11 @@ export default async function ProjectPage({
   if (!project) notFound();
 
   const company = await getCompanySettings();
-  const timeline = await loadTimeline(
-    { projectId: project.id },
-    company.defaultTimeZone,
-  );
+  // The history names who changed what the project pays and who was taken
+  // off it. Not loaded at all for somebody who only works here.
+  const timeline = canManage
+    ? await loadTimeline({ projectId: project.id }, company.defaultTimeZone)
+    : [];
 
   const jobs = project.jobs.map((job) => {
     const zone = job.site.timeZone ?? company.defaultTimeZone;
@@ -163,9 +207,7 @@ export default async function ProjectPage({
       intWoId: job.intWoId,
       title: job.title,
       externalAssignmentId: job.externalAssignmentId,
-      siteLabel: job.site.numberPending
-        ? `${job.customer.code} — number pending`
-        : siteLabel(job.customer.code, job.site.siteNumber),
+      siteLabel: siteLabelOnScreen(job.customer.code, job.site),
       city: job.site.city,
       state: job.site.state,
       scheduledLabel: job.scheduledStart
@@ -188,22 +230,28 @@ export default async function ProjectPage({
       <PageHeader
         title={project.name}
         backHref="/projects"
-        description={`${project.code} · next work order #${String(project.intWoCounter + 1).padStart(4, "0")}`}
+        description={
+          canManage
+            ? `${project.code} · next work order #${String(project.intWoCounter + 1).padStart(4, "0")}`
+            : project.code
+        }
         actions={
-          <>
-            <Link
-              href={`/projects/${project.id}/settings`}
-              className={buttonVariants({ variant: "secondary", size: "sm" })}
-            >
-              <Settings /> Settings
-            </Link>
-            <Link
-              href={`/jobs/new?projectId=${project.id}`}
-              className={buttonVariants({ size: "sm" })}
-            >
-              <Plus /> New job
-            </Link>
-          </>
+          canManage ? (
+            <>
+              <Link
+                href={`/projects/${project.id}/settings`}
+                className={buttonVariants({ variant: "secondary", size: "sm" })}
+              >
+                <Settings /> Settings
+              </Link>
+              <Link
+                href={`/jobs/new?projectId=${project.id}`}
+                className={buttonVariants({ size: "sm" })}
+              >
+                <Plus /> New job
+              </Link>
+            </>
+          ) : null
         }
       />
 
@@ -260,7 +308,11 @@ export default async function ProjectPage({
               </Badge>
             }
           />
-          <Fact label="Jobs" value={String(jobs.length)} mono />
+          {/* Theirs is a count of their own jobs, which the list below gives
+              them; as a fact about the project it would be wrong. */}
+          {canManage ? (
+            <Fact label="Jobs" value={String(jobs.length)} mono />
+          ) : null}
           <Fact
             label="Project manager"
             value={project.manager?.name ?? "Not set"}
@@ -304,8 +356,9 @@ export default async function ProjectPage({
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">
-              Nobody recorded. Set it in Settings so a tech at a locked door has
-              somebody to ring.
+              {canManage
+                ? "Nobody recorded. Set it in Settings so a tech at a locked door has somebody to ring."
+                : "Nobody recorded for this project."}
             </p>
           )}
         </CardContent>
@@ -313,16 +366,20 @@ export default async function ProjectPage({
 
       <Card>
         <CardHeader>
-          <CardTitle>Job Settings</CardTitle>
+          <CardTitle>{canManage ? "Job Settings" : "On every job"}</CardTitle>
           <CardDescription>
-            What a job under this project starts as. Change them in Settings.
+            {canManage
+              ? "What a job under this project starts as. Change them in Settings."
+              : "What a job under this project asks of whoever works it."}
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2">
-          <Fact
-            label="Job title"
-            value={project.defaultJobTitle ?? "Not prefilled"}
-          />
+          {canManage ? (
+            <Fact
+              label="Job title"
+              value={project.defaultJobTitle ?? "Not prefilled"}
+            />
+          ) : null}
           <Fact label="Paid Breaks" value={project.breakPaid ? "Yes" : "No"} />
           {canSeePay ? (
             <>
@@ -359,14 +416,18 @@ export default async function ProjectPage({
                 : "None"
             }
           />
-          <Fact
-            label="Dispatch contacts"
-            value={
-              project.dispatchContacts.length > 0
-                ? String(project.dispatchContacts.length)
-                : "None"
-            }
-          />
+          {/* A count for whoever keeps the list. Everybody else has the
+              contacts themselves, further down. */}
+          {canManage ? (
+            <Fact
+              label="Dispatch contacts"
+              value={
+                project.dispatchContacts.length > 0
+                  ? String(project.dispatchContacts.length)
+                  : "None"
+              }
+            />
+          ) : null}
         </CardContent>
       </Card>
 
@@ -374,8 +435,9 @@ export default async function ProjectPage({
         <CardHeader>
           <CardTitle>Crew</CardTitle>
           <CardDescription>
-            Everybody with PROJECT-scoped access here. Offered first when a job
-            in this project is crewed.
+            {canManage
+              ? "Everybody with PROJECT-scoped access here. Offered first when a job in this project is crewed."
+              : "Who is on this project."}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -394,9 +456,7 @@ export default async function ProjectPage({
                       member.role === "PROJECT_MANAGER" ? "primary" : "neutral"
                     }
                   >
-                    {member.role === "PROJECT_MANAGER"
-                      ? "PM"
-                      : member.role.toLowerCase()}
+                    {MEMBER_ROLE_LABEL[member.role]}
                   </Badge>
                 </span>
               ))}
@@ -461,7 +521,9 @@ export default async function ProjectPage({
           <CardTitle>Jobs</CardTitle>
           <CardDescription>
             <MapPin className="mr-1 inline size-3.5" />
-            What is still coming, and what is behind us.
+            {canManage
+              ? "What is still coming, and what is behind us."
+              : "The ones you can open: what is still coming, and what is behind you."}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -469,18 +531,20 @@ export default async function ProjectPage({
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Timeline</CardTitle>
-          <CardDescription>
-            Everything that has happened to this project, newest first. Runs of
-            the same thing collapse — tap to open them.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Timeline rows={timeline} />
-        </CardContent>
-      </Card>
+      {canManage ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Timeline</CardTitle>
+            <CardDescription>
+              Everything that has happened to this project, newest first. Runs
+              of the same thing collapse — tap to open them.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Timeline rows={timeline} />
+          </CardContent>
+        </Card>
+      ) : null}
     </div>
   );
 }

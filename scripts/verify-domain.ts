@@ -281,6 +281,111 @@ async function budgetSplits() {
   check("a flat share has no rate to be under", underOwnRate(one.lines[0], 3800), false);
 }
 
+/**
+ * A change request, written out for whoever decides it.
+ *
+ * A request holds what the field holds. Each of these is something that was
+ * on screen as it is stored: the path to a visit on the badge, a site's id
+ * and an instant either side of the arrow.
+ */
+async function changeRequestWords() {
+  const { readableRequest, requestKind } = await import(
+    "@/lib/change-request-display"
+  );
+  const sites = new Map([
+    ["site-a", "TSA #4471 · Covina, CA"],
+    ["site-b", "SBUX — number pending · Bakersfield, CA"],
+  ]);
+
+  check("a job field is called by its label", requestKind("scheduledStart"), "Scheduled start");
+  check("a punch is called a punch, not its path", requestKind("visit.cmabc123.clockOut"), "Punch");
+
+  const site = readableRequest(
+    { fieldPath: "siteId", oldValue: "site-a", newValue: "site-b" },
+    TZ,
+    sites,
+  );
+  check("a site reads as its number, not its id", site.oldValue, "TSA #4471 · Covina, CA");
+  check("on both sides", site.newValue, "SBUX — number pending · Bakersfield, CA");
+  check(
+    "one that has gone says so rather than showing an id",
+    readableRequest({ fieldPath: "siteId", oldValue: null, newValue: "site-z" }, TZ, sites).newValue,
+    "A site that is no longer in the directory",
+  );
+
+  // The details form stores the site-local string on both sides.
+  const typed = readableRequest(
+    { fieldPath: "scheduledStart", oldValue: "2026-11-10T14:00", newValue: "2026-11-12T09:30" },
+    TZ,
+    sites,
+  );
+  check("a schedule typed on site reads as a date", typed.oldValue, "11-10-2026 2:00 PM");
+  check("and so does what it is changed to", typed.newValue, "11-12-2026 9:30 AM");
+  // Older requests kept the instant, as JavaScript prints one.
+  check(
+    "an instant is read on the site's clock",
+    readableRequest(
+      {
+        fieldPath: "scheduledStart",
+        oldValue: "Tue Nov 10 2026 22:00:00 GMT+0000 (Coordinated Universal Time)",
+        newValue: null,
+      },
+      TZ,
+      sites,
+    ).oldValue,
+    "11-10-2026 2:00 PM",
+  );
+  check(
+    "and somewhere else's clock is somewhere else's time",
+    readableRequest(
+      { fieldPath: "scheduledStart", oldValue: "2026-11-10T22:00:00.000Z", newValue: null },
+      "America/New_York",
+      sites,
+    ).oldValue,
+    "11-10-2026 5:00 PM",
+  );
+
+  const estimate = readableRequest(
+    { fieldPath: "estimateMinutes", oldValue: "240", newValue: "330" },
+    TZ,
+    sites,
+  );
+  check("an estimate is in hours, as it is everywhere else", estimate.oldValue, "4.00 hrs");
+  check("to the same two places", estimate.newValue, "5.50 hrs");
+
+  const punch = readableRequest(
+    {
+      fieldPath: "visit.cmabc123.punch",
+      oldValue: JSON.stringify({ clockIn: "2026-11-10T16:00:00.000Z", clockOut: null }),
+      newValue: JSON.stringify({
+        clockIn: "2026-11-10T15:30:00.000Z",
+        clockOut: "2026-11-10T23:45:00.000Z",
+      }),
+    },
+    TZ,
+    sites,
+  );
+  check("a punch reads as the times asked for", punch.newValue, "in 7:30 AM, out 3:45 PM");
+  check("and the times it had", punch.oldValue, "in 8:00 AM");
+  check(
+    "a single clock reads as its date and time",
+    readableRequest(
+      { fieldPath: "visit.cmabc123.clockOut", oldValue: null, newValue: "2026-11-10T23:45:00.000Z" },
+      TZ,
+      sites,
+    ).newValue,
+    "11-10-2026 3:45 PM",
+  );
+
+  const text = readableRequest(
+    { fieldPath: "ticketNumber", oldValue: "6772107", newValue: null },
+    TZ,
+    sites,
+  );
+  check("plain text is left as it was typed", text.oldValue, "6772107");
+  check("and nothing stays nothing", text.newValue, null);
+}
+
 async function main() {
   // --- fixtures -----------------------------------------------------------
   const boss = await db.user.findUniqueOrThrow({
@@ -4362,6 +4467,7 @@ async function main() {
   check("decimal strings convert to cents", toCents("12.34"), 1234);
 
   await budgetSplits();
+  await changeRequestWords();
 
   // A week is filed under the month its Monday falls in, so a straddling week
   // is counted once and by its start.

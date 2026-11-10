@@ -52,7 +52,9 @@ export function MileageList({
                 </span>
               </div>
 
-              <div className="mt-0.5 truncate text-xs text-muted-foreground">
+              {/* Wrapped, not cut: what the trip was for is at the end of
+                  this line, and the end is what a phone dropped. */}
+              <div className="mt-0.5 text-xs text-muted-foreground [overflow-wrap:anywhere]">
                 {entry.date} · {entry.startOdometer} → {entry.endOdometer}
                 {entry.reference ? ` · ${entry.reference}` : ""}
                 {entry.jobTitle ? ` · ${entry.jobTitle}` : ""}
@@ -93,6 +95,16 @@ export function MileageList({
                   aria-label="Remove trip"
                   disabled={pending}
                   onClick={() => {
+                    // Asked first. The cross sits beside the odometer
+                    // photos, a thumb's width from them, and removing a trip
+                    // deletes those too — there is nothing to bring back.
+                    if (
+                      !window.confirm(
+                        `Remove this trip (${entry.miles} mi on ${entry.date})? Its odometer photos are deleted with it.`,
+                      )
+                    ) {
+                      return;
+                    }
                     setError(null);
                     startTransition(async () => {
                       const formData = new FormData();

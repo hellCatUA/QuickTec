@@ -32,7 +32,21 @@ import {
 import { ClockPicker } from "./clock-picker";
 import { saveSignature } from "./upload-actions";
 
-export type ModOption = { id: string; name: string; signed: boolean };
+export type ModOption = {
+  id: string;
+  name: string;
+  /** Their signature is on the job. */
+  signed: boolean;
+  /** They were asked and did not sign — recorded, but not a signature. */
+  skipped?: boolean;
+};
+
+/**
+ * Where a signature stands. "skipped" is its own answer and not a kind of
+ * done: the step was gone through and nobody signed, which the summary has to
+ * say in those words.
+ */
+type Signed = "none" | "signed" | "skipped";
 
 /**
  * The checkout run-through.
@@ -55,6 +69,7 @@ export function CheckoutWizard({
   mods,
   techName,
   techSigned,
+  techSkipped = false,
   releaseCode: initialReleaseCode,
   noReleaseCode: initialNoReleaseCode,
   outcome: initialOutcome,
@@ -71,6 +86,8 @@ export function CheckoutWizard({
   mods: ModOption[];
   techName: string;
   techSigned: boolean;
+  /** The tech's step was gone through without a signature. */
+  techSkipped?: boolean;
   releaseCode: string | null;
   noReleaseCode: boolean;
   outcome: JobOutcome | null;
@@ -112,12 +129,33 @@ export function CheckoutWizard({
   const [modId, setModId] = React.useState(mods[0]?.id ?? "");
   const [noMod, setNoMod] = React.useState(false);
   const [modInk, setModInk] = React.useState<string | null>(null);
-  const [modDone, setModDone] = React.useState(mods.some((mod) => mod.signed));
+  const [modState, setModState] = React.useState<Signed>(
+    mods.some((mod) => mod.signed)
+      ? "signed"
+      : mods.some((mod) => mod.skipped)
+        ? "skipped"
+        : "none",
+  );
 
   const [techInk, setTechInk] = React.useState<string | null>(null);
-  const [techDone, setTechDone] = React.useState(techSigned);
+  const [techState, setTechState] = React.useState<Signed>(
+    techSigned ? "signed" : techSkipped ? "skipped" : "none",
+  );
 
   const step = steps[index];
+
+  // Each step starts at the top of the screen. The card sits under the job's
+  // title and badges, so without this the signature steps put Continue below
+  // the fold — and the way down to it is a swipe across the signature pad.
+  //
+  // A jump, made before the new step is painted, and not a glide. A step that
+  // is still sliding into place when a finger lands on it takes the tap
+  // somewhere else — on the signature steps, off the pad altogether, and a
+  // signature drawn at nothing is recorded as one nobody gave.
+  const cardRef = React.useRef<HTMLDivElement>(null);
+  React.useLayoutEffect(() => {
+    cardRef.current?.scrollIntoView({ block: "start" });
+  }, [index]);
   const next = () =>
     setIndex((current) => Math.min(current + 1, steps.length - 1));
   const back = () => setIndex((current) => Math.max(current - 1, 0));
@@ -153,11 +191,22 @@ export function CheckoutWizard({
         setError(created?.error ?? "Could not save the name.");
         return false;
       }
-      contactId = "";
+      // Theirs from here on: the signature below is kept against them, and
+      // coming back to this step finds them in the list rather than asking
+      // for the name again.
+      contactId = created.id ?? "";
+      if (contactId) {
+        const added = { id: contactId, name: modName.trim(), signed: false };
+        setModList((current) => [...current, added]);
+        setModId(contactId);
+        setModName("");
+        setModPosition("");
+      }
     }
 
     const signer =
       modList.find((mod) => mod.id === contactId)?.name ?? modName.trim();
+    const withInk = modInk !== null;
     if (!signer) {
       setError("Enter the MOD/POC's name, or press No MOD/POC.");
       return false;
@@ -182,17 +231,24 @@ export function CheckoutWizard({
       return false;
     }
 
-    setModDone(true);
-    if (!modList.some((mod) => mod.id === contactId)) {
-      setModList((current) => [
-        ...current,
-        { id: contactId, name: signer, signed: true },
-      ]);
-    }
+    setModState(withInk ? "signed" : "skipped");
+    setModList((current) =>
+      current.some((mod) => mod.id === contactId)
+        ? current.map((mod) =>
+            mod.id === contactId
+              ? { ...mod, signed: withInk, skipped: !withInk }
+              : mod,
+          )
+        : [
+            ...current,
+            { id: contactId, name: signer, signed: withInk, skipped: !withInk },
+          ],
+    );
     return true;
   }
 
   async function saveTech() {
+    const withInk = techInk !== null;
     const result = await run(async () => {
       const formData = new FormData();
       formData.set("jobId", jobId);
@@ -210,7 +266,7 @@ export function CheckoutWizard({
       setError(result?.error ?? "Could not save the signature.");
       return false;
     }
-    setTechDone(true);
+    setTechState(withInk ? "signed" : "skipped");
     return true;
   }
 
@@ -256,8 +312,16 @@ export function CheckoutWizard({
     onClose();
   }
 
+  // Going on from a signature step with nothing in the box is a decision, and
+  // the button says so before it is pressed. It used to read "Continue" either
+  // way, save "no signature obtained", and then report the signature as
+  // captured.
+  const leavingUnsigned =
+    (step === "mod" && !noMod && modInk === null && modState === "none") ||
+    (step === "tech" && techInk === null && techState === "none");
+
   return (
-    <Card className="border-primary/50">
+    <Card ref={cardRef} className="scroll-mt-3 border-primary/50">
       <CardHeader>
         <CardTitle>
           {mode === "prepare" ? "Prepare checkout" : "Checkout"}
@@ -372,9 +436,16 @@ export function CheckoutWizard({
 
         {step === "mod" ? (
           <div className="flex flex-col gap-3">
-            {modDone ? (
+            {modState === "signed" ? (
               <p className="flex items-center gap-2 text-sm text-success">
                 <Check className="size-4" /> MOD/POC signature already captured.
+              </p>
+            ) : modState === "skipped" ? (
+              <p className="flex items-start gap-2 text-sm text-warning">
+                <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                <span>
+                  No MOD/POC signature was taken. Sign below to add one.
+                </span>
               </p>
             ) : null}
 
@@ -457,9 +528,14 @@ export function CheckoutWizard({
 
         {step === "tech" ? (
           <div className="flex flex-col gap-3">
-            {techDone ? (
+            {techState === "signed" ? (
               <p className="flex items-center gap-2 text-sm text-success">
                 <Check className="size-4" /> Your signature is already captured.
+              </p>
+            ) : techState === "skipped" ? (
+              <p className="flex items-start gap-2 text-sm text-warning">
+                <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                <span>You have not signed yet. Sign below to add yours.</span>
               </p>
             ) : null}
             <span className="text-sm">
@@ -492,10 +568,10 @@ export function CheckoutWizard({
                 )}
               </Row>
               <Row label="MOD/POC signature">
-                {noMod ? "No MOD/POC" : modDone ? "Captured" : "Not captured"}
+                {noMod ? "No MOD/POC" : <SignedAs state={modState} />}
               </Row>
               <Row label="Your signature">
-                {techDone ? "Captured" : "Not captured"}
+                <SignedAs state={techState} />
               </Row>
               {missingRequired.length > 0 ? (
                 <Row label="Missing">
@@ -572,10 +648,18 @@ export function CheckoutWizard({
                 (step === "release" && !noReleaseCode && !releaseCode.trim())
               }
               onClick={async () => {
-                if (step === "mod" && !noMod && !modDone) {
-                  if (!(await saveMod())) return;
-                } else if (step === "tech" && !techDone) {
-                  if (!(await saveTech())) return;
+                // Ink in the box is always kept — it replaces whatever was
+                // there, which is what signing again means. An empty box is
+                // written down once, as not signed, and after that there is
+                // nothing new to save.
+                if (step === "mod" && !noMod) {
+                  if (modInk !== null || modState === "none") {
+                    if (!(await saveMod())) return;
+                  }
+                } else if (step === "tech") {
+                  if (techInk !== null || techState === "none") {
+                    if (!(await saveTech())) return;
+                  }
                 }
 
                 if (mode === "prepare" && step === "tech") {
@@ -587,13 +671,29 @@ export function CheckoutWizard({
               }}
             >
               {pending ? <Loader2 className="animate-spin" /> : null}
-              {mode === "prepare" && step === "tech" ? "Done" : "Continue"}
+              {leavingUnsigned
+                ? mode === "prepare" && step === "tech"
+                  ? "Done without a signature"
+                  : "Continue without a signature"
+                : mode === "prepare" && step === "tech"
+                  ? "Done"
+                  : "Continue"}
               {mode === "prepare" && step === "tech" ? null : <ArrowRight />}
             </Button>
           ) : null}
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+/** What the summary says about a signature, in the words for what happened. */
+function SignedAs({ state }: { state: Signed }) {
+  if (state === "signed") return <>Captured</>;
+  return (
+    <span className="text-warning">
+      {state === "skipped" ? "Not signed" : "Not captured"}
+    </span>
   );
 }
 

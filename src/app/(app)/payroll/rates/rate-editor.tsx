@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Field, Input, Select } from "@/components/ui/field";
 import { formatRate, PAY_TYPE_LABEL } from "@/lib/money";
+import { ROLE_LABEL } from "@/lib/profile-format";
 import type { PayType } from "@prisma-client";
 import { deletePayRate, savePayRate } from "../actions";
 
@@ -59,7 +60,9 @@ export function RateEditor({
       <CardContent className="flex flex-col gap-4">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm font-semibold">{user.name}</span>
-          <Badge variant="neutral">{user.baseRole}</Badge>
+          <Badge variant="neutral">
+            {ROLE_LABEL[user.baseRole] ?? user.baseRole}
+          </Badge>
           {!user.defaultPayType ? (
             <Badge variant="warning">No default rate</Badge>
           ) : null}
@@ -147,6 +150,13 @@ export function RateEditor({
                   aria-label={`Remove ${rate.scopeLabel} rate`}
                   disabled={pending}
                   onClick={() => {
+                    if (
+                      !window.confirm(
+                        `Remove ${user.name}'s ${rate.scopeLabel} rate?`,
+                      )
+                    ) {
+                      return;
+                    }
                     setError(null);
                     startTransition(async () => {
                       const formData = new FormData();

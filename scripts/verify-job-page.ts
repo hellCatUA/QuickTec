@@ -1509,6 +1509,18 @@ async function main() {
     check("the tech on the job can open it", fetched.status(), 200);
     await asTech.close();
 
+    // Asked first: the file is deleted, not just unlisted. Saying no keeps it.
+    planner.once("dialog", (dialog) => dialog.dismiss());
+    await planner
+      .getByRole("button", { name: "Remove NetCom-WO-887766.pdf" })
+      .click();
+    await planner.waitForTimeout(1000);
+    check(
+      "taking a document off asks first, and no keeps it",
+      await db.attachment.count({ where: { jobDocumentId: assignment.jobId } }),
+      1,
+    );
+    planner.once("dialog", (dialog) => dialog.accept());
     await planner
       .getByRole("button", { name: "Remove NetCom-WO-887766.pdf" })
       .click();

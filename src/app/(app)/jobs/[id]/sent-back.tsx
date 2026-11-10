@@ -84,7 +84,9 @@ export function SentBack({
             onClick={resubmit}
           >
             {pending ? <Loader2 className="animate-spin" /> : null}
-            Send back for review
+            {/* Not "Send back": that is the heading two lines up, and it
+                means the opposite direction. */}
+            Resubmit for review
           </Button>
           <p className="text-xs text-muted-foreground">
             Fix what is above first. This puts the job back in their queue and

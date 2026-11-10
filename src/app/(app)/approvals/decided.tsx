@@ -1,7 +1,6 @@
 import { ArrowRight } from "lucide-react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
-import { JOB_FIELDS, isJobField } from "@/lib/job-fields";
 
 export type DecidedRow = {
   id: string;
@@ -85,9 +84,4 @@ export function DecidedList({ rows }: { rows: DecidedRow[] }) {
       ))}
     </div>
   );
-}
-
-/** "Scheduled start" rather than "scheduledStart", for a field change. */
-export function fieldKind(fieldPath: string): string {
-  return isJobField(fieldPath) ? JOB_FIELDS[fieldPath].label : fieldPath;
 }
