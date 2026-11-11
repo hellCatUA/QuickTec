@@ -31,6 +31,9 @@ const BASE = process.env.BASE_URL ?? "http://127.0.0.1:3000";
 const LA = "America/Los_Angeles";
 const COMPANY_A = "Jobs List Co A";
 const COMPANY_B = "Jobs List Co B";
+const REP_NAME = "Jobs List Rep Co";
+const PROJECT_CODE = "JLPRJ";
+const PROJECT_NAME = "Jobs List Project";
 const CUSTOMER_CODE = "JLC";
 let failures = 0;
 
@@ -71,6 +74,8 @@ async function cleanup() {
       ],
     },
   });
+  await db.project.deleteMany({ where: { code: PROJECT_CODE } });
+  await db.repCompany.deleteMany({ where: { name: REP_NAME } });
   if (customer) await db.customer.delete({ where: { id: customer.id } });
   await db.client.deleteMany({ where: { id: { in: companyIds } } });
 }
@@ -87,16 +92,23 @@ async function main() {
   const customer = await db.customer.create({
     data: { name: "Jobs List Customer", code: CUSTOMER_CODE },
   });
-  const site = await db.site.create({
-    data: {
-      customerId: customer.id,
-      siteNumber: "4401",
-      addressLine1: "1 Test Way",
-      city: "Lodi",
-      state: "CA",
-      postalCode: "95240",
-      timeZone: LA,
-    },
+  const siteAt = (siteNumber: string) =>
+    db.site.create({
+      data: {
+        customerId: customer.id,
+        siteNumber,
+        addressLine1: "1 Test Way",
+        city: "Lodi",
+        state: "CA",
+        postalCode: "95240",
+        timeZone: LA,
+      },
+    });
+  const site = await siteAt("4401");
+  const otherSite = await siteAt("4402");
+  const repCompany = await db.repCompany.create({ data: { name: REP_NAME } });
+  const project = await db.project.create({
+    data: { name: PROJECT_NAME, code: PROJECT_CODE, clientId: companyA.id },
   });
 
   // Every date is counted from today on the site's calendar, so the suite
@@ -116,6 +128,9 @@ async function main() {
       lifecycle?: "SCHEDULED" | "IN_PROGRESS" | "PENDING_REVIEW" | "APPROVED";
       outcome?: "COMPLETED";
       client?: string;
+      site?: string;
+      rep?: string;
+      project?: string;
       crew?: { userId: string; isLead: boolean }[];
     } = {},
   ) {
@@ -127,7 +142,9 @@ async function main() {
         title,
         clientId: options.client ?? companyA.id,
         customerId: customer.id,
-        siteId: site.id,
+        siteId: options.site ?? site.id,
+        repCompanyId: options.rep ?? null,
+        projectId: options.project ?? null,
         // Raised by the supervisor, which is what lets them see the tech's.
         createdById: sup.user.id,
         scheduledStart: start,
@@ -157,7 +174,11 @@ async function main() {
       { userId: T, isLead: false },
     ],
   });
-  const tomorrowTech = await job("JL Tomorrow tech", at(1, 8), { crew: techLead });
+  const tomorrowTech = await job("JL Tomorrow tech", at(1, 8), {
+    crew: techLead,
+    rep: repCompany.id,
+    project: project.id,
+  });
   const earlierOne = await job("JL Earlier one", at(-3, 7), {
     lifecycle: "PENDING_REVIEW",
     outcome: "COMPLETED",
@@ -168,7 +189,10 @@ async function main() {
     outcome: "COMPLETED",
     crew: techLead,
   });
-  const earlierThree = await job("JL Earlier three", at(-10, 8), { crew: techLead });
+  const earlierThree = await job("JL Earlier three", at(-10, 8), {
+    crew: techLead,
+    site: otherSite.id,
+  });
   const inProgress = await job("JL In progress", at(-2, 7, 30), {
     lifecycle: "IN_PROGRESS",
     crew: techLead,
@@ -235,57 +259,62 @@ async function main() {
   const card = (page: Page, id: string) => page.locator(`a[href="/jobs/${id}"]`).first();
   const onA = `company=${companyA.id}`;
 
-  // --- a supervisor: their own first, then everybody else's -----------------
+  const whose = (page: Page) => page.locator('nav[aria-label="Whose jobs"]');
+  const current = (page: Page) =>
+    whose(page).locator('a[aria-current="page"]').innerText();
+
+  // --- a supervisor: My jobs or All jobs ----------------------------------------
   const supPage = await pageFor(browser, sup.token);
   await open(supPage, `/jobs?${onA}`);
 
+  check("a supervisor can switch between their jobs and all", await whose(supPage).isVisible(), true);
+  check("and starts on All jobs", await current(supPage), "All jobs");
   check(
-    "a supervisor's own jobs come first, under their own heading",
-    await supPage.getByRole("heading", { name: /^Your jobs/ }).isVisible(),
-    true,
+    "which holds theirs and everybody else's",
+    `${(await listed(supPage)).includes("JL Today sup")} ${(await listed(supPage)).includes("JL Tomorrow tech")}`,
+    "true true",
+  );
+  await whose(supPage).getByRole("link", { name: "My jobs" }).click();
+  await supPage.waitForURL((url) => url.searchParams.get("who") === "mine", { timeout: 15_000 });
+  await supPage.waitForTimeout(400);
+  check("My jobs is the jobs they are on", (await listed(supPage)).join(", "), "JL Today sup");
+  check(
+    "and keeps the filters",
+    new URL(supPage.url()).searchParams.get("company"),
+    companyA.id,
+  );
+  await open(supPage, `/jobs?${onA}`);
+  check("the choice is remembered", await current(supPage), "My jobs");
+  check("and so is what it shows", (await listed(supPage)).join(", "), "JL Today sup");
+  await whose(supPage).getByRole("link", { name: "All jobs" }).click();
+  await supPage.waitForURL((url) => url.searchParams.get("who") === "all", { timeout: 15_000 });
+  await open(supPage, `/jobs?${onA}`);
+  check("All jobs is remembered too", await current(supPage), "All jobs");
+
+  // --- the days -----------------------------------------------------------------
+  check(
+    "on a job now first, then today and the days to come, no date, the stragglers",
+    (await headings(supPage, "main", "h2")).join(" | "),
+    `In progress | Today · ${named(0)} | Tomorrow · ${named(1)} | No date yet | Earlier — still open`,
   );
   check(
-    "and everybody else's after the divider",
-    await supPage.getByRole("heading", { name: /^Other jobs/ }).isVisible(),
-    true,
-  );
-  check(
-    "their job is in their part",
-    (await listed(supPage, 'section[aria-label="Your jobs"]')).join(", "),
-    "JL Today sup",
-  );
-  check(
-    "nothing is listed twice",
-    await supPage.locator(`a[href="/jobs/${todaySup.id}"]`).count(),
-    1,
-  );
-  check(
-    "the rest run: on a job now, the days to come, no date, then the stragglers",
-    (await headings(supPage, 'section[aria-label="Other jobs"]', "h3")).join(" | "),
-    `In progress | Tomorrow · ${named(1)} | No date yet | Earlier — still open`,
-  );
-  check(
-    "the stragglers are cut by day, newest first",
-    (await headings(supPage, 'section[aria-label="Other jobs"]', "h4"))
-      .filter((label) => label !== named(-2))
-      .join(" | "),
-    `${named(-3)} | ${named(-10)}`,
+    "a group of several days is cut by day, the stragglers newest first",
+    (await headings(supPage, "main", "h3")).join(" | "),
+    `${named(-2)} | ${named(-3)} | ${named(-10)}`,
   );
   check(
     "two jobs on one day share one divider, morning first",
     (
       await listed(
-        supPage
-          .locator('section[aria-label="Other jobs"] h4', { hasText: named(-3) })
-          .locator("xpath=.."),
+        supPage.locator("main h3", { hasText: named(-3) }).locator("xpath=.."),
       )
     ).join(", "),
     "JL Earlier one, JL Earlier two",
   );
   check(
-    "a job on now says which day it was booked for, above it and on it",
-    `${await supPage.locator('section[aria-label="Other jobs"] h4', { hasText: named(-2) }).count()} ${(await card(supPage, inProgress.id).innerText()).includes(named(-2))}`,
-    "1 true",
+    "the day is on the card as well as above it",
+    (await card(supPage, inProgress.id).innerText()).includes(named(-2)),
+    true,
   );
   check(
     "on their own job, the supervisor is 'You'",
@@ -315,25 +344,18 @@ async function main() {
 
   // --- the filters, through the address ----------------------------------------
   await open(supPage, `/jobs?${onA}&tech=${S}`);
+  check("one tech's jobs", (await listed(supPage)).join(", "), "JL Today sup");
   check(
-    "one tech's jobs",
-    (await listed(supPage)).join(", "),
-    "JL Today sup",
-  );
-  check(
-    "and with nobody else's, no divider to draw",
-    await supPage.getByRole("heading", { name: /^Other jobs/ }).count(),
-    0,
-  );
-  check(
-    "each filter in use is a chip, and there is a way to clear them all",
+    "each filter in use is a chip, the companies saying which they are",
     (
       await supPage
         .locator('nav[aria-label="Filters in use"] a')
-        .evaluateAll((links) => links.map((link) => (link.textContent ?? "").replace("(remove)", "").trim()))
+        .evaluateAll((links) =>
+          links.map((link) => (link.textContent ?? "").replace("(remove)", "").trim()),
+        )
     ).join(" | "),
-    // In the panel's order: days, tech, company, customer.
-    `Sam Super | ${COMPANY_A} | Clear all`,
+    // In the panel's order.
+    `Paying: ${COMPANY_A} | Sam Super | Clear all`,
   );
   await supPage
     .locator('nav[aria-label="Filters in use"] a', { hasText: "Sam Super" })
@@ -357,6 +379,18 @@ async function main() {
     (await listed(supPage)).sort().join(", "),
     "JL Earlier one, JL Earlier three, JL Earlier two",
   );
+  await open(supPage, `/jobs?rep=${repCompany.id}`);
+  check("a rep company", (await listed(supPage)).join(", "), "JL Tomorrow tech");
+  await open(supPage, `/jobs?project=${project.id}`);
+  check(
+    "a project, said on its chip",
+    `${(await listed(supPage)).join(", ")} / ${await supPage.locator('nav[aria-label="Filters in use"] a', { hasText: `Project: ${PROJECT_NAME}` }).count()}`,
+    "JL Tomorrow tech / 1",
+  );
+  await open(supPage, `/jobs?customer=${customer.id}&site=4402`);
+  check("a customer and a site ID", (await listed(supPage)).join(", "), "JL Earlier three");
+  await open(supPage, `/jobs?customer=${customer.id}&site=440`);
+  check("part of a site ID finds every site it is part of", (await listed(supPage)).length, 8);
 
   await open(supPage, `/jobs?${onA}&q=earlier+three`);
   check("every word has to be found", (await listed(supPage)).join(", "), "JL Earlier three");
@@ -366,6 +400,8 @@ async function main() {
     (await listed(supPage)).join(", "),
     "JL Tomorrow tech",
   );
+  await open(supPage, `/jobs?q=${encodeURIComponent(PROJECT_NAME)}`);
+  check("the search finds a project by its name", (await listed(supPage)).join(", "), "JL Tomorrow tech");
   await open(supPage, `/jobs?q=${tomorrowTech.intWoId}`);
   check("a work order number finds its job", (await listed(supPage)).join(", "), "JL Tomorrow tech");
   check(
@@ -374,11 +410,7 @@ async function main() {
     true,
   );
   await open(supPage, `/jobs?customer=${customer.id}`);
-  check(
-    "a customer, whoever pays",
-    (await listed(supPage)).length,
-    8,
-  );
+  check("a customer, whoever pays", (await listed(supPage)).length, 8);
   await open(supPage, `/jobs?${onA}&q=nothing-like-this`);
   check(
     "nothing found says so",
@@ -387,20 +419,21 @@ async function main() {
   );
 
   // --- the tabs keep the filters --------------------------------------------
-  await open(supPage, `/jobs?${onA}&q=earlier`);
+  await open(supPage, `/jobs?${onA}&q=earlier&who=all`);
   const allTab = await supPage
     .locator('nav[aria-label="Which jobs"] a', { hasText: "All" })
     .getAttribute("href");
   check(
-    "a tab carries the search and the filters over",
-    `${allTab?.includes(onA)} ${allTab?.includes("q=earlier")}`,
-    "true true",
+    "a tab carries the search, the filters and whose jobs over",
+    `${allTab?.includes(onA)} ${allTab?.includes("q=earlier")} ${allTab?.includes("who=all")}`,
+    "true true true",
   );
   await open(supPage, `/jobs?filter=all&${onA}`);
   check(
     "the history reads back from today a day at a time",
-    (await headings(supPage, 'section[aria-label="Other jobs"]', "h3")).join(" | "),
+    (await headings(supPage, "main", "h2")).join(" | "),
     [
+      `Today · ${named(0)}`,
       `Tomorrow · ${named(1)}`,
       "No date yet",
       named(-2),
@@ -420,11 +453,25 @@ async function main() {
   await open(supPage, "/jobs");
   const toggle = supPage.getByRole("button", { name: /^Filters/ });
   await toggle.click();
-  check("Filters opens the panel", await supPage.locator("#job-filters").isVisible(), true);
+  const panel = supPage.locator("#job-filters");
+  check("Filters opens the panel", await panel.isVisible(), true);
   check("and says it is open", await toggle.getAttribute("aria-expanded"), "true");
-  await supPage.locator("#jobs-company").click();
-  await supPage.locator("#jobs-company").fill(COMPANY_B);
-  await supPage.locator("#jobs-company").press("Enter");
+  check(
+    "in the owner's order",
+    (await panel.locator("label").evaluateAll((labels) => labels.map((label) => label.textContent))).join(" | "),
+    "From | To | Paying company | Rep company | Project | Tech | Customer | Site ID",
+  );
+  const rows = await panel.evaluate((node) =>
+    [...node.querySelectorAll("label")].map((label) =>
+      Math.round(label.getBoundingClientRect().top),
+    ),
+  );
+  check(
+    "two to a row where the owner put two, the project and the tech a row each",
+    [rows[0] === rows[1], rows[2] === rows[3], rows[4] < rows[5], rows[6] === rows[7]].join(" "),
+    "true true true true",
+  );
+  await supPage.locator("#jobs-company").selectOption(companyB.id);
   await supPage.locator("#jobs-from").fill(dayOf(1));
   await supPage.locator("#jobs-to").fill(dayOf(1));
   await supPage.getByRole("button", { name: "Show jobs" }).click();
@@ -437,19 +484,38 @@ async function main() {
     `${(await listed(supPage)).join(", ")} / ${new URL(supPage.url()).searchParams.get("from")}`,
     `JL Other company / ${dayOf(1)}`,
   );
-  check("and closes the panel", await supPage.locator("#job-filters").count(), 0);
+  check("and closes the panel", await panel.count(), 0);
   check(
     "the button counts the filters in use",
     await toggle.locator("span.tabular").textContent(),
     "2 in use",
   );
+  await open(supPage, "/jobs");
+  await toggle.click();
+  await supPage.locator("#jobs-project").click();
+  await supPage.locator("#jobs-project").fill(PROJECT_NAME);
+  await supPage.locator("#jobs-project").press("Enter");
+  await supPage.locator("#jobs-site").fill("4401");
+  await supPage.getByRole("button", { name: "Show jobs" }).click();
+  await supPage.waitForURL((url) => url.search.includes(`project=${project.id}`), {
+    timeout: 15_000,
+  });
+  await supPage.waitForTimeout(500);
+  check(
+    "a project picked from the list, with a site ID typed",
+    `${(await listed(supPage)).join(", ")} / ${new URL(supPage.url()).searchParams.get("site")}`,
+    "JL Tomorrow tech / 4401",
+  );
 
   // --- 320 px --------------------------------------------------------------------
   const narrow = await pageFor(browser, sup.token, 320);
-  await open(narrow, `/jobs?${onA}&tech=${T}&from=${dayOf(-10)}&to=${dayOf(1)}`);
+  await open(
+    narrow,
+    `/jobs?${onA}&rep=${repCompany.id}&project=${project.id}&tech=${T}&customer=${customer.id}&site=4401&from=${dayOf(-10)}&to=${dayOf(1)}`,
+  );
   await narrow.getByRole("button", { name: /^Filters/ }).click();
   check(
-    "at 320 px, with the panel open and chips in use, nothing runs off the side",
+    "at 320 px, with the panel open and every chip in use, nothing runs off the side",
     await narrow.evaluate(() => document.documentElement.scrollWidth <= 320),
     true,
   );
@@ -458,8 +524,8 @@ async function main() {
   const techPage = await pageFor(browser, tech.token);
   await open(techPage, `/jobs?${onA}`);
   check(
-    "a tech's list has no 'Your jobs' heading — it is all theirs",
-    await techPage.getByRole("heading", { name: /^(Your|Other) jobs/ }).count(),
+    "a tech has no My jobs and All jobs to choose between — it is all theirs",
+    await whose(techPage).count(),
     0,
   );
   check(
@@ -482,9 +548,15 @@ async function main() {
   const bossPage = await pageFor(browser, boss.token);
   await open(bossPage, `/jobs?${onA}`);
   check(
-    "a manager with no jobs of their own in it gets the list without the split",
-    `${await bossPage.getByRole("heading", { name: /^(Your|Other) jobs/ }).count()} ${(await listed(bossPage)).length}`,
-    "0 7",
+    "a manager starts on All jobs, and sees them all",
+    `${await current(bossPage)} ${(await listed(bossPage)).length}`,
+    "All jobs 7",
+  );
+  await open(bossPage, `/jobs?${onA}&who=mine`);
+  check(
+    "My jobs with none of theirs says so, and how to see the rest",
+    await bossPage.getByText(/None of your jobs match\. Try All jobs/).isVisible(),
+    true,
   );
 
   await browser.close();

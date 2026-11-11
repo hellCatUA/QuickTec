@@ -5160,7 +5160,7 @@ async function main() {
   );
 
   // --- the Jobs list --------------------------------------------------------
-  const { groupByDay, listJobs, onDays, parseJobsQuery, jobsHref, dayName } =
+  const { groupByDay, onDays, parseJobsQuery, jobsHref, jobsWhere, dayName, NO_FILTERS } =
     await import("@/lib/job-list");
   type ListedJob = import("@/lib/job-list").ListedJob;
   const NY = "America/New_York";
@@ -5288,38 +5288,19 @@ async function main() {
     "Terry Tech +1",
   );
 
-  const mixed = [
-    listed("own", "2026-11-11T16:00:00Z", { assignments: [{ isLead: true, userId: "sam", user: { name: "Sam Super" } }] }),
-    listed("theirs", "2026-11-12T16:00:00Z"),
-  ];
-  check(
-    "a supervisor's own jobs, then everybody else's",
-    listJobs(mixed, { ...listLayout, viewerId: "sam", split: true })
-      .map((section) => `${section.label}: ${section.count}`)
-      .join(" | "),
-    "Your jobs: 1 | Other jobs: 1",
-  );
-  check(
-    "with none of their own, the list as it was, without headings",
-    listJobs(mixed, { ...listLayout, viewerId: "boss", split: true })
-      .map((section) => `${section.label}: ${section.count}`)
-      .join(" | "),
-    "null: 2",
-  );
-  check(
-    "a tech's list is never split",
-    listJobs(mixed, { ...listLayout, split: false }).length,
-    1,
-  );
-
   const asked = parseJobsQuery({
     filter: "nonsense",
+    who: "everybody",
     q: "  terry   visalia ",
     from: "2026-11-30",
     to: "2026-11-01",
     tech: "x' OR 1=1",
     company: "c_123",
+    project: "p_9",
+    site: "  T-22 ",
   });
+  check("'whose' that is neither is left to the page", asked.who, null);
+  check("a site ID is kept as typed, trimmed", asked.site, "T-22");
   check("an unknown tab is the open one", asked.tab, "open");
   check("the search is one space between words", asked.q, "terry visalia");
   check("dates typed backwards are read forwards", `${asked.from} ${asked.to}`, "2026-11-01 2026-11-30");
@@ -5328,7 +5309,32 @@ async function main() {
   check(
     "a tab keeps the search and the filters",
     jobsHref(asked, { tab: "all" }),
-    "/jobs?filter=all&q=terry+visalia&from=2026-11-01&to=2026-11-30&company=c_123",
+    "/jobs?filter=all&q=terry+visalia&from=2026-11-01&to=2026-11-30&company=c_123&project=p_9&site=T-22",
+  );
+  check(
+    "and 'My jobs' with them",
+    jobsHref(parseJobsQuery({ who: "mine", rep: "r_1" }), { tab: "approved" }),
+    "/jobs?filter=approved&who=mine&rep=r_1",
+  );
+  check(
+    "clearing the filters keeps the tab and whose jobs",
+    jobsHref(parseJobsQuery({ filter: "all", who: "mine", q: "x", site: "1", customer: "c" }), NO_FILTERS),
+    "/jobs?filter=all&who=mine",
+  );
+  const whereOf = (mineOf: string | null) =>
+    JSON.stringify(jobsWhere(parseJobsQuery({}), { wide: true, fallbackZone: TZ, mineOf }));
+  check(
+    "'My jobs' is the jobs this person is on",
+    whereOf("sam").includes('{"assignments":{"some":{"userId":"sam"}}}'),
+    true,
+  );
+  check("'All jobs' adds nothing to what they may see", whereOf(null).includes("assignments"), false);
+  check(
+    "a tech picked by somebody who sees only their own narrows nothing",
+    JSON.stringify(
+      jobsWhere(parseJobsQuery({ tech: "terry" }), { wide: false, fallbackZone: TZ, mineOf: null }),
+    ).includes("terry"),
+    false,
   );
   check(
     "a day asked for is the site's: half past ten at night in New York is the 11th there",

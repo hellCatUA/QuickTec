@@ -182,18 +182,30 @@ before it went in, and they are in:
 - **A divider for each day inside those groups** (owner's addition): In
   progress, Sent back and Earlier hold several days, and two cards from
   different days read as one. The day stays on the card as well.
-- **"Your jobs", then a divider, then "Other jobs"** for a supervisor and up
-  (owner's addition) — anybody whose `job.view` reaches past their own. Nothing
-  is listed twice; somebody with none of their own in the list sees it as
-  before, without the headings. A tech's list is never split.
-- **Search and a Filters panel** (owner's addition: days, tech, company). The
-  search box finds a job by work order, title, site, address, town, paying
-  company, customer, project or anybody on the crew — every word somewhere.
-  Under Filters: a range of days (on the site's calendar), a tech (supervisor
-  and up), the paying company and the customer, offered only from jobs the
-  person can see. All of it is asked of the server through the address, so it
-  reaches past the hundred loaded, a filtered list can be bookmarked, and the
-  tabs keep it. What is in use shows as chips that each take themselves off.
+- **"My jobs | All jobs"** for a supervisor and up — anybody whose `job.view`
+  reaches past their own. The owner first asked for their own jobs set apart
+  ("Your jobs" above a divider, "Other jobs" below); having seen it, they asked
+  for a switch instead. It starts on All jobs and remembers the last choice (a
+  cookie, `quicktec-jobs-who`). "My jobs" is the jobs the person is on. A tech
+  has nothing to switch: the list is theirs already.
+- **Search and a Filters panel** (owner's addition, laid out as they drew it):
+
+  ```
+  [From]            [To]
+  [Paying company]  [Rep company]
+  [Project]
+  [Tech]                          (supervisor and up)
+  [Customer]        [Site ID]
+  ```
+
+  Two to a row from 360 px, one below. The short lists are the phone's own
+  picker, the long ones type-to-filter; each offers only what is on jobs the
+  person can see. The search box finds a job by work order, title, site,
+  address, town, paying company, customer, project or anybody on the crew —
+  every word somewhere. All of it is asked of the server through the address,
+  so it reaches past the hundred loaded, a filtered list can be bookmarked, and
+  the tabs keep it. What is in use shows as chips that each take themselves
+  off; the companies' chips say which company they are.
 - **A card is the time, the title, the place and the crew.** The date went to
   the heading; our work order number and the paying company went from phones
   (from a tablet up they are a third line) and are what the search finds. A
@@ -203,6 +215,13 @@ before it went in, and they are in:
 
 The rules are in `src/lib/job-list.ts` and checked in `npm run verify`; the page
 is driven as a tech, a supervisor and a manager by `npm run verify:jobs`.
+
+### Job cards — the owner's brief, being designed
+
+Asked for once the search is done (11 November 2026): each card to carry the
+date, time, title, paying company, rep company, client and town, with icons;
+and the crew shown as one person's name or a count of people, with an arrow
+that opens everyone on it with their full name and picture.
 
 ### Asked for next, once 5 and 8 are settled
 

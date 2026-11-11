@@ -39,19 +39,36 @@ export type JobsTab = (typeof JOBS_TABS)[number]["key"];
 /** How many jobs one page of the list holds. */
 export const JOBS_LIST_LIMIT = 100;
 
+/** Whose jobs: the ones somebody is on, or all they can see. */
+export type JobsWho = "mine" | "all";
+
+/** Where the last "My jobs" or "All jobs" picked is kept between visits. */
+export const WHO_COOKIE = "quicktec-jobs-who";
+
 /** What the list was asked for, read off its address. */
 export type JobsQuery = {
   tab: JobsTab;
+  /**
+   * "My jobs" or "All jobs", for somebody who sees more than their own. Null
+   * when the address does not say, and the page falls back on the last one
+   * they picked.
+   */
+  who: JobsWho | null;
   /** Words to find, each somewhere on the job. */
   q: string;
   /** "YYYY-MM-DD" on the site's calendar, both ends included. */
   from: string | null;
   to: string | null;
-  /** Somebody on the crew. Only for those who see more than their own. */
-  tech: string | null;
   /** The paying company. */
   company: string | null;
+  /** Who represents the customer above the paying company. */
+  rep: string | null;
+  project: string | null;
+  /** Somebody on the crew. Only for those who see more than their own. */
+  tech: string | null;
   customer: string | null;
+  /** The site's number, or part of it, as typed: "10542", "T-22". */
+  site: string;
 };
 
 type Params = Record<string, string | string[] | undefined>;
@@ -87,27 +104,50 @@ export function parseJobsQuery(params: Params): JobsQuery {
   // Typed the wrong way round, it still means the days between them.
   if (from && to && from > to) [from, to] = [to, from];
 
+  const who = one("who");
+
   return {
     tab,
+    who: who === "mine" || who === "all" ? who : null,
     q: one("q").replace(/\s+/g, " ").slice(0, 100),
     from,
     to,
-    tech: id("tech"),
     company: id("company"),
+    rep: id("rep"),
+    project: id("project"),
+    tech: id("tech"),
     customer: id("customer"),
+    site: one("site").replace(/\s+/g, " ").slice(0, 40),
   };
 }
+
+/** Every filter off, and the search, but the tab and "whose" kept. */
+export const NO_FILTERS: Partial<JobsQuery> = {
+  q: "",
+  from: null,
+  to: null,
+  company: null,
+  rep: null,
+  project: null,
+  tech: null,
+  customer: null,
+  site: "",
+};
 
 /** The list's address with some of what it asks for changed. */
 export function jobsHref(query: JobsQuery, change: Partial<JobsQuery> = {}) {
   const next = { ...query, ...change };
   const params = new URLSearchParams({ filter: next.tab });
+  if (next.who) params.set("who", next.who);
   if (next.q) params.set("q", next.q);
   if (next.from) params.set("from", next.from);
   if (next.to) params.set("to", next.to);
-  if (next.tech) params.set("tech", next.tech);
   if (next.company) params.set("company", next.company);
+  if (next.rep) params.set("rep", next.rep);
+  if (next.project) params.set("project", next.project);
+  if (next.tech) params.set("tech", next.tech);
   if (next.customer) params.set("customer", next.customer);
+  if (next.site) params.set("site", next.site);
   return `/jobs?${params}`;
 }
 
@@ -123,9 +163,13 @@ export function jobsWhere(
     /** Whether they see more than their own jobs, and so may pick a tech. */
     wide: boolean;
     fallbackZone: string;
+    /** Set for "My jobs": only the jobs this person is on. */
+    mineOf: string | null;
   },
 ): Prisma.JobWhereInput {
   const and: Prisma.JobWhereInput[] = [];
+
+  if (options.mineOf) and.push({ assignments: { some: { userId: options.mineOf } } });
 
   if (query.tab === "open") and.push({ lifecycle: { in: OPEN_LIFECYCLES } });
   else if (query.tab === "approved") and.push({ lifecycle: "APPROVED" });
@@ -163,7 +207,12 @@ export function jobsWhere(
     and.push({ assignments: { some: { userId: query.tech } } });
   }
   if (query.company) and.push({ clientId: query.company });
+  if (query.rep) and.push({ repCompanyId: query.rep });
+  if (query.project) and.push({ projectId: query.project });
   if (query.customer) and.push({ customerId: query.customer });
+  if (query.site) {
+    and.push({ site: { siteNumber: { contains: query.site, mode: "insensitive" } } });
+  }
 
   // Days are the site's, and sites sit in different zones, so the database is
   // asked for a day either side and `onDays` settles each job afterwards.
@@ -247,64 +296,12 @@ export type JobGroup = {
   days: JobDay[];
 };
 
-/** "Your jobs", "Other jobs", or the one unlabelled list. */
-export type JobSection = {
-  key: "mine" | "others" | "all";
-  label: string | null;
-  count: number;
-  groups: JobGroup[];
-};
-
 type LayoutOptions = {
   now: Date;
   fallbackZone: string;
   viewerId: string;
   tab: JobsTab;
 };
-
-/**
- * The jobs, laid out.
- *
- * For somebody who sees more than their own, their own come first under
- * "Your jobs" and everybody else's after a divider, each laid out by day the
- * same way. A supervisor who also works in the field was finding their own
- * morning among the whole team's. Nobody's job is listed twice, and somebody
- * with no jobs of their own in the list gets it as before, without headings.
- */
-export function listJobs(
-  jobs: ListedJob[],
-  options: LayoutOptions & { split: boolean },
-): JobSection[] {
-  if (!options.split) {
-    return [
-      { key: "all", label: null, count: jobs.length, groups: groupByDay(jobs, options) },
-    ];
-  }
-
-  const isMine = (job: ListedJob) =>
-    job.assignments.some((one) => one.userId === options.viewerId);
-  const mine = jobs.filter(isMine);
-  const others = jobs.filter((job) => !isMine(job));
-
-  const sections: JobSection[] = [];
-  if (mine.length > 0) {
-    sections.push({
-      key: "mine",
-      label: "Your jobs",
-      count: mine.length,
-      groups: groupByDay(mine, options),
-    });
-  }
-  if (others.length > 0) {
-    sections.push({
-      key: "others",
-      label: mine.length > 0 ? "Other jobs" : null,
-      count: others.length,
-      groups: groupByDay(others, options),
-    });
-  }
-  return sections;
-}
 
 /**
  * The jobs under a heading for each day, today first.

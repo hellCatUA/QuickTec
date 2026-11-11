@@ -1,7 +1,7 @@
-import { ChevronRight, UserRound, UsersRound } from "lucide-react";
+import { ChevronRight, UsersRound } from "lucide-react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
-import type { JobCard, JobGroup, JobSection } from "@/lib/job-list";
+import type { JobCard, JobGroup } from "@/lib/job-list";
 import { cn } from "@/lib/utils";
 
 /**
@@ -13,73 +13,35 @@ import { cn } from "@/lib/utils";
  * to read every one to find today. Now the day is a heading said once, the
  * card is the time, what it is, where, and who, and the numbers are what the
  * search finds rather than what every card spells out.
- *
- * Headings nest: "Your jobs" and "Other jobs" when the list is split, the day
- * groups under them, and the days inside a group that spans several.
  */
-export function JobList({ sections }: { sections: JobSection[] }) {
-  const split = sections.some((section) => section.label);
-
+export function JobList({ groups }: { groups: JobGroup[] }) {
   return (
     <div className="flex flex-col gap-6">
-      {sections.map((section, index) => (
-        <section
-          key={section.key}
-          aria-label={section.label ?? undefined}
-          className={cn(
-            "flex flex-col gap-4",
-            // The divider between one's own and everybody else's: the
-            // strongest line on the page, so it is not taken for a day.
-            index > 0 && split && "border-t-2 border-border pt-5",
-          )}
-        >
-          {section.label ? (
-            <h2 className="flex items-center gap-2 text-base font-semibold">
-              {section.key === "mine" ? (
-                <UserRound className="size-5 text-primary" aria-hidden />
-              ) : (
-                <UsersRound className="size-5 text-muted-foreground" aria-hidden />
-              )}
-              {section.label}
-              <Count value={section.count} />
-            </h2>
-          ) : null}
-          {section.groups.map((group) => (
-            <Group key={group.key} group={group} nested={split} />
+      {groups.map((group) => (
+        <section key={group.key} className="flex flex-col gap-2">
+          <h2 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            {group.label}
+            <Count value={group.count} />
+          </h2>
+          {group.days.map((day) => (
+            <div key={day.key} className="flex flex-col gap-2">
+              {/* A group holding several days says where one ends: the day on
+                  each card was there, but two cards from different days looked
+                  like two cards from the same one. */}
+              {day.label ? (
+                <h3 className="flex items-center gap-2 pt-1 text-xs font-medium text-muted-foreground">
+                  <span className="tabular shrink-0">{day.label}</span>
+                  <span className="h-px flex-1 bg-border" aria-hidden />
+                </h3>
+              ) : null}
+              {day.jobs.map((job) => (
+                <Card key={job.id} job={job} />
+              ))}
+            </div>
           ))}
         </section>
       ))}
     </div>
-  );
-}
-
-function Group({ group, nested }: { group: JobGroup; nested: boolean }) {
-  const Heading = nested ? "h3" : "h2";
-  const DayHeading = nested ? "h4" : "h3";
-
-  return (
-    <section className="flex flex-col gap-2">
-      <Heading className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-        {group.label}
-        <Count value={group.count} />
-      </Heading>
-      {group.days.map((day) => (
-        <div key={day.key} className="flex flex-col gap-2">
-          {/* A group holding several days says where one ends: the day on
-              each card was there, but two cards from different days looked
-              like two cards from the same one. */}
-          {day.label ? (
-            <DayHeading className="flex items-center gap-2 pt-1 text-xs font-medium text-muted-foreground">
-              <span className="tabular shrink-0">{day.label}</span>
-              <span className="h-px flex-1 bg-border" aria-hidden />
-            </DayHeading>
-          ) : null}
-          {day.jobs.map((job) => (
-            <Card key={job.id} job={job} />
-          ))}
-        </div>
-      ))}
-    </section>
   );
 }
 

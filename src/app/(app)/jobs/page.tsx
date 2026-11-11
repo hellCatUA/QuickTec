@@ -1,4 +1,5 @@
 import { Plus, X } from "lucide-react";
+import { cookies } from "next/headers";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -6,14 +7,17 @@ import { EmptyState, PageHeader } from "@/components/ui/page-header";
 import { getCompanySettings } from "@/lib/company";
 import { db } from "@/lib/db";
 import {
+  groupByDay,
   JOBS_LIST_LIMIT,
   JOBS_TABS,
   jobsHref,
   jobsWhere,
-  listJobs,
+  NO_FILTERS,
   onDays,
   parseJobsQuery,
   shortDay,
+  WHO_COOKIE,
+  type JobsWho,
 } from "@/lib/job-list";
 import { jobScopeWhere } from "@/lib/scope";
 import { can, getSessionUser } from "@/lib/session";
@@ -37,19 +41,32 @@ export default async function JobsPage({
   const query = parseJobsQuery(await searchParams);
   const company = await getCompanySettings();
   const zone = company.defaultTimeZone;
-  // Somebody who sees more than their own jobs — a supervisor and up. Their
-  // own are set apart from the rest, and they may look for one tech's. For
-  // anybody else a tech in the address is ignored: it could only narrow a
-  // list that is theirs already.
+  // Somebody who sees more than their own jobs — a supervisor and up. They
+  // choose between the jobs they are on and all they can see, and may look
+  // for one tech's. For anybody else the list is their own already: a tech in
+  // the address is ignored, and there is nothing to choose between.
   const wide = can(user, "job.view", { minScope: "REPORTS" });
+  const remembered = (await cookies()).get(WHO_COOKIE)?.value;
+  const who: JobsWho | null = wide
+    ? (query.who ?? (remembered === "mine" ? "mine" : "all"))
+    : null;
 
   // What is still to do is read from the next job on; what is done, from the
   // last one back. The hundred fetched are the hundred that matter for each.
   const history = query.tab === "approved" || query.tab === "all";
 
-  const [loaded, techs, companies, customers] = await Promise.all([
+  const [loaded, companies, reps, projects, techs, customers] = await Promise.all([
     db.job.findMany({
-      where: { AND: [scope, jobsWhere(query, { wide, fallbackZone: zone })] },
+      where: {
+        AND: [
+          scope,
+          jobsWhere(query, {
+            wide,
+            fallbackZone: zone,
+            mineOf: who === "mine" ? user.id : null,
+          }),
+        ],
+      },
       orderBy: history
         ? [{ scheduledStart: "desc" }, { createdAt: "desc" }]
         : [{ scheduledStart: "asc" }, { createdAt: "desc" }],
@@ -83,8 +100,23 @@ export default async function JobsPage({
         },
       },
     }),
-    // What the pickers offer is what can be found: the people, companies and
-    // customers on jobs this person can see, and nobody else's.
+    // What the pickers offer is what can be found: the companies, projects,
+    // people and customers on jobs this person can see, and nobody else's.
+    db.client.findMany({
+      where: { jobs: { some: scope } },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    }),
+    db.repCompany.findMany({
+      where: { jobs: { some: scope } },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    }),
+    db.project.findMany({
+      where: { jobs: { some: scope } },
+      select: { id: true, name: true, code: true },
+      orderBy: { name: "asc" },
+    }),
     wide
       ? db.user.findMany({
           where: { assignments: { some: { job: scope } } },
@@ -92,11 +124,6 @@ export default async function JobsPage({
           orderBy: { name: "asc" },
         })
       : null,
-    db.client.findMany({
-      where: { jobs: { some: scope } },
-      select: { id: true, name: true },
-      orderBy: { name: "asc" },
-    }),
     db.customer.findMany({
       where: { jobs: { some: scope } },
       select: { id: true, name: true, code: true },
@@ -105,16 +132,17 @@ export default async function JobsPage({
   ]);
   const jobs = loaded.filter((job) => onDays(job, query, zone));
 
-  const sections = listJobs(jobs, {
+  const groups = groupByDay(jobs, {
     now: new Date(),
     fallbackZone: zone,
     viewerId: user.id,
     tab: query.tab,
-    split: wide,
   });
 
+  // Each filter in use, as a chip that takes itself off. The companies say
+  // which they are: with two of them a bare "NetCom Sub" could be either.
   const nameOf = (list: { id: string; name: string }[] | null, id: string) =>
-    list?.find((one) => one.id === id)?.name;
+    list?.find((one) => one.id === id)?.name ?? "Unknown";
   const chips = [
     query.from || query.to
       ? {
@@ -130,37 +158,50 @@ export default async function JobsPage({
           href: jobsHref(query, { from: null, to: null }),
         }
       : null,
-    wide && query.tech
-      ? {
-          key: "tech",
-          label: nameOf(techs, query.tech) ?? "Unknown tech",
-          href: jobsHref(query, { tech: null }),
-        }
-      : null,
     query.company
       ? {
           key: "company",
-          label: nameOf(companies, query.company) ?? "Unknown company",
+          label: `Paying: ${nameOf(companies, query.company)}`,
           href: jobsHref(query, { company: null }),
+        }
+      : null,
+    query.rep
+      ? {
+          key: "rep",
+          label: `Rep: ${nameOf(reps, query.rep)}`,
+          href: jobsHref(query, { rep: null }),
+        }
+      : null,
+    query.project
+      ? {
+          key: "project",
+          label: `Project: ${nameOf(projects, query.project)}`,
+          href: jobsHref(query, { project: null }),
+        }
+      : null,
+    wide && query.tech
+      ? {
+          key: "tech",
+          label: nameOf(techs, query.tech),
+          href: jobsHref(query, { tech: null }),
         }
       : null,
     query.customer
       ? {
           key: "customer",
-          label: nameOf(customers, query.customer) ?? "Unknown customer",
+          label: `Customer: ${nameOf(customers, query.customer)}`,
           href: jobsHref(query, { customer: null }),
+        }
+      : null,
+    query.site
+      ? {
+          key: "site",
+          label: `Site ID: ${query.site}`,
+          href: jobsHref(query, { site: "" }),
         }
       : null,
   ].filter((chip) => chip !== null);
   const narrowed = chips.length > 0 || query.q !== "";
-  const cleared = jobsHref(query, {
-    q: "",
-    from: null,
-    to: null,
-    tech: null,
-    company: null,
-    customer: null,
-  });
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4">
@@ -202,13 +243,19 @@ export default async function JobsPage({
 
       <JobFilters
         query={query}
-        techs={techs?.map((one) => ({ value: one.id, label: one.name })) ?? null}
+        who={who}
         companies={companies.map((one) => ({ value: one.id, label: one.name }))}
-        customers={customers.map((one) => ({
+        reps={reps.map((one) => ({ value: one.id, label: one.name }))}
+        projects={projects.map((one) => ({
           value: one.id,
           label: one.name,
           hint: one.code,
           keywords: one.code,
+        }))}
+        techs={techs?.map((one) => ({ value: one.id, label: one.name })) ?? null}
+        customers={customers.map((one) => ({
+          value: one.id,
+          label: `${one.name} (${one.code})`,
         }))}
       />
 
@@ -227,7 +274,7 @@ export default async function JobsPage({
           ))}
           {chips.length > 1 || query.q ? (
             <Link
-              href={cleared}
+              href={jobsHref(query, NO_FILTERS)}
               className="inline-flex min-h-11 items-center px-2 text-sm font-medium text-primary underline-offset-4 hover:underline"
             >
               Clear all
@@ -254,10 +301,19 @@ export default async function JobsPage({
           <EmptyState
             title="Nothing matches"
             description={
-              query.tab === "all"
-                ? "No job matches. Try fewer words, or clear the filters."
-                : `No ${query.tab} jobs match. Try the All tab, or clear the search and filters.`
+              // "My jobs" is a filter too, and the likelier reason a manager
+              // finds nothing: it is named first when it is on.
+              who === "mine"
+                ? "None of your jobs match. Try All jobs, or clear the search and filters."
+                : query.tab === "all"
+                  ? "No job matches. Try fewer words, or clear the filters."
+                  : `No ${query.tab} jobs match. Try the All tab, or clear the search and filters.`
             }
+          />
+        ) : who === "mine" ? (
+          <EmptyState
+            title="None of yours"
+            description={`You are not on any ${query.tab === "all" ? "" : `${query.tab} `}jobs. All jobs shows everyone's.`}
           />
         ) : (
           <EmptyState
@@ -272,7 +328,7 @@ export default async function JobsPage({
           />
         )
       ) : (
-        <JobList sections={sections} />
+        <JobList groups={groups} />
       )}
 
       {loaded.length === JOBS_LIST_LIMIT ? (
