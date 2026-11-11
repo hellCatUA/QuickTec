@@ -26,6 +26,7 @@ import {
   allocateRevisitIntWo,
   revisitAssignmentId,
 } from "@/lib/int-wo";
+import { announceAssignments } from "@/lib/assignment-notices";
 import { notify } from "@/lib/notifications";
 import {
   jobRateNote,
@@ -486,6 +487,14 @@ export async function createJob(
   // draft is only a way to create it a second time by accident.
   await db.jobDraft.deleteMany({ where: { userId: actor.id } });
 
+  // Raised with a crew is the commonest way onto a job, and it used to be the
+  // one that said nothing: only somebody added afterwards was told.
+  await announceAssignments({
+    jobId: job.id,
+    actorId: actor.id,
+    people: rates.map(({ userId, supervisorId }) => ({ userId, supervisorId })),
+  });
+
   syncJobInBackground(job.id);
   revalidatePath("/jobs");
   // Said rather than swallowed: the job is real either way, and somebody has
@@ -907,6 +916,14 @@ export async function createRevisit(
       detail: { who: job.intWoId },
     });
   }
+
+  // Sent back to a site is news the same way being put on a job is — more,
+  // if anything: it was not on anybody's week until now.
+  await announceAssignments({
+    jobId: job.id,
+    actorId: actor.id,
+    people: carried.map(({ userId, supervisorId }) => ({ userId, supervisorId })),
+  });
 
   revalidatePath("/jobs");
   revalidatePath(`/jobs/${parent.id}`);

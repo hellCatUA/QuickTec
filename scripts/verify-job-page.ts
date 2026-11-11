@@ -2488,8 +2488,10 @@ async function main() {
     );
     check(
       "and our own work order offers the PDF beside its number",
+      // Found by where it goes: the button says "Open PDF" now, rather than
+      // spelling the file name out a second time under the same number.
       await planner
-        .getByRole("link", { name: /\.pdf$/ })
+        .locator('a[href*="/export/pdf"]')
         .first()
         .isVisible(),
       true,

@@ -1305,6 +1305,35 @@ async function main() {
     "HOURLY 52.5 · The project's rate",
   );
 
+  // Raised with a crew is the commonest way onto a job, and it used to be the
+  // only one that told nobody.
+  const raisedNote = await db.notification.findFirst({
+    where: { userId: tech.user.id, kind: "job_assigned", jobId: raised?.id },
+    select: { title: true, body: true, actorId: true },
+  });
+  check(
+    "the crew a job is raised with are told they are on it",
+    raisedNote?.title,
+    "You are on Register swap",
+  );
+  check(
+    "by whoever raised it",
+    raisedNote?.actorId,
+    boss.user.id,
+  );
+  check(
+    "with where it is, not only its number",
+    /· .+, [A-Z]{2}$/.test(raisedNote?.body ?? ""),
+    true,
+  );
+  check(
+    "and nobody is told about a job they raised themselves",
+    await db.notification.count({
+      where: { userId: boss.user.id, kind: "job_assigned", jobId: raised?.id },
+    }),
+    0,
+  );
+
   await managerPage.goto(`${BASE}/jobs/${raised?.id}/manage/schedule`, {
     waitUntil: "load",
   });

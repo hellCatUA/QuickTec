@@ -31,6 +31,9 @@ const SLICE = Number(arg("slice", "1500"));
 const VIEWPORTS: Record<string, { width: number; height: number }> = {
   phone: { width: 390, height: 844 },
   small: { width: 320, height: 568 },
+  // The two most common Android and small-iPhone widths, between the two above.
+  w360: { width: 360, height: 780 },
+  w375: { width: 375, height: 667 },
   tablet: { width: 820, height: 1180 },
   desktop: { width: 1440, height: 900 },
 };
@@ -356,7 +359,7 @@ async function visit(
     consoleErrors.push(`navigation: ${(error as Error).message.slice(0, 200)}`);
   }
 
-  const phone = meta.view === "phone" || meta.view === "small";
+  const phone = meta.view === "phone" || meta.view === "small" || meta.view.startsWith("w");
   const measured = await measure(page, phone).catch((error) => ({
     title: "",
     h1: [],
@@ -435,8 +438,8 @@ async function main() {
         const context = await browser.newContext({
           viewport: VIEWPORTS[view],
           deviceScaleFactor: 1,
-          hasTouch: view === "phone" || view === "small",
-          isMobile: view === "phone" || view === "small",
+          hasTouch: view === "phone" || view === "small" || view.startsWith("w"),
+          isMobile: view === "phone" || view === "small" || view.startsWith("w"),
           timezoneId: "America/Los_Angeles",
           locale: "en-US",
         });

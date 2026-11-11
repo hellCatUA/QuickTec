@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { signOut } from "@/auth";
 import { AccountMenu } from "@/components/account-menu";
+import { ApprovalsBadgeProvider } from "@/components/approvals-badge";
 import { BottomNav, SideNav } from "@/components/app-nav";
 import { CompanyMark } from "@/components/company-mark";
 import { ConnectionStatus } from "@/components/connection-status";
@@ -17,6 +18,7 @@ import { db } from "@/lib/db";
 import { buildNavItems, opensSettings } from "@/lib/nav";
 import { ROLE_LABEL } from "@/lib/profile-format";
 import { getSessionUser } from "@/lib/session";
+import { approvalsBadge } from "@/lib/waiting";
 
 export default async function AppLayout({
   children,
@@ -55,82 +57,87 @@ export default async function AppLayout({
 
   const items = buildNavItems(user);
   const canManageSettings = opensSettings(user);
+  // Counted with the shell so the first paint already has it; the tab bar
+  // asks again as somebody moves around.
+  const badge = await approvalsBadge(user);
 
   return (
-    <div className="flex min-h-dvh flex-col">
-      <ServiceWorkerRegistrar />
-      <ConnectionStatus />
+    <ApprovalsBadgeProvider initial={badge}>
+      <div className="flex min-h-dvh flex-col">
+        <ServiceWorkerRegistrar />
+        <ConnectionStatus />
 
-      <header className="flex items-center gap-3 border-b border-border bg-surface px-4 py-2">
-        <Link href="/dashboard" className="flex min-w-0 items-center gap-2">
-          <CompanyMark
-            logoUrl={company?.logoUrl}
-            name={company?.name}
-            size={COMPANY_MARK_BASE.header}
-            scale={company?.logoScale}
-            className="text-sm"
-          />
-          {/* The company owns the deployment, QuickTec is what it is running.
-              Whether both are spelled out is a setting: a long company name
-              eats the whole bar on a phone, and the logo already says whose
-              deployment this is.
+        <header className="flex items-center gap-3 border-b border-border bg-surface px-4 py-2">
+          <Link href="/dashboard" className="flex min-w-0 items-center gap-2">
+            <CompanyMark
+              logoUrl={company?.logoUrl}
+              name={company?.name}
+              size={COMPANY_MARK_BASE.header}
+              scale={company?.logoScale}
+              className="text-sm"
+            />
+            {/* The company owns the deployment, QuickTec is what it is running.
+                Whether both are spelled out is a setting: a long company name
+                eats the whole bar on a phone, and the logo already says whose
+                deployment this is.
 
-              With a wordmark uploaded, the product's half of that line becomes
-              the artwork and only the company name stays as text — set as-is,
-              never inverted: flipping a two-colour mark turns its accent into
-              the opposite colour. */}
-          {company?.headerLogoUrl ? (
-            <span className="flex min-w-0 items-center gap-2">
-              {companyNameForHeader ? (
-                <span className="truncate text-lg font-semibold tracking-tight text-muted-foreground">
-                  {companyNameForHeader}
-                </span>
-              ) : null}
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={company.headerLogoUrl}
-                alt={APP_NAME}
-                style={{
-                  height: brandSize(
-                    HEADER_WORDMARK_BASE,
-                    company.headerLogoScale,
-                  ),
-                }}
-                className="w-auto shrink-0 object-contain"
-              />
-            </span>
-          ) : (
-            <span className="truncate text-lg font-semibold tracking-tight">
-              {company?.showCompanyNameInHeader === false
-                ? APP_NAME
-                : brandLine(company?.name)}
-            </span>
-          )}
-        </Link>
+                With a wordmark uploaded, the product's half of that line becomes
+                the artwork and only the company name stays as text — set as-is,
+                never inverted: flipping a two-colour mark turns its accent into
+                the opposite colour. */}
+            {company?.headerLogoUrl ? (
+              <span className="flex min-w-0 items-center gap-2">
+                {companyNameForHeader ? (
+                  <span className="truncate text-lg font-semibold tracking-tight text-muted-foreground">
+                    {companyNameForHeader}
+                  </span>
+                ) : null}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={company.headerLogoUrl}
+                  alt={APP_NAME}
+                  style={{
+                    height: brandSize(
+                      HEADER_WORDMARK_BASE,
+                      company.headerLogoScale,
+                    ),
+                  }}
+                  className="w-auto shrink-0 object-contain"
+                />
+              </span>
+            ) : (
+              <span className="truncate text-lg font-semibold tracking-tight">
+                {company?.showCompanyNameInHeader === false
+                  ? APP_NAME
+                  : brandLine(company?.name)}
+              </span>
+            )}
+          </Link>
 
-        <div className="ml-auto flex items-center gap-2">
-          <AccountMenu
-            name={user.name}
-            picture={avatarSrc(user.id, user.avatarPath)}
-            role={ROLE_LABEL[user.baseRole] ?? user.baseRole}
-            canManageSettings={canManageSettings}
-            signOutAction={async () => {
-              "use server";
-              // Back through NextCloud asking for credentials, so signing out
-              // on a shared phone actually signs you out.
-              await signOut({ redirectTo: "/signin?reauth=1" });
-            }}
-          />
+          <div className="ml-auto flex items-center gap-2">
+            <AccountMenu
+              name={user.name}
+              picture={avatarSrc(user.id, user.avatarPath)}
+              role={ROLE_LABEL[user.baseRole] ?? user.baseRole}
+              canManageSettings={canManageSettings}
+              signOutAction={async () => {
+                "use server";
+                // Back through NextCloud asking for credentials, so signing out
+                // on a shared phone actually signs you out.
+                await signOut({ redirectTo: "/signin?reauth=1" });
+              }}
+            />
+          </div>
+        </header>
+
+        <div className="flex flex-1">
+          <SideNav items={items} />
+          {/* pb-20 clears the mobile tab bar. */}
+          <main className="min-w-0 flex-1 p-4 pb-20 md:pb-4">{children}</main>
         </div>
-      </header>
 
-      <div className="flex flex-1">
-        <SideNav items={items} />
-        {/* pb-20 clears the mobile tab bar. */}
-        <main className="min-w-0 flex-1 p-4 pb-20 md:pb-4">{children}</main>
+        <BottomNav items={items} />
       </div>
-
-      <BottomNav items={items} />
-    </div>
+    </ApprovalsBadgeProvider>
   );
 }

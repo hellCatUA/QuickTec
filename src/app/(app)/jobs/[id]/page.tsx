@@ -62,6 +62,7 @@ import { wmFormAssignments } from "@/lib/exports/guard";
 import { readableRequest, siteNamesFor } from "@/lib/change-request-display";
 import { jobSpan, visitTotals } from "@/lib/time-tracking";
 import { Timeline } from "@/components/timeline";
+import { cn } from "@/lib/utils";
 import { WoId } from "@/components/wo-id";
 import { approveJob } from "../actions";
 
@@ -1082,8 +1083,20 @@ export default async function JobPage({
               <CardHeader>
                 <CardTitle>Assignment details</CardTitle>
               </CardHeader>
-              <CardContent>
-                    <div className="grid gap-4 text-sm sm:grid-cols-2">
+              {/* Two to a row from a phone up, by the card's own width
+                  rather than the window's: a column of twelve label-and-value
+                  pairs, one under another, was seven hundred pixels before
+                  the scope of work. Short facts pair up; anything that runs
+                  long — the project, the address, the paperwork — takes the
+                  whole row. Below 18rem, which is a 320px phone or one with
+                  its text set large, the pairs stack again: half of that is
+                  narrower than a date.
+
+                  Paired the way they are read: who pays and who represents
+                  them, the customer and their site, when and for how long,
+                  the client's two references, then the incident and ours. */}
+              <CardContent className="@container">
+                    <div className="grid grid-cols-1 gap-x-3 gap-y-4 text-sm @2xs:grid-cols-2 @xl:gap-x-6">
                       {/* The project, when there is one, opens the block: it is
                         the thing the rest of these fields are an instance of,
                         and it decides the scope, the deliverables and the rate.
@@ -1091,7 +1104,7 @@ export default async function JobPage({
                         field reading "No project" is a row spent saying
                         nothing. Full width so the pairs below stay paired. */}
                       {job.project ? (
-                        <div className="sm:col-span-2">
+                        <div className="col-span-full">
                           <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                             Project
                           </div>
@@ -1136,7 +1149,7 @@ export default async function JobPage({
                         )}
                       </div>
 
-                      <div className="sm:col-span-2">
+                      <div className="col-span-full">
                         <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                           Address
                         </div>
@@ -1177,45 +1190,57 @@ export default async function JobPage({
                         "externalAssignmentId",
                         job.externalAssignmentId ?? "",
                       )}
-                      {editable("ticketNumber", job.ticketNumber ?? "")}
                       {/* One job routinely answers to more than one ticket. The first
-                        is the field above; these are the ones after it, and the plus
-                        stays offered even once there is one — a second turns up
-                        mid-job often enough. */}
-                      <JobTickets
-                        jobId={job.id}
-                        primary={job.ticketNumber}
-                        extras={job.extraTickets}
-                        canEdit={canFillMissing}
-                      />
+                        is the field; the ones after it sit under it, in the same
+                        cell, so they never take a cell of their own and push the
+                        pairs below out of step. The plus stays offered even once
+                        there is one — a second turns up mid-job often enough. */}
+                      <div className="flex min-w-0 flex-col gap-1.5">
+                        {editable("ticketNumber", job.ticketNumber ?? "")}
+                        <JobTickets
+                          jobId={job.id}
+                          primary={job.ticketNumber}
+                          extras={job.extraTickets}
+                          canEdit={canFillMissing}
+                        />
+                      </div>
                       {editable("incNumber", job.incNumber ?? "")}
 
                       {/* The two work orders close the block, in the order they
                         are quoted: ours first, then theirs. A number on its own
                         was never what anybody came here for — they came for the
                         paper — so each field holds the document as well as the
-                        reference, and neither is a drawer away any more. Full
-                        width, because a file box in half a phone is a file box
-                        nobody can read the name of. */}
-                      <div className="sm:col-span-2">
+                        reference, and neither is a drawer away any more.
+
+                        Ours fits half a row: its number, and the PDF as a
+                        button that says what it is rather than spelling the
+                        file name out a second time under the same number. The
+                        number may break at a dash in the narrowest cell — a
+                        project ID can be twenty characters, and a number cut in
+                        two is still readable where one run off the card is not. */}
+                      <div className="min-w-0">
                         <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                           {intWoFieldLabel(company)}
                         </div>
-                        <div className="font-mono">{job.intWoId}</div>
+                        <div className="font-mono text-[0.8125rem] leading-5">
+                          {job.intWoId}
+                        </div>
                         {canExportPdf ? (
                           <a
                             href={`/api/jobs/${job.id}/export/pdf?inline=1`}
                             target="_blank"
                             rel="noreferrer"
-                            className="mt-2 flex min-h-11 items-center gap-2 rounded-lg border border-border p-2 text-sm text-primary underline-offset-4 hover:bg-muted"
+                            className="mt-1.5 inline-flex min-h-11 items-center gap-2 rounded-lg border border-border px-3 text-sm text-primary underline-offset-4 hover:bg-muted"
                           >
                             <Printer className="size-4 shrink-0" />
-                            {job.intWoId}.pdf
+                            Open PDF
                           </a>
                         ) : null}
                       </div>
 
-                      <div className="sm:col-span-2">
+                      {/* Theirs is a file box, and a file box in half a phone is
+                        one nobody can read the name of. */}
+                      <div className="col-span-full">
                         <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                           {job.client.name} work order
                         </div>
@@ -1703,8 +1728,13 @@ function Static({
       <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
         {label}
       </div>
+      {/* Wrapped anywhere it has to be. Half a phone is narrow, and a
+          company name typed as one long word would otherwise run off it. */}
       <div
-        className={value ? (mono ? "tabular" : "") : "text-muted-foreground"}
+        className={cn(
+          "[overflow-wrap:anywhere]",
+          value ? (mono ? "tabular" : "") : "text-muted-foreground",
+        )}
       >
         {value ?? "—"}
       </div>

@@ -40,6 +40,9 @@ const BASE = process.env.BASE_URL ?? "http://127.0.0.1:3100";
 const VIEWPORTS: Record<string, { width: number; height: number }> = {
   phone: { width: 390, height: 844 },
   small: { width: 320, height: 568 },
+  // The two most common Android and small-iPhone widths, between the two above.
+  w360: { width: 360, height: 780 },
+  w375: { width: 375, height: 667 },
   tablet: { width: 820, height: 1180 },
   desktop: { width: 1440, height: 900 },
 };
@@ -64,7 +67,7 @@ async function main() {
   });
 
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined });
-  const phone = view === "phone" || view === "small";
+  const phone = view === "phone" || view === "small" || view.startsWith("w");
   const context = await browser.newContext({
     viewport: VIEWPORTS[view],
     deviceScaleFactor: 1,

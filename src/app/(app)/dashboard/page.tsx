@@ -30,11 +30,11 @@ import {
 } from "@/lib/datetime";
 import { db } from "@/lib/db";
 import { OPEN_LIFECYCLES } from "@/lib/job-status";
-import { jobScopeWhere, reportIds } from "@/lib/scope";
+import { jobScopeWhere } from "@/lib/scope";
 import { uploadsWritable } from "@/lib/storage";
 import { isGuest } from "@/lib/permissions";
-import { canSupervise } from "@/lib/supervisors";
-import { managesProfiles, reachableContact } from "@/lib/profile";
+import { reachableContact } from "@/lib/profile";
+import { waitingOnYou } from "@/lib/waiting";
 import { can, getSessionUser, permissionScope } from "@/lib/session";
 
 export const metadata = { title: "Dashboard" };
@@ -145,63 +145,16 @@ export default async function DashboardPage() {
   ]);
 
   // --- what is waiting on you ------------------------------------------------
-  const changeWhere = await jobScopeWhere(user, "job.approve_change");
-  const reportWhere = await jobScopeWhere(user, "job.approve_report");
-  const payrollScope = permissionScope(user, "payroll.approve");
-
-  const [
-    changeCount,
-    adHocCount,
-    reviewCount,
-    payrollCount,
-    notificationCount,
-    myPendingCount,
-    profileRequestCount,
-  ] = await Promise.all([
-    changeWhere
-      ? db.changeRequest.count({ where: { status: "PENDING", job: changeWhere } })
-      : 0,
-    reportWhere
-      ? db.job.count({
-          where: { AND: [reportWhere, { lifecycle: "PENDING_APPROVAL" }] },
-        })
-      : 0,
-    reportWhere
-      ? db.job.count({
-          where: { AND: [reportWhere, { lifecycle: "PENDING_REVIEW" }] },
-        })
-      : 0,
-    (async () => {
-      if (!payrollScope) return 0;
-      const ids = payrollScope === "ALL" ? null : [...(await reportIds(user.id))];
-      if (ids !== null && ids.length === 0) return 0;
-      return db.payrollPeriod.count({
-        where: { status: "DRAFT", ...(ids ? { userId: { in: ids } } : {}) },
-      });
-    })(),
-    db.notification.count({
-      where: { userId: user.id, acknowledgedAt: null },
-    }),
-    db.changeRequest.count({
-      where: { requestedById: user.id, status: "PENDING" },
-    }),
-    // The same queue Approvals shows: what their reports asked for, or every
-    // request for whoever manages users.
-    isGuest(user)
-      ? 0
-      : db.profileRequest.count({
-          where: {
-            status: "PENDING",
-            // Somebody whose role no longer supervises keeps the link on
-              // their old reports' records, but not the queue.
-              ...(managesProfiles(user)
-                ? {}
-                : canSupervise(user.baseRole)
-                  ? { user: { directSupervisorId: user.id } }
-                  : { id: "" }),
-          },
-        }),
-  ]);
+  // Counted where the Approvals tab's number is counted, so the two agree.
+  const {
+    changes: changeCount,
+    adHoc: adHocCount,
+    reviews: reviewCount,
+    payroll: payrollCount,
+    profileRequests: profileRequestCount,
+    notices: notificationCount,
+    mine: myPendingCount,
+  } = await waitingOnYou(user);
 
   const waiting = [
     { label: "Suggested changes", count: changeCount, href: "/approvals" },

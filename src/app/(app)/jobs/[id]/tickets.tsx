@@ -2,7 +2,6 @@
 
 import { Loader2, Plus, X } from "lucide-react";
 import * as React from "react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/field";
 import { ticketRole } from "@/lib/tickets";
@@ -69,12 +68,19 @@ export function JobTickets({
   return (
     <div className="flex flex-col gap-2">
       {extras.map((ticket, index) => (
+        // Its role over the number rather than beside it: the cell is half a
+        // phone wide, and "Secondary" in a badge beside a remove button left
+        // the number itself a column a few letters wide.
         <div
           key={ticket.id}
           className="flex items-center gap-2 text-sm"
         >
-          <Badge variant="neutral">{ticketRole(index + 1)}</Badge>
-          <span className="min-w-0 flex-1 break-words">{ticket.number}</span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-xs text-muted-foreground">
+              {ticketRole(index + 1)}
+            </span>
+            <span className="block [overflow-wrap:anywhere]">{ticket.number}</span>
+          </span>
           {canEdit ? (
             <Button
               type="button"
@@ -94,8 +100,11 @@ export function JobTickets({
 
       {canEdit ? (
         adding ? (
-          <div className="flex items-center gap-2">
+          // The box on a line of its own and the buttons under it, in half a
+          // phone; side by side wherever there is room.
+          <div className="flex flex-wrap items-center gap-2">
             <Input
+              className="min-w-0 basis-full @sm:flex-1"
               value={value}
               autoFocus
               aria-label="Another ticket number"

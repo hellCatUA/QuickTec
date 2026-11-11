@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Badge } from "@/components/ui/badge";
 import {
   Card,
   CardContent,
@@ -17,6 +16,7 @@ import { weeksInMonth } from "@/lib/payroll";
 import { reportIds } from "@/lib/scope";
 import { computeStats, type StatsRange } from "@/lib/stats";
 import { getSessionUser, permissionScope } from "@/lib/session";
+import { cn } from "@/lib/utils";
 
 export const metadata = { title: "Statistics" };
 
@@ -94,17 +94,35 @@ export default async function StatsPage({
         description={`Your figures · ${selected.label}`}
       />
 
-      <div className="flex flex-wrap gap-1.5">
-        {ranges.map((entry) => (
-          <Link key={entry.key} href={`/pay/stats?period=${entry.key}`}>
-            <Badge variant={entry.key === selected.key ? "primary" : "neutral"}>
+      {/* Chips a thumb can hit. They were badges — labels a couple of dozen
+          pixels tall, made into links — and the period was the one thing on
+          the page anybody changes. */}
+      <nav aria-label="Period" className="flex flex-wrap gap-2">
+        {ranges.map((entry) => {
+          const current = entry.key === selected.key;
+          return (
+            <Link
+              key={entry.key}
+              href={`/pay/stats?period=${entry.key}`}
+              aria-current={current ? "page" : undefined}
+              className={cn(
+                "inline-flex min-h-10 items-center rounded-full border px-4 text-sm font-medium transition-colors",
+                current
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-border text-muted-foreground hover:bg-muted hover:text-foreground",
+              )}
+            >
               {entry.label}
-            </Badge>
-          </Link>
-        ))}
-      </div>
+            </Link>
+          );
+        })}
+      </nav>
 
-      <div className="grid gap-3 sm:grid-cols-2">
+      {/* Six figures as tiles, two to a row on a phone and three wider. As
+          six cards the width of the screen they were two screens of one
+          number each, and the one somebody came for was usually below the
+          fold. */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         <Stat label="Jobs" value={String(stats.jobs)} />
         <Stat
           label="Hours on site"
@@ -157,11 +175,15 @@ export default async function StatsPage({
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <Card>
-      <CardContent>
+      <CardContent className="p-3 sm:p-4">
         <div className="text-xs uppercase tracking-wide text-muted-foreground">
           {label}
         </div>
-        <div className="tabular text-2xl font-semibold">{value}</div>
+        {/* A size smaller on a phone, where a tile is half the screen and a
+            five-figure amount has to fit in it. */}
+        <div className="tabular mt-0.5 text-lg font-semibold [overflow-wrap:anywhere] sm:text-2xl">
+          {value}
+        </div>
       </CardContent>
     </Card>
   );

@@ -107,7 +107,16 @@ export function EditableField({
     // for it and the wrong place for a toolbar and a text box — with the
     // header set to wrap, this drops the editor onto its own line beneath the
     // title instead of squeezing it into the space beside it.
-    <div className={cn("flex flex-col gap-1", open && "w-full", className)}>
+    // Open, it also takes the whole row of a grid it sits in: a field in half a
+    // phone has room for its value, not for a text box with two buttons and a
+    // reason under it.
+    <div
+      className={cn(
+        "flex min-w-0 flex-col gap-1",
+        open && "col-span-full w-full",
+        className,
+      )}
+    >
       <div className="flex items-center gap-2">
         {hideValue ? null : (
           <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -186,7 +195,7 @@ export function EditableField({
 
           {error ? <p className="text-xs text-danger">{error}</p> : null}
 
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button type="button" size="sm" disabled={pending} onClick={submit}>
               {suggesting ? "Send suggestion" : "Save"}
             </Button>

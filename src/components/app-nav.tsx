@@ -4,6 +4,12 @@ import { MoreHorizontal } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import * as React from "react";
+import {
+  badgeSpeech,
+  IconBadge,
+  RowBadge,
+  useApprovalsBadge,
+} from "@/components/approvals-badge";
 import { NAV_ICONS, splitNav, type NavItem } from "@/components/nav-icons";
 import { cn } from "@/lib/utils";
 
@@ -59,6 +65,7 @@ function useKeyboardOpen(): boolean {
 /** Left rail on tablet and desktop, where everything fits. */
 export function SideNav({ items }: { items: NavItem[] }) {
   const isActive = useIsActive();
+  const badge = useApprovalsBadge();
 
   return (
     <nav className="hidden w-56 shrink-0 flex-col gap-1 border-r border-border bg-surface p-3 md:flex">
@@ -77,6 +84,12 @@ export function SideNav({ items }: { items: NavItem[] }) {
           >
             <Icon className="size-4 shrink-0" />
             {item.label}
+            {item.href === "/approvals" ? (
+              <>
+                <span className="sr-only">{badgeSpeech(badge)}</span>
+                <RowBadge badge={badge} />
+              </>
+            ) : null}
           </Link>
         );
       })}
@@ -95,6 +108,7 @@ export function SideNav({ items }: { items: NavItem[] }) {
 export function BottomNav({ items }: { items: NavItem[] }) {
   const isActive = useIsActive();
   const keyboardOpen = useKeyboardOpen();
+  const badge = useApprovalsBadge();
 
   const { primary: visible, overflow: overflowItems } = splitNav(items);
   const overflows = overflowItems.length > 0;
@@ -121,8 +135,17 @@ export function BottomNav({ items }: { items: NavItem[] }) {
               isActive(item.href) ? "text-primary" : "text-muted-foreground",
             )}
           >
-            <Icon className="size-5" />
+            {/* The count sits on the icon, so a manager on a phone sees what
+                is waiting without scrolling the dashboard past the whole
+                week to find out. */}
+            <span className="relative">
+              <Icon className="size-5" />
+              {item.href === "/approvals" ? <IconBadge badge={badge} /> : null}
+            </span>
             {item.label}
+            {item.href === "/approvals" ? (
+              <span className="sr-only">{badgeSpeech(badge)}</span>
+            ) : null}
           </Link>
         );
       })}

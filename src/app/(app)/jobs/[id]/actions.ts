@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { siteLabel, siteLabelOnScreen } from "@/lib/address";
+import { siteLabel } from "@/lib/address";
 import { recordAudit } from "@/lib/audit";
 import { attachTemplatesToOpenJobs } from "@/lib/job-documents";
 import { payingCompanyFixed } from "@/lib/job-paying-company";
@@ -25,7 +25,6 @@ import {
   parseDatetimeLocalInZone,
   roundToInterval,
   toDatetimeLocalInZone,
-  usDateTimeInZone,
 } from "@/lib/datetime";
 import { db } from "@/lib/db";
 import {
@@ -57,6 +56,7 @@ import { jobRateNote, LATE_TRAVEL_NOTE, resolvePayRate } from "@/lib/pay-rates";
 import { capitaliseName, FULL_NAME_NEEDED, isFullName } from "@/lib/names";
 import { MAX_WORK_SUMMARY } from "@/lib/work-summary";
 import { formatPhone } from "@/lib/phone";
+import { announceAssignments } from "@/lib/assignment-notices";
 import { notify } from "@/lib/notifications";
 import { canOnJob, canOnProject, resolveJobSupervisor } from "@/lib/scope";
 import {
@@ -992,56 +992,13 @@ export async function assignTech(formData: FormData): Promise<ActionResult> {
     },
   });
 
-  const jobRef = await db.job.findUniqueOrThrow({
-    where: { id: jobId },
-    select: {
-      title: true,
-      intWoId: true,
-      scheduledStart: true,
-      customer: { select: { code: true } },
-      site: {
-        select: {
-          siteNumber: true,
-          numberPending: true,
-          city: true,
-          state: true,
-        },
-      },
-    },
-  });
-
-  // When and where, not only which. A project's jobs share a title, so a tech
-  // put on five of them read five notices that differed by a work order
-  // number and said nothing about which morning or which town.
-  const whenAndWhere = [
-    jobRef.intWoId,
-    jobRef.scheduledStart
-      ? usDateTimeInZone(jobRef.scheduledStart, job.timeZone)
-      : "not scheduled yet",
-    `${siteLabelOnScreen(jobRef.customer.code, jobRef.site)} · ${jobRef.site.city}, ${jobRef.site.state}`,
-  ].join(" · ");
-
-  await notify({
-    userId,
-    actorId: user.id,
-    kind: "job_assigned",
-    title: `You are on ${jobRef.title}`,
-    body: whenAndWhere,
-    href: `/jobs/${jobId}`,
+  // The person and the supervisor who pays for their time, said the same way
+  // whichever road onto the job they came by.
+  await announceAssignments({
     jobId,
+    actorId: user.id,
+    people: [{ userId, supervisorId }],
   });
-  // Their supervisor pays for this time, so they hear about it too.
-  if (supervisorId) {
-    await notify({
-      userId: supervisorId,
-      actorId: user.id,
-      kind: "job_assigned",
-      title: `${person.name} was put on ${jobRef.title}`,
-      body: whenAndWhere,
-      href: `/jobs/${jobId}`,
-      jobId,
-    });
-  }
 
   syncJobInBackground(jobId);
   touch(jobId);
