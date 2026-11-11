@@ -40,3 +40,7 @@ docker-compose.override.yml
 .claude/
 .windsurf/
 skills-lock.json
+
+# What scripts/ui-audit writes: screenshots, reports, server logs. Rebuilt on
+# every run; the record worth keeping is docs/ui-audit/.
+/.audit/
