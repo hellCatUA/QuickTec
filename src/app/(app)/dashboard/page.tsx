@@ -345,7 +345,11 @@ export default async function DashboardPage() {
         </CardContent>
       </Card>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      {/* One column that may be narrower than what is in it. Left to size
+          itself, the column grew to fit the longest project line unbroken —
+          wider than a small phone, so the whole dashboard scrolled sideways,
+          and on a larger one these two cards stuck out past the rest. */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">

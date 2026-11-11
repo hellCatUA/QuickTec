@@ -2,6 +2,7 @@ import { ShieldCheck } from "lucide-react";
 import { notFound, redirect } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/ui/page-header";
+import { WoId } from "@/components/wo-id";
 import { db } from "@/lib/db";
 import { loadPortal } from "@/lib/job-portal";
 import { getSessionUser } from "@/lib/session";
@@ -57,7 +58,11 @@ export default async function ManagerPortalPage({
       <PageHeader
         title="Manager Portal"
         backHref={`/jobs/${portal.jobId}`}
-        description={`${portal.title} · ${portal.intWoId}`}
+        description={
+          <>
+            {portal.title} · <WoId>{portal.intWoId}</WoId>
+          </>
+        }
         actions={<Badge variant="primary">{portal.stage}</Badge>}
       />
 

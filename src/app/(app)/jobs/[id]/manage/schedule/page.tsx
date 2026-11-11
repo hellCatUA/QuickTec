@@ -7,6 +7,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
+import { WoId } from "@/components/wo-id";
 import { assignmentTerms, describeTerms } from "@/lib/budget";
 import { readableRequest, siteNamesFor } from "@/lib/change-request-display";
 import { getCompanySettings } from "@/lib/company";
@@ -217,7 +218,11 @@ export default async function ManagePage({
       <PageHeader
         title="Schedule & Budget"
         backHref={`/jobs/${job.id}/manage`}
-        description={`Manager Portal · ${job.intWoId}`}
+        description={
+          <>
+            Manager Portal · <WoId>{job.intWoId}</WoId>
+          </>
+        }
       />
 
       {scheduleOpen ? (

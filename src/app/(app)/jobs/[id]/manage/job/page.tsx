@@ -1,5 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 import { PageHeader } from "@/components/ui/page-header";
+import { WoId } from "@/components/wo-id";
 import { db } from "@/lib/db";
 import { detailsEditable } from "@/lib/job-fields";
 import { payingCompanyFixed } from "@/lib/job-paying-company";
@@ -107,7 +108,11 @@ export default async function JobManagementPage({
       <PageHeader
         title="Job management"
         backHref={await portalBackHref(job.id, user)}
-        description={`${job.title} · ${job.intWoId}`}
+        description={
+          <>
+            {job.title} · <WoId>{job.intWoId}</WoId>
+          </>
+        }
       />
 
       {open ? (

@@ -1,5 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 import { PageHeader } from "@/components/ui/page-header";
+import { WoId } from "@/components/wo-id";
 import { formatAddress, siteLabel } from "@/lib/address";
 import { readableRequest, siteNamesFor } from "@/lib/change-request-display";
 import { DEFAULT_TIME_ZONE } from "@/lib/datetime";
@@ -139,7 +140,11 @@ export default async function EditDetailsPage({
       <PageHeader
         title="Job details"
         backHref={await portalBackHref(job.id, user)}
-        description={`${job.title} · ${job.intWoId}`}
+        description={
+          <>
+            {job.title} · <WoId>{job.intWoId}</WoId>
+          </>
+        }
       />
 
       {open ? (

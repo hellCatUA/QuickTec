@@ -67,12 +67,15 @@ function WeekBlock({
     <Link
       href={href}
       className={cn(
-        "flex items-center gap-3 rounded-xl border bg-surface p-3.5 transition-colors hover:bg-surface-raised",
+        // Drawn closer below 360px — a phone set to larger text is 320 wide —
+        // where the full spacing left the dates a column 30px across, one
+        // word to a line: "Nov / 9 – / 15".
+        "flex items-center gap-2 rounded-xl border bg-surface p-3 transition-colors hover:bg-surface-raised min-[360px]:gap-3 min-[360px]:p-3.5",
         current ? "border-primary" : "border-border",
         empty ? "opacity-70" : "",
       )}
     >
-      <div className="flex w-12 shrink-0 flex-col items-center justify-center">
+      <div className="flex w-10 shrink-0 flex-col items-center justify-center min-[360px]:w-12">
         <div
           className={cn(
             "text-xl font-semibold leading-tight tabular-nums",
@@ -110,7 +113,9 @@ function WeekBlock({
           —
         </div>
       ) : (
-        <div className="flex shrink-0 flex-col items-end gap-0.5">
+        // The note under the money may fold there; it is the money that
+        // must not, and the dates beside it that need the room.
+        <div className="flex max-w-24 shrink-0 flex-col items-end gap-0.5 text-right min-[360px]:max-w-none">
           <div className="text-[1.0625rem] font-semibold tabular-nums">
             {money(payTotal(week.totals))}
           </div>

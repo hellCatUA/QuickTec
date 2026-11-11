@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { siteLabel } from "@/lib/address";
+import { siteLabel, siteLabelOnScreen } from "@/lib/address";
 import { recordAudit } from "@/lib/audit";
 import { attachTemplatesToOpenJobs } from "@/lib/job-documents";
 import { payingCompanyFixed } from "@/lib/job-paying-company";
@@ -25,6 +25,7 @@ import {
   parseDatetimeLocalInZone,
   roundToInterval,
   toDatetimeLocalInZone,
+  usDateTimeInZone,
 } from "@/lib/datetime";
 import { db } from "@/lib/db";
 import {
@@ -993,15 +994,39 @@ export async function assignTech(formData: FormData): Promise<ActionResult> {
 
   const jobRef = await db.job.findUniqueOrThrow({
     where: { id: jobId },
-    select: { title: true, intWoId: true },
+    select: {
+      title: true,
+      intWoId: true,
+      scheduledStart: true,
+      customer: { select: { code: true } },
+      site: {
+        select: {
+          siteNumber: true,
+          numberPending: true,
+          city: true,
+          state: true,
+        },
+      },
+    },
   });
+
+  // When and where, not only which. A project's jobs share a title, so a tech
+  // put on five of them read five notices that differed by a work order
+  // number and said nothing about which morning or which town.
+  const whenAndWhere = [
+    jobRef.intWoId,
+    jobRef.scheduledStart
+      ? usDateTimeInZone(jobRef.scheduledStart, job.timeZone)
+      : "not scheduled yet",
+    `${siteLabelOnScreen(jobRef.customer.code, jobRef.site)} · ${jobRef.site.city}, ${jobRef.site.state}`,
+  ].join(" · ");
 
   await notify({
     userId,
     actorId: user.id,
     kind: "job_assigned",
     title: `You are on ${jobRef.title}`,
-    body: jobRef.intWoId,
+    body: whenAndWhere,
     href: `/jobs/${jobId}`,
     jobId,
   });
@@ -1012,7 +1037,7 @@ export async function assignTech(formData: FormData): Promise<ActionResult> {
       actorId: user.id,
       kind: "job_assigned",
       title: `${person.name} was put on ${jobRef.title}`,
-      body: jobRef.intWoId,
+      body: whenAndWhere,
       href: `/jobs/${jobId}`,
       jobId,
     });

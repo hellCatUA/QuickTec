@@ -27,18 +27,23 @@ export function Line({
   return (
     <div className="border-t border-border first:border-t-0">
       <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-1 px-4 py-3 text-sm sm:grid-cols-[10rem_minmax(0,1fr)_auto] sm:items-center sm:gap-4">
-        {/* Each told its column. With only a row to go on, the grid seated
+        {/* Each told its cell. With only a row to go on, the grid seated
             the controls first — in the wide column — and the label in what
             was left, so on a phone every label sat at the right-hand edge
-            over a value at the left. */}
-        <dt className="col-start-1 text-muted-foreground">{label}</dt>
-        <div className="col-start-2 row-start-1 flex items-center justify-end gap-1 sm:col-start-3">
+            over a value at the left.
+
+            On a phone the label sits directly on its value and the history
+            button stands beside the pair, across both rows. Sharing the
+            label's row alone, the button made that row its own height and
+            pushed the value a finger's width down from what it belongs to. */}
+        <dt className="col-start-1 row-start-1 text-muted-foreground">{label}</dt>
+        <div className="col-start-2 row-span-2 row-start-1 flex items-center justify-end gap-1 self-center sm:col-start-3 sm:row-span-1">
           <LevelBadge level={level} iconOnly className="hidden sm:inline-flex" />
           {userId && field ? (
             <HistoryButton label={label} open={open} onToggle={() => setOpen((was) => !was)} />
           ) : null}
         </div>
-        <dd className="col-span-2 min-w-0 break-words sm:col-span-1 sm:col-start-2 sm:row-start-1">
+        <dd className="col-start-1 row-start-2 min-w-0 break-words sm:col-start-2 sm:row-start-1">
           {children}
         </dd>
       </div>

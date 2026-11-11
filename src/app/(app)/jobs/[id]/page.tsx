@@ -62,6 +62,7 @@ import { wmFormAssignments } from "@/lib/exports/guard";
 import { readableRequest, siteNamesFor } from "@/lib/change-request-display";
 import { jobSpan, visitTotals } from "@/lib/time-tracking";
 import { Timeline } from "@/components/timeline";
+import { WoId } from "@/components/wo-id";
 import { approveJob } from "../actions";
 
 import { ChangeRequests } from "./change-requests";
@@ -851,11 +852,8 @@ export default async function JobPage({
         title={job.title}
         backHref="/jobs"
         description={
-          // The number stays in one piece: broken at a hyphen it reads as two
-          // numbers, and it is the one thing on this line people copy down.
           <>
-            {intWoFieldLabel(company)}:{" "}
-            <span className="tabular whitespace-nowrap">{job.intWoId}</span>
+            {intWoFieldLabel(company)}: <WoId>{job.intWoId}</WoId>
           </>
         }
         actions={

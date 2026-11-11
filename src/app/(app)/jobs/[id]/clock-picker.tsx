@@ -41,24 +41,43 @@ export function ClockPicker({
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface-raised p-3">
       <div className="grid grid-cols-5 gap-1.5">
-        {options.map((option) => (
-          <Button
-            key={option.offset}
-            type="button"
-            variant={option.offset === 0 ? "primary" : "secondary"}
-            size="sm"
-            disabled={pending}
-            onClick={() => onPick(option.at)}
-            className="flex-col gap-0 px-1 py-1.5"
-          >
-            <span className="tabular text-xs">{timeLabel(option.at)}</span>
-            <span className="text-[10px] opacity-70">
-              {option.offset === 0
-                ? "now"
-                : `${option.offset > 0 ? "+" : ""}${option.offset}`}
-            </span>
-          </Button>
-        ))}
+        {options.map((option) => {
+          // "10:35 AM" is wider than a fifth of a phone. From ten o'clock on
+          // every label ran out of both sides of its button and into its
+          // neighbours — which is every morning start and most afternoons.
+          // So on a phone the half of the day goes under the time, and on
+          // anything wider they are one line again.
+          const label = timeLabel(option.at);
+          const cut = label.lastIndexOf(" ");
+          const clock = cut > 0 ? label.slice(0, cut) : label;
+          const half = cut > 0 ? label.slice(cut + 1) : "";
+          const offset =
+            option.offset === 0
+              ? "now"
+              : `${option.offset > 0 ? "+" : ""}${option.offset}`;
+
+          return (
+            <Button
+              key={option.offset}
+              type="button"
+              variant={option.offset === 0 ? "primary" : "secondary"}
+              size="sm"
+              disabled={pending}
+              onClick={() => onPick(option.at)}
+              // Read out whole, whatever the layout has done to it.
+              aria-label={`${label}, ${option.offset === 0 ? "now" : `${offset} minutes`}`}
+              className="flex-col gap-0 px-0.5 py-1.5"
+            >
+              <span className="tabular flex flex-col items-center leading-tight sm:flex-row sm:items-baseline sm:gap-1">
+                <span className="text-xs">{clock}</span>
+                {half ? (
+                  <span className="text-[10px] sm:text-xs">{half}</span>
+                ) : null}
+              </span>
+              <span className="text-[10px] opacity-70">{offset}</span>
+            </Button>
+          );
+        })}
       </div>
 
       <div className="flex flex-wrap items-end gap-2">
