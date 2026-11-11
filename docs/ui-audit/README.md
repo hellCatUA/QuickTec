@@ -131,10 +131,10 @@ The eleven proposals put to the owner, and their answers (11 November 2026).
 | 2 | A count on the Approvals tab in the navigation | **Done** — `4a58c8e` |
 | 3 | Fold runs of empty "No work" weeks on Pay into one line | **No** — keep each week |
 | 4 | Assignment details two to a row on phones, everything fitting | **Done** — `4a58c8e` |
-| 5 | Day headings in the Jobs list (Earlier / Today / Tomorrow / Later) | Asked what it means — explained, waiting |
+| 5 | Day headings in the Jobs list (Earlier / Today / Tomorrow / Later) | The owner meant to rework that list anyway, as overloaded. A lighter list was prototyped and shown (below) — waiting |
 | 6 | One badge for lifecycle and outcome ("Pending review · Completed") | Its own conversation, later |
 | 7 | "Failed" / "Cancelled" on checkout's outcome buttons | **No** — keep "Fail" / "Cancel" |
-| 8 | Two control styles instead of five (segmented views, chips for filters) | Leaning yes, asked what it means — explained with a picture, waiting |
+| 8 | Two control styles instead of five (segmented views, chips for filters) | **Yes**, merge them. Every switch was photographed side by side (`controls.ts`) to choose the looks — waiting |
 | 9 | Collapsible sections on the very long settings pages | Later |
 | 10 | Statistics as compact tiles with larger period chips | **Done** — `4a58c8e` |
 | 11 | Small ones: Pay/Payroll title size, "No SiteID", "CI"/"CO", project job group names, legacy-form note | Later |
@@ -166,6 +166,40 @@ What each was about, as first put:
     a project groups its jobs as "Scheduled / Completed" where the Jobs tabs say
     "Open / Approved"; the Reimbursements note on a tech's job mentions the
     legacy form.
+
+### The Jobs list prototype (for 5)
+
+Kept as a patch until the owner answers — `git apply
+docs/ui-audit/prototypes/jobs-list.patch` on a clean tree, then build. What it
+changes, on `/jobs` only:
+
+- **A heading for each day** on the site's calendar: "Today · Wed 11/11",
+  "Tomorrow · Thu 11/12", the days after, "No date yet", then "Earlier — still
+  open", newest first. The All and Approved tabs run back from today a day at a
+  time ("Yesterday · Tue 11/10", …), and load the newest hundred rather than the
+  oldest.
+- **In progress and Sent back first**, whatever day they were booked for:
+  somebody is on those now, or has to put them right.
+- **A card is the time, the title, the place and the crew.** The date went to
+  the heading; our work order number and the paying company went from phones
+  (from a tablet up they are a third line) — the new search box above the list
+  finds a job by either, by title, site, town or crew. A badge only says what
+  the heading and tab do not: no "Scheduled" under a day still to come, no
+  "Approved" on the Approved tab, no "Revisit required" on the Revisit tab.
+- On somebody's own job, "You +1" rather than their own name, and nothing when
+  they are on it alone.
+
+### Asked for next, once 5 and 8 are settled
+
+Raised by the owner on 11 November 2026:
+
+- **The phone field formats only at the end.** Ten digits become
+  `xxx-xxx-xxxx` once the whole number is in; the dashes should go in between
+  the blocks while it is typed.
+- **A link on dispatch contacts**, for a Zoom or Teams bridge. On screen it is
+  only the host, subdomains and all — `https://zoom.us/j/9…` reads `zoom.us`,
+  `company.zoom.us/…` reads `company.zoom.us`; the rest is for the link to
+  open, not for reading.
 
 ## Independent review (11 November 2026)
 
@@ -259,6 +293,10 @@ npx tsx --tsconfig tsconfig.json scripts/ui-audit/walk-tech.ts .audit/shots/walk
 
 # Every change request kind waiting, for looking at Approvals.
 npx tsx --tsconfig tsconfig.json scripts/ui-audit/add-requests.ts
+
+# Every tab, switch and row of choice buttons, photographed where it lives,
+# in both themes, to lay side by side (out dir, width).
+npx tsx --tsconfig tsconfig.json scripts/ui-audit/controls.ts .audit/shots/controls 390
 
 sh scripts/ui-audit/sheet.sh .audit/shots/run1/phone-dark-tech job 3     # slices side by side
 sh scripts/ui-audit/pair.sh before.png after.png out.png 844              # a before/after image

@@ -1,0 +1,559 @@
+diff --git a/src/app/(app)/jobs/job-list.tsx b/src/app/(app)/jobs/job-list.tsx
+new file mode 100644
+index 0000000..aba7967
+--- /dev/null
++++ b/src/app/(app)/jobs/job-list.tsx
+@@ -0,0 +1,180 @@
++"use client";
++
++import { ChevronRight, Search, UsersRound } from "lucide-react";
++import Link from "next/link";
++import * as React from "react";
++import { Badge } from "@/components/ui/badge";
++import { cn } from "@/lib/utils";
++
++type Variant = "neutral" | "primary" | "success" | "warning" | "danger";
++
++export type JobRow = {
++  id: string;
++  title: string;
++  revisit: number | null;
++  /** "7:30 AM" on the site's clock, or null when there is no date yet. */
++  time: string | null;
++  /** "Sat 11/7" or "Today", in a group that holds more than one day. */
++  day: string | null;
++  /** "SBUX #10542 · Visalia, CA" */
++  place: string;
++  badges: { label: string; variant: Variant }[];
++  /** The lead and how many more: "Terry Tech +1", "You +2", or null. */
++  crew: string | null;
++  unassigned: boolean;
++  /** "2611-SBX-POS-0005 · NetCom Sub" — ours, and who pays. */
++  reference: string;
++  /** Everything it can be found by, lower case. */
++  search: string;
++};
++
++export type JobGroup = { key: string; label: string; jobs: JobRow[] };
++
++/**
++ * The jobs, a day at a time.
++ *
++ * The date used to open every card's second line, and a card carried two
++ * reference numbers and the paying company as well — four lines and up to four
++ * badges for each job, so a phone showed five or six of them and the eye had
++ * to read every one to find today. Now the day is a heading said once, the
++ * card is the time, what it is, where, and how it stands, and the numbers
++ * are what the search box finds rather than what every card spells out.
++ */
++export function JobList({
++  groups,
++  searchable,
++}: {
++  groups: JobGroup[];
++  /** Only for a list long enough to need it. */
++  searchable: boolean;
++}) {
++  const [query, setQuery] = React.useState("");
++  const needle = query.trim().toLowerCase();
++
++  const shown = groups
++    .map((group) => ({
++      ...group,
++      jobs: needle
++        ? group.jobs.filter((job) => job.search.includes(needle))
++        : group.jobs,
++    }))
++    .filter((group) => group.jobs.length > 0);
++  const count = shown.reduce((total, group) => total + group.jobs.length, 0);
++
++  return (
++    <div className="flex flex-col gap-4">
++      {searchable ? (
++        <label className="relative block">
++          <span className="sr-only">Find a job</span>
++          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
++          <input
++            type="search"
++            value={query}
++            onChange={(event) => setQuery(event.target.value)}
++            placeholder="WO, title, site, city or crew"
++            autoComplete="off"
++            className="min-h-11 w-full rounded-lg border border-border bg-input pl-9 pr-3 text-foreground placeholder:text-muted-foreground"
++          />
++        </label>
++      ) : null}
++
++      <p className="sr-only" aria-live="polite">
++        {needle ? `${count} ${count === 1 ? "job" : "jobs"} found` : null}
++      </p>
++      {needle && count === 0 ? (
++        <p className="text-sm text-muted-foreground">Nothing matches that.</p>
++      ) : null}
++
++      {shown.map((group) => (
++        <section key={group.key} className="flex flex-col gap-2">
++          <h2 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
++            {group.label}
++            <span className="tabular rounded-full bg-muted px-1.5 py-px text-[0.6875rem] font-medium normal-case tracking-normal">
++              {group.jobs.length}
++            </span>
++          </h2>
++          {group.jobs.map((job) => (
++            <JobCard key={job.id} job={job} />
++          ))}
++        </section>
++      ))}
++    </div>
++  );
++}
++
++function JobCard({ job }: { job: JobRow }) {
++  return (
++    <Link
++      href={`/jobs/${job.id}`}
++      className="flex items-start gap-3 rounded-xl border border-border bg-surface p-3 transition-colors hover:border-primary/50"
++    >
++      {/* The time has a column of its own: it is what the list is scanned
++          by, and it never shares a line with anything that could push it
++          off the end. */}
++      <div className="tabular flex w-[4.25rem] shrink-0 flex-col pt-px text-sm font-semibold leading-tight">
++        {job.day ? (
++          <span className="text-xs font-medium text-muted-foreground">
++            {job.day}
++          </span>
++        ) : null}
++        <span className={job.time ? undefined : "text-muted-foreground"}>
++          {job.time ?? "—"}
++        </span>
++      </div>
++
++      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
++        <div className="flex items-start gap-1.5">
++          <span className="line-clamp-2 text-sm font-semibold leading-snug">
++            {job.title}
++          </span>
++          {job.revisit ? (
++            <Badge variant="warning" className="shrink-0">
++              R{job.revisit}
++            </Badge>
++          ) : null}
++        </div>
++        <span className="truncate text-xs text-muted-foreground">
++          {job.place}
++        </span>
++
++        {/* How it stands and who is on it, under the title rather than
++            beside it: three badges beside a title on a phone used to fold
++            the title into a column three words wide. */}
++        <div
++          className={cn(
++            "mt-1 flex-wrap items-center gap-x-2 gap-y-1 text-xs",
++            job.badges.length > 0 || job.unassigned || job.crew
++              ? "flex"
++              : "hidden sm:flex",
++          )}
++        >
++          {job.badges.map((badge) => (
++            <Badge key={badge.label} variant={badge.variant}>
++              {badge.label}
++            </Badge>
++          ))}
++          {job.unassigned ? (
++            <span className="inline-flex items-center gap-1 text-warning">
++              <UsersRound className="size-3.5" aria-hidden />
++              Nobody assigned
++            </span>
++          ) : job.crew ? (
++            <span className="inline-flex min-w-0 items-center gap-1 text-muted-foreground">
++              <UsersRound className="size-3.5 shrink-0" aria-hidden />
++              <span className="sr-only">Lead:</span>
++              <span className="truncate">{job.crew}</span>
++            </span>
++          ) : null}
++          {/* Ours and who pays, for whoever quotes them — from a tablet up,
++              where they fit without taking a line. On a phone the search
++              finds them. */}
++          <span className="tabular hidden min-w-0 truncate text-muted-foreground sm:inline">
++            {job.reference}
++          </span>
++        </div>
++      </div>
++
++      <ChevronRight className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
++    </Link>
++  );
++}
+diff --git a/src/app/(app)/jobs/page.tsx b/src/app/(app)/jobs/page.tsx
+index 290642c..d22c9e1 100644
+--- a/src/app/(app)/jobs/page.tsx
++++ b/src/app/(app)/jobs/page.tsx
+@@ -1,13 +1,11 @@
+-import { ChevronRight, Plus } from "lucide-react";
++import { Plus } from "lucide-react";
+ import Link from "next/link";
+ import { redirect } from "next/navigation";
+-import { Badge } from "@/components/ui/badge";
+ import { Button } from "@/components/ui/button";
+-import { Card, CardContent } from "@/components/ui/card";
+ import { EmptyState, PageHeader } from "@/components/ui/page-header";
+-import { siteLabelOnScreen } from "@/lib/address";
++import { placeLabel, siteLabelOnScreen } from "@/lib/address";
+ import { getCompanySettings } from "@/lib/company";
+-import { usDateTimeInZone } from "@/lib/datetime";
++import { isoDateInZone, usTimeInZone, zonedParts } from "@/lib/datetime";
+ import { db } from "@/lib/db";
+ import {
+   INTERNAL_STATUS_META,
+@@ -17,7 +15,12 @@ import {
+ } from "@/lib/job-status";
+ import { jobScopeWhere } from "@/lib/scope";
+ import { can, getSessionUser } from "@/lib/session";
+-import type { JobInternalStatus, JobLifecycle } from "@prisma-client";
++import type {
++  JobInternalStatus,
++  JobLifecycle,
++  JobOutcome,
++} from "@prisma-client";
++import { JobList, type JobGroup, type JobRow } from "./job-list";
+ 
+ export const metadata = { title: "Jobs" };
+ 
+@@ -57,9 +60,14 @@ export default async function JobsPage({
+           ? { internalStatus: "REVISIT_REQUIRED" }
+           : {};
+ 
++  // What is still to do is read from the next job on; what is done, from the
++  // last one back. The hundred fetched are the hundred that matter for each.
++  const history = filter === "approved" || filter === "all";
+   const jobs = await db.job.findMany({
+     where: { AND: [where, lifecycleFilter] },
+-    orderBy: [{ scheduledStart: "asc" }, { createdAt: "desc" }],
++    orderBy: history
++      ? [{ scheduledStart: "desc" }, { createdAt: "desc" }]
++      : [{ scheduledStart: "asc" }, { createdAt: "desc" }],
+     take: 100,
+     select: {
+       id: true,
+@@ -92,6 +100,13 @@ export default async function JobsPage({
+     },
+   });
+ 
++  const groups = groupByDay(jobs, {
++    now: new Date(),
++    fallbackZone: company.defaultTimeZone,
++    viewerId: user.id,
++    filter,
++  });
++
+   return (
+     <div className="mx-auto flex max-w-3xl flex-col gap-4">
+       <PageHeader
+@@ -136,96 +151,217 @@ export default async function JobsPage({
+         />
+       ) : null}
+ 
+-      <div className="flex flex-col gap-2">
+-        {jobs.map((job) => {
+-          const zone = job.site.timeZone ?? company.defaultTimeZone;
+-          const lead = job.assignments.find((a) => a.isLead);
+-          const others = job.assignments.filter((a) => !a.isLead).length;
+-          // On somebody's own list their own name is the one thing they do
+-          // not need telling. Leading a job alone says nothing at all; leading
+-          // a crew is worth the two words.
+-          const crew =
+-            lead?.userId === user.id
+-              ? others > 0
+-                ? `You lead · +${others} tech${others === 1 ? "" : "s"}`
+-                : null
+-              : `${lead ? `Lead: ${lead.user.name}` : "No lead"}${
+-                  others > 0 ? ` +${others} tech${others === 1 ? "" : "s"}` : ""
+-                }`;
+-
+-          return (
+-            <Link key={job.id} href={`/jobs/${job.id}`}>
+-              <Card className="transition-colors hover:border-primary/50">
+-                <CardContent className="flex items-center gap-3 p-3">
+-                  <div className="min-w-0 flex-1">
+-                    <div className="flex flex-wrap items-center gap-1.5">
+-                      <span className="truncate text-sm font-semibold">
+-                        {job.title}
+-                      </span>
+-                      {job.revisitNumber ? (
+-                        <Badge variant="warning">R{job.revisitNumber}</Badge>
+-                      ) : null}
+-                      <Badge variant={LIFECYCLE_META[job.lifecycle].variant}>
+-                        {LIFECYCLE_META[job.lifecycle].label}
+-                      </Badge>
+-                      {job.outcome ? (
+-                        <Badge variant={OUTCOME_META[job.outcome].variant}>
+-                          {OUTCOME_META[job.outcome].label}
+-                        </Badge>
+-                      ) : null}
+-                      {job.internalStatus ? (
+-                        <Badge
+-                          variant={
+-                            INTERNAL_STATUS_META[job.internalStatus].variant
+-                          }
+-                        >
+-                          {INTERNAL_STATUS_META[job.internalStatus].label}
+-                        </Badge>
+-                      ) : null}
+-                    </div>
+-
+-                    {/* When, then where: the two things this list is read
+-                        for, and the when is never the part that gets cut. It
+-                        used to close a line that opened with two reference
+-                        numbers, so on a phone it read "11-07-2026 6:3…". */}
+-                    <div className="mt-0.5 flex min-w-0 items-baseline gap-1.5 text-xs">
+-                      <span className="tabular shrink-0 font-medium text-foreground">
+-                        {job.scheduledStart
+-                          ? usDateTimeInZone(job.scheduledStart, zone)
+-                          : "Not scheduled"}
+-                      </span>
+-                      <span className="truncate text-muted-foreground">
+-                        · {siteLabelOnScreen(job.customer.code, job.site)} ·{" "}
+-                        {job.site.city}, {job.site.state}
+-                      </span>
+-                    </div>
+-
+-                    <div className="mt-0.5 truncate text-xs text-muted-foreground">
+-                      <span className="tabular">{job.intWoId}</span>
+-                      {job.externalAssignmentId
+-                        ? ` · ${job.externalAssignmentId}`
+-                        : ""}
+-                      {` · ${job.client.name}`}
+-                    </div>
+-
+-                    {job.assignments.length === 0 ? (
+-                      <div className="mt-0.5 text-xs text-warning">
+-                        Nobody assigned
+-                      </div>
+-                    ) : crew ? (
+-                      <div className="mt-0.5 truncate text-xs text-muted-foreground">
+-                        {crew}
+-                      </div>
+-                    ) : null}
+-                  </div>
+-
+-                  <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+-                </CardContent>
+-              </Card>
+-            </Link>
+-          );
+-        })}
+-      </div>
++      <JobList groups={groups} searchable={jobs.length > 8} />
+     </div>
+   );
+ }
++
++type ListedJob = {
++  id: string;
++  intWoId: string;
++  title: string;
++  externalAssignmentId: string | null;
++  scheduledStart: Date | null;
++  lifecycle: JobLifecycle;
++  outcome: JobOutcome | null;
++  internalStatus: JobInternalStatus | null;
++  revisitNumber: number | null;
++  client: { name: string };
++  customer: { code: string };
++  site: {
++    siteNumber: string;
++    numberPending: boolean;
++    city: string;
++    state: string;
++    timeZone: string | null;
++  };
++  assignments: { isLead: boolean; userId: string; user: { name: string } }[];
++};
++
++/**
++ * The jobs under a heading for each day, today first.
++ *
++ * Each on the site's own calendar, the clock its times are shown on. Of what
++ * is still to do: first anything somebody is on right now or has to put
++ * right, whatever day it was booked for; then today and the days after it;
++ * then jobs with no date; then the stragglers from days already gone. At the
++ * top used to be a job from June that nobody closed, above this morning's.
++ * The history tabs read the other way from today: what is coming, then each
++ * day back.
++ */
++function groupByDay(
++  jobs: ListedJob[],
++  options: {
++    now: Date;
++    fallbackZone: string;
++    viewerId: string;
++    filter: string;
++  },
++): JobGroup[] {
++  const stillOpen = options.filter === "open" || options.filter === "revisit";
++  const buckets = new Map<
++    string,
++    {
++      label: string;
++      rank: number;
++      day: string;
++      newestFirst: boolean;
++      rows: { at: number; row: JobRow }[];
++    }
++  >();
++
++  for (const job of jobs) {
++    const zone = job.site.timeZone ?? options.fallbackZone;
++    const at = job.scheduledStart;
++    const dayOf = (offset: number) =>
++      isoDateInZone(new Date(options.now.getTime() + offset * 86_400_000), zone);
++    const today = dayOf(0);
++    const day = at ? isoDateInZone(at, zone) : null;
++    const named = at ? dayName(at, zone, options.now) : null;
++
++    // A group holding more than one day says each card's day on the card.
++    let key: string;
++    let label: string;
++    let rank: number;
++    let mixed = false;
++    let newestFirst = false;
++    if (stillOpen && job.lifecycle === "IN_PROGRESS") {
++      key = "in-progress";
++      label = LIFECYCLE_META.IN_PROGRESS.label;
++      rank = 0;
++      mixed = true;
++    } else if (stillOpen && job.lifecycle === "CHANGES_REQUESTED") {
++      key = "sent-back";
++      label = LIFECYCLE_META.CHANGES_REQUESTED.label;
++      rank = 1;
++      mixed = true;
++    } else if (!day || !named) {
++      key = "none";
++      label = "No date yet";
++      rank = 3;
++    } else if (day >= today) {
++      key = day;
++      label =
++        day === today
++          ? `Today · ${named}`
++          : day === dayOf(1)
++            ? `Tomorrow · ${named}`
++            : named;
++      rank = 2;
++    } else if (stillOpen) {
++      key = "earlier";
++      label = "Earlier — still open";
++      rank = 4;
++      mixed = true;
++      newestFirst = true;
++    } else {
++      key = day;
++      label = day === dayOf(-1) ? `Yesterday · ${named}` : named;
++      rank = 5;
++      newestFirst = true;
++    }
++
++    // Only what the heading and the tab have not said already: "Scheduled"
++    // on every card under a day still to come, or "Approved" on every card of
++    // the Approved tab, is the same word thirty times.
++    const upcoming = day !== null && day >= today;
++    const sayLifecycle =
++      key !== "in-progress" &&
++      key !== "sent-back" &&
++      options.filter !== "approved" &&
++      // Nor "Scheduled" under "No date yet", where it is not true either.
++      !(job.lifecycle === "SCHEDULED" && (upcoming || day === null));
++    const badges = [
++      ...(sayLifecycle ? [LIFECYCLE_META[job.lifecycle]] : []),
++      ...(job.outcome ? [OUTCOME_META[job.outcome]] : []),
++      ...(job.internalStatus &&
++      !(options.filter === "revisit" && job.internalStatus === "REVISIT_REQUIRED")
++        ? [INTERNAL_STATUS_META[job.internalStatus]]
++        : []),
++    ];
++
++    const count = job.assignments.length;
++    const lead = job.assignments.find((one) => one.isLead);
++    // On somebody's own list their own name is the one thing they do not
++    // need telling, and leading a job alone says nothing at all.
++    const crew =
++      count === 0
++        ? null
++        : lead?.userId === options.viewerId
++          ? count > 1
++            ? `You +${count - 1}`
++            : null
++          : lead
++            ? `${lead.user.name}${count > 1 ? ` +${count - 1}` : ""}`
++            : `${count} tech${count === 1 ? "" : "s"}`;
++
++    const place = placeLabel(
++      siteLabelOnScreen(job.customer.code, job.site),
++      job.site,
++    );
++
++    const row: JobRow = {
++      id: job.id,
++      title: job.title,
++      revisit: job.revisitNumber,
++      time: at ? usTimeInZone(at, zone) : null,
++      day: mixed && day ? (day === today ? "Today" : named) : null,
++      place,
++      badges,
++      crew,
++      unassigned: count === 0,
++      reference: `${job.intWoId} · ${job.client.name}`,
++      search: [
++        job.intWoId,
++        job.title,
++        job.externalAssignmentId ?? "",
++        place,
++        job.client.name,
++        ...job.assignments.map((one) => one.user.name),
++      ]
++        .join(" ")
++        .toLowerCase(),
++    };
++
++    const bucket = buckets.get(key) ?? {
++      label,
++      rank,
++      day: day ?? "",
++      newestFirst,
++      rows: [],
++    };
++    bucket.rows.push({ at: at?.getTime() ?? 0, row });
++    buckets.set(key, bucket);
++  }
++
++  return [...buckets.entries()]
++    .map(([key, bucket]) => ({ key, ...bucket }))
++    .sort((a, b) => {
++      if (a.rank !== b.rank) return a.rank - b.rank;
++      // Days to come run forward from today; days gone, back from yesterday.
++      const forward = a.day < b.day ? -1 : a.day > b.day ? 1 : 0;
++      return a.newestFirst ? -forward : forward;
++    })
++    .map((bucket) => ({
++      key: bucket.key,
++      label: bucket.label,
++      jobs: bucket.rows
++        .sort((a, b) => (bucket.newestFirst ? b.at - a.at : a.at - b.at))
++        .map((entry) => entry.row),
++    }));
++}
++
++/**
++ * "Thu 11/12", like the days of the dashboard's week. From another year,
++ * "6/25/2025": the year matters more than the weekday then, and both do not
++ * fit above a time.
++ */
++function dayName(date: Date, zone: string, now: Date): string {
++  const { year, month, day } = zonedParts(date, zone);
++  if (year !== zonedParts(now, zone).year) return `${month}/${day}/${year}`;
++  const weekday = new Intl.DateTimeFormat("en-US", {
++    weekday: "short",
++    timeZone: zone,
++  }).format(date);
++  return `${weekday} ${month}/${day}`;
++}

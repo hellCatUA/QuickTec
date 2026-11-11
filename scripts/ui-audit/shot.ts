@@ -24,6 +24,7 @@ import { db } from "@/lib/db";
  *   scroll:<css>         bring an element to the top
  *   eval:<js>            run in the page, print the result
  * The last screenshot (<out.png>) is the whole page unless the path ends in "-fold.png".
+ * SCALE=2 in the environment takes it at twice the pixels.
  */
 
 // Signs people in and presses buttons, so it is kept to the audit database:
@@ -70,7 +71,8 @@ async function main() {
   const phone = view === "phone" || view === "small" || view.startsWith("w");
   const context = await browser.newContext({
     viewport: VIEWPORTS[view],
-    deviceScaleFactor: 1,
+    // SCALE=2 for a picture somebody will look at on a phone; 1 for checks.
+    deviceScaleFactor: Number(process.env.SCALE ?? 1),
     hasTouch: phone,
     isMobile: phone,
     timezoneId: "America/Los_Angeles",
