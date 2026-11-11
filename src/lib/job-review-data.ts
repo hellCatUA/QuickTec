@@ -1,4 +1,5 @@
 import { siteLabelOnScreen } from "@/lib/address";
+import { readableRequest } from "@/lib/change-request-display";
 import { getCompanySettings } from "@/lib/company";
 import { usDateTimeInZone, usTimeInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
@@ -143,13 +144,17 @@ async function detailChanges(
     // Nothing was overwritten, so there is nothing for a reviewer to weigh.
     if (from === "") continue;
 
-    const show = (value: string) =>
-      field === "siteId" ? (siteNames.get(value) ?? value) : value;
+    // The same words the job page and Approvals use for a change: a date on
+    // the site's clock, an estimate in hours, a site by its number. This
+    // printed what was stored — "2026-11-10T14:00 → …", "240 → 330".
+    const shown = isJobField(field)
+      ? readableRequest({ fieldPath: field, oldValue: from, newValue: to }, zone, siteNames)
+      : { oldValue: from, newValue: to };
 
     changes.push({
       label: isJobField(field) ? JOB_FIELDS[field].label : field,
-      from: show(from),
-      to: show(to),
+      from: shown.oldValue ?? "",
+      to: shown.newValue ?? "",
       who: event.actor?.name ?? "Someone since removed",
       when: usDateTimeInZone(event.createdAt, zone),
       approved: event.action === "change_approved",

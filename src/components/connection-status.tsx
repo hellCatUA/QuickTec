@@ -53,6 +53,9 @@ export function ConnectionStatus() {
   return (
     <div
       role="status"
+      // Found by the checkout, which scrolls each step to the top and has to
+      // land it below this rather than under it.
+      data-offline-banner=""
       className="sticky top-0 z-50 flex items-center justify-center gap-2 bg-warning px-3 py-1.5 text-xs font-medium text-warning-foreground"
     >
       <CloudOff className="size-3.5" />

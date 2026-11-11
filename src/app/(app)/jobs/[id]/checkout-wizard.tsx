@@ -126,16 +126,34 @@ export function CheckoutWizard({
   const [modList, setModList] = React.useState(mods);
   const [modName, setModName] = React.useState("");
   const [modPosition, setModPosition] = React.useState("");
-  const [modId, setModId] = React.useState(mods[0]?.id ?? "");
+  // Whoever already signed, when somebody has — coming back to a prepared
+  // checkout should find them, not another contact on the site who would
+  // then be written down as having not signed.
+  const [modId, setModId] = React.useState(
+    mods.find((mod) => mod.signed)?.id ?? mods[0]?.id ?? "",
+  );
   const [noMod, setNoMod] = React.useState(false);
   const [modInk, setModInk] = React.useState<string | null>(null);
-  const [modState, setModState] = React.useState<Signed>(
-    mods.some((mod) => mod.signed)
-      ? "signed"
-      : mods.some((mod) => mod.skipped)
-        ? "skipped"
-        : "none",
-  );
+
+  // Where the MOD step stands is a fact about the person signing, read off
+  // the list each time rather than kept beside it. Kept as one flag for "the
+  // MOD", it said "already captured" over a different person picked from the
+  // list or typed in — and Continue then saved nothing, so they were never
+  // recorded and nothing on screen said so.
+  const selectedMod = modId
+    ? modList.find((mod) => mod.id === modId)
+    : undefined;
+  const modState: Signed = selectedMod?.signed
+    ? "signed"
+    : selectedMod?.skipped
+      ? "skipped"
+      : "none";
+  // And the job's, for the summary: whether any MOD has signed for it.
+  const jobModState: Signed = modList.some((mod) => mod.signed)
+    ? "signed"
+    : modList.some((mod) => mod.skipped)
+      ? "skipped"
+      : "none";
 
   const [techInk, setTechInk] = React.useState<string | null>(null);
   const [techState, setTechState] = React.useState<Signed>(
@@ -152,19 +170,35 @@ export function CheckoutWizard({
   // is still sliding into place when a finger lands on it takes the tap
   // somewhere else — on the signature steps, off the pad altogether, and a
   // signature drawn at nothing is recorded as one nobody gave.
+  //
+  // Clear of what sits over the top of the page: the offline banner, which is
+  // sticky and two or three lines on a small phone, and — saved to an
+  // iPhone's home screen — the status bar (the card's scroll margin).
   const cardRef = React.useRef<HTMLDivElement>(null);
   React.useLayoutEffect(() => {
-    cardRef.current?.scrollIntoView({ block: "start" });
+    const card = cardRef.current;
+    if (!card) return;
+    card.scrollIntoView({ block: "start" });
+    const banner = document.querySelector<HTMLElement>("[data-offline-banner]");
+    if (banner) window.scrollBy(0, -banner.getBoundingClientRect().height);
   }, [index]);
   const next = () =>
     setIndex((current) => Math.min(current + 1, steps.length - 1));
   const back = () => setIndex((current) => Math.max(current - 1, 0));
 
+  // A server action that never answers — the signal dropped, a proxy sent an
+  // error page — rejects rather than returning a result. That used to end the
+  // spinner and say nothing, so the button looked as if it had done its job.
   async function run<T>(work: () => Promise<T>): Promise<T | null> {
     setError(null);
     setPending(true);
     try {
       return await work();
+    } catch {
+      setError(
+        "The connection dropped before that was saved. Check your signal and press it again.",
+      );
+      return null;
     } finally {
       setPending(false);
     }
@@ -187,8 +221,9 @@ export function CheckoutWizard({
         formData.set("position", modPosition.trim());
         return addPointOfContact(null, formData);
       });
-      if (!created?.ok) {
-        setError(created?.error ?? "Could not save the name.");
+      if (!created) return false;
+      if (!created.ok) {
+        setError(created.error ?? "Could not save the name.");
         return false;
       }
       // Theirs from here on: the signature below is kept against them, and
@@ -226,12 +261,12 @@ export function CheckoutWizard({
       return saveSignature(null, formData);
     });
 
-    if (!result?.ok) {
-      setError(result?.error ?? "Could not save the signature.");
+    if (!result) return false;
+    if (!result.ok) {
+      setError(result.error ?? "Could not save the signature.");
       return false;
     }
 
-    setModState(withInk ? "signed" : "skipped");
     setModList((current) =>
       current.some((mod) => mod.id === contactId)
         ? current.map((mod) =>
@@ -262,8 +297,9 @@ export function CheckoutWizard({
       return saveSignature(null, formData);
     });
 
-    if (!result?.ok) {
-      setError(result?.error ?? "Could not save the signature.");
+    if (!result) return false;
+    if (!result.ok) {
+      setError(result.error ?? "Could not save the signature.");
       return false;
     }
     setTechState(withInk ? "signed" : "skipped");
@@ -286,8 +322,9 @@ export function CheckoutWizard({
       return saveCheckoutDraft(null, formData);
     });
 
-    if (!result?.ok) {
-      setError(result?.error ?? "Could not save what you have filled in.");
+    if (!result) return false;
+    if (!result.ok) {
+      setError(result.error ?? "Could not save what you have filled in.");
       return false;
     }
     return true;
@@ -305,8 +342,9 @@ export function CheckoutWizard({
       return completeCheckout(null, formData);
     });
 
-    if (!result?.ok) {
-      setError(result?.error ?? "Could not complete checkout.");
+    if (!result) return;
+    if (!result.ok) {
+      setError(result.error ?? "Could not complete checkout.");
       return;
     }
     onClose();
@@ -321,7 +359,10 @@ export function CheckoutWizard({
     (step === "tech" && techInk === null && techState === "none");
 
   return (
-    <Card ref={cardRef} className="scroll-mt-3 border-primary/50">
+    <Card
+      ref={cardRef}
+      className="scroll-mt-[calc(env(safe-area-inset-top)+0.75rem)] border-primary/50"
+    >
       <CardHeader>
         <CardTitle>
           {mode === "prepare" ? "Prepare checkout" : "Checkout"}
@@ -568,7 +609,7 @@ export function CheckoutWizard({
                 )}
               </Row>
               <Row label="MOD/POC signature">
-                {noMod ? "No MOD/POC" : <SignedAs state={modState} />}
+                {noMod ? "No MOD/POC" : <SignedAs state={jobModState} />}
               </Row>
               <Row label="Your signature">
                 <SignedAs state={techState} />
@@ -614,7 +655,10 @@ export function CheckoutWizard({
           </div>
         ) : null}
 
-        <div className="flex items-center gap-2 border-t border-border pt-3">
+        {/* Wraps: "Continue without a signature" beside Back is wider than
+            a 320px phone, and a button running off the card took the page
+            sideways with it. */}
+        <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
           {index > 0 ? (
             <Button
               type="button"

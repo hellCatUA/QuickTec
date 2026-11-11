@@ -81,6 +81,17 @@ export function SignaturePad({
     return () => window.removeEventListener("resize", onResize);
   }, [prepare, onChange]);
 
+  // Gone from the screen, its ink goes too. The parent holds the drawing as a
+  // data URL, and the pad is unmounted whenever the step around it changes —
+  // so after Back the checkout showed a blank pad beside ink from before,
+  // and Continue uploaded that hidden drawing, under whoever was picked by
+  // then: one person's signature saved as another's.
+  const latestOnChange = React.useRef(onChange);
+  React.useEffect(() => {
+    latestOnChange.current = onChange;
+  });
+  React.useEffect(() => () => latestOnChange.current(null), []);
+
   function positionOf(event: React.PointerEvent<HTMLCanvasElement>) {
     const rect = event.currentTarget.getBoundingClientRect();
     return { x: event.clientX - rect.left, y: event.clientY - rect.top };

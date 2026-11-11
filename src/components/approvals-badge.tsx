@@ -29,16 +29,25 @@ export function ApprovalsBadgeProvider({
   const pathname = usePathname();
   const [badge, setBadge] = React.useState(initial);
   const [seen, setSeen] = React.useState(initial);
+  // Which answer is the newest asked for. On a slow signal they arrive out of
+  // order, and an old count landing last put back a number the manager had
+  // just cleared.
+  const asked = React.useRef(0);
   if (initial !== seen) {
     setSeen(initial);
     setBadge(initial);
   }
+  // The server's count is newer than anything in flight before it arrived.
+  React.useEffect(() => {
+    asked.current += 1;
+  }, [initial]);
 
   const refresh = React.useCallback(() => {
+    const mine = ++asked.current;
     fetch("/api/waiting", { cache: "no-store" })
       .then((response) => (response.ok ? response.json() : null))
       .then((next: ApprovalsBadge | null) => {
-        if (next) setBadge(next);
+        if (next && mine === asked.current) setBadge(next);
       })
       // Offline, or between deploys: the last count stands.
       .catch(() => {});

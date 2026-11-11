@@ -201,11 +201,23 @@ function JobRow({ job, selfName }: { job: ScheduledJob; selfName?: string }) {
 
 function JobChip({ job, selfName }: { job: ScheduledJob; selfName?: string }) {
   // First names: the column is a hundred and fifty pixels and the question
-  // is who, not how they spell it.
-  const crew = crewLine(
-    job.crew.map((name) => name.split(" ")[0]),
-    selfName?.split(" ")[0],
-  );
+  // is who, not how they spell it. Shortened after deciding who is "with"
+  // whom, not before: compared by first name, Mike Brown's week took Mike Lee
+  // for himself and showed the job as his alone.
+  const others =
+    selfName && job.crew.includes(selfName)
+      ? job.crew.filter((name) => name !== selfName)
+      : null;
+  const firstNames = (names: string[]) =>
+    names.map((name) => name.split(" ")[0]).join(", ");
+  const crew =
+    others === null
+      ? job.crew.length > 0
+        ? firstNames(job.crew)
+        : null
+      : others.length > 0
+        ? `with ${firstNames(others)}`
+        : null;
 
   return (
     <Link

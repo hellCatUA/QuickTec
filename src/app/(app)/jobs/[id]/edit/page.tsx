@@ -3,7 +3,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { WoId } from "@/components/wo-id";
 import { formatAddress, siteLabel } from "@/lib/address";
 import { readableRequest, siteNamesFor } from "@/lib/change-request-display";
-import { DEFAULT_TIME_ZONE } from "@/lib/datetime";
+import { getCompanySettings } from "@/lib/company";
 import { db } from "@/lib/db";
 import { detailsEditable } from "@/lib/job-fields";
 import { portalBackHref } from "@/lib/job-portal";
@@ -128,11 +128,14 @@ export default async function EditDetailsPage({
     oldValue: null,
   }));
   const askedSites = await siteNamesFor(asked);
+  const askedZone =
+    asked.length > 0
+      ? (job.site.timeZone ?? (await getCompanySettings()).defaultTimeZone)
+      : "";
   const pending: Record<string, string> = {};
   for (const request of asked) {
     pending[request.fieldPath] =
-      readableRequest(request, job.site.timeZone ?? DEFAULT_TIME_ZONE, askedSites)
-        .newValue ?? "(cleared)";
+      readableRequest(request, askedZone, askedSites).newValue ?? "(cleared)";
   }
 
   return (

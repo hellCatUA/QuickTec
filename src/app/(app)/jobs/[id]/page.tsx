@@ -1195,7 +1195,10 @@ export default async function JobPage({
                         cell, so they never take a cell of their own and push the
                         pairs below out of step. The plus stays offered even once
                         there is one — a second turns up mid-job often enough. */}
-                      <div className="flex min-w-0 flex-col gap-1.5">
+                      {/* The whole row while the ticket field inside is open
+                        for editing — the field's own col-span cannot reach the
+                        grid from in here. */}
+                      <div className="flex min-w-0 flex-col gap-1.5 has-[[data-editing]]:col-span-full">
                         {editable("ticketNumber", job.ticketNumber ?? "")}
                         <JobTickets
                           jobId={job.id}

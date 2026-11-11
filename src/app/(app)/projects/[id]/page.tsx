@@ -25,6 +25,7 @@ import {
 } from "@/lib/deliverables";
 import { formatRate } from "@/lib/money";
 import { canOnProject, jobScopeWhere } from "@/lib/scope";
+import { isGuest } from "@/lib/permissions";
 import { can, getSessionUser } from "@/lib/session";
 import { loadTimeline } from "@/lib/timeline-data";
 import { ProjectJobs } from "./project-jobs";
@@ -92,6 +93,12 @@ export default async function ProjectPage({
   const canManage = canOnProject(user, "project.manage", id);
   const jobWhere = await jobScopeWhere(user, "job.view");
   if (!canManage) {
+    // Asked as the Projects list asks it. A guest can be added to a project
+    // by anybody who manages it — the member picker offers every active
+    // account — and membership alone would then have shown them the crew by
+    // name and the coordinator's phone, which a guest is not given anywhere
+    // else.
+    if (isGuest(user) || !can(user, "job.view")) redirect("/dashboard");
     const [onIt, jobsHere] = await Promise.all([
       // The rule the Projects page lists by, asked of the database: the
       // session only carries the projects somebody runs or supervises, so a

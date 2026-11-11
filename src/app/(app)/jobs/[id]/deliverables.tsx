@@ -1303,70 +1303,90 @@ function UploadForm({
     let itemId: string | undefined = kept.current?.itemId;
     const textToSend =
       kept.current && kept.current.text === textValue ? "" : textValue;
+    // Which photo was on its way, for saying so if the connection goes.
+    let current: File | null = null;
 
-    for (const [index, entry] of batch.entries()) {
-      const original = entry.file;
-      const prepared = await prepareForUpload(original);
+    // A server action that never answers — the signal dropped, a proxy sent
+    // an error page — rejects instead of returning a result. Unhandled, that
+    // left the button at "Uploading 4 of 10" for good with every control
+    // disabled, and the retry below, written for exactly this, never ran.
+    try {
+      for (const [index, entry] of batch.entries()) {
+        const original = entry.file;
+        current = original;
+        const prepared = await prepareForUpload(original);
 
-      const formData = base();
-      // Text belongs to the upload, so it goes with the request that makes it.
-      if (textToSend && index === 0 && !itemId) {
-        formData.set("textValue", textToSend);
-      }
-      if (itemId) formData.set("itemId", itemId);
-      formData.append("files", prepared.file);
-      if (prepared.exif) formData.append("exif", prepared.exif, "exif.bin");
-
-      const result = await saveDeliverable(null, formData);
-      if (!result.ok) {
-        setPending(false);
-        // Whichever is known: the one the server names, or the one the
-        // photos before this were already filed under. Without the second a
-        // dropped connection on photo four put photos four to ten in an
-        // upload of their own.
-        const keepId = result.id ?? itemId;
-        if (keepId) {
-          kept.current = {
-            itemId: keepId,
-            text: kept.current?.text ?? textValue,
-          };
+        const formData = base();
+        // Text belongs to the upload, so it goes with the request that makes it.
+        if (textToSend && index === 0 && !itemId) {
+          formData.set("textValue", textToSend);
         }
-        // Named, because the ones before it are already saved and retrying
-        // should not mean starting again. The server names the file itself
-        // when the trouble was the file.
-        const named = result.error.startsWith(original.name)
-          ? result.error
-          : `${original.name}: ${result.error}`;
-        onError(named + (index > 0 ? ` (${index} already saved)` : ""));
-        return;
+        if (itemId) formData.set("itemId", itemId);
+        formData.append("files", prepared.file);
+        if (prepared.exif) formData.append("exif", prepared.exif, "exif.bin");
+
+        const result = await saveDeliverable(null, formData);
+        if (!result.ok) {
+          // Whichever is known: the one the server names, or the one the
+          // photos before this were already filed under. Without the second a
+          // dropped connection on photo four put photos four to ten in an
+          // upload of their own.
+          const keepId = result.id ?? itemId;
+          if (keepId) {
+            kept.current = {
+              itemId: keepId,
+              text: kept.current?.text ?? textValue,
+            };
+          }
+          // Named, because the ones before it are already saved and retrying
+          // should not mean starting again. The server names the file itself
+          // when the trouble was the file.
+          const named = result.error.startsWith(original.name)
+            ? result.error
+            : `${original.name}: ${result.error}`;
+          onError(named + (index > 0 ? ` (${index} already saved)` : ""));
+          return;
+        }
+
+        itemId ??= result.id;
+        setDone(index + 1);
+        // Saved, so off the list: its square goes as it lands, and trying
+        // again after a failure further on sends what is left rather than
+        // the whole lot a second time.
+        leaveOut(entry);
       }
 
-      itemId ??= result.id;
-      setDone(index + 1);
-      // Saved, so off the list: its square goes as it lands, and trying
-      // again after a failure further on sends what is left rather than
-      // the whole lot a second time.
-      leaveOut(entry);
-    }
+      // Text on its own, with no photos to carry it.
+      if (batch.length === 0) {
+        // Already saved by the attempt that failed on its photo.
+        if (kept.current && kept.current.text === textValue) {
+          return onDone();
+        }
+        const formData = base();
+        if (textValue) formData.set("textValue", textValue);
 
-    // Text on its own, with no photos to carry it.
-    if (files.length === 0) {
-      // Already saved by the attempt that failed on its photo.
-      if (kept.current && kept.current.text === textValue) {
-        setPending(false);
+        const result = await saveDeliverable(null, formData);
+        if (!result.ok) return onError(result.error);
         return onDone();
       }
-      const formData = base();
-      if (textValue) formData.set("textValue", textValue);
 
-      const result = await saveDeliverable(null, formData);
+      onDone();
+    } catch {
+      // What landed is saved and off the list; what is left stays picked,
+      // and goes into the same upload when Save is pressed again.
+      if (itemId) {
+        kept.current = {
+          itemId,
+          text: kept.current?.text ?? textValue,
+        };
+      }
+      onError(
+        `The connection dropped${current ? ` while sending ${current.name}` : ""}. ` +
+          "Anything already sent is saved — press Save again for the rest.",
+      );
+    } finally {
       setPending(false);
-      if (!result.ok) return onError(result.error);
-      return onDone();
     }
-
-    setPending(false);
-    onDone();
   }
 
   return (
@@ -1477,9 +1497,12 @@ function UploadForm({
               photos these were, and the wrong one was only found afterwards,
               stamped and filed. */}
           {picked.length > 0 ? (
+            // Room above the first row for the leave-out buttons' reach: it
+            // stands up out of each square, and with the usual gap it took
+            // taps meant for "Add another photo" just above.
             <ul
               aria-label="Picked, not saved yet"
-              className="flex flex-wrap gap-2.5"
+              className="flex flex-wrap gap-2.5 pt-2.5"
             >
               {picked.map((entry) => (
                 <li key={entry.key} className="relative">

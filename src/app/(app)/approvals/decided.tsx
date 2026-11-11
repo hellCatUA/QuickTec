@@ -17,6 +17,9 @@ export type DecidedRow = {
   decidedBy: string | null;
   /** Null while it is still pending. */
   decidedAt: string | null;
+  /** When it was decided, as a number, for putting rows in order — the
+   *  written-out date above does not sort. */
+  decidedAtMs?: number;
   outcome: "APPROVED" | "REJECTED" | "PENDING";
 };
 

@@ -1,4 +1,4 @@
-import { siteLabelOnScreen } from "@/lib/address";
+import { placeLabel, siteLabelOnScreen } from "@/lib/address";
 import {
   decimalHours,
   parseDatetimeLocalInZone,
@@ -71,7 +71,7 @@ export async function siteNamesFor(
   return new Map(
     sites.map((site) => [
       site.id,
-      `${siteLabelOnScreen(site.customer.code, site)} · ${site.city}, ${site.state}`,
+      placeLabel(siteLabelOnScreen(site.customer.code, site), site),
     ]),
   );
 }

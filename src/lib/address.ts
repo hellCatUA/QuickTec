@@ -64,3 +64,19 @@ export function siteLabelOnScreen(
     ? `${customerCode} — number pending`
     : siteLabel(customerCode, site.siteNumber);
 }
+
+/**
+ * "TSA #4471 · Covina, CA", leaving out whatever is not known. A site added in
+ * a hurry from the new-job form can have no city or state yet, and joined
+ * blindly that read "TSA #4471 · , ".
+ */
+export function placeLabel(
+  label: string,
+  site: { city: string | null; state: string | null },
+): string {
+  const town = [site.city, site.state]
+    .map((part) => part?.trim())
+    .filter(Boolean)
+    .join(", ");
+  return town ? `${label} · ${town}` : label;
+}

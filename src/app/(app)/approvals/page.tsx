@@ -19,6 +19,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { EmptyState, PageHeader } from "@/components/ui/page-header";
+import { siteLabelOnScreen } from "@/lib/address";
 import { requestedAvatarSrc } from "@/lib/avatar";
 import {
   readableRequest,
@@ -37,6 +38,7 @@ import { loadPrivacySettings, managesProfiles, PICTURE_SELECT, pictureFor } from
 import { jobScopeWhere, reportIds } from "@/lib/scope";
 import { getSessionUser, permissionScope } from "@/lib/session";
 import { DecidedList, type DecidedRow } from "./decided";
+import { decisionsWaiting, waitingOnYou } from "@/lib/waiting";
 import { NotificationsPanel } from "./notifications-panel";
 import {
   ApprovalTabs,
@@ -141,7 +143,9 @@ export default async function ApprovalsPage({
               createdAt: true,
               createdBy: { select: { name: true } },
               customer: { select: { code: true } },
-              site: { select: { siteNumber: true } },
+              site: {
+                select: { siteNumber: true, numberPending: true, timeZone: true },
+              },
             },
           })
         : [],
@@ -234,12 +238,11 @@ export default async function ApprovalsPage({
 
   // Notifications are counted apart: the headline is about decisions waiting,
   // and folding "you were put on a job" into that number would overstate it.
-  const total =
-    changeRequests.length +
-    adHocJobs.length +
-    pendingReview.length +
-    payrollPeriods.length +
-    profileRequests.length;
+  //
+  // Counted rather than added up from the lists, which stop at fifty each: the
+  // tab bar counts, and with seventy-three changes waiting the two said 73 and
+  // 50. Shared with the shell's count for this request, so it costs nothing.
+  const total = decisionsWaiting(await waitingOnYou(user));
 
   // --- what you have asked for ----------------------------------------------
   // Yours by authorship, not by scope: a tech cannot approve their own request
@@ -272,10 +275,13 @@ export default async function ApprovalsPage({
           from: request.oldValue,
           to: request.newValue,
           raisedBy: null,
-          raisedAt: usDateTimeInZone(request.createdAt, zone),
+          raisedAt: usDateTimeInZone(
+            request.createdAt,
+            request.job.site.timeZone ?? zone,
+          ),
           decidedBy: request.reviewedBy?.name ?? null,
           decidedAt: request.reviewedAt
-            ? usDateTimeInZone(request.reviewedAt, zone)
+            ? usDateTimeInZone(request.reviewedAt, request.job.site.timeZone ?? zone)
             : null,
           outcome:
             request.status === "PENDING"
@@ -324,11 +330,18 @@ export default async function ApprovalsPage({
                 from: request.oldValue,
                 to: request.newValue,
                 raisedBy: request.requestedBy.name,
-                raisedAt: usDateTimeInZone(request.createdAt, zone),
+                raisedAt: usDateTimeInZone(
+                  request.createdAt,
+                  request.job.site.timeZone ?? zone,
+                ),
                 decidedBy: request.reviewedBy?.name ?? null,
                 decidedAt: request.reviewedAt
-                  ? usDateTimeInZone(request.reviewedAt, zone)
+                  ? usDateTimeInZone(
+                      request.reviewedAt,
+                      request.job.site.timeZone ?? zone,
+                    )
                   : null,
+                decidedAtMs: request.reviewedAt?.getTime() ?? 0,
                 outcome:
                   request.status === "APPROVED"
                     ? ("APPROVED" as const)
@@ -350,6 +363,7 @@ export default async function ApprovalsPage({
                     approvedAt: true,
                     createdBy: { select: { name: true } },
                     approvedBy: { select: { name: true } },
+                    site: { select: { timeZone: true } },
                   },
                 })
               ).map((job) => ({
@@ -359,15 +373,19 @@ export default async function ApprovalsPage({
                 title: job.title,
                 subtitle: job.intWoId,
                 raisedBy: job.createdBy.name,
-                raisedAt: usDateTimeInZone(job.createdAt, zone),
+                raisedAt: usDateTimeInZone(job.createdAt, job.site.timeZone ?? zone),
                 decidedBy: job.approvedBy?.name ?? null,
                 decidedAt: job.approvedAt
-                  ? usDateTimeInZone(job.approvedAt, zone)
+                  ? usDateTimeInZone(job.approvedAt, job.site.timeZone ?? zone)
                   : null,
+                decidedAtMs: job.approvedAt?.getTime() ?? 0,
                 outcome: "APPROVED" as const,
               }))
             : []),
-        ].sort((a, b) => (a.decidedAt ?? "") < (b.decidedAt ?? "") ? 1 : -1)
+          // Newest decision first, by when it was made. This compared the
+          // written-out "MM-DD-YYYY h:mm AM" strings, so 9:05 sorted above
+          // 10:05 and last December above this January.
+        ].sort((a, b) => (b.decidedAtMs ?? 0) - (a.decidedAtMs ?? 0))
       : [];
 
   const heading =
@@ -498,7 +516,10 @@ export default async function ApprovalsPage({
                     under them with its leading dot left hanging. */}
                 <div className="text-xs text-muted-foreground">
                   {request.requestedBy.name} ·{" "}
-                  {usDateTimeInZone(request.createdAt, zone)}
+                  {usDateTimeInZone(
+                    request.createdAt,
+                    request.job.site.timeZone ?? zone,
+                  )}
                 </div>
               </Link>
             ))}
@@ -590,9 +611,12 @@ export default async function ApprovalsPage({
                 <span className="tabular text-xs text-muted-foreground">
                   {job.intWoId}
                 </span>
+                {/* A tech's own job is very often at a site whose number
+                    nobody knows yet — said as such, not as its placeholder. */}
                 <span className="text-xs text-muted-foreground">
-                  {job.customer.code} #{job.site.siteNumber} ·{" "}
-                  {job.createdBy.name} · {usDateTimeInZone(job.createdAt, zone)}
+                  {siteLabelOnScreen(job.customer.code, job.site)} ·{" "}
+                  {job.createdBy.name} ·{" "}
+                  {usDateTimeInZone(job.createdAt, job.site.timeZone ?? zone)}
                 </span>
               </Link>
             ))}

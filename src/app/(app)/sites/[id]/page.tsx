@@ -130,11 +130,13 @@ export default async function SiteHistoryPage({
     <div className="mx-auto flex max-w-3xl flex-col gap-4">
       {/* Back to the customer for somebody who keeps the directory, and to
           the job list for everybody else: a tech reaches this page from a
-          job, and the directory sends them to the dashboard. */}
+          job, and the customer's page sends anybody without client.manage to
+          the dashboard. That includes supervisors, who manage projects but
+          not the directory — they were sent there and straight back. */}
       <PageHeader
         title={siteLabelOnScreen(site.customer.code, site)}
         backHref={
-          can(user, "client.manage") || can(user, "project.manage")
+          can(user, "client.manage")
             ? `/directory/customers/${site.customer.id}`
             : "/jobs"
         }

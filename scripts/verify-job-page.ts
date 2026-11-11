@@ -562,6 +562,29 @@ async function main() {
   await page.getByRole("button", { name: "Continue" }).click();
   await page.waitForSelector("text=Signing as", { timeout: 30_000 });
 
+  // Back to the MOD after signing. The pad comes back blank, and its old ink
+  // must not come back with it: it used to sit unseen beside the empty pad,
+  // and Continue uploaded it again — under whoever was picked by then.
+  const signedBefore = await db.signature.count({
+    where: { jobId: assignment.jobId },
+  });
+  await page.getByRole("button", { name: "Back" }).click();
+  await page.waitForSelector("text=MOD/POC signature already captured", {
+    timeout: 30_000,
+  });
+  check(
+    "back on a signed MOD step, going on is plain Continue",
+    await page.getByRole("button", { name: "Continue", exact: true }).count(),
+    1,
+  );
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await page.waitForSelector("text=Signing as", { timeout: 30_000 });
+  check(
+    "and nothing is uploaded a second time",
+    await db.signature.count({ where: { jobId: assignment.jobId } }),
+    signedBefore,
+  );
+
   await drawSignature(page);
   await page.getByRole("button", { name: "Continue" }).click();
   await page.waitForSelector("text=Clock out now", { timeout: 30_000 });

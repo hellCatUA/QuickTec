@@ -27,6 +27,8 @@ export function UserList({ rows }: { rows: UserRowData[] }) {
     ].some((value) => value.toLowerCase().includes(needle));
 
   const shown = rows.filter(matches).length;
+  const found =
+    shown === 0 ? "Nobody matches that." : `${shown} of ${rows.length} accounts`;
 
   return (
     <div className="flex flex-col gap-3">
@@ -47,11 +49,16 @@ export function UserList({ rows }: { rows: UserRowData[] }) {
         </label>
       ) : null}
 
+      {/* Read out by a region that is always there: a live region only
+          speaks up about changes to one that already exists, so one mounted
+          with its first message said nothing on the first keystroke. The
+          visible line is for the eye only, so it is not read twice. */}
+      <p className="sr-only" aria-live="polite">
+        {needle === "" ? null : found}
+      </p>
       {needle !== "" ? (
-        <p className="text-xs text-muted-foreground" aria-live="polite">
-          {shown === 0
-            ? "Nobody matches that."
-            : `${shown} of ${rows.length} accounts`}
+        <p className="text-xs text-muted-foreground" aria-hidden>
+          {found}
         </p>
       ) : null}
 

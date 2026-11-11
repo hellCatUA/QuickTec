@@ -111,6 +111,7 @@ export function EditableField({
     // phone has room for its value, not for a text box with two buttons and a
     // reason under it.
     <div
+      data-editing={open ? "" : undefined}
       className={cn(
         "flex min-w-0 flex-col gap-1",
         open && "col-span-full w-full",

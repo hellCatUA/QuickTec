@@ -34,6 +34,14 @@ export default async function AppLayout({
   // else in the app until it has been replaced.
   if (user.mustChangePassword) redirect("/set-password");
 
+  // The count on the Approvals tab is asked for alongside the company row
+  // rather than after it, and a failure in it is a missing badge, never a
+  // missing page: the provider renders nothing for null.
+  const badgePromise = approvalsBadge(user).catch((error) => {
+    console.error("[layout] could not count what is waiting:", error);
+    return null;
+  });
+
   const company = await db.companySettings.findUnique({
     where: { id: "singleton" },
     select: {
@@ -59,7 +67,7 @@ export default async function AppLayout({
   const canManageSettings = opensSettings(user);
   // Counted with the shell so the first paint already has it; the tab bar
   // asks again as somebody moves around.
-  const badge = await approvalsBadge(user);
+  const badge = await badgePromise;
 
   return (
     <ApprovalsBadgeProvider initial={badge}>

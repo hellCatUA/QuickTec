@@ -167,6 +167,49 @@ What each was about, as first put:
     "Open / Approved"; the Reimbursements note on a tech's job mentions the
     legacy form.
 
+## Independent review (11 November 2026)
+
+Two agents read everything from `d31dca7` on — one the server side (who sees
+what, what is counted and sent), one the client side (state, layout,
+accessibility) — and reported what they could show going wrong. Fixed in the
+commit after `3d3651f`:
+
+- **A signature saved under the wrong person.** Back from the tech's step to
+  the MOD's showed a blank pad, but the drawing from before was still held
+  beside it; Continue uploaded it again, under whoever was picked by then. The
+  pad now takes its ink with it when it goes, and the MOD step's state is the
+  selected person's — a different person picked or typed is recorded, where
+  before nothing was saved and nothing said so.
+- **An upload stuck for good on a dropped connection.** A server action that
+  never answers rejects rather than returning, and nothing caught it: the
+  button stayed at "Uploading 4 of 10" with every control disabled. Now the
+  photos already sent stay saved, the rest stay picked, and Save sends them
+  into the same upload. Checkout says so too when a step's save never answers.
+- **Guests could read a project's page** if somebody added them as a member.
+  The members' page now asks what the Projects list asks.
+- **Who hears that somebody was put on a job**: the job's approver *and* the
+  person's direct supervisor, who pays them — on a project job the second was
+  never told — once each per job however many of their people are on it, and
+  the "put themselves on it" exception narrowed to a tech's own ad-hoc job.
+- Smaller: "Continue without a signature" ran off the card at 320 px; the
+  checkout step landed under the offline banner; an open ticket field stayed
+  in half a row; the leave-out button's reach took taps meant for "Add another
+  photo"; desktop week chips compared first names; long work order numbers ran
+  off a 320 px header; the badge could be overwritten by an older answer; the
+  user search was not announced on the first keystroke; the period chips were
+  40 px; Approvals counted 50 where the tab counted 73, printed a pending
+  site's placeholder, sorted its archive by the written-out date, and showed
+  request times on the company's clock rather than the site's; the review page
+  printed changes as stored; a supervisor's back link from a site bounced; a
+  quick-created site with no town read "SBUX #12 · , "; and the badge's count
+  could take a page down with it.
+
+Left as they are, knowingly: a supervisor's report list is looked up up to
+three times when the badge is counted (a few milliseconds); and if the network
+drops just after a new MOD's name is saved but before the answer arrives,
+pressing Continue again records them twice — the checkout now says the
+connection dropped, but cannot know the save landed.
+
 ## Other open threads (outside this audit)
 
 Parked by the owner, not forgotten. None has been started.

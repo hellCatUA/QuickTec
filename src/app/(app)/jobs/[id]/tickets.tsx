@@ -100,11 +100,13 @@ export function JobTickets({
 
       {canEdit ? (
         adding ? (
-          // The box on a line of its own and the buttons under it, in half a
-          // phone; side by side wherever there is room.
+          // The box on a line of its own and the buttons under it. It sits in
+          // half of the details card, which is never wide enough for all
+          // three side by side — and a container query here would measure
+          // the card, not the half it is in.
           <div className="flex flex-wrap items-center gap-2">
             <Input
-              className="min-w-0 basis-full @sm:flex-1"
+              className="min-w-0 basis-full"
               value={value}
               autoFocus
               aria-label="Another ticket number"

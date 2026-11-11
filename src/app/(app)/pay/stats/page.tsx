@@ -106,7 +106,7 @@ export default async function StatsPage({
               href={`/pay/stats?period=${entry.key}`}
               aria-current={current ? "page" : undefined}
               className={cn(
-                "inline-flex min-h-10 items-center rounded-full border px-4 text-sm font-medium transition-colors",
+                "inline-flex min-h-11 items-center rounded-full border px-4 text-sm font-medium transition-colors",
                 current
                   ? "border-primary bg-primary text-primary-foreground"
                   : "border-border text-muted-foreground hover:bg-muted hover:text-foreground",
