@@ -123,42 +123,49 @@ dense rows. Each report's `smallTargets` lists them.
 
 ## Open — waiting on the owner
 
-Numbered so they can be answered by number. Each says what was seen and what
-is proposed; nothing here has been started.
+The eleven proposals put to the owner, and their answers (11 November 2026).
+
+| # | Proposal | Answer |
+| --- | --- | --- |
+| 1 | Tell the crew a job is raised with ("You are on …"), not only people added later | **Done** — `4a58c8e` |
+| 2 | A count on the Approvals tab in the navigation | **Done** — `4a58c8e` |
+| 3 | Fold runs of empty "No work" weeks on Pay into one line | **No** — keep each week |
+| 4 | Assignment details two to a row on phones, everything fitting | **Done** — `4a58c8e` |
+| 5 | Day headings in the Jobs list (Earlier / Today / Tomorrow / Later) | Asked what it means — explained, waiting |
+| 6 | One badge for lifecycle and outcome ("Pending review · Completed") | Its own conversation, later |
+| 7 | "Failed" / "Cancelled" on checkout's outcome buttons | **No** — keep "Fail" / "Cancel" |
+| 8 | Two control styles instead of five (segmented views, chips for filters) | Leaning yes, asked what it means — explained with a picture, waiting |
+| 9 | Collapsible sections on the very long settings pages | Later |
+| 10 | Statistics as compact tiles with larger period chips | **Done** — `4a58c8e` |
+| 11 | Small ones: Pay/Payroll title size, "No SiteID", "CI"/"CO", project job group names, legacy-form note | Later |
+
+What each was about, as first put:
 
 1. **Crew put on a job when it is created are never told.** Only somebody added
-   later gets "You are on …". *Proposed: notify at creation too, except whoever
-   created it.*
+   later gets "You are on …".
 2. **A manager on a phone finds "Waiting on you" below the whole week**, a screen
-   and a half down. *Proposed: a count on the Approvals tab in the bottom bar.*
-3. **Pay lists every empty week as its own "No work" card.** *Proposed: fold a
-   run of empty weeks into one line.*
+   and a half down.
+3. **Pay lists every empty week as its own "No work" card.**
 4. **Assignment details on the job page** are twelve label-and-value pairs one
-   under another on a phone, about 700 px before the scope of work. The block
-   was arranged by hand with the owner, so it was left alone. *Proposed: two
-   columns for the short pairs.*
+   under another on a phone, about 700 px before the scope of work.
 5. **The Jobs list has no day headings**; the open list runs oldest first, so a
-   stale job sits above today's. *Proposed: Earlier / Today / Tomorrow / Later
-   headings, order unchanged.*
+   stale job sits above today's.
 6. **Two status badges side by side** ("Pending review" "Completed") read as two
-   statuses. *Proposed: one badge reading "Pending review · Completed", or the
-   outcome on the job page only.*
+   statuses.
 7. **Checkout's outcome buttons "Fail" and "Cancel"** — "Cancel" inside a dialog
-   reads as "close this". *Proposed: "Failed" and "Cancelled" on the buttons; the
-   stored values and the exports unchanged.*
-8. **Five tab styles**: segmented on Jobs, pills on Approvals, chips on
-   Statistics, a large segmented control on Pay, tabs on the job page.
-   *Proposed: one segmented control and one tab style.*
+   reads as "close this".
+8. **Five control styles** for the same job: segmented on Jobs, pills on
+   Approvals, chips on Statistics, a large segmented control on Pay, tabs on the
+   job page.
 9. **Very long settings pages on a phone**: Company about 6,000 px, Roles 4,800,
-   a project's settings 6,200, payroll rates 3,200. *Proposed: collapsible
-   sections as on Users, or a list of sections to jump to.*
-10. **Statistics** is six full-width cards — two screens — with small filter
-    chips. *Proposed: compact tiles two to a row, larger chips.*
+   a project's settings 6,200, payroll rates 3,200.
+10. **Statistics** was six full-width cards — two screens — with small filter
+    chips.
 11. Small: Pay and Payroll titles are larger than every other page's; "No
-    SiteID" on the new-job form reads as stray text; "CI" and "CO" on punches
-    (house shorthand, or spell them out?); a project groups its jobs as
-    "Scheduled / Completed" where the Jobs tabs say "Open / Approved"; the
-    Reimbursements note on a tech's job mentions the legacy form.
+    SiteID" on the new-job form reads as stray text; "CI" and "CO" on punches;
+    a project groups its jobs as "Scheduled / Completed" where the Jobs tabs say
+    "Open / Approved"; the Reimbursements note on a tech's job mentions the
+    legacy form.
 
 ## Other open threads (outside this audit)
 
@@ -255,3 +262,15 @@ A page that is not there.
 Somebody else's profile on a phone.
 
 ![Profile](images/8-profile.webp)
+
+Assignment details on a phone, after the owner's answer 4.
+
+![Assignment details](images/10-details.webp)
+
+Statistics, after the owner's answer 10.
+
+![Statistics](images/11-stats.webp)
+
+The five control styles behind proposal 8.
+
+![Tab styles](images/9-tab-styles.webp)
