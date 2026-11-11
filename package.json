@@ -20,6 +20,7 @@
     "verify:ui": "tsx --tsconfig tsconfig.json scripts/verify-job-page.ts",
     "verify:pay": "tsx --tsconfig tsconfig.json scripts/verify-pay-page.ts",
     "verify:approvals": "tsx --tsconfig tsconfig.json scripts/verify-approvals-page.ts",
+    "verify:jobs": "tsx --tsconfig tsconfig.json scripts/verify-jobs-list.ts",
     "verify:auth": "tsx --tsconfig tsconfig.json scripts/verify-auth.ts",
     "verify:forms": "tsx --tsconfig tsconfig.json scripts/verify-forms.ts",
     "verify:draft": "tsx --tsconfig tsconfig.json scripts/verify-job-draft.ts",

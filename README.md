@@ -252,6 +252,7 @@ npm run dev
 | `npm run verify:pay` | Drives Pay and Payroll in a real browser, including who is offered which |
 | `npm run serve` | Serves the standalone build on 3000, for the browser suites |
 | `npm run verify:approvals` | Drives the approvals inbox, site history and crew changes in a real browser |
+| `npm run verify:jobs` | Drives the Jobs list in a real browser: own and others' jobs, search, filters, days |
 | `npm run verify:auth` | Runs the OIDC handshake against a stand-in NextCloud |
 | `npm run verify:forms` | Fills a company's sign-off sheet, no database or browser needed |
 | `npm run verify:images` | Reads the pixels of a stamped photo |
@@ -284,6 +285,7 @@ QUICKTEC_ALLOW_DESTRUCTIVE_VERIFY=1 npm run verify
 QUICKTEC_ALLOW_DESTRUCTIVE_VERIFY=1 npm run fixtures
 npm run build && npm run serve &
 npm run verify:ui && npm run verify:pay && npm run verify:approvals && npm run verify:form-pages
+QUICKTEC_ALLOW_DESTRUCTIVE_VERIFY=1 npm run verify:jobs
 ```
 
 `npm run serve` rather than `npm start`: the build is `output: "standalone"`,

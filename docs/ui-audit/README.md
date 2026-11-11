@@ -131,7 +131,7 @@ The eleven proposals put to the owner, and their answers (11 November 2026).
 | 2 | A count on the Approvals tab in the navigation | **Done** — `4a58c8e` |
 | 3 | Fold runs of empty "No work" weeks on Pay into one line | **No** — keep each week |
 | 4 | Assignment details two to a row on phones, everything fitting | **Done** — `4a58c8e` |
-| 5 | Day headings in the Jobs list (Earlier / Today / Tomorrow / Later) | The owner meant to rework that list anyway, as overloaded. A lighter list was prototyped and shown (below) — waiting |
+| 5 | Day headings in the Jobs list (Earlier / Today / Tomorrow / Later) | The owner meant to rework that list anyway, as overloaded. Prototyped, shown, then **done** with three additions of theirs (below) |
 | 6 | One badge for lifecycle and outcome ("Pending review · Completed") | Its own conversation, later |
 | 7 | "Failed" / "Cancelled" on checkout's outcome buttons | **No** — keep "Fail" / "Cancel" |
 | 8 | Two control styles instead of five (segmented views, chips for filters) | **Yes**, merge them. Every switch was photographed side by side (`controls.ts`) to choose the looks — waiting |
@@ -167,11 +167,10 @@ What each was about, as first put:
     "Open / Approved"; the Reimbursements note on a tech's job mentions the
     legacy form.
 
-### The Jobs list prototype (for 5)
+### The Jobs list (5)
 
-Kept as a patch until the owner answers — `git apply
-docs/ui-audit/prototypes/jobs-list.patch` on a clean tree, then build. What it
-changes, on `/jobs` only:
+A prototype was shown first ("not bad"); the owner asked for three more things
+before it went in, and they are in:
 
 - **A heading for each day** on the site's calendar: "Today · Wed 11/11",
   "Tomorrow · Thu 11/12", the days after, "No date yet", then "Earlier — still
@@ -180,14 +179,30 @@ changes, on `/jobs` only:
   oldest.
 - **In progress and Sent back first**, whatever day they were booked for:
   somebody is on those now, or has to put them right.
+- **A divider for each day inside those groups** (owner's addition): In
+  progress, Sent back and Earlier hold several days, and two cards from
+  different days read as one. The day stays on the card as well.
+- **"Your jobs", then a divider, then "Other jobs"** for a supervisor and up
+  (owner's addition) — anybody whose `job.view` reaches past their own. Nothing
+  is listed twice; somebody with none of their own in the list sees it as
+  before, without the headings. A tech's list is never split.
+- **Search and a Filters panel** (owner's addition: days, tech, company). The
+  search box finds a job by work order, title, site, address, town, paying
+  company, customer, project or anybody on the crew — every word somewhere.
+  Under Filters: a range of days (on the site's calendar), a tech (supervisor
+  and up), the paying company and the customer, offered only from jobs the
+  person can see. All of it is asked of the server through the address, so it
+  reaches past the hundred loaded, a filtered list can be bookmarked, and the
+  tabs keep it. What is in use shows as chips that each take themselves off.
 - **A card is the time, the title, the place and the crew.** The date went to
   the heading; our work order number and the paying company went from phones
-  (from a tablet up they are a third line) — the new search box above the list
-  finds a job by either, by title, site, town or crew. A badge only says what
-  the heading and tab do not: no "Scheduled" under a day still to come, no
-  "Approved" on the Approved tab, no "Revisit required" on the Revisit tab.
-- On somebody's own job, "You +1" rather than their own name, and nothing when
-  they are on it alone.
+  (from a tablet up they are a third line) and are what the search finds. A
+  badge only says what the heading and tab do not: no "Scheduled" under a day
+  still to come, no "Approved" on the Approved tab, no "Revisit required" on
+  the Revisit tab. On somebody's own job, "You +1" rather than their own name.
+
+The rules are in `src/lib/job-list.ts` and checked in `npm run verify`; the page
+is driven as a tech, a supervisor and a manager by `npm run verify:jobs`.
 
 ### Asked for next, once 5 and 8 are settled
 

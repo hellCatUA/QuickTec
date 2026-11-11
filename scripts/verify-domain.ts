@@ -5159,6 +5159,201 @@ async function main() {
     "Some new thing happened",
   );
 
+  // --- the Jobs list --------------------------------------------------------
+  const { groupByDay, listJobs, onDays, parseJobsQuery, jobsHref, dayName } =
+    await import("@/lib/job-list");
+  type ListedJob = import("@/lib/job-list").ListedJob;
+  const NY = "America/New_York";
+  // Wednesday 11 November 2026, noon in Los Angeles.
+  const listNow = new Date("2026-11-11T20:00:00Z");
+  const listed = (
+    id: string,
+    at: string | null,
+    extra: Partial<ListedJob> = {},
+  ): ListedJob => ({
+    id,
+    intWoId: `WO-${id}`,
+    title: `Job ${id}`,
+    scheduledStart: at ? new Date(at) : null,
+    lifecycle: "SCHEDULED",
+    outcome: null,
+    internalStatus: null,
+    revisitNumber: null,
+    client: { name: "Pays Co" },
+    customer: { code: "SBUX" },
+    site: { siteNumber: "1", numberPending: false, city: "Fresno", state: "CA", timeZone: TZ },
+    assignments: [{ isLead: true, userId: "terry", user: { name: "Terry Tech" } }],
+    ...extra,
+  });
+  const listLayout = { now: listNow, fallbackZone: TZ, viewerId: "terry", tab: "open" as const };
+  const inNewYork = { ...listed("x", null).site, timeZone: NY };
+
+  const lateNight = groupByDay(
+    [
+      listed("la", "2026-11-12T06:30:00Z"),
+      listed("ny", "2026-11-12T06:30:00Z", { site: inNewYork }),
+    ],
+    listLayout,
+  );
+  check(
+    "half past ten at night in Los Angeles is today there, and tomorrow in New York",
+    lateNight.map((group) => group.label).join(" | "),
+    "Today · Wed 11/11 | Tomorrow · Thu 11/12",
+  );
+
+  const open = groupByDay(
+    [
+      listed("today", "2026-11-11T16:00:00Z"),
+      listed("review", "2026-11-09T15:00:00Z", { lifecycle: "PENDING_REVIEW" }),
+      listed("sent", "2026-11-07T15:00:00Z", { lifecycle: "CHANGES_REQUESTED" }),
+      listed("on", "2026-11-09T16:00:00Z", { lifecycle: "IN_PROGRESS" }),
+      listed("undated", null),
+      listed("late", "2026-11-10T05:00:00Z", { lifecycle: "PENDING_REVIEW" }),
+      listed("june", "2026-06-25T15:00:00Z"),
+      listed("yesterday", "2026-11-11T00:30:00Z", { lifecycle: "PENDING_REVIEW" }),
+    ],
+    listLayout,
+  );
+  check(
+    "on a job now and sent back come first, whatever day; the stragglers last",
+    open.map((group) => group.key).join(" "),
+    "in-progress sent-back 2026-11-11 none earlier",
+  );
+  const earlier = open.find((group) => group.key === "earlier")!;
+  check(
+    "the stragglers are cut by day, newest first",
+    earlier.days.map((day) => day.label).join(" | "),
+    "Yesterday · Tue 11/10 | Mon 11/9 | Thu 6/25",
+  );
+  check(
+    "and a day's jobs run morning first",
+    earlier.days[1].jobs.map((job) => job.time).join(", "),
+    "7:00 AM, 9:00 PM",
+  );
+  check(
+    "a group of one day needs no divider inside it",
+    open.find((group) => group.key === "2026-11-11")!.days.map((day) => day.label).join(),
+    "",
+  );
+  check(
+    "the day stays on a card in a group of several",
+    open.find((group) => group.key === "in-progress")!.days[0].jobs[0].day,
+    "Mon 11/9",
+  );
+
+  const history = groupByDay(
+    [
+      listed("a", "2026-11-10T16:00:00Z", { lifecycle: "APPROVED" }),
+      listed("b", "2026-11-09T16:00:00Z", { lifecycle: "APPROVED" }),
+      listed("c", "2026-11-12T16:00:00Z"),
+    ],
+    { ...listLayout, tab: "all" },
+  );
+  check(
+    "the history reads forward from today, then back a day at a time",
+    history.map((group) => group.label).join(" | "),
+    "Tomorrow · Thu 11/12 | Yesterday · Tue 11/10 | Mon 11/9",
+  );
+
+  const badgesOf = (job: ListedJob, tab: "open" | "approved" | "revisit" = "open") =>
+    groupByDay([job], { ...listLayout, tab })[0].days[0].jobs[0].badges
+      .map((badge) => badge.label)
+      .join(", ");
+  check("no 'Scheduled' under a day still to come", badgesOf(listed("s", "2026-11-12T16:00:00Z")), "");
+  check("nor under 'No date yet'", badgesOf(listed("s", null)), "");
+  check("but a straggler that never started says it", badgesOf(listed("s", "2026-06-25T15:00:00Z")), "Scheduled");
+  check(
+    "no 'Approved' on the Approved tab",
+    badgesOf(listed("s", "2026-11-09T16:00:00Z", { lifecycle: "APPROVED", outcome: "COMPLETED" }), "approved"),
+    "Completed",
+  );
+  check(
+    "no 'Revisit required' on the Revisit tab",
+    badgesOf(listed("s", "2026-11-09T16:00:00Z", { lifecycle: "PENDING_REVIEW", internalStatus: "REVISIT_REQUIRED" }), "revisit"),
+    "Pending review",
+  );
+
+  const crewOf = (job: ListedJob, viewerId = "terry") =>
+    groupByDay([job], { ...listLayout, viewerId })[0].days[0].jobs[0].crew;
+  const sam = { isLead: false, userId: "sam", user: { name: "Sam Super" } };
+  check("leading a job alone, your own card says nothing about the crew", crewOf(listed("c", null)), null);
+  check(
+    "with somebody else on it, 'You +1'",
+    crewOf(listed("c", null, { assignments: [...listed("c", null).assignments, sam] })),
+    "You +1",
+  );
+  check(
+    "and to them, the lead's name",
+    crewOf(listed("c", null, { assignments: [...listed("c", null).assignments, sam] }), "sam"),
+    "Terry Tech +1",
+  );
+
+  const mixed = [
+    listed("own", "2026-11-11T16:00:00Z", { assignments: [{ isLead: true, userId: "sam", user: { name: "Sam Super" } }] }),
+    listed("theirs", "2026-11-12T16:00:00Z"),
+  ];
+  check(
+    "a supervisor's own jobs, then everybody else's",
+    listJobs(mixed, { ...listLayout, viewerId: "sam", split: true })
+      .map((section) => `${section.label}: ${section.count}`)
+      .join(" | "),
+    "Your jobs: 1 | Other jobs: 1",
+  );
+  check(
+    "with none of their own, the list as it was, without headings",
+    listJobs(mixed, { ...listLayout, viewerId: "boss", split: true })
+      .map((section) => `${section.label}: ${section.count}`)
+      .join(" | "),
+    "null: 2",
+  );
+  check(
+    "a tech's list is never split",
+    listJobs(mixed, { ...listLayout, split: false }).length,
+    1,
+  );
+
+  const asked = parseJobsQuery({
+    filter: "nonsense",
+    q: "  terry   visalia ",
+    from: "2026-11-30",
+    to: "2026-11-01",
+    tech: "x' OR 1=1",
+    company: "c_123",
+  });
+  check("an unknown tab is the open one", asked.tab, "open");
+  check("the search is one space between words", asked.q, "terry visalia");
+  check("dates typed backwards are read forwards", `${asked.from} ${asked.to}`, "2026-11-01 2026-11-30");
+  check("an id that could not be one is dropped", asked.tech, null);
+  check("a day that does not exist is no day", parseJobsQuery({ from: "2026-02-31" }).from, null);
+  check(
+    "a tab keeps the search and the filters",
+    jobsHref(asked, { tab: "all" }),
+    "/jobs?filter=all&q=terry+visalia&from=2026-11-01&to=2026-11-30&company=c_123",
+  );
+  check(
+    "a day asked for is the site's: half past ten at night in New York is the 11th there",
+    onDays(
+      { scheduledStart: new Date("2026-11-12T03:30:00Z"), site: { timeZone: NY } },
+      { from: "2026-11-11", to: "2026-11-11" },
+      TZ,
+    ),
+    true,
+  );
+  check(
+    "and one in the morning in Los Angeles is the 12th",
+    onDays(
+      { scheduledStart: new Date("2026-11-12T09:00:00Z"), site: { timeZone: TZ } },
+      { from: "2026-11-11", to: "2026-11-11" },
+      TZ,
+    ),
+    false,
+  );
+  check(
+    "a day from another year carries its year instead of its weekday",
+    dayName(new Date("2025-06-25T15:00:00Z"), TZ, listNow),
+    "6/25/2025",
+  );
+
   // --- branding -----------------------------------------------------------
   const { brandLine } = await import("@/lib/company");
 

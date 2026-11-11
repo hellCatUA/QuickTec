@@ -32,7 +32,7 @@ run() {
 }
 
 SUITES="$*"
-[ -z "$SUITES" ] && SUITES="verify fixtures verify:ui verify:approvals verify:pay verify:forms verify:draft verify:form-pages verify:images verify:profiles verify:signin verify:deliverables verify:budget"
+[ -z "$SUITES" ] && SUITES="verify fixtures verify:ui verify:approvals verify:jobs verify:pay verify:forms verify:draft verify:form-pages verify:images verify:profiles verify:signin verify:deliverables verify:budget"
 for suite in $SUITES; do
   run "$suite"
 done

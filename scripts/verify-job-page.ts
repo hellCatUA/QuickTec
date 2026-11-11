@@ -707,9 +707,11 @@ async function main() {
     waitUntil: "domcontentloaded",
   });
   await page.waitForTimeout(800);
+  // The job itself, not the badge: on the Revisit tab every job would carry
+  // "Revisit required", so the list no longer prints it.
   check(
     "the planner can filter for it rather than scanning badges",
-    await page.getByText("Revisit required").first().isVisible(),
+    await page.locator(`a[href="/jobs/${assignment.jobId}"]`).first().isVisible(),
     true,
   );
 
