@@ -216,12 +216,35 @@ before it went in, and they are in:
 The rules are in `src/lib/job-list.ts` and checked in `npm run verify`; the page
 is driven as a tech, a supervisor and a manager by `npm run verify:jobs`.
 
-### Job cards — the owner's brief, being designed
+### Job cards — the owner's brief, designed, waiting
 
 Asked for once the search is done (11 November 2026): each card to carry the
 date, time, title, paying company, rep company, client and town, with icons;
 and the crew shown as one person's name or a count of people, with an arrow
 that opens everyone on it with their full name and picture.
+
+The design is a working prototype, kept as a patch until the owner answers —
+`git apply docs/ui-audit/prototypes/job-cards.patch` on a clean tree, then
+build. A card, top to bottom:
+
+- **When**: calendar icon and the day ("Wed 11/11"), clock icon and the time,
+  on the site's clock; R1 and the arrow on the right.
+- **The title**, which is the link: it is stretched over the whole card, so a
+  tap anywhere opens the job.
+- **Four facts, each with its icon**, two to a row on a phone and all four in
+  one row from a tablet up: the client (customer and site ID, a shop), the town
+  (a pin), the paying company (a banknote) and the rep company (a handshake;
+  a dash when there is none). Each says what it is to a screen reader too.
+- **Under a hairline, the crew and how it stands.** The crew is a button: one
+  person is their name with a person ("You" on one's own), more are a crowd
+  with how many. Its arrow opens the crew — picture as the viewer may see it
+  (`pictureFor`, the privacy rules the profile route applies), full name that
+  wraps rather than being cut, "Lead", "(you)". Nobody on it: "Nobody
+  assigned" in amber. Status badges sit to the right, as before only where the
+  heading and tab have not said it.
+
+The day headings and dividers stay, so the day is said above a card and on it.
+The work order number is no longer on the card; the search finds it.
 
 ### Asked for next, once 5 and 8 are settled
 
