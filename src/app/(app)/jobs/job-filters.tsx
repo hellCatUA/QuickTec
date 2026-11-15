@@ -358,7 +358,9 @@ function Picker({
         name={name}
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="min-w-0 truncate"
+        // "Any" in the same grey as the type-to pickers' empty state, so the
+        // panel does not read as half filled in.
+        className={cn("min-w-0 truncate", !value && "text-muted-foreground")}
       >
         <option value="">Any</option>
         {options.map((option) => (
