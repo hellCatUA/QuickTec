@@ -35,6 +35,7 @@ import {
   withoutLateTravel,
 } from "@/lib/pay-rates";
 import { formatPhone } from "@/lib/phone";
+import { normaliseLink } from "@/lib/links";
 import { canOnJob, resolveJobSupervisor } from "@/lib/scope";
 import { timeZoneForZip } from "@/lib/us-regions";
 import { can, getSessionUser, requirePermission } from "@/lib/session";
@@ -68,10 +69,19 @@ export async function createJob(
     dispatchName: formData.getAll("dispatchName").map(String),
     dispatchPhone: formData.getAll("dispatchPhone").map(String),
     dispatchEmail: formData.getAll("dispatchEmail").map(String),
+    dispatchUrl: formData.getAll("dispatchUrl").map(String),
     dispatchNote: formData.getAll("dispatchNote").map(String),
   });
   if (!parsed.success) {
     return { ok: false, error: z.prettifyError(parsed.error) };
+  }
+  // Refused before anything is written: found after the job is made, a bad
+  // link would leave the job raised and its numbers half saved.
+  if (parsed.data.dispatchUrl.some((typed) => typed.trim() && !normaliseLink(typed))) {
+    return {
+      ok: false,
+      error: "A dispatch contact's link is not a web address. Paste the whole meeting link.",
+    };
   }
 
   const input = parsed.data;
@@ -404,6 +414,7 @@ export async function createJob(
       // Normalised where it is stored, like every other phone on the record.
       phone: formatPhone(input.dispatchPhone[index] ?? "") || null,
       email: input.dispatchEmail[index]?.trim() || null,
+      url: normaliseLink(input.dispatchUrl[index] ?? ""),
       note: input.dispatchNote[index]?.trim() || null,
       order: index,
     }))
@@ -583,6 +594,7 @@ export async function createRevisit(
           name: true,
           phone: true,
           email: true,
+          url: true,
           note: true,
           order: true,
         },

@@ -256,7 +256,12 @@ async function main() {
       .evaluateAll((nodes) => nodes.map((node) => node.firstChild?.textContent ?? ""));
   }
 
-  const card = (page: Page, id: string) => page.locator(`a[href="/jobs/${id}"]`).first();
+  // The link is the title, stretched over the card; what a card says is the
+  // whole article around it.
+  const card = (page: Page, id: string) =>
+    page.locator("article", { has: page.locator(`a[href="/jobs/${id}"]`) }).first();
+  const crewButton = (page: Page, id: string) =>
+    card(page, id).getByRole("button", { name: /^Crew/ });
   const onA = `company=${companyA.id}`;
 
   const whose = (page: Page) => page.locator('nav[aria-label="Whose jobs"]');
@@ -316,11 +321,43 @@ async function main() {
     (await card(supPage, inProgress.id).innerText()).includes(named(-2)),
     true,
   );
+  const facts = await card(supPage, tomorrowTech.id).innerText();
   check(
-    "on their own job, the supervisor is 'You'",
-    (await card(supPage, todaySup.id).innerText()).includes("You +1"),
-    true,
+    "a card carries the client and site ID, the town, who pays and who handed it down",
+    [`${CUSTOMER_CODE} #4401`, "Lodi, CA", COMPANY_A, REP_NAME].map((fact) => facts.includes(fact)).join(" "),
+    "true true true true",
   );
+  check(
+    "one person on the crew is their name",
+    await crewButton(supPage, tomorrowTech.id).innerText(),
+    "Terry Tech",
+  );
+  check(
+    "more than one is how many",
+    await crewButton(supPage, todaySup.id).innerText(),
+    "2",
+  );
+  await crewButton(supPage, todaySup.id).click();
+  const crewList = supPage.getByRole("group", { name: "Crew on JL Today sup" });
+  check(
+    "the arrow opens all of them, the lead first, the viewer marked",
+    // The name beside the picture, and the Lead badge — not the initials a
+    // missing picture is drawn with.
+    (
+      await crewList.locator("li").evaluateAll((items) =>
+        items.map(
+          (item) =>
+            `${item.querySelector("span.flex-1")?.textContent ?? ""}${
+              item.textContent?.endsWith("Lead") ? "Lead" : ""
+            }`,
+        ),
+      )
+    ).join(" | "),
+    "Sam Super (you)Lead | Terry Tech",
+  );
+  check("and opening it does not open the job", new URL(supPage.url()).pathname, "/jobs");
+  await supPage.keyboard.press("Escape");
+  check("Escape closes it", await crewList.count(), 0);
   check(
     "a job with nobody on it says so",
     (await card(supPage, noDate.id).innerText()).includes("Nobody assigned"),
@@ -534,6 +571,11 @@ async function main() {
       (await listed(techPage)).includes("JL Today sup") &&
       !(await listed(techPage)).includes("JL No date"),
     true,
+  );
+  check(
+    "alone on their own job, the crew is 'You'",
+    await crewButton(techPage, tomorrowTech.id).innerText(),
+    "You",
   );
   await techPage.getByRole("button", { name: /^Filters/ }).click();
   check("a tech is not offered a tech to pick", await techPage.locator("#jobs-tech").count(), 0);

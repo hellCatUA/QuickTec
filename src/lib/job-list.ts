@@ -1,4 +1,4 @@
-import { placeLabel, siteLabelOnScreen } from "@/lib/address";
+import { siteLabelOnScreen } from "@/lib/address";
 import {
   isoDateInZone,
   parseZonedDate,
@@ -257,6 +257,7 @@ export type ListedJob = {
   internalStatus: JobInternalStatus | null;
   revisitNumber: number | null;
   client: { name: string };
+  repCompany: { name: string } | null;
   customer: { code: string };
   site: {
     siteNumber: string;
@@ -268,22 +269,35 @@ export type ListedJob = {
   assignments: { isLead: boolean; userId: string; user: { name: string } }[];
 };
 
+/** Somebody on the crew, as the card's crew list shows them. */
+export type CrewMember = {
+  id: string;
+  name: string;
+  /** Their picture as this viewer may see it, or null for initials. */
+  picture: string | null;
+  lead: boolean;
+  you: boolean;
+};
+
 export type JobCard = {
   id: string;
   title: string;
   revisit: number | null;
-  /** "7:30 AM" on the site's clock, or null when there is no date yet. */
+  /** "Wed 11/11" on the site's calendar, or null when there is no date yet. */
+  date: string | null;
+  /** "7:30 AM" on the site's clock. */
   time: string | null;
-  /** "Sat 11/7" or "Today", in a group that holds more than one day. */
-  day: string | null;
-  /** "SBUX #10542 · Visalia, CA" */
-  place: string;
+  /** The customer and its site ID: "SBUX #10542". */
+  client: string;
+  /** "Visalia, CA" */
+  town: string | null;
+  /** Who pays us. */
+  paying: string;
+  /** Who handed it down to them, where anybody did. */
+  rep: string | null;
   badges: { label: string; variant: Variant }[];
-  /** The lead and how many more: "Terry Tech +1", "You +2", or null. */
-  crew: string | null;
-  unassigned: boolean;
-  /** "2611-SBX-POS-0005 · NetCom Sub" — ours, and who pays. */
-  reference: string;
+  /** Lead first. Empty when nobody is on it yet. */
+  crew: CrewMember[];
 };
 
 /** One day's jobs within a group; labelled when the group spans days. */
@@ -301,6 +315,8 @@ type LayoutOptions = {
   fallbackZone: string;
   viewerId: string;
   tab: JobsTab;
+  /** Each crew member's picture as this viewer may see it. */
+  pictures?: Map<string, string | null>;
 };
 
 /**
@@ -407,32 +423,31 @@ export function groupByDay(jobs: ListedJob[], options: LayoutOptions): JobGroup[
         : []),
     ];
 
-    const count = job.assignments.length;
-    const lead = job.assignments.find((one) => one.isLead);
-    // On somebody's own list their own name is the one thing they do not
-    // need telling, and leading a job alone says nothing at all.
-    const crew =
-      count === 0
-        ? null
-        : lead?.userId === options.viewerId
-          ? count > 1
-            ? `You +${count - 1}`
-            : null
-          : lead
-            ? `${lead.user.name}${count > 1 ? ` +${count - 1}` : ""}`
-            : `${count} tech${count === 1 ? "" : "s"}`;
+    const town = [job.site.city, job.site.state]
+      .map((part) => part?.trim())
+      .filter(Boolean)
+      .join(", ");
 
     const card: JobCard = {
       id: job.id,
       title: job.title,
       revisit: job.revisitNumber,
+      date: named,
       time: at ? usTimeInZone(at, zone) : null,
-      day: mixed && day ? (day === today ? "Today" : named) : null,
-      place: placeLabel(siteLabelOnScreen(job.customer.code, job.site), job.site),
+      client: siteLabelOnScreen(job.customer.code, job.site),
+      town: town || null,
+      paying: job.client.name,
+      rep: job.repCompany?.name ?? null,
       badges,
-      crew,
-      unassigned: count === 0,
-      reference: `${job.intWoId} · ${job.client.name}`,
+      crew: [...job.assignments]
+        .sort((a, b) => Number(b.isLead) - Number(a.isLead) || a.user.name.localeCompare(b.user.name))
+        .map((one) => ({
+          id: one.userId,
+          name: one.user.name,
+          picture: options.pictures?.get(one.userId) ?? null,
+          lead: one.isLead,
+          you: one.userId === options.viewerId,
+        })),
     };
 
     const bucket = buckets.get(key) ?? {

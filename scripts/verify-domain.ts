@@ -2490,7 +2490,7 @@ async function main() {
   check("and an unknown one is not invented", stateName("ZZ"), null);
 
   // --- phone numbers -------------------------------------------------------
-  const { formatPhone, formatPhoneAsTyped, telHref } = await import("@/lib/phone");
+  const { formatPhone, formatPhoneAsTyped, caretAfterDigits, telHref } = await import("@/lib/phone");
 
   // Written the one way wherever it is stored, not only where somebody typed
   // it slowly. Half the forms formatted as you typed and half did not, so one
@@ -2523,10 +2523,56 @@ async function main() {
   check("and so is anything too short to be a number", formatPhone("911"), "911");
   check("nothing is nothing", formatPhone(null), "");
 
-  // Typing: the dashes appear once there is enough to place them, so they do
-  // not fight the thumb on the first three digits.
-  check("no dashes until there are enough digits", formatPhoneAsTyped("55512"), "55512");
-  check("then they appear", formatPhoneAsTyped("5551234567"), "555-123-4567");
+  // Typing: the dashes go in with the digits. They used to wait for the tenth,
+  // and from the seventh to the ninth even hand-typed dashes came back out.
+  check(
+    "the dashes go in as the number is typed",
+    ["5", "555", "5551", "555123", "5551234", "5551234567"].map(formatPhoneAsTyped).join(" "),
+    "5 555 555-1 555-123 555-123-4 555-123-4567",
+  );
+  check("dashes typed by hand are kept, not taken out", formatPhoneAsTyped("555-123-4"), "555-123-4");
+  check("never a dash with nothing after it", formatPhoneAsTyped("555-"), "555");
+  check(
+    "a leading 1 is the country code from the start",
+    ["1", "15", "1555123", "15551234567"].map(formatPhoneAsTyped).join(" "),
+    "1 1-5 1-555-123 1-555-123-4567",
+  );
+  check("the finished number matches how it is stored", formatPhoneAsTyped("2065550177"), formatPhone("2065550177"));
+  check("an extension is left as typed", formatPhoneAsTyped("555-123-4567 x2"), "555-123-4567 x2");
+  check("so is anything international", formatPhoneAsTyped("+38067"), "+38067");
+  check("and anything too long to be one of ours", formatPhoneAsTyped("555123456789"), "555123456789");
+  check("the caret stays after its digit as dashes move", caretAfterDigits("555-912-3", 4), 5);
+  check("and at the start before any", caretAfterDigits("555-1", 0), 0);
+
+  // --- links on dispatch numbers ---------------------------------------------
+  const { normaliseLink, linkHost } = await import("@/lib/links");
+  const { linkText } = await import("@/lib/form");
+  check(
+    "a link pasted without https gets it",
+    normaliseLink("zoom.us/j/123?pwd=abc"),
+    "https://zoom.us/j/123?pwd=abc",
+  );
+  check(
+    "and shows as its host alone",
+    [
+      "https://zoom.us/j/9912?pwd=x",
+      "https://company.zoom.us/j/9912",
+      "https://teams.microsoft.com/l/meetup-join/19%3ameeting",
+      "https://www.example.com/room",
+    ]
+      .map(linkHost)
+      .join(" "),
+    "zoom.us company.zoom.us teams.microsoft.com example.com",
+  );
+  check(
+    "nothing but a web address is a link",
+    ["javascript:alert(1)", "mailto:a@b.com", "zoom", "Meeting ID 123", "ftp://x.com/a"]
+      .map((typed) => String(normaliseLink(typed)))
+      .join(" "),
+    "null null null null null",
+  );
+  check("a blank link is no link", linkText.parse("  "), null);
+  check("and a bad one is refused rather than stored", linkText.safeParse("javascript:alert(1)").success, false);
 
   check("a phone dials the digits, not the dashes", telHref("555-123-4567"), "tel:5551234567");
   check("and keeps a plus where there is one", telHref("+380671234567"), "tel:+380671234567");
@@ -5180,6 +5226,7 @@ async function main() {
     internalStatus: null,
     revisitNumber: null,
     client: { name: "Pays Co" },
+    repCompany: null,
     customer: { code: "SBUX" },
     site: { siteNumber: "1", numberPending: false, city: "Fresno", state: "CA", timeZone: TZ },
     assignments: [{ isLead: true, userId: "terry", user: { name: "Terry Tech" } }],
@@ -5236,8 +5283,8 @@ async function main() {
     "",
   );
   check(
-    "the day stays on a card in a group of several",
-    open.find((group) => group.key === "in-progress")!.days[0].jobs[0].day,
+    "the day is on the card as well as above it",
+    open.find((group) => group.key === "in-progress")!.days[0].jobs[0].date,
     "Mon 11/9",
   );
 
@@ -5276,17 +5323,16 @@ async function main() {
   const crewOf = (job: ListedJob, viewerId = "terry") =>
     groupByDay([job], { ...listLayout, viewerId })[0].days[0].jobs[0].crew;
   const sam = { isLead: false, userId: "sam", user: { name: "Sam Super" } };
-  check("leading a job alone, your own card says nothing about the crew", crewOf(listed("c", null)), null);
-  check(
-    "with somebody else on it, 'You +1'",
-    crewOf(listed("c", null, { assignments: [...listed("c", null).assignments, sam] })),
-    "You +1",
-  );
-  check(
-    "and to them, the lead's name",
-    crewOf(listed("c", null, { assignments: [...listed("c", null).assignments, sam] }), "sam"),
-    "Terry Tech +1",
-  );
+  const crewLine = (job: ListedJob, viewerId = "terry") =>
+    crewOf(job, viewerId)
+      .map((one) => `${one.name}${one.lead ? " (lead)" : ""}${one.you ? " (you)" : ""}`)
+      .join(", ");
+  const withSam = listed("c", null, {
+    assignments: [sam, ...listed("c", null).assignments],
+  });
+  check("the crew is listed lead first", crewLine(withSam, "boss"), "Terry Tech (lead), Sam Super");
+  check("and the viewer is marked as themselves", crewLine(withSam, "sam"), "Terry Tech (lead), Sam Super (you)");
+  check("a job with nobody on it has nobody to list", crewOf(listed("c", null, { assignments: [] })).length, 0);
 
   const asked = parseJobsQuery({
     filter: "nonsense",

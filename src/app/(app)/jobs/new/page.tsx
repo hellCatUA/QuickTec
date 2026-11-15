@@ -135,6 +135,7 @@ export default async function NewJobPage({
         name: true,
         phone: true,
         email: true,
+        url: true,
         note: true,
       },
     }),

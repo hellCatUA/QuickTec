@@ -82,6 +82,7 @@ export const jobFormSchema = z.object({
   dispatchName: z.array(z.string()).default([]),
   dispatchPhone: z.array(z.string()).default([]),
   dispatchEmail: z.array(z.string()).default([]),
+  dispatchUrl: z.array(z.string()).default([]),
   dispatchNote: z.array(z.string()).default([]),
   /// The paying company issued no work order for this job.
   noWorkOrder: flag,

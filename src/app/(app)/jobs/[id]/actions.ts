@@ -56,6 +56,7 @@ import { jobRateNote, LATE_TRAVEL_NOTE, resolvePayRate } from "@/lib/pay-rates";
 import { capitaliseName, FULL_NAME_NEEDED, isFullName } from "@/lib/names";
 import { MAX_WORK_SUMMARY } from "@/lib/work-summary";
 import { formatPhone } from "@/lib/phone";
+import { normaliseLink } from "@/lib/links";
 import { announceAssignments } from "@/lib/assignment-notices";
 import { notify } from "@/lib/notifications";
 import { canOnJob, canOnProject, resolveJobSupervisor } from "@/lib/scope";
@@ -2254,6 +2255,15 @@ export async function setSiteNumber(formData: FormData): Promise<ActionResult> {
 // Dispatch numbers for this job
 // ---------------------------------------------------------------------------
 
+const NOT_A_LINK = "That link is not a web address. Paste the whole meeting link.";
+
+/** The link typed, as stored; null for none; false when it is not one. */
+function linkFrom(formData: FormData): string | null | false {
+  const typed = String(formData.get("url") ?? "").trim();
+  if (!typed) return null;
+  return normaliseLink(typed) ?? false;
+}
+
 /**
  * Adds a number to reach mid-job.
  *
@@ -2284,6 +2294,9 @@ export async function addJobDispatchContact(
     select: { order: true },
   });
 
+  const link = linkFrom(formData);
+  if (link === false) return fail(NOT_A_LINK);
+
   const contact = await db.dispatchContact.create({
     data: {
       jobId,
@@ -2291,6 +2304,7 @@ export async function addJobDispatchContact(
       name: capitaliseName(String(formData.get("name") ?? "").trim()) || null,
       phone: formatPhone(String(formData.get("phone") ?? "")) || null,
       email: String(formData.get("email") ?? "").trim() || null,
+      url: link,
       note: String(formData.get("note") ?? "").trim() || null,
       order: (last?.order ?? -1) + 1,
     },
@@ -2341,6 +2355,9 @@ export async function updateJobDispatchContact(
     return fail("You cannot change contacts on this job.");
   }
 
+  const link = linkFrom(formData);
+  if (link === false) return fail(NOT_A_LINK);
+
   await db.dispatchContact.update({
     where: { id },
     data: {
@@ -2348,6 +2365,7 @@ export async function updateJobDispatchContact(
       name: capitaliseName(String(formData.get("name") ?? "").trim()) || null,
       phone: formatPhone(String(formData.get("phone") ?? "")) || null,
       email: String(formData.get("email") ?? "").trim() || null,
+      url: link,
       note: String(formData.get("note") ?? "").trim() || null,
     },
   });

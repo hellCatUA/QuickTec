@@ -101,6 +101,8 @@ type JobForCalendar = {
     name: string | null;
     phone: string | null;
     email: string | null;
+    /** Whole here: a calendar shows text, and the link is what joins. */
+    url?: string | null;
     note: string | null;
   }[];
 };
@@ -118,7 +120,7 @@ export function describeJob(job: JobForCalendar): string {
       "",
       "Dispatch:",
       ...job.dispatchContacts.map((contact) =>
-        [contact.label, contact.name, contact.phone, contact.email, contact.note]
+        [contact.label, contact.name, contact.phone, contact.email, contact.url, contact.note]
           .filter(Boolean)
           .join(" · "),
       ),
@@ -415,6 +417,7 @@ export async function syncJob(
           name: true,
           phone: true,
           email: true,
+          url: true,
           note: true,
         },
       },

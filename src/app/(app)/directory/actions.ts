@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { recordAudit } from "@/lib/audit";
 import { db } from "@/lib/db";
-import { flag, optionalText, phoneText } from "@/lib/form";
+import { flag, linkText, optionalText, phoneText } from "@/lib/form";
 import { analyzeForm, type FormAnalysis } from "@/lib/forms/analyze";
 import {
   DOCUMENT_LABELS,
@@ -446,6 +446,7 @@ const dispatchSchema = z.object({
   name: optionalText,
   phone: phoneText,
   email: optionalText,
+  url: linkText,
   note: optionalText,
 });
 

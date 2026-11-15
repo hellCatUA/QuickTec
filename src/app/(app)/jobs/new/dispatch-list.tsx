@@ -4,14 +4,16 @@ import { Plus, X } from "lucide-react";
 import type * as React from "react";
 import { Button } from "@/components/ui/button";
 import { capitaliseName } from "@/lib/names";
-import { formatPhoneAsTyped } from "@/lib/phone";
 import { Field, Input } from "@/components/ui/field";
+import { PhoneInput } from "@/components/ui/phone-input";
 
 export type DraftContact = {
   label: string;
   name: string;
   phone: string;
   email: string;
+  /** Missing from drafts saved before links were asked for. */
+  url?: string;
   note: string;
 };
 
@@ -20,6 +22,7 @@ const EMPTY: DraftContact = {
   name: "",
   phone: "",
   email: "",
+  url: "",
   note: "",
 };
 
@@ -50,6 +53,7 @@ export function DispatchList({
     name: string | null;
     phone: string | null;
     email: string | null;
+    url: string | null;
     note: string | null;
   }[];
   /**
@@ -85,6 +89,7 @@ export function DispatchList({
               name: contact.name ?? "",
               phone: contact.phone ?? "",
               email: contact.email ?? "",
+              url: contact.url ?? "",
               note: contact.note ?? "",
             },
           ],
@@ -206,16 +211,11 @@ export function DispatchList({
               />
             </Field>
             <Field label="Phone" htmlFor={`dispatch-phone-${index}`}>
-              <Input
+              <PhoneInput
                 id={`dispatch-phone-${index}`}
                 name="dispatchPhone"
                 value={contact.phone}
-                onChange={(event) =>
-                  update(index, {
-                    phone: formatPhoneAsTyped(event.target.value),
-                  })
-                }
-                inputMode="tel"
+                onValueChange={(phone) => update(index, { phone })}
                 autoComplete="off"
               />
             </Field>
@@ -226,6 +226,19 @@ export function DispatchList({
                 onChange={(event) => update(index, { email: event.target.value })}
                 inputMode="email"
                 autoComplete="off"
+              />
+            </Field>
+            <Field label="Link" htmlFor={`dispatch-url-${index}`}>
+              <Input
+                id={`dispatch-url-${index}`}
+                name="dispatchUrl"
+                value={contact.url ?? ""}
+                onChange={(event) => update(index, { url: event.target.value })}
+                placeholder="Zoom or Teams link"
+                inputMode="url"
+                autoComplete="off"
+                autoCapitalize="none"
+                spellCheck={false}
               />
             </Field>
             <Field label="Note" htmlFor={`dispatch-note-${index}`}>

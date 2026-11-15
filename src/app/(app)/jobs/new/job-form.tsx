@@ -73,6 +73,7 @@ export type ClientDispatch = {
   name: string | null;
   phone: string | null;
   email: string | null;
+  url: string | null;
   note: string | null;
 };
 type Template = {

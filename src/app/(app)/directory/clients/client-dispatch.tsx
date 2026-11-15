@@ -4,8 +4,10 @@ import { Loader2, Phone, Plus, X } from "lucide-react";
 import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { capitaliseName } from "@/lib/names";
-import { formatPhone, formatPhoneAsTyped, telHref } from "@/lib/phone";
+import { formatPhone, telHref } from "@/lib/phone";
 import { Field, Input } from "@/components/ui/field";
+import { PhoneInput } from "@/components/ui/phone-input";
+import { DispatchLink } from "@/components/dispatch-link";
 import { deleteClientDispatch, saveClientDispatch } from "../actions";
 
 export type ClientDispatchRecord = {
@@ -14,6 +16,7 @@ export type ClientDispatchRecord = {
   name: string | null;
   phone: string | null;
   email: string | null;
+  url: string | null;
   note: string | null;
 };
 
@@ -37,6 +40,7 @@ export function ClientDispatch({
   const [name, setName] = React.useState("");
   const [phone, setPhone] = React.useState("");
   const [email, setEmail] = React.useState("");
+  const [url, setUrl] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
   const [pending, startTransition] = React.useTransition();
 
@@ -49,6 +53,7 @@ export function ClientDispatch({
       formData.set("name", name);
       formData.set("phone", phone);
       formData.set("email", email);
+      formData.set("url", url);
 
       const result = await saveClientDispatch(null, formData);
       if (!result.ok) {
@@ -59,6 +64,7 @@ export function ClientDispatch({
       setName("");
       setPhone("");
       setEmail("");
+      setUrl("");
       setAdding(false);
     });
   }
@@ -108,6 +114,7 @@ export function ClientDispatch({
                 {contact.email}
               </span>
             ) : null}
+            {contact.url ? <DispatchLink href={contact.url} className="text-xs" /> : null}
             <Button
               type="button"
               variant="ghost"
@@ -150,25 +157,38 @@ export function ClientDispatch({
               />
             </Field>
             <Field label="Phone" htmlFor={`disp-phone-${clientId}`}>
-              <Input
+              <PhoneInput
                 id={`disp-phone-${clientId}`}
-                type="tel"
                 value={phone}
-                onChange={(event) => setPhone(formatPhoneAsTyped(event.target.value))}
+                onValueChange={setPhone}
                 autoComplete="off"
               />
             </Field>
           </div>
 
-          <Field label="Email" htmlFor={`disp-email-${clientId}`}>
-            <Input
-              id={`disp-email-${clientId}`}
-              type="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              autoComplete="off"
-            />
-          </Field>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Email" htmlFor={`disp-email-${clientId}`}>
+              <Input
+                id={`disp-email-${clientId}`}
+                type="email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                autoComplete="off"
+              />
+            </Field>
+            <Field label="Link" htmlFor={`disp-url-${clientId}`}>
+              <Input
+                id={`disp-url-${clientId}`}
+                value={url}
+                onChange={(event) => setUrl(event.target.value)}
+                placeholder="Zoom or Teams link"
+                inputMode="url"
+                autoComplete="off"
+                autoCapitalize="none"
+                spellCheck={false}
+              />
+            </Field>
+          </div>
 
           <div className="flex gap-2">
             <Button

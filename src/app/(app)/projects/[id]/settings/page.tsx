@@ -119,6 +119,7 @@ export default async function ProjectSettingsPage({
               name: true,
               phone: true,
               email: true,
+              url: true,
               note: true,
             },
           },

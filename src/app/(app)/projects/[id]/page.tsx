@@ -1,5 +1,6 @@
 import { Mail, MapPin, Phone, Plus, Settings } from "lucide-react";
 import Link from "next/link";
+import { DispatchLink } from "@/components/dispatch-link";
 import { notFound, redirect } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { formatPhone, telHref } from "@/lib/phone";
@@ -164,7 +165,7 @@ export default async function ProjectPage({
       },
       dispatchContacts: {
         orderBy: { order: "asc" },
-        select: { id: true, label: true, name: true, phone: true, email: true },
+        select: { id: true, label: true, name: true, phone: true, email: true, url: true },
       },
       jobs: {
         // Every job for whoever runs the project; for anybody else, the ones
@@ -517,6 +518,7 @@ export default async function ProjectPage({
                     <Mail className="size-3.5" /> {contact.email}
                   </a>
                 ) : null}
+                {contact.url ? <DispatchLink href={contact.url} /> : null}
               </div>
             ))}
           </CardContent>

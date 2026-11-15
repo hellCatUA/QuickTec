@@ -1687,13 +1687,39 @@ async function main() {
 
   await managerPage.getByRole("button", { name: "Add a number" }).click();
   await managerPage.locator("#dispatch-add-label").fill("NOC bridge");
-  await managerPage.locator("#dispatch-add-phone").fill("206-555-0101");
+  // Typed a key at a time, as a thumb does: the dashes go in with the
+  // digits. They used to appear only once the tenth was in.
+  const addPhone = managerPage.locator("#dispatch-add-phone");
+  await addPhone.pressSequentially("2065550");
+  check("a phone number gets its dashes as it is typed", await addPhone.inputValue(), "206-555-0");
+  await addPhone.press("Backspace");
+  await addPhone.press("Backspace");
+  check("and backspace takes digits, never just a dash", await addPhone.inputValue(), "206-55");
+  await addPhone.pressSequentially("50101");
+  check("so the finished number is whole", await addPhone.inputValue(), "206-555-0101");
+  await managerPage.locator("#dispatch-add-url").fill("javascript:alert(1)");
+  await managerPage.getByRole("button", { name: "Add contact" }).click();
+  await managerPage.waitForTimeout(1500);
+  check(
+    "a link that is not a web address is refused, not stored",
+    await managerPage.getByText(/That link is not a web address/).isVisible(),
+    true,
+  );
+  await managerPage.locator("#dispatch-add-url").fill("https://acme.zoom.us/j/5551234?pwd=Xy");
   await managerPage.getByRole("button", { name: "Add contact" }).click();
   await managerPage.waitForTimeout(2000);
   const bridge = await db.dispatchContact.findFirstOrThrow({
     where: { projectId: project.id, label: "NOC bridge" },
     select: { id: true },
   });
+  // Shown as where it goes, opened whole.
+  const bridgeLink = managerPage.locator('a[href="https://acme.zoom.us/j/5551234?pwd=Xy"]');
+  check(
+    "a dispatch link reads as its host, subdomain and all",
+    (await bridgeLink.first().innerText()).replace("(link, opens in a new tab)", "").trim(),
+    "acme.zoom.us",
+  );
+  check("and opens in a new tab", await bridgeLink.first().getAttribute("target"), "_blank");
   await managerPage.getByRole("button", { name: "Options for NOC bridge" }).click();
   await managerPage.getByRole("menuitem", { name: "Edit" }).click();
   await managerPage.locator(`#dispatch-${bridge.id}-phone`).fill("206-555-0102");

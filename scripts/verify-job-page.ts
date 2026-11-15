@@ -1273,6 +1273,8 @@ async function main() {
     await planner.locator("#dispatch-label-0").fill("Bridge line");
     await planner.locator("#dispatch-phone-0").fill("206-555-0177");
     await planner.locator("#dispatch-note-0").fill("Ask for the duty manager");
+    // Pasted the way people paste it, without the https.
+    await planner.locator("#dispatch-url-0").fill("us02web.zoom.us/j/8812345?pwd=abc");
 
     // The company's usual numbers are one press away rather than retyped.
     // Offered, not added on their own: a stale NOC line that appeared unasked
@@ -1360,7 +1362,7 @@ async function main() {
 
     const numbers = await db.dispatchContact.findMany({
       where: { jobId: made!.id },
-      select: { label: true, phone: true, note: true },
+      select: { label: true, phone: true, note: true, url: true },
     });
     check("both dispatch numbers are on the job", numbers.length, 2);
     check(
@@ -1371,6 +1373,11 @@ async function main() {
     const typed = numbers.find((row) => row.label !== "NOC");
     check("with who to ask for", typed?.note, "Ask for the duty manager");
     check("and the number itself", typed?.phone, "206-555-0177");
+    check(
+      "and the meeting link, kept whole",
+      typed?.url,
+      "https://us02web.zoom.us/j/8812345?pwd=abc",
+    );
 
     // Set on the job, so it applies to everybody on it rather than following
     // whatever rate each of them happens to carry.

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { normaliseLink } from "@/lib/links";
 import { formatPhone } from "@/lib/phone";
 
 /**
@@ -54,6 +55,24 @@ export const optionalText = z
 export const phoneText = optionalText.transform((value) =>
   value === null ? null : formatPhone(value) || null,
 );
+
+/**
+ * A web link, stored whole with its scheme; blank is nothing. Anything that is
+ * not an http or https address is refused rather than kept, because it is
+ * shown as a link to everybody on the job.
+ */
+export const linkText = optionalText.transform((value, context) => {
+  if (value === null) return null;
+  const link = normaliseLink(value);
+  if (!link) {
+    context.addIssue({
+      code: "custom",
+      message: "That link is not a web address. Paste the whole meeting link.",
+    });
+    return z.NEVER;
+  }
+  return link;
+});
 
 /** Text that has to be there. Missing and blank fail the same way. */
 export function requiredText(message: string) {

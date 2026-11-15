@@ -1,8 +1,19 @@
-import { ChevronRight, UsersRound } from "lucide-react";
+import {
+  Banknote,
+  CalendarDays,
+  ChevronRight,
+  Clock,
+  Handshake,
+  MapPin,
+  Store,
+  UsersRound,
+  type LucideIcon,
+} from "lucide-react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import type { JobCard, JobGroup } from "@/lib/job-list";
 import { cn } from "@/lib/utils";
+import { CrewMenu } from "./crew-menu";
 
 /**
  * The jobs, a day at a time.
@@ -54,78 +65,82 @@ function Count({ value }: { value: number }) {
 }
 
 function Card({ job }: { job: JobCard }) {
-  const meta = job.badges.length > 0 || job.unassigned || job.crew;
-
   return (
-    <Link
-      href={`/jobs/${job.id}`}
-      className="flex items-start gap-3 rounded-xl border border-border bg-surface p-3 transition-colors hover:border-primary/50"
-    >
-      {/* The time has a column of its own: it is what the list is scanned
-          by, and it never shares a line with anything that could push it
-          off the end. */}
-      <div className="tabular flex w-[4.25rem] shrink-0 flex-col pt-px text-sm font-semibold leading-tight">
-        {job.day ? (
-          <span className="text-xs font-medium text-muted-foreground">
-            {job.day}
+    // The whole card opens the job, through the title's link stretched over
+    // it; the crew button sits above that link so it can open on its own.
+    <article className="relative flex flex-col gap-2 rounded-xl border border-border bg-surface p-3 transition-colors hover:border-primary/50">
+      <div className="flex items-center gap-3 text-sm font-medium">
+        <span className="tabular inline-flex items-center gap-1.5">
+          <CalendarDays className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+          {job.date ?? <span className="text-muted-foreground">No date yet</span>}
+        </span>
+        {job.time ? (
+          <span className="tabular inline-flex items-center gap-1.5">
+            <Clock className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+            {job.time}
           </span>
         ) : null}
-        <span className={job.time ? undefined : "text-muted-foreground"}>
-          {job.time ?? "—"}
+        <span className="ml-auto flex shrink-0 items-center gap-1.5">
+          {job.revisit ? <Badge variant="warning">R{job.revisit}</Badge> : null}
+          <ChevronRight className="size-4 text-muted-foreground" aria-hidden />
         </span>
       </div>
 
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <div className="flex items-start gap-1.5">
-          <span className="line-clamp-2 text-sm font-semibold leading-snug">
-            {job.title}
-          </span>
-          {job.revisit ? (
-            <Badge variant="warning" className="shrink-0">
-              R{job.revisit}
-            </Badge>
-          ) : null}
-        </div>
-        <span className="truncate text-xs text-muted-foreground">
-          {job.place}
-        </span>
+      <Link
+        href={`/jobs/${job.id}`}
+        className="line-clamp-2 text-[0.9375rem] font-semibold leading-snug after:absolute after:inset-0 after:rounded-xl after:content-['']"
+      >
+        {job.title}
+      </Link>
 
-        {/* How it stands and who is on it, under the title rather than
-            beside it: three badges beside a title on a phone used to fold
-            the title into a column three words wide. */}
-        <div
-          className={cn(
-            "mt-1 flex-wrap items-center gap-x-2 gap-y-1 text-xs",
-            meta ? "flex" : "hidden sm:flex",
-          )}
-        >
-          {job.badges.map((badge) => (
-            <Badge key={badge.label} variant={badge.variant}>
-              {badge.label}
-            </Badge>
-          ))}
-          {job.unassigned ? (
-            <span className="inline-flex items-center gap-1 text-warning">
-              <UsersRound className="size-3.5" aria-hidden />
-              Nobody assigned
-            </span>
-          ) : job.crew ? (
-            <span className="inline-flex min-w-0 items-center gap-1 text-muted-foreground">
-              <UsersRound className="size-3.5 shrink-0" aria-hidden />
-              <span className="sr-only">Lead:</span>
-              <span className="truncate">{job.crew}</span>
-            </span>
-          ) : null}
-          {/* Ours and who pays, for whoever quotes them — from a tablet up,
-              where they fit without taking a line. On a phone the search
-              finds them. */}
-          <span className="tabular hidden min-w-0 truncate text-muted-foreground sm:inline">
-            {job.reference}
+      {/* Two to a row on a phone, all four in one from a tablet up. Each
+          says what it is with its icon, and in words to a screen reader. */}
+      <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-muted-foreground sm:grid-cols-4">
+        <Fact icon={Store} label="Client" value={job.client} />
+        <Fact icon={MapPin} label="City" value={job.town} />
+        <Fact icon={Banknote} label="Paying company" value={job.paying} />
+        <Fact icon={Handshake} label="Rep company" value={job.rep} />
+      </dl>
+
+      <div className="flex flex-wrap items-center gap-2 border-t border-border pt-2">
+        {job.crew.length > 0 ? (
+          <CrewMenu crew={job.crew} jobTitle={job.title} />
+        ) : (
+          <span className="inline-flex min-h-10 items-center gap-1.5 text-sm font-medium text-warning">
+            <UsersRound className="size-4" aria-hidden />
+            Nobody assigned
           </span>
-        </div>
+        )}
+        {job.badges.length > 0 ? (
+          <span className="ml-auto flex flex-wrap justify-end gap-1.5">
+            {job.badges.map((badge) => (
+              <Badge key={badge.label} variant={badge.variant}>
+                {badge.label}
+              </Badge>
+            ))}
+          </span>
+        ) : null}
       </div>
+    </article>
+  );
+}
 
-      <ChevronRight className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-    </Link>
+function Fact({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: LucideIcon;
+  label: string;
+  value: string | null;
+}) {
+  return (
+    <div className="flex min-w-0 items-center gap-1.5">
+      <dt className="sr-only">{label}</dt>
+      <Icon className="size-3.5 shrink-0" aria-hidden />
+      <dd className={cn("truncate", value ? "text-foreground/85" : "text-muted-foreground/70")}>
+        {value ?? "—"}
+      </dd>
+    </div>
   );
 }

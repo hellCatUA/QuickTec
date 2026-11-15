@@ -22,7 +22,7 @@ export function Label({
 export function Input({
   className,
   ...props
-}: React.InputHTMLAttributes<HTMLInputElement>) {
+}: React.ComponentProps<"input">) {
   return <input className={cn(controlClasses, className)} {...props} />;
 }
 

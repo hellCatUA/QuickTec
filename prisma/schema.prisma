@@ -1426,6 +1426,9 @@ model DispatchContact {
   name  String?
   phone String?
   email String?
+  /// A web link — a Zoom or Teams bridge — stored whole with its scheme, and
+  /// shown as its host alone ("zoom.us", "company.zoom.us").
+  url   String?
   note  String?
   order Int     @default(0)
 

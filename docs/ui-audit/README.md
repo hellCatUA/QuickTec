@@ -216,16 +216,16 @@ before it went in, and they are in:
 The rules are in `src/lib/job-list.ts` and checked in `npm run verify`; the page
 is driven as a tech, a supervisor and a manager by `npm run verify:jobs`.
 
-### Job cards — the owner's brief, designed, waiting
+### Job cards — the owner's brief, designed, approved, done
 
 Asked for once the search is done (11 November 2026): each card to carry the
 date, time, title, paying company, rep company, client and town, with icons;
 and the crew shown as one person's name or a count of people, with an arrow
 that opens everyone on it with their full name and picture.
 
-The design is a working prototype, kept as a patch until the owner answers —
-`git apply docs/ui-audit/prototypes/job-cards.patch` on a clean tree, then
-build. A card, top to bottom:
+Shown as a working prototype first; the owner approved it as it was, and
+agreed that the customer and its site ID share one fact ("SBUX #10542") as
+the client. A card, top to bottom:
 
 - **When**: calendar icon and the day ("Wed 11/11"), clock icon and the time,
   on the site's clock; R1 and the arrow on the right.
@@ -246,17 +246,24 @@ build. A card, top to bottom:
 The day headings and dividers stay, so the day is said above a card and on it.
 The work order number is no longer on the card; the search finds it.
 
-### Asked for next, once 5 and 8 are settled
+### Asked for after 5 and 8 — done
 
 Raised by the owner on 11 November 2026:
 
-- **The phone field formats only at the end.** Ten digits become
-  `xxx-xxx-xxxx` once the whole number is in; the dashes should go in between
-  the blocks while it is typed.
-- **A link on dispatch contacts**, for a Zoom or Teams bridge. On screen it is
-  only the host, subdomains and all — `https://zoom.us/j/9…` reads `zoom.us`,
-  `company.zoom.us/…` reads `company.zoom.us`; the rest is for the link to
-  open, not for reading.
+- **The phone field formatted only at the end.** It waited for the seventh
+  digit, then handed seven to nine digits to the whole-number formatter, which
+  knows only ten — so even hand-typed dashes came back out and the number got
+  its shape at the tenth digit. Now the dashes go in with the digits (555,
+  555-1, 555-123-4, 555-123-4567; a leading 1 as the country code), the caret
+  stays after its digit as dashes move, and Backspace on a dash takes the digit
+  before it. Every phone field is the one `PhoneInput` now; four had their own.
+- **A link on dispatch contacts** — a Zoom or Teams bridge — on a job's,
+  a project's and a paying company's numbers and on the new-job form; copied to
+  a revisit and into the calendar event whole. Stored whole with https added
+  where it was pasted without; anything but an http or https address is
+  refused. Shown as its host only (`acme.zoom.us`, `teams.microsoft.com`;
+  a leading `www.` dropped), opening in a new tab. Migration
+  `20261115120000_dispatch_contact_link` adds the column.
 
 ## Independent review (11 November 2026)
 

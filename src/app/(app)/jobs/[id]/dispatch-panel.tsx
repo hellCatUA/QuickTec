@@ -4,10 +4,12 @@ import { Loader2, Mail, Phone, Plus } from "lucide-react";
 import * as React from "react";
 import { Avatar } from "@/components/profile/parts";
 import { Button } from "@/components/ui/button";
-import { formatPhone, formatPhoneAsTyped, telHref } from "@/lib/phone";
+import { formatPhone, telHref } from "@/lib/phone";
 import { capitaliseName } from "@/lib/names";
 import { Field, Input } from "@/components/ui/field";
+import { PhoneInput } from "@/components/ui/phone-input";
 import { RowMenu } from "@/components/ui/row-menu";
+import { DispatchLink } from "@/components/dispatch-link";
 import {
   addDispatchContact,
   deleteDispatchContact,
@@ -27,6 +29,8 @@ export type DispatchEntry = {
   picture?: string | null;
   phone: string | null;
   email: string | null;
+  /** A meeting link, shown as its host. */
+  url?: string | null;
   note: string | null;
   /** False for the tech's supervisor and for the project's own contacts. */
   removable: boolean;
@@ -37,10 +41,11 @@ type Draft = {
   name: string;
   phone: string;
   email: string;
+  url: string;
   note: string;
 };
 
-const BLANK: Draft = { label: "", name: "", phone: "", email: "", note: "" };
+const BLANK: Draft = { label: "", name: "", phone: "", email: "", url: "", note: "" };
 
 /**
  * Numbers to reach mid-job. Tap to dial.
@@ -146,6 +151,9 @@ export function DispatchPanel({
                 {contact.email}
               </a>
             ) : null}
+            {contact.url ? (
+              <DispatchLink href={contact.url} className="text-xs" />
+            ) : null}
 
             {canEdit && contact.removable ? (
               <RowMenu
@@ -229,6 +237,7 @@ function ContactForm({
           name: existing.name ?? "",
           phone: existing.phone ? formatPhone(existing.phone) : "",
           email: existing.email ?? "",
+          url: existing.url ?? "",
           note: existing.note ?? "",
         }
       : BLANK,
@@ -294,13 +303,11 @@ function ContactForm({
           />
         </Field>
         <Field label="Phone" htmlFor={`dispatch-${key}-phone`}>
-          <Input
+          <PhoneInput
             id={`dispatch-${key}-phone`}
             value={draft.phone}
-            inputMode="tel"
-            onChange={(event) =>
-              set({ phone: formatPhoneAsTyped(event.target.value) })
-            }
+            onValueChange={(phone) => set({ phone })}
+            autoComplete="off"
           />
         </Field>
         <Field label="Email" htmlFor={`dispatch-${key}-email`}>
@@ -309,6 +316,18 @@ function ContactForm({
             value={draft.email}
             inputMode="email"
             onChange={(event) => set({ email: event.target.value })}
+          />
+        </Field>
+        <Field label="Link" htmlFor={`dispatch-${key}-url`}>
+          <Input
+            id={`dispatch-${key}-url`}
+            value={draft.url}
+            inputMode="url"
+            autoComplete="off"
+            autoCapitalize="none"
+            spellCheck={false}
+            onChange={(event) => set({ url: event.target.value })}
+            placeholder="Zoom or Teams link"
           />
         </Field>
         <Field label="Note" htmlFor={`dispatch-${key}-note`}>
@@ -323,7 +342,7 @@ function ContactForm({
 
       {projectId ? (
         <p className="text-xs text-muted-foreground">
-          A phone number or an email — every job here will be dialling it.
+          A phone number, an email or a link — every job here will be using it.
         </p>
       ) : null}
 

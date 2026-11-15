@@ -4,9 +4,10 @@ import { AlertTriangle, Mail, Phone, Plus } from "lucide-react";
 import * as React from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { formatPhone, formatPhoneAsTyped, telHref } from "@/lib/phone";
+import { formatPhone, telHref } from "@/lib/phone";
 import { capitaliseName } from "@/lib/names";
 import { Field, Input, Select } from "@/components/ui/field";
+import { PhoneInput } from "@/components/ui/phone-input";
 import { PositionPicker } from "@/components/ui/position-picker";
 import { RowMenu } from "@/components/ui/row-menu";
 import type { ContactType } from "@prisma-client";
@@ -283,13 +284,10 @@ function ContactForm({
 
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Phone" htmlFor={`poc-phone-${key}`}>
-          <Input
+          <PhoneInput
             id={`poc-phone-${key}`}
-            type="tel"
             value={phone}
-            onChange={(event) =>
-              setPhone(formatPhoneAsTyped(event.target.value))
-            }
+            onValueChange={setPhone}
             autoComplete="off"
           />
         </Field>

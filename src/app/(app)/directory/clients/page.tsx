@@ -40,6 +40,7 @@ export default async function ClientsPage() {
           name: true,
           phone: true,
           email: true,
+          url: true,
           note: true,
         },
       },

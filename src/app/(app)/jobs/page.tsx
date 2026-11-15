@@ -19,6 +19,7 @@ import {
   WHO_COOKIE,
   type JobsWho,
 } from "@/lib/job-list";
+import { loadPrivacySettings, PICTURE_SELECT, pictureFor } from "@/lib/profile";
 import { jobScopeWhere } from "@/lib/scope";
 import { can, getSessionUser } from "@/lib/session";
 import { cn } from "@/lib/utils";
@@ -81,6 +82,7 @@ export default async function JobsPage({
         internalStatus: true,
         revisitNumber: true,
         client: { select: { name: true } },
+        repCompany: { select: { name: true } },
         customer: { select: { code: true } },
         site: {
           select: {
@@ -95,7 +97,7 @@ export default async function JobsPage({
           select: {
             isLead: true,
             userId: true,
-            user: { select: { name: true } },
+            user: { select: { name: true, ...PICTURE_SELECT } },
           },
         },
       },
@@ -132,11 +134,26 @@ export default async function JobsPage({
   ]);
   const jobs = loaded.filter((job) => onDays(job, query, zone));
 
+  // Each person's picture once, however many jobs they are on, and only as
+  // this viewer may see it: the same question the picture's own route asks.
+  const privacy = await loadPrivacySettings();
+  const people = new Map(
+    jobs.flatMap((job) => job.assignments.map((one) => [one.userId, one.user] as const)),
+  );
+  const pictures = new Map(
+    await Promise.all(
+      [...people.values()].map(
+        async (person) => [person.id, await pictureFor(user, person, privacy)] as const,
+      ),
+    ),
+  );
+
   const groups = groupByDay(jobs, {
     now: new Date(),
     fallbackZone: zone,
     viewerId: user.id,
     tab: query.tab,
+    pictures,
   });
 
   // Each filter in use, as a chip that takes itself off. The companies say

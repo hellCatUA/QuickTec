@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { diffFields, recordAudit } from "@/lib/audit";
 import { db } from "@/lib/db";
-import { flag, optionalMoney, optionalText, phoneText } from "@/lib/form";
+import { flag, linkText, optionalMoney, optionalText, phoneText } from "@/lib/form";
 import {
   customLabelField,
   minPhotosField,
@@ -847,6 +847,7 @@ const contactSchema = z.object({
   name: optionalText,
   phone: phoneText,
   email: optionalText,
+  url: linkText,
   note: optionalText,
 });
 
@@ -863,8 +864,8 @@ export async function addDispatchContact(
   const actor = await projectActor(projectId);
   if (!actor) return NOT_YOURS;
 
-  if (!data.phone && !data.email) {
-    return { ok: false, error: "Give at least a phone number or an email." };
+  if (!data.phone && !data.email && !data.url) {
+    return { ok: false, error: "Give at least a phone number, an email or a link." };
   }
 
   const count = await db.dispatchContact.count({ where: { projectId } });
@@ -936,8 +937,8 @@ export async function updateDispatchContact(
   const actor = await projectActor(projectId);
   if (!actor) return NOT_YOURS;
 
-  if (!data.phone && !data.email) {
-    return { ok: false, error: "Give at least a phone number or an email." };
+  if (!data.phone && !data.email && !data.url) {
+    return { ok: false, error: "Give at least a phone number, an email or a link." };
   }
 
   // This project's own number, and nothing else by that id.
