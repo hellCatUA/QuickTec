@@ -134,7 +134,7 @@ The eleven proposals put to the owner, and their answers (11 November 2026).
 | 5 | Day headings in the Jobs list (Earlier / Today / Tomorrow / Later) | The owner meant to rework that list anyway, as overloaded. Prototyped, shown, then **done** with three additions of theirs (below) |
 | 6 | One badge for lifecycle and outcome ("Pending review · Completed") | Its own conversation, later |
 | 7 | "Failed" / "Cancelled" on checkout's outcome buttons | **No** — keep "Fail" / "Cancel" |
-| 8 | Two control styles instead of five (segmented views, chips for filters) | **Yes**, merge them. Every switch was photographed side by side (`controls.ts`) to choose the looks — waiting |
+| 8 | Two control styles instead of five (segmented views, chips for filters) | Agreed in principle; every switch was photographed side by side (`controls.ts`) and a one-look version drawn. Then **left as they are for now** (16 November 2026) |
 | 9 | Collapsible sections on the very long settings pages | Later |
 | 10 | Statistics as compact tiles with larger period chips | **Done** — `4a58c8e` |
 | 11 | Small ones: Pay/Payroll title size, "No SiteID", "CI"/"CO", project job group names, legacy-form note | Later |
