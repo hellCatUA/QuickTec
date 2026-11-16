@@ -1691,7 +1691,7 @@ async function main() {
   // digits. They used to appear only once the tenth was in.
   const addPhone = managerPage.locator("#dispatch-add-phone");
   await addPhone.pressSequentially("2065550");
-  check("a phone number gets its dashes as it is typed", await addPhone.inputValue(), "206-555-0");
+  check("a phone number gets its dashes as it is typed", await addPhone.inputValue(), "206-5550");
   await addPhone.press("Backspace");
   await addPhone.press("Backspace");
   check("and backspace takes digits, never just a dash", await addPhone.inputValue(), "206-55");

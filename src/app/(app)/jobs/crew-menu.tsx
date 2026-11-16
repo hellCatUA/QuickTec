@@ -50,10 +50,10 @@ export function CrewMenu({ crew, jobTitle }: { crew: CrewMember[]; jobTitle: str
       <button
         type="button"
         aria-expanded={open}
-        aria-controls={listId}
+        aria-controls={open ? listId : undefined}
         aria-label={`Crew: ${one ? said : `${crew.length} people`}`}
         onClick={() => setOpen((current) => !current)}
-        className="inline-flex min-h-10 max-w-full items-center gap-1.5 rounded-full border border-border bg-surface-raised pl-2.5 pr-2 text-sm font-medium transition-colors hover:bg-muted"
+        className="inline-flex min-h-11 max-w-full items-center gap-1.5 rounded-full border border-border bg-surface-raised pl-2.5 pr-2 text-sm font-medium transition-colors hover:bg-muted"
       >
         <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
         <span className="tabular truncate">{said}</span>

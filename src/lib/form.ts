@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { normaliseLink } from "@/lib/links";
-import { formatPhone } from "@/lib/phone";
+import { formatPhone, phoneDigits } from "@/lib/phone";
 
 /**
  * Shared coercion for everything arriving from a form.
@@ -136,5 +136,14 @@ export function changedSinceOpened(formData: FormData) {
 
 /** Phones compared as they read, so "5595550142" and "559-555-0142" are one number. */
 export function samePhone(a: string, b: string): boolean {
+  // Punctuation is not a change: "2034" shown back as "203-4", or "555-0142"
+  // stored as "5550142", is the number that was there. Only where letters
+  // carry meaning — an extension written out — is the text compared.
+  if (!/[a-z]/i.test(a) && !/[a-z]/i.test(b)) {
+    return (
+      phoneDigits(a) === phoneDigits(b) &&
+      a.trim().startsWith("+") === b.trim().startsWith("+")
+    );
+  }
   return (formatPhone(a) || a) === (formatPhone(b) || b);
 }

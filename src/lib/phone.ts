@@ -35,6 +35,10 @@ export function formatPhone(value: string | null | undefined): string {
   if (digits.length === 10) {
     return `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`;
   }
+  // A local number without its area code, written the way it is said.
+  if (digits.length === 7 && !digits.startsWith("1")) {
+    return `${digits.slice(0, 3)}-${digits.slice(3)}`;
+  }
   if (digits.length === 11 && digits.startsWith("1")) {
     return `1-${digits.slice(1, 4)}-${digits.slice(4, 7)}-${digits.slice(7)}`;
   }
@@ -44,8 +48,9 @@ export function formatPhone(value: string | null | undefined): string {
 
 /**
  * What to put in the field as somebody types: the dashes go in with the
- * digits — 555, 555-1, 555-123-4, 555-123-4567 — and a leading 1, which no
- * area code starts with, is set apart as the country code.
+ * digits. Up to seven they are grouped as a local number (555-1, 555-0142);
+ * from the eighth, as a whole one (555-123-45, 555-123-4567). A leading 1,
+ * which no area code starts with, is set apart as the country code.
  *
  * It used to wait for the whole number. Nothing happened before the seventh
  * digit, and from the seventh to the ninth the digits were handed to
@@ -54,7 +59,8 @@ export function formatPhone(value: string | null | undefined): string {
  *
  * Never a dash with nothing after it: backspace at the end always takes a
  * digit. Anything with letters or a plus, and anything too long to be one of
- * ours, is left exactly as typed.
+ * ours, is left exactly as typed. What a number of no usual length settles to
+ * when the field is left is `settlePhone`.
  */
 export function formatPhoneAsTyped(value: string): string {
   if (/[a-z+]/i.test(value)) return value;
@@ -66,9 +72,26 @@ export function formatPhoneAsTyped(value: string): string {
   const rest = digits.slice(country.length);
   if (rest.length > 10) return value;
 
-  return [country, rest.slice(0, 3), rest.slice(3, 6), rest.slice(6)]
-    .filter(Boolean)
-    .join("-");
+  const groups =
+    rest.length <= 7
+      ? [rest.slice(0, 3), rest.slice(3)]
+      : [rest.slice(0, 3), rest.slice(3, 6), rest.slice(6)];
+  return [country, ...groups].filter(Boolean).join("-");
+}
+
+/**
+ * What a number typed into a field settles to once the field is left.
+ *
+ * The dashes put in while typing assume a phone number is on its way. A
+ * number that stopped at an unusual length — a four-digit extension — was
+ * never one, and keeps its digits without the dashes it was given on the way.
+ */
+export function settlePhone(value: string): string {
+  if (/[a-z+]/i.test(value)) return value;
+  const digits = phoneDigits(value);
+  const rest = digits.startsWith("1") ? digits.slice(1) : digits;
+  if (rest.length === 7 || rest.length === 10) return formatPhoneAsTyped(value);
+  return digits;
 }
 
 /**

@@ -21,7 +21,7 @@ const MAX_LENGTH = 2000;
  */
 export function normaliseLink(value: string): string | null {
   const trimmed = value.trim();
-  if (!trimmed || trimmed.length > MAX_LENGTH) return null;
+  if (!trimmed) return null;
 
   const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)
     ? trimmed
@@ -37,7 +37,10 @@ export function normaliseLink(value: string): string | null {
   if (url.username || url.password) return null;
   // "zoom" on its own is a word, not an address.
   if (!url.hostname.includes(".")) return null;
-  return url.toString();
+  // Measured as stored: writing it out can percent-encode it longer than it
+  // was typed, and a link stored past the limit would be refused when shown.
+  const href = url.toString();
+  return href.length > MAX_LENGTH ? null : href;
 }
 
 /** "zoom.us" or "company.zoom.us": the host, subdomains and all, but no "www.". */

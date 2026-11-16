@@ -308,6 +308,44 @@ drops just after a new MOD's name is saved but before the answer arrives,
 pressing Continue again records them twice — the checkout now says the
 connection dropped, but cannot know the save landed.
 
+## Independent review (16 November 2026)
+
+An agent read everything from `903ac5e` to `e84ed06` — the Jobs list, its
+search and cards, typed phone numbers and dispatch links. It found no way for
+a filter, a picker, the switch or a crew picture to show anything outside what
+the viewer may see, and no path for a link that is not http or https. Fixed in
+the commit after `e84ed06`:
+
+- **Today could be missing from the Open tab.** It loaded the oldest hundred
+  open jobs, so a backlog of reviews filled them. It now loads from yesterday
+  on, the undated ones, and whatever is in progress or sent back first, and
+  fills what room is left with older ones, newest first. All and Approved put
+  undated jobs last rather than first.
+- **Short phone numbers changed when a form opened.** The typing rules ran on
+  the stored value: "2034" opened as "203-4" and the profile counted it as an
+  edit, which could put back phones a supervisor had just changed. A stored
+  number is now shown as stored; phones compare by their digits; up to seven
+  digits group as a local number (555-0142, stored that way too); and a number
+  of no usual length loses the dashes it was given when the field is left.
+- **The day filter could show "Nothing matches" on a full day.** It asked for
+  a day either side and trimmed after loading a hundred rows. It now asks each
+  site zone for its own exact day.
+- Smaller: "Yesterday" and "Tomorrow" were 24 hours rather than a calendar day
+  either side of the clocks changing; approved jobs on the Revisit tab sat
+  under "Earlier — still open"; Delete next to a dash did nothing and a stray
+  character in the middle threw the caret to the end; the project PM phone
+  was still a plain field; a link could be stored longer than it could be
+  shown; the switch and the crew button were under 44 px; `aria-current` and
+  `aria-controls` corrected.
+- In older code: saving a paying company's dispatch number trusted the id
+  alone, so it could rewrite a number on any job or project. It now changes
+  only that company's own.
+
+Left as they are: the job page's back arrow goes to the plain Jobs list (the
+browser's back keeps the search); and two sites in different zones with the
+same date share a heading, which can read "Today" for one of them around
+midnight.
+
 ## Other open threads (outside this audit)
 
 Parked by the owner, not forgotten. None has been started.

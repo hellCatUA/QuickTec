@@ -479,8 +479,18 @@ export async function saveClientDispatch(
       select: { order: true },
     });
 
+    // Changed only if it is this company's own: the same table holds every
+    // job's and project's numbers, and an id alone would let this action
+    // rewrite one on somebody's job — link included — and move it here.
+    if (id) {
+      const updated = await db.dispatchContact.updateMany({
+        where: { id, clientId: client.id },
+        data,
+      });
+      if (updated.count === 0) return { ok: false, error: "Not found." };
+    }
     const contact = id
-      ? await db.dispatchContact.update({ where: { id }, data })
+      ? await db.dispatchContact.findUniqueOrThrow({ where: { id }, select: { id: true, label: true } })
       : await db.dispatchContact.create({
           data: { ...data, order: (last?.order ?? -1) + 1 },
         });

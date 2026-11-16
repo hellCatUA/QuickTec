@@ -151,7 +151,15 @@ export function jobsHref(query: JobsQuery, change: Partial<JobsQuery> = {}) {
   return `/jobs?${params}`;
 }
 
-const DAY_MS = 86_400_000;
+/**
+ * "2026-11-12" for "2026-11-11" and 1. Calendar days, not 24-hour steps: next
+ * to the night the clocks change, now minus 24 hours is two dates back or the
+ * same one, and "Yesterday" landed on the wrong day.
+ */
+export function shiftDay(iso: string, days: number): string {
+  const [year, month, day] = iso.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+}
 
 /**
  * The filters as a database question, to be ANDed with what the person may
@@ -165,6 +173,8 @@ export function jobsWhere(
     fallbackZone: string;
     /** Set for "My jobs": only the jobs this person is on. */
     mineOf: string | null;
+    /** Every zone a site is in, for the day filter. Null is a site with none. */
+    zones?: (string | null)[];
   },
 ): Prisma.JobWhereInput {
   const and: Prisma.JobWhereInput[] = [];
@@ -214,33 +224,31 @@ export function jobsWhere(
     and.push({ site: { siteNumber: { contains: query.site, mode: "insensitive" } } });
   }
 
-  // Days are the site's, and sites sit in different zones, so the database is
-  // asked for a day either side and `onDays` settles each job afterwards.
+  // Days are the site's, and sites sit in different zones: one window for
+  // each zone there is, each exact. It used to be a day either side, trimmed
+  // after loading — and when the hundred rows loaded were all from that extra
+  // day, a day full of jobs read "Nothing matches".
   if (query.from || query.to) {
-    const range: Prisma.DateTimeFilter = {};
-    const from = query.from && parseZonedDate(query.from, options.fallbackZone);
-    const to = query.to && parseZonedDate(query.to, options.fallbackZone);
-    if (from) range.gte = new Date(from.getTime() - DAY_MS);
-    if (to) range.lt = new Date(to.getTime() + 2 * DAY_MS);
-    and.push({ scheduledStart: range });
+    const window = (zone: string) => {
+      const range: { gte?: Date; lt?: Date } = {};
+      const from = query.from && parseZonedDate(query.from, zone);
+      const to = query.to && parseZonedDate(shiftDay(query.to, 1), zone);
+      if (from) range.gte = from;
+      if (to) range.lt = to;
+      return range;
+    };
+    const zones = [...new Set(options.zones ?? [])].filter(
+      (zone): zone is string => Boolean(zone),
+    );
+    and.push({
+      OR: [
+        ...zones.map((zone) => ({ site: { timeZone: zone }, scheduledStart: window(zone) })),
+        { site: { timeZone: null }, scheduledStart: window(options.fallbackZone) },
+      ],
+    });
   }
 
   return { AND: and };
-}
-
-/** Whether a job falls on the days asked for, on its site's calendar. */
-export function onDays(
-  job: { scheduledStart: Date | null; site: { timeZone: string | null } },
-  query: Pick<JobsQuery, "from" | "to">,
-  fallbackZone: string,
-): boolean {
-  if (!query.from && !query.to) return true;
-  if (!job.scheduledStart) return false;
-  const day = isoDateInZone(
-    job.scheduledStart,
-    job.site.timeZone ?? fallbackZone,
-  );
-  return (!query.from || day >= query.from) && (!query.to || day <= query.to);
 }
 
 // --- laying it out -------------------------------------------------------------
@@ -352,9 +360,8 @@ export function groupByDay(jobs: ListedJob[], options: LayoutOptions): JobGroup[
   for (const job of jobs) {
     const zone = job.site.timeZone ?? options.fallbackZone;
     const at = job.scheduledStart;
-    const dayOf = (offset: number) =>
-      isoDateInZone(new Date(options.now.getTime() + offset * DAY_MS), zone);
-    const today = dayOf(0);
+    const today = isoDateInZone(options.now, zone);
+    const dayOf = (offset: number) => shiftDay(today, offset);
     const day = at ? isoDateInZone(at, zone) : null;
     const named = at ? dayName(at, zone, options.now) : null;
     const spoken =
@@ -393,7 +400,9 @@ export function groupByDay(jobs: ListedJob[], options: LayoutOptions): JobGroup[
       rank = 2;
     } else if (stillOpen) {
       key = "earlier";
-      label = "Earlier — still open";
+      // On the Revisit tab a job here may be approved and done; it is the
+      // trip back that is outstanding, not the job.
+      label = options.tab === "open" ? "Earlier — still open" : "Earlier";
       rank = 4;
       mixed = true;
       newestFirst = true;

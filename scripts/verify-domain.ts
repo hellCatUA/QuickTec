@@ -2490,7 +2490,9 @@ async function main() {
   check("and an unknown one is not invented", stateName("ZZ"), null);
 
   // --- phone numbers -------------------------------------------------------
-  const { formatPhone, formatPhoneAsTyped, caretAfterDigits, telHref } = await import("@/lib/phone");
+  const { formatPhone, formatPhoneAsTyped, settlePhone, caretAfterDigits, telHref } =
+    await import("@/lib/phone");
+  const { samePhone } = await import("@/lib/form");
 
   // Written the one way wherever it is stored, not only where somebody typed
   // it slowly. Half the forms formatted as you typed and half did not, so one
@@ -2526,11 +2528,24 @@ async function main() {
   // Typing: the dashes go in with the digits. They used to wait for the tenth,
   // and from the seventh to the ninth even hand-typed dashes came back out.
   check(
-    "the dashes go in as the number is typed",
-    ["5", "555", "5551", "555123", "5551234", "5551234567"].map(formatPhoneAsTyped).join(" "),
-    "5 555 555-1 555-123 555-123-4 555-123-4567",
+    "the dashes go in as the number is typed, local first, then whole",
+    ["5", "555", "5551", "555123", "5550142", "55501428", "5551234567"]
+      .map(formatPhoneAsTyped)
+      .join(" "),
+    "5 555 555-1 555-123 555-0142 555-014-28 555-123-4567",
   );
-  check("dashes typed by hand are kept, not taken out", formatPhoneAsTyped("555-123-4"), "555-123-4");
+  check("dashes typed by hand are kept, not taken out", formatPhoneAsTyped("555-0142"), "555-0142");
+  check("a local number is stored the way it is said", formatPhone("5550142"), "555-0142");
+  check(
+    "a short number left in the field loses the dashes it was given on the way",
+    [settlePhone("203-4"), settlePhone("555-0142"), settlePhone("555-123-4567")].join(" "),
+    "2034 555-0142 555-123-4567",
+  );
+  check(
+    "punctuation alone is not a changed number",
+    [samePhone("2034", "203-4"), samePhone("5550142", "555-0142"), samePhone("555-0142", "555-0143")].join(" "),
+    "true true false",
+  );
   check("never a dash with nothing after it", formatPhoneAsTyped("555-"), "555");
   check(
     "a leading 1 is the country code from the start",
@@ -2541,7 +2556,7 @@ async function main() {
   check("an extension is left as typed", formatPhoneAsTyped("555-123-4567 x2"), "555-123-4567 x2");
   check("so is anything international", formatPhoneAsTyped("+38067"), "+38067");
   check("and anything too long to be one of ours", formatPhoneAsTyped("555123456789"), "555123456789");
-  check("the caret stays after its digit as dashes move", caretAfterDigits("555-912-3", 4), 5);
+  check("the caret stays after its digit as dashes move", caretAfterDigits("555-912-34", 4), 5);
   check("and at the start before any", caretAfterDigits("555-1", 0), 0);
 
   // --- links on dispatch numbers ---------------------------------------------
@@ -5206,7 +5221,7 @@ async function main() {
   );
 
   // --- the Jobs list --------------------------------------------------------
-  const { groupByDay, onDays, parseJobsQuery, jobsHref, jobsWhere, dayName, NO_FILTERS } =
+  const { groupByDay, shiftDay, parseJobsQuery, jobsHref, jobsWhere, dayName, NO_FILTERS } =
     await import("@/lib/job-list");
   type ListedJob = import("@/lib/job-list").ListedJob;
   const NY = "America/New_York";
@@ -5382,23 +5397,44 @@ async function main() {
     ).includes("terry"),
     false,
   );
+  // A day asked for is each site's own: one exact window per zone, rather than
+  // a day either side trimmed afterwards, which could load a hundred rows of
+  // the wrong day and show none.
+  const dayWindows = JSON.stringify(
+    jobsWhere(parseJobsQuery({ from: "2026-11-11", to: "2026-11-11" }), {
+      wide: true,
+      fallbackZone: TZ,
+      mineOf: null,
+      zones: [NY, TZ, null],
+    }),
+  );
   check(
-    "a day asked for is the site's: half past ten at night in New York is the 11th there",
-    onDays(
-      { scheduledStart: new Date("2026-11-12T03:30:00Z"), site: { timeZone: NY } },
-      { from: "2026-11-11", to: "2026-11-11" },
-      TZ,
+    "the 11th in New York runs from its own midnight to the next",
+    dayWindows.includes(
+      '{"site":{"timeZone":"America/New_York"},"scheduledStart":{"gte":"2026-11-11T05:00:00.000Z","lt":"2026-11-12T05:00:00.000Z"}}',
     ),
     true,
   );
   check(
-    "and one in the morning in Los Angeles is the 12th",
-    onDays(
-      { scheduledStart: new Date("2026-11-12T09:00:00Z"), site: { timeZone: TZ } },
-      { from: "2026-11-11", to: "2026-11-11" },
-      TZ,
+    "and a site with no zone of its own is on the company's clock",
+    dayWindows.includes(
+      '{"site":{"timeZone":null},"scheduledStart":{"gte":"2026-11-11T08:00:00.000Z","lt":"2026-11-12T08:00:00.000Z"}}',
     ),
-    false,
+    true,
+  );
+  check(
+    "a day either side is a calendar day, whatever the clocks do",
+    [shiftDay("2026-03-08", -1), shiftDay("2026-03-08", 1), shiftDay("2026-12-31", 1)].join(" "),
+    "2026-03-07 2026-03-09 2027-01-01",
+  );
+  check(
+    "the night the clocks go forward, yesterday is still yesterday",
+    groupByDay([listed("dst", "2026-03-08T18:00:00Z", { lifecycle: "APPROVED" })], {
+      ...listLayout,
+      now: new Date("2026-03-09T07:30:00Z"),
+      tab: "all",
+    })[0].label,
+    "Yesterday · Sun 3/8",
   );
   check(
     "a day from another year carries its year instead of its weekday",

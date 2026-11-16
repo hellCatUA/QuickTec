@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { EmptyState, PageHeader } from "@/components/ui/page-header";
 import { getCompanySettings } from "@/lib/company";
+import { isoDateInZone, parseZonedDate } from "@/lib/datetime";
 import { db } from "@/lib/db";
 import {
   groupByDay,
@@ -13,7 +14,7 @@ import {
   jobsHref,
   jobsWhere,
   NO_FILTERS,
-  onDays,
+  shiftDay,
   parseJobsQuery,
   shortDay,
   WHO_COOKIE,
@@ -23,6 +24,7 @@ import { loadPrivacySettings, PICTURE_SELECT, pictureFor } from "@/lib/profile";
 import { jobScopeWhere } from "@/lib/scope";
 import { can, getSessionUser } from "@/lib/session";
 import { cn } from "@/lib/utils";
+import type { JobLifecycle } from "@prisma-client";
 import { JobFilters } from "./job-filters";
 import { JobList } from "./job-list";
 
@@ -52,56 +54,103 @@ export default async function JobsPage({
     ? (query.who ?? (remembered === "mine" ? "mine" : "all"))
     : null;
 
-  // What is still to do is read from the next job on; what is done, from the
-  // last one back. The hundred fetched are the hundred that matter for each.
-  const history = query.tab === "approved" || query.tab === "all";
-
-  const [loaded, companies, reps, projects, techs, customers] = await Promise.all([
-    db.job.findMany({
-      where: {
-        AND: [
-          scope,
-          jobsWhere(query, {
-            wide,
-            fallbackZone: zone,
-            mineOf: who === "mine" ? user.id : null,
-          }),
-        ],
-      },
-      orderBy: history
-        ? [{ scheduledStart: "desc" }, { createdAt: "desc" }]
-        : [{ scheduledStart: "asc" }, { createdAt: "desc" }],
-      take: JOBS_LIST_LIMIT,
+  // Every zone a site is in, for an exact day filter on each site's calendar.
+  const zones = query.from || query.to
+    ? (
+        await db.site.findMany({ distinct: ["timeZone"], select: { timeZone: true } })
+      ).map((site) => site.timeZone)
+    : [];
+  const where = {
+    AND: [
+      scope,
+      jobsWhere(query, {
+        wide,
+        fallbackZone: zone,
+        mineOf: who === "mine" ? user.id : null,
+        zones,
+      }),
+    ],
+  };
+  const select = {
+    id: true,
+    intWoId: true,
+    title: true,
+    scheduledStart: true,
+    lifecycle: true,
+    outcome: true,
+    internalStatus: true,
+    revisitNumber: true,
+    client: { select: { name: true } },
+    repCompany: { select: { name: true } },
+    customer: { select: { code: true } },
+    site: {
       select: {
-        id: true,
-        intWoId: true,
-        title: true,
-        scheduledStart: true,
-        lifecycle: true,
-        outcome: true,
-        internalStatus: true,
-        revisitNumber: true,
-        client: { select: { name: true } },
-        repCompany: { select: { name: true } },
-        customer: { select: { code: true } },
-        site: {
-          select: {
-            siteNumber: true,
-            numberPending: true,
-            city: true,
-            state: true,
-            timeZone: true,
-          },
-        },
-        assignments: {
-          select: {
-            isLead: true,
-            userId: true,
-            user: { select: { name: true, ...PICTURE_SELECT } },
-          },
-        },
+        siteNumber: true,
+        numberPending: true,
+        city: true,
+        state: true,
+        timeZone: true,
       },
-    }),
+    },
+    assignments: {
+      select: {
+        isLead: true,
+        userId: true,
+        user: { select: { name: true, ...PICTURE_SELECT } },
+      },
+    },
+  } as const;
+
+  // What is done reads from the last one back, with undated jobs at the end
+  // rather than first. What is still to do is from yesterday on — the undated
+  // ones and whatever somebody is on or has to put right with it — and only
+  // the room left is filled with older stragglers, newest first. It was the
+  // oldest hundred: a backlog of reviews was enough to push today off a
+  // manager's list altogether.
+  const history = query.tab === "approved" || query.tab === "all";
+  const cutoff = parseZonedDate(shiftDay(isoDateInZone(new Date(), zone), -1), zone)!;
+  const live: JobLifecycle[] = ["IN_PROGRESS", "CHANGES_REQUESTED"];
+  const loadJobs = async () => {
+    if (history) {
+      return db.job.findMany({
+        where,
+        orderBy: [{ scheduledStart: { sort: "desc", nulls: "last" } }, { createdAt: "desc" }],
+        take: JOBS_LIST_LIMIT,
+        select,
+      });
+    }
+    const [current, older] = await Promise.all([
+      db.job.findMany({
+        where: {
+          AND: [
+            where,
+            {
+              OR: [
+                { scheduledStart: { gte: cutoff } },
+                { scheduledStart: null },
+                { lifecycle: { in: live } },
+              ],
+            },
+          ],
+        },
+        orderBy: [{ scheduledStart: { sort: "asc", nulls: "last" } }, { createdAt: "desc" }],
+        take: JOBS_LIST_LIMIT,
+        select,
+      }),
+      db.job.findMany({
+        where: {
+          AND: [where, { scheduledStart: { lt: cutoff } }, { lifecycle: { notIn: live } }],
+        },
+        orderBy: [{ scheduledStart: "desc" }, { createdAt: "desc" }],
+        take: JOBS_LIST_LIMIT,
+        select,
+      }),
+    ]);
+    return [...current, ...older].slice(0, JOBS_LIST_LIMIT);
+  };
+
+  const [jobs, companies, reps, projects, techs, customers] = await Promise.all([
+    loadJobs(),
     // What the pickers offer is what can be found: the companies, projects,
     // people and customers on jobs this person can see, and nobody else's.
     db.client.findMany({
@@ -132,7 +181,6 @@ export default async function JobsPage({
       orderBy: { name: "asc" },
     }),
   ]);
-  const jobs = loaded.filter((job) => onDays(job, query, zone));
 
   // Each person's picture once, however many jobs they are on, and only as
   // this viewer may see it: the same question the picture's own route asks.
@@ -307,7 +355,7 @@ export default async function JobsPage({
         className={narrowed && jobs.length > 0 ? "text-sm text-muted-foreground" : "sr-only"}
       >
         {narrowed
-          ? `${jobs.length}${loaded.length === JOBS_LIST_LIMIT ? "+" : ""} ${
+          ? `${jobs.length}${jobs.length === JOBS_LIST_LIMIT ? "+" : ""} ${
               jobs.length === 1 ? "job" : "jobs"
             } found`
           : ""}
@@ -348,9 +396,9 @@ export default async function JobsPage({
         <JobList groups={groups} />
       )}
 
-      {loaded.length === JOBS_LIST_LIMIT ? (
+      {jobs.length === JOBS_LIST_LIMIT ? (
         <p className="text-center text-xs text-muted-foreground">
-          {history ? "The 100 most recent are shown." : "The first 100 are shown."}{" "}
+          {history ? "The 100 most recent are shown." : "The 100 nearest today are shown."}{" "}
           The search and the filters find the rest.
         </p>
       ) : null}

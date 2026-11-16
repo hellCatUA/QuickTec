@@ -146,14 +146,15 @@ export function JobFilters({
             <Link
               key={option}
               href={jobsHref(query, { who: option })}
-              aria-current={who === option ? "page" : undefined}
+              // "true", not "page": the tabs above already say which page.
+              aria-current={who === option ? "true" : undefined}
               // Kept for next time: a supervisor who works their own jobs
               // should not have to ask for them every morning.
               onClick={() => {
                 document.cookie = `${WHO_COOKIE}=${option}; path=/; max-age=31536000; samesite=lax`;
               }}
               className={cn(
-                "flex min-h-9 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium transition-colors",
+                "flex min-h-11 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium transition-colors",
                 who === option
                   ? "bg-primary text-primary-foreground"
                   : "text-muted-foreground hover:bg-muted",
@@ -205,7 +206,7 @@ export function JobFilters({
             type="button"
             variant="secondary"
             aria-expanded={open}
-            aria-controls="job-filters"
+            aria-controls={open ? "job-filters" : undefined}
             onClick={() => setOpen((current) => !current)}
             className={cn("shrink-0", open && "border-primary")}
           >

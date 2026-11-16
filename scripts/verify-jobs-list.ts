@@ -31,6 +31,7 @@ const BASE = process.env.BASE_URL ?? "http://127.0.0.1:3000";
 const LA = "America/Los_Angeles";
 const COMPANY_A = "Jobs List Co A";
 const COMPANY_B = "Jobs List Co B";
+const COMPANY_BACKLOG = "Jobs List Backlog Co";
 const REP_NAME = "Jobs List Rep Co";
 const PROJECT_CODE = "JLPRJ";
 const PROJECT_NAME = "Jobs List Project";
@@ -62,7 +63,7 @@ async function tokenFor(email: string) {
 async function cleanup() {
   const customer = await db.customer.findUnique({ where: { code: CUSTOMER_CODE } });
   const companies = await db.client.findMany({
-    where: { name: { in: [COMPANY_A, COMPANY_B] } },
+    where: { name: { in: [COMPANY_A, COMPANY_B, COMPANY_BACKLOG] } },
     select: { id: true },
   });
   const companyIds = companies.map((one) => one.id);
@@ -266,7 +267,7 @@ async function main() {
 
   const whose = (page: Page) => page.locator('nav[aria-label="Whose jobs"]');
   const current = (page: Page) =>
-    whose(page).locator('a[aria-current="page"]').innerText();
+    whose(page).locator('a[aria-current="true"]').innerText();
 
   // --- a supervisor: My jobs or All jobs ----------------------------------------
   const supPage = await pageFor(browser, sup.token);
@@ -453,6 +454,41 @@ async function main() {
     "nothing found says so",
     await supPage.getByText("Nothing matches", { exact: true }).isVisible(),
     true,
+  );
+
+  // --- a backlog does not push today off the list --------------------------------
+  // A hundred reviews waiting from last month used to fill the hundred rows
+  // the Open tab loads, oldest first, and today's job was never among them.
+  const backlogCo = await db.client.create({ data: { name: COMPANY_BACKLOG } });
+  await db.job.createMany({
+    data: Array.from({ length: 100 }, (_, index) => ({
+      intWoId: `JLB-${sequence + 1 + index}`,
+      intWoSequence: sequence + 1 + index,
+      title: `JL Backlog ${index + 1}`,
+      clientId: backlogCo.id,
+      customerId: customer.id,
+      siteId: site.id,
+      createdById: sup.user.id,
+      scheduledStart: at(-30, 9),
+      lifecycle: "PENDING_REVIEW" as const,
+    })),
+  });
+  sequence += 101;
+  const todayInBacklog = await job("JL Today behind a backlog", at(0, 10), {
+    client: backlogCo.id,
+  });
+  await open(supPage, `/jobs?company=${backlogCo.id}`);
+  check(
+    "today's job is on the Open tab however many old ones are waiting",
+    await supPage.locator(`a[href="/jobs/${todayInBacklog.id}"]`).count(),
+    1,
+  );
+  check(
+    "and the rest of the hundred are the newest of the old",
+    await supPage.locator('main a[href^="/jobs/"]').evaluateAll(
+      (links) => links.filter((link) => link.textContent?.startsWith("JL Backlog")).length,
+    ),
+    99,
   );
 
   // --- the tabs keep the filters --------------------------------------------

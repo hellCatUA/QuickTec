@@ -2,7 +2,13 @@
 
 import * as React from "react";
 import { Input } from "@/components/ui/field";
-import { caretAfterDigits, formatPhoneAsTyped, phoneDigits } from "@/lib/phone";
+import {
+  caretAfterDigits,
+  formatPhone,
+  formatPhoneAsTyped,
+  phoneDigits,
+  settlePhone,
+} from "@/lib/phone";
 
 /**
  * A phone number that writes its own dashes, as it is typed.
@@ -11,11 +17,15 @@ import { caretAfterDigits, formatPhoneAsTyped, phoneDigits } from "@/lib/phone";
  * typed as 2065550177 and one typed as (206) 555-0177 are the same number, and
  * only one of them reads as one.
  *
- * Because the dashes now move with every digit, the field keeps the caret
- * after the digit it was after — a controlled input otherwise throws it to the
- * end on each change, which made a typo in the middle impossible to fix in
- * place — and Backspace on a dash takes the digit before it, since the dash
+ * Because the dashes move with every digit, the field keeps the caret after
+ * the digit it was after — a controlled input otherwise throws it to the end
+ * on each change, which made a typo in the middle impossible to fix in place —
+ * and Backspace or Delete on a dash takes the digit beyond it, where the dash
  * alone would only come straight back.
+ *
+ * What it is given to start with is shown as stored, not as if typed: run
+ * through the typing rules, a four-digit extension "2034" opened as "203-4",
+ * and the form counted that as a change nobody made.
  *
  * Either left to itself (`defaultValue`, posted with its form by `name`) or
  * held by its parent (`value` and `onValueChange`).
@@ -25,6 +35,7 @@ export function PhoneInput({
   defaultValue,
   value: held,
   onValueChange,
+  onBlur,
   id,
   ...props
 }: Omit<React.ComponentProps<"input">, "value" | "onChange" | "defaultValue"> & {
@@ -34,9 +45,10 @@ export function PhoneInput({
   value?: string;
   onValueChange?: (value: string) => void;
 }) {
-  const [own, setOwn] = React.useState(() =>
-    formatPhoneAsTyped(defaultValue ?? ""),
-  );
+  const [own, setOwn] = React.useState(() => {
+    const stored = defaultValue ?? "";
+    return formatPhone(stored) || stored;
+  });
   const value = held ?? own;
   const ref = React.useRef<HTMLInputElement>(null);
   const caret = React.useRef<number | null>(null);
@@ -48,28 +60,53 @@ export function PhoneInput({
     caret.current = null;
   });
 
-  function onChange(event: React.ChangeEvent<HTMLInputElement>) {
-    let typed = event.target.value;
-    let at = event.target.selectionStart ?? typed.length;
+  function commit(next: string) {
+    if (held === undefined) setOwn(next);
+    onValueChange?.(next);
+  }
 
-    const removedOnlyADash =
-      (event.nativeEvent as InputEvent).inputType === "deleteContentBackward" &&
-      typed.length < value.length &&
-      phoneDigits(typed) === phoneDigits(value);
-    if (removedOnlyADash) {
+  function onChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const input = event.target;
+    let typed = input.value;
+    let at = input.selectionStart ?? typed.length;
+    const inputType = (event.nativeEvent as InputEvent).inputType;
+
+    // Only a dash went, and formatting would put it straight back: take the
+    // digit beyond it instead, the way the key was meant.
+    const onlyADash =
+      typed.length === value.length - 1 &&
+      phoneDigits(typed) === phoneDigits(value) &&
+      formatPhoneAsTyped(typed) === value;
+    if (onlyADash && inputType === "deleteContentBackward") {
       let index = at - 1;
       while (index >= 0 && !/\d/.test(typed[index])) index--;
       if (index >= 0) {
         typed = typed.slice(0, index) + typed.slice(index + 1);
         at = index;
       }
+    } else if (onlyADash && inputType === "deleteContentForward") {
+      let index = at;
+      while (index < typed.length && !/\d/.test(typed[index])) index++;
+      if (index < typed.length) typed = typed.slice(0, index) + typed.slice(index + 1);
     }
 
     const next = formatPhoneAsTyped(typed);
-    caret.current =
+    const place =
       next === typed ? at : caretAfterDigits(next, phoneDigits(typed.slice(0, at)).length);
-    if (held === undefined) setOwn(next);
-    onValueChange?.(next);
+
+    if (next === value) {
+      // Nothing changes, so nothing re-renders and the layout effect never
+      // runs: React puts the old value back and the caret at the end. Put it
+      // where it belongs once React has done that.
+      caret.current = null;
+      requestAnimationFrame(() => {
+        if (document.activeElement === input) input.setSelectionRange(place, place);
+      });
+      return;
+    }
+
+    caret.current = place;
+    commit(next);
   }
 
   return (
@@ -83,6 +120,11 @@ export function PhoneInput({
       name={name}
       value={value}
       onChange={onChange}
+      onBlur={(event) => {
+        const settled = settlePhone(value);
+        if (settled !== value) commit(settled);
+        onBlur?.(event);
+      }}
     />
   );
 }

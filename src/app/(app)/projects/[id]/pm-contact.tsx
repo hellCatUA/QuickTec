@@ -7,6 +7,7 @@ import { capitaliseName } from "@/lib/names";
 import { formatPhone, telHref } from "@/lib/phone";
 import { Combobox } from "@/components/ui/combobox";
 import { Field, Input } from "@/components/ui/field";
+import { PhoneInput } from "@/components/ui/phone-input";
 import { createExternalContact } from "../actions";
 
 export type ContactOption = {
@@ -130,12 +131,11 @@ export function PmContactPicker({
         </Field>
         <div className="grid gap-2 sm:grid-cols-2">
           <Field label="Phone" htmlFor="pm-phone">
-            <Input
+            <PhoneInput
               id="pm-phone"
               value={draft.phone}
-              onChange={(event) =>
-                setDraft((current) => ({ ...current, phone: event.target.value }))
-              }
+              onValueChange={(phone) => setDraft((current) => ({ ...current, phone }))}
+              autoComplete="off"
             />
           </Field>
           <Field label="Email" htmlFor="pm-email">
