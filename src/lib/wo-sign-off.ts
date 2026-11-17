@@ -33,7 +33,7 @@ export function workIsDone(lifecycle: JobLifecycle): boolean {
 }
 
 export const NOT_CLOSED_YET =
-  "Not yet — a work order is signed off once the job is closed. Clock out and it is offered there; it stays here for afterwards too.";
+  "Not yet — a work order is signed off once the job is closed, at the last clock-out.";
 
 export const NO_WORK_ORDER =
   "There is no work order on this job to sign. Attach theirs as a PDF under the job's details first.";

@@ -11,6 +11,7 @@ import {
   Loader2,
   Minus,
   Plus,
+  RefreshCw,
   RotateCcw,
   Undo2,
 } from "lucide-react";
@@ -22,6 +23,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Textarea } from "@/components/ui/field";
 import type { NotesFit, WoValues } from "@/lib/forms/wo-draw";
+import { LOCKED_WORK_ORDER } from "@/lib/forms/wo-errors";
 import {
   detectWoLayout,
   type WoFound,
@@ -43,16 +45,17 @@ import { saveSignedWorkOrder } from "./actions";
  * The work order is read on the phone, the three places found, and the
  * sign-off drawn onto it there with the code the server keeps it with — so
  * the page on the screen is the page that is saved. Each place is a box on
- * the page that can be dragged, nudged a point at a time, or stretched, and
- * each is ticked off as read. Nothing is kept until all three are.
+ * the page that can be dragged, nudged, or stretched, and each is ticked off
+ * as read. Nothing is kept until all three are.
  *
  * Built for the end of a job, on a phone, possibly with gloves on: the page
- * zooms, the box being read can be brought to the middle of it, and the
- * nudges are buttons rather than a fingertip's guess.
+ * zooms, the box being read can be brought into view whole, and the nudges
+ * are buttons rather than a fingertip's guess.
  */
 
 type BoxKey = "times" | "notes" | "approval";
 type PdfDocument = Awaited<ReturnType<Pdfjs["getDocument"]>["promise"]>;
+type PdfWorker = InstanceType<Pdfjs["PDFWorker"]>;
 
 const BOXES: BoxKey[] = ["times", "notes", "approval"];
 const BOX_NAME: Record<BoxKey, string> = {
@@ -72,6 +75,8 @@ const VALUE_BOX: Record<keyof WoValues, BoxKey> = {
   name: "approval",
   date: "approval",
 };
+/** Narrower than this and what the box holds no longer fits in it. */
+const MIN_WIDTH: Record<BoxKey, number> = { times: 40, notes: 60, approval: 200 };
 
 const MAX_WIDTH = 640;
 const ZOOMS = [1, 1.5, 2, 3];
@@ -79,6 +84,9 @@ const ZOOMS = [1, 1.5, 2, 3];
 const MAX_CANVAS_PIXELS = 16_000_000;
 /** How long the preview waits for the next change before drawing. */
 const PREVIEW_DELAY = 220;
+
+const DROPPED =
+  "The connection dropped before that was saved. Nothing here was lost — check your signal and press Save again.";
 
 const round = (value: number) => Math.round(value * 10) / 10;
 
@@ -128,13 +136,18 @@ export function WoSignOff({
   const [page, setPage] = React.useState(0);
   const [zoom, setZoom] = React.useState(1);
   const [selected, setSelected] = React.useState<BoxKey | null>(null);
+  const [coarse, setCoarse] = React.useState(false);
   const [frame, setFrame] = React.useState(0);
+  // Bumped by "Show me" so the screen always renders and centres the box,
+  // even when nothing else about it changed — pressed twice, it used to do
+  // nothing the second time and then jump at the next unrelated render.
+  const [, setFocusTick] = React.useState(0);
 
   const [preview, setPreview] = React.useState<PdfDocument | null>(null);
   const [drawn, setDrawn] = React.useState<{ notes: NotesFit; signed: boolean } | null>(null);
   // What the page on screen was drawn from. Anything else means a newer
-  // version is on its way, and the button waits for it: what is saved should
-  // be what was last looked at.
+  // version is on its way, and the ticks and the button wait for it: what is
+  // saved should be what was last looked at.
   const [drawnFor, setDrawnFor] = React.useState<{
     overlay: WoOverlay;
     values: WoValues;
@@ -146,9 +159,15 @@ export function WoSignOff({
   const [done, setDone] = React.useState<{ id: string; name: string; note: string | null } | null>(null);
 
   const pdfjsRef = React.useRef<Pdfjs | null>(null);
+  // One pdf.js worker for the whole screen. Each document used to start its
+  // own, and a preview redrawn on every change left one behind each time: a
+  // short session ran eleven, and the app kept open on a phone all day piles
+  // them up.
+  const workerRef = React.useRef<PdfWorker | null>(null);
+  const previewRef = React.useRef<PdfDocument | null>(null);
   const sourceRef = React.useRef<Uint8Array | null>(null);
   const signatureRef = React.useRef<Uint8Array | null>(null);
-  const frameRef = React.useRef<HTMLDivElement>(null);
+  const viewerRef = React.useRef<HTMLDivElement>(null);
   const scrollerRef = React.useRef<HTMLDivElement>(null);
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
   const scratchRef = React.useRef<HTMLCanvasElement | null>(null);
@@ -163,6 +182,10 @@ export function WoSignOff({
     (async () => {
       try {
         const pdfjs = await loadPdfjs();
+        if (cancelled) return;
+        pdfjsRef.current = pdfjs;
+        workerRef.current = new pdfjs.PDFWorker();
+
         const response = await fetch(`/api/files/${workOrder.id}`);
         if (!response.ok) {
           throw new Error(`The work order could not be fetched (${response.status}).`);
@@ -170,7 +193,10 @@ export function WoSignOff({
         const bytes = new Uint8Array(await response.arrayBuffer());
         // A copy goes to pdf.js: it hands its buffer to the worker, which
         // leaves the original empty for the drawing that follows.
-        const document = await pdfjs.getDocument({ data: bytes.slice() }).promise;
+        const document = await pdfjs.getDocument({
+          data: bytes.slice(),
+          worker: workerRef.current,
+        }).promise;
         const { scanWorkOrder } = await import("@/lib/forms/wo-scan");
         const read = await scanWorkOrder(document, pdfjs.OPS);
         void document.destroy();
@@ -183,7 +209,6 @@ export function WoSignOff({
         }
         if (cancelled) return;
 
-        pdfjsRef.current = pdfjs;
         sourceRef.current = bytes;
         signatureRef.current = signature;
 
@@ -226,6 +251,17 @@ export function WoSignOff({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Leaving the screen lets go of the last page drawn and of the worker.
+  React.useEffect(
+    () => () => {
+      void previewRef.current?.destroy();
+      previewRef.current = null;
+      workerRef.current?.destroy();
+      workerRef.current = null;
+    },
+    [],
+  );
+
   // -------------------------------------------------------------------------
   // The page as it will be kept, redrawn a moment after each change.
 
@@ -238,19 +274,31 @@ export function WoSignOff({
         const pdf = await openWorkOrder(sourceRef.current!, Math.max(...overlay.pages));
         const result = await drawWorkOrder(pdf, overlay, values, signatureRef.current);
         const bytes = await pdf.save();
-        const document = await pdfjsRef.current!.getDocument({ data: bytes }).promise;
+        const document = await pdfjsRef.current!.getDocument({
+          data: bytes,
+          worker: workerRef.current ?? undefined,
+        }).promise;
         if (cancelled) {
           void document.destroy();
           return;
         }
-        setPreview((previous) => {
-          void previous?.destroy();
-          return document;
-        });
+        const previous = previewRef.current;
+        previewRef.current = document;
+        setPreview(document);
+        void previous?.destroy();
         setDrawn(result);
         setPreviewError(null);
       } catch (caught) {
         if (cancelled) return;
+        // pdf.js reads a locked file happily; only writing on it fails. That
+        // is not a preview that went wrong but a work order this cannot sign,
+        // and it used to leave a blank page under three ticks that could still
+        // be pressed.
+        if (caught instanceof Error && caught.message === LOCKED_WORK_ORDER) {
+          setFailure(LOCKED_WORK_ORDER);
+          setPhase("failed");
+          return;
+        }
         console.error("[work order] drawing the preview failed", caught);
         setPreviewError(caught instanceof Error ? caught.message : "Unknown error");
       }
@@ -262,9 +310,11 @@ export function WoSignOff({
     };
   }, [phase, overlay, values]);
 
-  // How wide the page can be drawn: the column, up to a sensible page width.
+  // How wide the page can be drawn: the inside of its frame, up to a sensible
+  // page width. Measured inside the border, not outside it — two pixels too
+  // wide gave every width a sideways scroll at 100%.
   React.useEffect(() => {
-    const element = frameRef.current;
+    const element = scrollerRef.current;
     if (!element) return;
     const measure = () => setFrame(Math.min(MAX_WIDTH, element.clientWidth));
     measure();
@@ -275,6 +325,9 @@ export function WoSignOff({
 
   const drawing =
     phase === "ready" && (drawnFor?.overlay !== overlay || drawnFor?.values !== values);
+  /** Nothing is changed or ticked while it is being saved, or before it can be seen. */
+  const locked = saving;
+  const canTick = !locked && !drawing && previewError === null;
 
   const view = scan?.pages[page]?.view ?? [0, 0, 612, 792];
   const pageWidth = view[2] - view[0];
@@ -354,6 +407,8 @@ export function WoSignOff({
 
   // -------------------------------------------------------------------------
   // Changes. Any change to a box un-ticks it: what was read is not there now.
+  // None while saving: what was typed meanwhile used to be reported as saved
+  // when the file held the version from before it.
 
   /**
    * A box kept whole on its page. Dragged past the edge it would be written
@@ -374,6 +429,7 @@ export function WoSignOff({
   }
 
   function changeBox(key: BoxKey, next: Partial<WoOverlay[BoxKey]>) {
+    if (locked) return;
     setOverlay((current) =>
       current ? { ...current, [key]: onPage({ ...current[key], ...next }) } : current,
     );
@@ -382,6 +438,7 @@ export function WoSignOff({
   }
 
   function changeValue(key: keyof WoValues, value: string) {
+    if (locked) return;
     setValues((current) => (current ? { ...current, [key]: value } : current));
     setTyped((current) => ({ ...current, [key]: true }));
     setChecked((current) => ({ ...current, [VALUE_BOX[key]]: false }));
@@ -389,7 +446,7 @@ export function WoSignOff({
   }
 
   function resetValues(keys: (keyof WoValues)[]) {
-    if (!found) return;
+    if (!found || locked) return;
     const fresh = defaultValues(defaults, found.times);
     setValues((current) =>
       current ? keys.reduce((all, key) => ({ ...all, [key]: fresh[key] }), current) : current,
@@ -398,10 +455,13 @@ export function WoSignOff({
     for (const key of keys) {
       setChecked((current) => ({ ...current, [VALUE_BOX[key]]: false }));
     }
+    // Back to the job's values is a change like any other: it used to leave
+    // "Saved" up and no button to save the change with.
+    setDone(null);
   }
 
   function findAgain() {
-    if (!detected) return;
+    if (!detected || locked) return;
     setOverlay(detected.overlay);
     setFound(detected.found);
     // The times follow the layout — a date with them where WorkMarket printed
@@ -421,13 +481,38 @@ export function WoSignOff({
     setDone(null);
   }
 
+  function toggleCheck(key: BoxKey) {
+    if (!canTick) return;
+    setChecked((current) => ({ ...current, [key]: !current[key] }));
+  }
+
+  /** Brings the page into view, room left for an iPhone's status bar. */
+  function viewerIntoView() {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    viewer.scrollIntoView({ block: "start" });
+    // The offline notice sits over the top of the screen when it shows, as
+    // the checkout wizard already allows for.
+    const banner = window.document.querySelector<HTMLElement>("[data-offline-banner]");
+    if (banner) window.scrollBy(0, -banner.getBoundingClientRect().height);
+  }
+
   function show(key: BoxKey) {
-    if (!overlay) return;
+    if (!overlay || !scan) return;
+    const box = overlay[key];
+    const boxView = scan.pages[box.page]?.view ?? [0, 0, 612, 792];
+    const room = (scrollerRef.current?.clientWidth ?? frame) - 24;
+    // As close as it can be while the whole box is still in view across: at a
+    // fixed 200% the signature row was read a third at a time on a phone.
+    const fit = ZOOMS.filter(
+      (step) => box.width * ((frame * step) / (boxView[2] - boxView[0])) <= room,
+    );
     setSelected(key);
-    setPage(overlay[key].page);
-    setZoom((current) => Math.max(current, 2));
+    setPage(box.page);
+    setZoom(fit.length > 0 ? Math.max(...fit) : ZOOMS[0]);
     focusRef.current = key;
-    frameRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+    setFocusTick((tick) => tick + 1);
+    viewerIntoView();
   }
 
   function nudge(key: BoxKey, dx: number, dy: number) {
@@ -436,8 +521,32 @@ export function WoSignOff({
     changeBox(key, { x: round(box.x + dx), y: round(box.y + dy) });
   }
 
+  /** Stretched from the corner: the top-left stays where it is. */
+  function stretch(key: BoxKey, box: WoOverlay[BoxKey], dWidth: number, dHeight: number) {
+    // And the box stops at the page's edge rather than pushing its top up.
+    const boxView = scan?.pages[box.page]?.view ?? [0, 0, 612, 792];
+    const width = Math.min(Math.max(MIN_WIDTH[key], box.width + dWidth), boxView[2] - box.x);
+    const height = Math.min(Math.max(8, box.height + dHeight), box.y + box.height - boxView[1]);
+    const next: Partial<WoOverlay[BoxKey]> = {
+      width: round(width),
+      height: round(height),
+      y: round(box.y + box.height - height),
+    };
+    // The signature and the date are set along the row by how far in they
+    // are; stretched, they move with it. Fixed, a narrowed row left the date
+    // outside its own box, drawn tiny, and a widened one changed nothing.
+    if (key === "approval" && "signatureAt" in box) {
+      const factor = width / box.width;
+      Object.assign(next, {
+        signatureAt: round(box.signatureAt * factor),
+        dateAt: round(box.dateAt * factor),
+      });
+    }
+    changeBox(key, next);
+  }
+
   function onPointerDown(event: React.PointerEvent, key: BoxKey, mode: Drag["mode"]) {
-    if (!overlay) return;
+    if (!overlay || locked) return;
     event.preventDefault();
     event.stopPropagation();
     (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
@@ -455,22 +564,14 @@ export function WoSignOff({
   function onPointerMove(event: React.PointerEvent) {
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
+    event.stopPropagation();
     const dx = (event.clientX - drag.startX) / scale;
     const dy = (event.clientY - drag.startY) / scale;
     const box = drag.box;
     if (drag.mode === "move") {
       changeBox(drag.key, { x: round(box.x + dx), y: round(box.y - dy) });
     } else {
-      // From the corner: the top-left stays where it is, and the box stops
-      // at the page's edge rather than pushing its top up to make room.
-      const view = scan?.pages[box.page]?.view ?? [0, 0, 612, 792];
-      const width = Math.min(Math.max(30, box.width + dx), view[2] - box.x);
-      const height = Math.min(Math.max(8, box.height + dy), box.y + box.height - view[1]);
-      changeBox(drag.key, {
-        width: round(width),
-        height: round(height),
-        y: round(box.y + box.height - height),
-      });
+      stretch(drag.key, box, dx, dy);
     }
   }
 
@@ -479,6 +580,11 @@ export function WoSignOff({
   }
 
   function onBoxKey(event: React.KeyboardEvent, key: BoxKey) {
+    if (event.key === "Escape") {
+      setSelected(null);
+      (event.currentTarget as HTMLElement).blur();
+      return;
+    }
     const step = event.shiftKey ? 10 : 1;
     const moves: Record<string, [number, number]> = {
       ArrowLeft: [-step, 0],
@@ -487,9 +593,12 @@ export function WoSignOff({
       ArrowDown: [0, -step],
     };
     const move = moves[event.key];
-    if (!move) return;
+    if (!move || !overlay) return;
     event.preventDefault();
-    nudge(key, move[0], move[1]);
+    // With Alt, the arrows stretch rather than move: the dot on the corner
+    // has to be reachable without a pointer too.
+    if (event.altKey) stretch(key, overlay[key], move[0], -move[1]);
+    else nudge(key, move[0], move[1]);
   }
 
   function save() {
@@ -508,7 +617,16 @@ export function WoSignOff({
           found,
         }),
       );
-      const result = await saveSignedWorkOrder(formData);
+      // A request that never gets an answer rejects rather than returning a
+      // result. Uncaught, it took the whole screen with it — Next's error
+      // page in place of the boxes, the ticks and everything typed.
+      let result: Awaited<ReturnType<typeof saveSignedWorkOrder>>;
+      try {
+        result = await saveSignedWorkOrder(formData);
+      } catch {
+        setError(DROPPED);
+        return;
+      }
       if (!result.ok) {
         setError(result.error);
         return;
@@ -532,8 +650,13 @@ export function WoSignOff({
     return (
       <div role="alert" className="flex flex-col gap-3 rounded-xl border border-border p-4 text-sm">
         <p className="text-danger">This work order could not be read here.</p>
-        {failure ? <p className="text-xs text-muted-foreground">{failure}</p> : null}
+        {failure ? <p className="text-muted-foreground">{failure}</p> : null}
         <div className="flex flex-wrap gap-2">
+          {failure !== LOCKED_WORK_ORDER ? (
+            <Button type="button" variant="secondary" onClick={() => window.location.reload()}>
+              <RefreshCw /> Try again
+            </Button>
+          ) : null}
           <a
             href={`/api/files/${workOrder.id}`}
             target="_blank"
@@ -565,12 +688,20 @@ export function WoSignOff({
   const ticked = BOXES.filter((key) => checked[key]).length;
   const notesLines = Math.max(1, Math.floor((overlay.notes.height + 0.01) / overlay.notes.pitch));
   const zoomIndex = ZOOMS.indexOf(zoom);
-  const selectedBox = selected ? overlay[selected] : null;
+  // The move buttons are for a box that can be seen. On another page they
+  // moved it out of sight and un-ticked it.
+  const selectedBox = selected && overlay[selected].page === page ? overlay[selected] : null;
+  const step = coarse ? 10 : 1;
+  const points = coarse ? "10 points" : "a point";
 
   return (
     <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
-      {/* The page. */}
-      <div className="flex min-w-0 flex-col gap-2 lg:sticky lg:top-4 lg:w-[640px] lg:shrink-0">
+      {/* The page. Scrolled to with room above it for an iPhone's status bar
+          when the app is opened from the home screen. */}
+      <div
+        ref={viewerRef}
+        className="flex min-w-0 scroll-mt-[calc(env(safe-area-inset-top)+0.75rem)] flex-col gap-2 lg:sticky lg:top-4 lg:w-[640px] lg:shrink-0"
+      >
         <div className="flex flex-wrap items-center gap-2">
           {overlay.pages.length > 1 ? (
             <div role="group" aria-label="Page" className="flex flex-wrap gap-1">
@@ -614,14 +745,21 @@ export function WoSignOff({
           </div>
         </div>
 
-        <div ref={frameRef} className="w-full">
+        <div className="w-full">
           <div
             ref={scrollerRef}
-            className="relative max-h-[75vh] overflow-auto rounded-xl border border-border bg-white"
+            className="relative max-h-[75vh] overflow-auto rounded-xl border border-border bg-white [scrollbar-gutter:stable]"
           >
             <div
               className="relative"
               style={{ width: cssWidth, height: Math.round(pageHeight * scale) }}
+              // A tap on the page, not on a box, puts the box down: there was
+              // no way to see the values without its outline over them.
+              onClick={(event) => {
+                if (event.target === event.currentTarget || event.target === canvasRef.current) {
+                  setSelected(null);
+                }
+              }}
             >
               <canvas ref={canvasRef} className="block" aria-label={`Page ${page + 1} of the work order, as it will be saved`} />
 
@@ -633,8 +771,9 @@ export function WoSignOff({
                     key={key}
                     role="button"
                     tabIndex={0}
-                    aria-label={`${BOX_NAME[key]} box. Drag it, or use the arrow keys, to move it.`}
+                    aria-label={`${BOX_NAME[key]} box. Drag it, or use the arrow keys, to move it; Alt with the arrows stretches it.`}
                     aria-pressed={active}
+                    aria-disabled={locked || undefined}
                     data-box={key}
                     onPointerDown={(event) => onPointerDown(event, key, "move")}
                     onPointerMove={onPointerMove}
@@ -642,13 +781,15 @@ export function WoSignOff({
                     onPointerCancel={onPointerUp}
                     onKeyDown={(event) => onBoxKey(event, key)}
                     onFocus={() => setSelected(key)}
+                    // Drawn just outside the box, never over it: the 2 px edge
+                    // used to sit on the first digit of the time it framed.
                     className={cn(
-                      "absolute cursor-move touch-none rounded-[2px] border-2 outline-none",
+                      "absolute cursor-move touch-none select-none rounded-[2px] outline-2 outline-offset-2 [-webkit-touch-callout:none]",
                       active
-                        ? "border-[var(--color-primary)] bg-[var(--color-primary)]/10"
+                        ? "bg-[var(--color-primary)]/10 outline-solid outline-[var(--color-primary)]"
                         : checked[key]
-                          ? "border-success/70 border-dashed"
-                          : "border-[var(--color-primary)]/60 border-dashed",
+                          ? "outline-dashed outline-success/70"
+                          : "outline-dashed outline-[var(--color-primary)]/60",
                     )}
                     style={{
                       left: (box.x - view[0]) * scale,
@@ -660,7 +801,7 @@ export function WoSignOff({
                     <span
                       aria-hidden
                       className={cn(
-                        "pointer-events-none absolute -top-5 left-0 whitespace-nowrap rounded px-1 text-[0.6875rem] font-medium leading-4",
+                        "pointer-events-none absolute -top-6 left-0 whitespace-nowrap rounded px-1 text-[0.6875rem] font-medium leading-4",
                         active
                           ? "bg-[var(--color-primary)] text-primary-foreground"
                           : "bg-surface-raised text-foreground shadow-sm",
@@ -669,15 +810,16 @@ export function WoSignOff({
                       {BOX_SHORT[key]}
                     </span>
                     {active ? (
-                      // A 44 px place to press around a dot that can be seen
-                      // past: the dot alone was too small for a gloved thumb.
+                      // A 44 px place to press, with the dot it holds sitting
+                      // outside the corner: inside, it covered the "PM" of the
+                      // check-out the owner asked to have written out.
                       <span
                         aria-hidden
                         onPointerDown={(event) => onPointerDown(event, key, "resize")}
                         onPointerMove={onPointerMove}
                         onPointerUp={onPointerUp}
                         onPointerCancel={onPointerUp}
-                        className="absolute -bottom-[22px] -right-[22px] flex size-11 cursor-nwse-resize touch-none items-center justify-center"
+                        className="absolute -bottom-8 -right-8 flex size-11 cursor-nwse-resize touch-none select-none items-center justify-center [-webkit-touch-callout:none]"
                       >
                         <span className="pointer-events-none size-5 rounded-full border-2 border-white bg-[var(--color-primary)] shadow" />
                       </span>
@@ -689,15 +831,17 @@ export function WoSignOff({
           </div>
         </div>
 
-        <p className="flex min-h-5 items-center gap-2 text-xs text-muted-foreground" aria-live="polite">
+        <p className="flex min-h-5 items-center gap-2 text-xs text-muted-foreground">
           {drawing ? (
             <>
               <Loader2 className="size-3 animate-spin" aria-hidden /> Drawing it…
             </>
           ) : previewError ? (
-            <span className="text-danger">The preview could not be drawn: {previewError}</span>
+            <span role="alert" className="text-danger">
+              The preview could not be drawn: {previewError}
+            </span>
           ) : (
-            "This is the page as it will be saved. Drag a box to move it; the dot on its corner stretches it."
+            "This is the page as it will be saved. Drag a box to move it; the dot on its corner stretches it. Tap the page to put it down."
           )}
         </p>
 
@@ -709,24 +853,35 @@ export function WoSignOff({
           >
             <span className="text-sm font-medium">{BOX_SHORT[selected]}</span>
             <div className="flex items-center gap-1">
-              <Button type="button" size="icon" variant="secondary" aria-label="Left a point" onClick={() => nudge(selected, -1, 0)}>
+              <Button type="button" size="icon" variant="secondary" aria-label={`Left ${points}`} disabled={locked} onClick={() => nudge(selected, -step, 0)}>
                 <ArrowLeft />
               </Button>
-              <Button type="button" size="icon" variant="secondary" aria-label="Up a point" onClick={() => nudge(selected, 0, 1)}>
+              <Button type="button" size="icon" variant="secondary" aria-label={`Up ${points}`} disabled={locked} onClick={() => nudge(selected, 0, step)}>
                 <ArrowUp />
               </Button>
-              <Button type="button" size="icon" variant="secondary" aria-label="Down a point" onClick={() => nudge(selected, 0, -1)}>
+              <Button type="button" size="icon" variant="secondary" aria-label={`Down ${points}`} disabled={locked} onClick={() => nudge(selected, 0, -step)}>
                 <ArrowDown />
               </Button>
-              <Button type="button" size="icon" variant="secondary" aria-label="Right a point" onClick={() => nudge(selected, 1, 0)}>
+              <Button type="button" size="icon" variant="secondary" aria-label={`Right ${points}`} disabled={locked} onClick={() => nudge(selected, step, 0)}>
                 <ArrowRight />
               </Button>
             </div>
+            {/* A point a tap is right for the last nudge and slow for the
+                first; ten at a time gets a parked box across the page. */}
+            <Button
+              type="button"
+              variant={coarse ? "primary" : "secondary"}
+              aria-pressed={coarse}
+              onClick={() => setCoarse((current) => !current)}
+            >
+              ×10
+            </Button>
             {overlay.pages.length > 1 ? (
               <label className="ml-auto flex items-center gap-2 text-sm">
                 <span className="text-muted-foreground">On page</span>
                 <select
                   value={selectedBox.page}
+                  disabled={locked}
                   onChange={(event) => {
                     const next = Number(event.target.value);
                     changeBox(selected, { page: next });
@@ -765,7 +920,7 @@ export function WoSignOff({
               The signed copy already on the job
             </a>
           ) : null}
-          <Button type="button" variant="ghost" className="ml-auto" onClick={findAgain}>
+          <Button type="button" variant="ghost" className="ml-auto" disabled={locked} onClick={findAgain}>
             <RotateCcw /> Find the boxes again
           </Button>
         </div>
@@ -773,8 +928,9 @@ export function WoSignOff({
         <Section
           box="times"
           checked={checked.times}
+          canTick={canTick}
           onShow={() => show("times")}
-          onCheck={() => setChecked((current) => ({ ...current, times: !current.times }))}
+          onCheck={() => toggleCheck("times")}
           notes={[
             found.times === "lines"
               ? { text: "Written on the blank Arrival time and Departure time lines." }
@@ -797,6 +953,7 @@ export function WoSignOff({
                 id="wo-check-in"
                 value={values.checkIn}
                 maxLength={60}
+                disabled={locked}
                 onChange={(event) => changeValue("checkIn", event.target.value)}
               />
             </Field>
@@ -805,12 +962,13 @@ export function WoSignOff({
                 id="wo-check-out"
                 value={values.checkOut}
                 maxLength={60}
+                disabled={locked}
                 onChange={(event) => changeValue("checkOut", event.target.value)}
               />
             </Field>
           </div>
           {typed.checkIn || typed.checkOut ? (
-            <ResetLink onClick={() => resetValues(["checkIn", "checkOut"])}>
+            <ResetLink disabled={locked} onClick={() => resetValues(["checkIn", "checkOut"])}>
               Back to the job&rsquo;s times
             </ResetLink>
           ) : null}
@@ -819,8 +977,9 @@ export function WoSignOff({
         <Section
           box="notes"
           checked={checked.notes}
+          canTick={canTick}
           onShow={() => show("notes")}
-          onCheck={() => setChecked((current) => ({ ...current, notes: !current.notes }))}
+          onCheck={() => toggleCheck("notes")}
           notes={[
             found.notes === "lines"
               ? {
@@ -851,11 +1010,12 @@ export function WoSignOff({
               rows={5}
               value={values.notes}
               maxLength={4000}
+              disabled={locked}
               onChange={(event) => changeValue("notes", event.target.value)}
             />
           </Field>
           {typed.notes ? (
-            <ResetLink onClick={() => resetValues(["notes"])}>
+            <ResetLink disabled={locked} onClick={() => resetValues(["notes"])}>
               Back to the job&rsquo;s report
             </ResetLink>
           ) : null}
@@ -864,8 +1024,9 @@ export function WoSignOff({
         <Section
           box="approval"
           checked={checked.approval}
+          canTick={canTick}
           onShow={() => show("approval")}
-          onCheck={() => setChecked((current) => ({ ...current, approval: !current.approval }))}
+          onCheck={() => toggleCheck("approval")}
           notes={[
             found.approval
               ? { text: "On the Customer Name, Customer Signature and Date line." }
@@ -889,6 +1050,7 @@ export function WoSignOff({
                 id="wo-name"
                 value={values.name}
                 maxLength={120}
+                disabled={locked}
                 onChange={(event) => changeValue("name", event.target.value)}
               />
             </Field>
@@ -897,12 +1059,13 @@ export function WoSignOff({
                 id="wo-date"
                 value={values.date}
                 maxLength={40}
+                disabled={locked}
                 onChange={(event) => changeValue("date", event.target.value)}
               />
             </Field>
           </div>
           {typed.name || typed.date ? (
-            <ResetLink onClick={() => resetValues(["name", "date"])}>
+            <ResetLink disabled={locked} onClick={() => resetValues(["name", "date"])}>
               Back to the job&rsquo;s name and date
             </ResetLink>
           ) : null}
@@ -946,7 +1109,7 @@ export function WoSignOff({
               <Button
                 type="button"
                 block
-                disabled={ticked < 3 || saving || drawing}
+                disabled={ticked < 3 || saving || drawing || previewError !== null}
                 onClick={save}
               >
                 {saving ? <Loader2 className="animate-spin" /> : <Check />}
@@ -968,6 +1131,7 @@ export function WoSignOff({
 function Section({
   box,
   checked,
+  canTick,
   onShow,
   onCheck,
   notes,
@@ -975,6 +1139,8 @@ function Section({
 }: {
   box: BoxKey;
   checked: boolean;
+  /** Not while the page is being redrawn or saved: a tick is for what was seen. */
+  canTick: boolean;
   onShow: () => void;
   onCheck: () => void;
   notes: ({ text: string; warn?: boolean } | null)[];
@@ -1006,10 +1172,12 @@ function Section({
         <Button type="button" variant="secondary" onClick={onShow}>
           <Crosshair /> Show me
         </Button>
+        {/* The label says what pressing it does; it is not also a pressed
+            toggle, which read the same change out twice. */}
         <Button
           type="button"
           variant={checked ? "ghost" : "primary"}
-          aria-pressed={checked}
+          disabled={!canTick}
           onClick={onCheck}
         >
           {checked ? (
@@ -1027,12 +1195,21 @@ function Section({
   );
 }
 
-function ResetLink({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
+function ResetLink({
+  onClick,
+  disabled,
+  children,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="min-h-11 w-fit text-left text-sm text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+      disabled={disabled}
+      className="min-h-11 w-fit text-left text-sm text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:opacity-50"
     >
       {children}
     </button>

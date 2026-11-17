@@ -604,6 +604,10 @@ export default async function JobPage({
         (other) => other.generated && other.sourceTemplateId === doc.sourceTemplateId,
       ),
   );
+  // A filled sheet, or one somebody attached already signed.
+  const signOffOnJob = job.documents.some(
+    (doc) => doc.jobDocumentKind === "SIGN_OFF" && (doc.generated || !doc.sourceTemplateId),
+  );
   const paperwork: CheckoutPaperwork | null = canUpload
     ? {
         workOrder: latestWorkOrder
@@ -613,15 +617,14 @@ export default async function JobPage({
               signed: signedWorkOrders.some((doc) => doc.signedFromId === latestWorkOrder.id),
             }
           : null,
+        // The owner's rule: with a sign-off on the job already, it is their
+        // work order that is offered, not the blank again. Both are offered
+        // only when there is no sign-off yet.
         sheet:
-          emptySheet?.sourceTemplateId
+          !signOffOnJob && emptySheet?.sourceTemplateId
             ? { templateId: emptySheet.sourceTemplateId, name: emptySheet.originalName }
             : null,
-        // A filled sheet, or one somebody attached already signed.
-        signOffOnJob: job.documents.some(
-          (doc) =>
-            doc.jobDocumentKind === "SIGN_OFF" && (doc.generated || !doc.sourceTemplateId),
-        ),
+        signOffOnJob,
       }
     : null;
 

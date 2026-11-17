@@ -411,7 +411,18 @@ async function cleanup() {
     },
   });
   if (customer) await db.customer.delete({ where: { id: customer.id } });
-  if (company) await db.client.delete({ where: { id: company.id } });
+  if (company) {
+    // A template holds its file rather than the other way round, so the file
+    // is not taken with it when the company goes.
+    const templates = await db.clientDocumentTemplate.findMany({
+      where: { clientId: company.id },
+      select: { attachmentId: true },
+    });
+    await db.client.delete({ where: { id: company.id } });
+    await db.attachment.deleteMany({
+      where: { id: { in: templates.map((template) => template.attachmentId) } },
+    });
+  }
 }
 
 /**
@@ -462,6 +473,60 @@ async function tickAll(page: Page) {
     if ((await button.count()) === 0) break;
     await button.click();
   }
+}
+
+/** The zoom the page is shown at, as the screen says it. */
+async function zoomShown(page: Page): Promise<string> {
+  return (await page.getByText(/^\d+%$/).first().textContent())?.trim() ?? "";
+}
+
+/** The page's frame, as the screen lays it out. */
+async function frameScroll(page: Page) {
+  return page.evaluate(() => {
+    const scroller = document
+      .querySelector("canvas[aria-label^='Page']")
+      ?.closest(".overflow-auto") as HTMLElement | null;
+    return scroller
+      ? {
+          sideways: scroller.scrollWidth - scroller.clientWidth,
+          left: scroller.scrollLeft,
+          top: scroller.scrollTop,
+        }
+      : null;
+  });
+}
+
+async function scrollFrameTo(page: Page, left: number, top: number) {
+  await page.evaluate(
+    ([x, y]) => {
+      const scroller = document
+        .querySelector("canvas[aria-label^='Page']")
+        ?.closest(".overflow-auto") as HTMLElement | null;
+      scroller?.scrollTo({ left: x, top: y });
+    },
+    [left, top],
+  );
+}
+
+/** The last one out, through the whole checkout, as a tech does it. */
+async function clockOutThroughWizard(page: Page) {
+  await page.getByRole("button", { name: "Clock out", exact: true }).click();
+  await page.waitForSelector("text=Step 1 of 6", { timeout: 15_000 });
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Completed" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByText("No release code for this job").click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  const modName = page.locator("#mod-name");
+  if (await modName.count()) await modName.fill("Dana Reyes");
+  else await page.locator("#mod-picker").selectOption({ index: 0 });
+  await drawSignature(page);
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.waitForSelector("text=Signing as", { timeout: 30_000 });
+  await drawSignature(page);
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Clock out now" }).click();
+  await page.getByText("Clocked out. The job is closed.").waitFor({ timeout: 30_000 });
 }
 
 async function drawSignature(page: Page) {
@@ -515,6 +580,10 @@ async function online(browser: Browser) {
       workOrder?: "lines" | "printed";
       open?: boolean;
       signed?: boolean;
+      /** The company's own sign-off blank on the job, mapped and still empty. */
+      blank?: boolean;
+      /** A sign-off sheet attached already signed, by hand. */
+      signOffAttached?: boolean;
     },
   ) {
     sequence += 1;
@@ -595,12 +664,88 @@ async function online(browser: Browser) {
         })
       ).id;
     }
+    if (options.blank) {
+      const template = await companyBlank();
+      const stored = await storeFile(created.id, await plainDocument(), "application/pdf");
+      await db.attachment.create({
+        data: {
+          storagePath: stored.storagePath,
+          originalName: "WOSO sign-off.pdf",
+          mimeType: "application/pdf",
+          sizeBytes: stored.sizeBytes,
+          uploadedById: boss.user.id,
+          jobDocumentId: created.id,
+          jobDocumentKind: "SIGN_OFF",
+          sourceTemplateId: template,
+        },
+      });
+    }
+    if (options.signOffAttached) {
+      const stored = await storeFile(created.id, await plainDocument(), "application/pdf");
+      await db.attachment.create({
+        data: {
+          storagePath: stored.storagePath,
+          originalName: "Signed sheet scan.pdf",
+          mimeType: "application/pdf",
+          sizeBytes: stored.sizeBytes,
+          uploadedById: tech.user.id,
+          jobDocumentId: created.id,
+          jobDocumentKind: "SIGN_OFF",
+        },
+      });
+    }
     return { id: created.id, workOrderId };
+  }
+
+  /** The company's sign-off blank, with one box that fills itself. */
+  let blankId: string | null = null;
+  async function companyBlank(): Promise<string> {
+    if (blankId) return blankId;
+    const stored = await storeFile("templates", await plainDocument(), "application/pdf");
+    const file = await db.attachment.create({
+      data: {
+        storagePath: stored.storagePath,
+        originalName: "WOSO sign-off.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: stored.sizeBytes,
+        uploadedById: boss.user.id,
+      },
+    });
+    const template = await db.clientDocumentTemplate.create({
+      data: {
+        clientId: company.id,
+        kind: "SIGN_OFF",
+        label: "WOSO sign-off",
+        attachmentId: file.id,
+        boxSource: "DRAWN",
+        pageCount: 1,
+        pageWidth: 612,
+        pageHeight: 792,
+        placements: {
+          create: [{ page: 0, x: 60, y: 600, width: 200, height: 18, source: "job.title" }],
+        },
+      },
+    });
+    blankId = template.id;
+    return template.id;
   }
 
   const openJob = await job("WOSO Still on site", { lifecycle: "IN_PROGRESS", workOrder: "printed", open: true });
   const closedJob = await job("WOSO Closed", { lifecycle: "PENDING_REVIEW", workOrder: "printed", signed: true });
   const checkoutJob = await job("WOSO Checkout", { lifecycle: "IN_PROGRESS", workOrder: "lines", open: true });
+  const checkoutBoth = await job("WOSO Checkout both", {
+    lifecycle: "IN_PROGRESS",
+    workOrder: "lines",
+    open: true,
+    blank: true,
+  });
+  const checkoutSigned = await job("WOSO Checkout signed", {
+    lifecycle: "IN_PROGRESS",
+    workOrder: "lines",
+    open: true,
+    blank: true,
+    signOffAttached: true,
+  });
 
   const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
   await context.addCookies([{ name: "authjs.session-token", value: tech.token, url: BASE }]);
@@ -648,6 +793,11 @@ async function online(browser: Browser) {
   check("the day they signed", await page.locator("#wo-date").inputValue(), date);
   await shot(page, "wo-page-phone");
   check(
+    "at 100% the page fits its frame, with no sideways scroll",
+    ((await frameScroll(page))?.sideways ?? 1) <= 0,
+    true,
+  );
+  check(
     "it is not saved before each part is checked",
     await page.getByRole("button", { name: "Save the signed work order" }).isDisabled(),
     true,
@@ -656,9 +806,23 @@ async function online(browser: Browser) {
   // A nudge un-ticks what it moved: what was read is not there any more.
   await page.getByRole("button", { name: "Looks right" }).first().click();
   check("ticked", await page.getByRole("button", { name: "Checked — undo" }).count(), 1);
-  await page.locator('section[aria-label="Check-in and check-out"]').getByRole("button", { name: "Show me" }).click();
+  const showTimes = page
+    .locator('section[aria-label="Check-in and check-out"]')
+    .getByRole("button", { name: "Show me" });
+  await showTimes.click();
+  check("Show me brings the times as close as they go", await zoomShown(page), "300%");
   await page.getByRole("button", { name: "Up a point" }).click();
   check("moved, it needs looking at again", await page.getByRole("button", { name: "Checked — undo" }).count(), 0);
+  // Pressed a second time with nothing else changed, it used to do nothing.
+  await scrollFrameTo(page, 0, 0);
+  await showTimes.click();
+  await page.waitForTimeout(200);
+  check("pressed again, it brings the box back into view", ((await frameScroll(page))?.left ?? 0) > 0, true);
+  await page
+    .locator('section[aria-label="Notes"]')
+    .getByRole("button", { name: "Show me" })
+    .click();
+  check("a box as wide as the notes is shown whole across", await zoomShown(page), "100%");
 
   await tickAll(page);
   const save = page.getByRole("button", { name: "Save the signed work order" });
@@ -670,6 +834,24 @@ async function online(browser: Browser) {
     undefined,
     { timeout: 20_000 },
   );
+  check("one pdf.js worker for the whole screen, however often it redraws", page.workers().length, 1);
+
+  // The save request lost on the way: the screen used to give way to Next's
+  // error page, and everything typed and ticked with it.
+  const isScreen = (url: URL) => url.pathname.endsWith("/wo-sign-off");
+  const drop = (route: import("playwright").Route) =>
+    route.request().method() === "POST" ? route.abort("internetdisconnected") : route.continue();
+  await page.route(isScreen, drop);
+  await save.click();
+  check(
+    "a dropped connection while saving says so",
+    await soon(page.getByRole("alert").filter({ hasText: "connection dropped" })),
+    true,
+  );
+  check("and keeps what was on the screen", await page.locator("#wo-check-in").inputValue(), `${date} 9:05 AM`);
+  check("ticks and all", await page.getByRole("button", { name: "Checked — undo" }).count(), 3);
+  await page.unroute(isScreen, drop);
+
   await save.click();
   await page.getByText("Saved: 2600000001-Signed.pdf").waitFor({ timeout: 30_000 });
   await shot(page, "wo-page-saved-phone");
@@ -721,9 +903,25 @@ async function online(browser: Browser) {
   );
   await page.locator("#wo-check-in").fill(`${date} 9:06 AM`);
   check(
+    "a tick waits for the page to be redrawn",
+    await page
+      .locator('section[aria-label="Check-in and check-out"]')
+      .getByRole("button", { name: "Looks right" })
+      .isDisabled(),
+    true,
+  );
+  check(
     "typed over, it offers the job's own back",
     await page.getByRole("button", { name: "Back to the job’s times" }).isVisible(),
     true,
+  );
+  await page.waitForFunction(
+    () =>
+      [...document.querySelectorAll("button")].some(
+        (button) => button.textContent?.includes("Looks right") && !button.disabled,
+      ),
+    undefined,
+    { timeout: 20_000 },
   );
   await tickAll(page);
   await page.waitForFunction(
@@ -734,13 +932,34 @@ async function online(browser: Browser) {
     undefined,
     { timeout: 20_000 },
   );
+  // Held for a moment on the way, so the screen can be looked at mid-save.
+  const slow = async (route: import("playwright").Route) => {
+    if (route.request().method() === "POST") await new Promise((resolve) => setTimeout(resolve, 1500));
+    await route.continue();
+  };
+  await page.route(isScreen, slow);
   await page.getByRole("button", { name: "Replace the signed work order" }).click();
+  check("nothing can be typed while it saves", await page.locator("#wo-notes").isDisabled(), true);
   await page.getByText("Saved: 2600000001-Signed.pdf").waitFor({ timeout: 30_000 });
+  await page.unroute(isScreen, slow);
   check(
     "still one signed copy",
     await db.attachment.count({ where: { jobDocumentId: closedJob.id, signedFromId: closedJob.workOrderId } }),
     1,
   );
+  // Back to the job's own values after saving is a change to save: it used
+  // to leave "Saved" up and no button.
+  await page.getByRole("button", { name: "Back to the job’s times" }).click();
+  check(
+    "going back to the job's times after saving offers saving again",
+    await soon(page.getByRole("button", { name: "Replace the signed work order" })),
+    true,
+  );
+  // Left by the screen's own link, the worker goes with it.
+  await page.getByRole("link", { name: "Back" }).first().click();
+  await page.waitForURL(new RegExp(`/jobs/${closedJob.id}$`), { timeout: 15_000 });
+  await page.waitForTimeout(500);
+  check("leaving the screen lets its worker go", page.workers().length, 0);
   await page.goto(`${BASE}/jobs/${closedJob.id}/wo-sign-off`, { waitUntil: "domcontentloaded" });
   await ready(page);
   check("what was typed comes back", await page.locator("#wo-check-in").inputValue(), `${date} 9:06 AM`);
@@ -808,12 +1027,29 @@ async function online(browser: Browser) {
   // The screen worked on a desktop and on the owner's phone said "undefined is
   // not a function (near '...t of e...')". Only Chromium is installed here, so
   // the phone is played by Chromium with that one ability taken away.
-  const iphone = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  // Taken away inside pdf.js's worker as well, which an init script does not
+  // reach: its script is rewritten on the way in, and the app's own service
+  // worker is kept out so the rewrite is not served round from its cache.
+  const iphone = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    serviceWorkers: "block",
+  });
   await iphone.addCookies([{ name: "authjs.session-token", value: tech.token, url: BASE }]);
   await iphone.addInitScript(() => {
     const stream = ReadableStream.prototype as unknown as Record<PropertyKey, unknown>;
     delete stream[Symbol.asyncIterator];
     delete stream.values;
+  });
+  let workerRewritten = false;
+  await iphone.route(/pdf\.worker[^/]*\.m?js(\?.*)?$/, async (route) => {
+    const response = await route.fetch();
+    workerRewritten = true;
+    await route.fulfill({
+      response,
+      body:
+        "try{delete ReadableStream.prototype[Symbol.asyncIterator];delete ReadableStream.prototype.values;}catch(e){}\n" +
+        (await response.text()),
+    });
   });
   const onIphone = await iphone.newPage();
   await onIphone.goto(`${BASE}/jobs/${closedJob.id}/wo-sign-off`, { waitUntil: "domcontentloaded" });
@@ -827,27 +1063,41 @@ async function online(browser: Browser) {
     await onIphone.getByText("could not be read here").count(),
     0,
   );
+  check("with the worker played as an iPhone's too", workerRewritten, true);
   await iphone.close();
 
   // --- offered at the last clock-out ------------------------------------------
+  // Their blank on the job and empty: both are offered.
+  await page.goto(`${BASE}/jobs/${checkoutBoth.id}`, { waitUntil: "domcontentloaded" });
+  await clockOutThroughWizard(page);
+  check(
+    "with their blank empty, the card offers the sheet and the work order",
+    (await page.getByRole("link", { name: "Fill in the sign-off sheet" }).count()) === 1 &&
+      (await page.getByRole("link", { name: "Use WM WO as a Sign-Off" }).count()) >= 1,
+    true,
+  );
+  check(
+    "and says both",
+    await page.getByText("their sign-off sheet, and their work order as well").isVisible(),
+    true,
+  );
+
+  // A sign-off attached already: the work order, and not the blank again.
+  await page.goto(`${BASE}/jobs/${checkoutSigned.id}`, { waitUntil: "domcontentloaded" });
+  await clockOutThroughWizard(page);
+  check(
+    "with a sign-off on the job, it is the work order that is offered",
+    await page.getByText("A sign-off is on the job already").isVisible(),
+    true,
+  );
+  check(
+    "and not their blank again",
+    await page.getByRole("link", { name: "Fill in the sign-off sheet" }).count(),
+    0,
+  );
+
   await page.goto(`${BASE}/jobs/${checkoutJob.id}`, { waitUntil: "domcontentloaded" });
-  await page.getByRole("button", { name: "Clock out", exact: true }).click();
-  await page.waitForSelector("text=Step 1 of 6", { timeout: 15_000 });
-  await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByRole("button", { name: "Completed" }).click();
-  await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByText("No release code for this job").click();
-  await page.getByRole("button", { name: "Continue" }).click();
-  const modName = page.locator("#mod-name");
-  if (await modName.count()) await modName.fill("Dana Reyes");
-  else await page.locator("#mod-picker").selectOption({ index: 0 });
-  await drawSignature(page);
-  await page.getByRole("button", { name: "Continue" }).click();
-  await page.waitForSelector("text=Signing as", { timeout: 30_000 });
-  await drawSignature(page);
-  await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByRole("button", { name: "Clock out now" }).click();
-  await page.getByText("Clocked out. The job is closed.").waitFor({ timeout: 30_000 });
+  await clockOutThroughWizard(page);
   check(
     "with no sheet of their own, the work order is offered",
     await page.getByRole("link", { name: "Use WM WO as a Sign-Off" }).first().isVisible(),

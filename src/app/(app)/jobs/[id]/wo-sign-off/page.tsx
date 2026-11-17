@@ -90,7 +90,8 @@ export default async function WoSignOffPage({
 
   const header = (
     <PageHeader
-      title="Use WM WO as a Sign-Off"
+      // A non-breaking hyphen: at 320 px the title broke as "Sign-" / "Off".
+      title="Use WM WO as a Sign‑Off"
       backHref={`/jobs/${id}`}
       description={`${job.client.name} · ${job.intWoId} — their work order, signed where the customer signs it.`}
     />

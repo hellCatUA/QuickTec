@@ -247,11 +247,14 @@ function Section({
               ) : (
                 <FileText className="size-4 shrink-0 text-muted-foreground" />
               )}
+              {/* Wrapped, not cut: a signed work order is told from the one
+                  it was made from by the end of its name, and at 320 px the
+                  cut fell before "-Signed". */}
               <a
                 href={`/api/files/${doc.id}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="min-w-0 flex-1 truncate underline-offset-2 hover:underline"
+                className="min-w-0 flex-1 underline-offset-2 [overflow-wrap:anywhere] hover:underline"
               >
                 {doc.originalName}
               </a>
@@ -304,8 +307,6 @@ function Section({
         ))
       )}
 
-      {extra}
-
       {canUpload ? (
         <div className="flex flex-wrap items-center gap-2">
           <label className="flex min-h-11 flex-1 cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-border px-3 text-sm">
@@ -332,6 +333,10 @@ function Section({
           </label>
         </div>
       ) : null}
+
+      {/* After the attach control, not between it and the "attach it here"
+          above it, which it used to split from its button. */}
+      {extra}
     </div>
   );
 }

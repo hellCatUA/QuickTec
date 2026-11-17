@@ -6,6 +6,7 @@ import {
   type PDFPage,
 } from "pdf-lib";
 import { sizeToFit, toWinAnsi, wrapText } from "@/lib/forms/text-fit";
+import { LOCKED_WORK_ORDER } from "@/lib/forms/wo-errors";
 import {
   RULE_LIFT,
   TIMES_ASCENT,
@@ -233,8 +234,7 @@ export async function drawWorkOrder(
   return { notes, signed };
 }
 
-export const LOCKED_WORK_ORDER =
-  "This work order is locked against changes by whoever made it, so nothing can be written on it.";
+export { LOCKED_WORK_ORDER };
 
 /**
  * A work order, opened for drawing, as a new document holding its pages.

@@ -16,6 +16,18 @@ import { cn } from "@/lib/utils";
 /** The owner's words for it, on every button that leads there. */
 export const USE_WO_LABEL = "Use WM WO as a Sign-Off";
 
+/**
+ * The same words, kept from breaking at the hyphen: at 320 px the label wrapped
+ * as "Sign-" on one line and "Off" on the next.
+ */
+function UseWoLabel() {
+  return (
+    <span>
+      Use WM WO as a <span className="whitespace-nowrap">Sign-Off</span>
+    </span>
+  );
+}
+
 const actionClass =
   "inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg px-4 text-sm font-medium transition-colors";
 
@@ -39,13 +51,17 @@ export function AfterCheckout({
 }) {
   const { workOrder, sheet, signOffOnJob } = paperwork;
 
-  const said = signOffOnJob
-    ? "A sign-off is on the job already. Their work order can go back signed as well."
-    : sheet && workOrder
+  // Said from what is actually offered. It used to say a sign-off was on the
+  // job already over a button to fill in their sheet, and to promise their
+  // work order on a job that had none.
+  const said =
+    sheet && workOrder
       ? "Get the paperwork signed while the customer is here: their sign-off sheet, and their work order as well."
       : sheet
         ? "Get their sign-off sheet filled in and signed while the customer is here."
-        : "This company has no sign-off sheet on the job. Their work order can go back signed instead.";
+        : signOffOnJob
+          ? "A sign-off is on the job already. Their work order can go back signed as well."
+          : "This company has no sign-off sheet on the job. Their work order can go back signed instead.";
 
   return (
     <Card className="border-primary/50">
@@ -77,7 +93,7 @@ export function AfterCheckout({
               )}
             >
               <FileSignature className="size-4 shrink-0" aria-hidden />
-              {workOrder.signed ? "Sign the work order again" : USE_WO_LABEL}
+              {workOrder.signed ? "Sign the work order again" : <UseWoLabel />}
             </Link>
           ) : null}
           <Button type="button" variant="ghost" block onClick={onDone}>
@@ -105,7 +121,11 @@ export function WoSignOffEntry({
 }) {
   const [why, setWhy] = React.useState<string | null>(null);
   const ready = state.done && state.workOrders.length > 0;
-  const blocked = !state.done ? NOT_CLOSED_YET : state.workOrders.length === 0 ? NO_WORK_ORDER : null;
+  const blocked = !state.done
+    ? `${NOT_CLOSED_YET} It is offered then, and stays here for afterwards.`
+    : state.workOrders.length === 0
+      ? NO_WORK_ORDER
+      : null;
 
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-border p-3">
@@ -139,7 +159,7 @@ export function WoSignOffEntry({
           className={cn(actionClass, "border border-border bg-surface-raised hover:bg-muted")}
         >
           <FileSignature className="size-4 shrink-0" aria-hidden />
-          {USE_WO_LABEL}
+          <UseWoLabel />
         </Link>
       ) : (
         <button
@@ -150,7 +170,7 @@ export function WoSignOffEntry({
           className={cn(actionClass, "border border-dashed border-border text-muted-foreground")}
         >
           <FileSignature className="size-4 shrink-0" aria-hidden />
-          {USE_WO_LABEL}
+          <UseWoLabel />
         </button>
       )}
       {why ? (
