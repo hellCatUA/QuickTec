@@ -29,6 +29,7 @@
     "verify:profiles": "tsx --tsconfig tsconfig.json scripts/verify-profiles.ts",
     "verify:signin": "tsx --tsconfig tsconfig.json scripts/verify-signin.ts",
     "verify:deliverables": "tsx --tsconfig tsconfig.json scripts/verify-deliverables.ts",
+    "verify:wo": "tsx --tsconfig tsconfig.json scripts/verify-wo-signoff.ts",
     "audit:files": "tsx --tsconfig tsconfig.json scripts/audit-job-files.ts",
     "verify:budget": "tsx --tsconfig tsconfig.json scripts/verify-budget-guards.ts",
     "signin:local": "tsx --tsconfig tsconfig.json scripts/local-signin.ts"

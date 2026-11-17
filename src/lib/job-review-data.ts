@@ -26,6 +26,7 @@ import {
 } from "@/lib/job-review";
 import { isJobField, JOB_FIELDS } from "@/lib/job-fields";
 import { visitTotals } from "@/lib/time-tracking";
+import { isSignedWorkOrder } from "@/lib/wo-sign-off";
 import type { JobLifecycle } from "@prisma-client";
 
 /**
@@ -180,7 +181,9 @@ export async function loadReview(jobId: string): Promise<LoadedReview | null> {
       createdById: true,
       projectId: true,
       site: { select: { timeZone: true } },
-      documents: { select: { jobDocumentKind: true } },
+      documents: {
+        select: { jobDocumentKind: true, generated: true, sourceTemplateId: true },
+      },
       deliverableRules: {
         where: { projectId: null },
         select: RULE_SELECT,
@@ -377,8 +380,10 @@ export async function loadReview(jobId: string): Promise<LoadedReview | null> {
           (total, item) => total + item.attachments.length,
           0,
         ),
+        // Their work order signed as the sign-off counts: it is what a company
+        // with no sheet of its own gets back instead of one.
         hasSignOff: job.documents.some(
-          (doc) => doc.jobDocumentKind === "SIGN_OFF",
+          (doc) => doc.jobDocumentKind === "SIGN_OFF" || isSignedWorkOrder(doc),
         ),
       }),
       // Every photo the client is about to be sent, in the pass that is about

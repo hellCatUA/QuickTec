@@ -32,6 +32,7 @@ export function TimeClock({
   canClock,
   serverNow,
   onRequestCheckout,
+  onClockedOut,
 }: {
   jobId: string;
   timeZone: string;
@@ -47,6 +48,8 @@ export function TimeClock({
   serverNow: string;
   /** Present when the job should go through the guided checkout on the way out. */
   onRequestCheckout?: () => void;
+  /** A plain clock-out closed the job — the last one out without the checkout. */
+  onClockedOut?: () => void;
 }) {
   // Starts on the server's clock so the first client render matches the HTML
   // that arrived; the interval takes over from there.
@@ -77,12 +80,17 @@ export function TimeClock({
   const startsAt = openVisit ? new Date(openVisit.clockInAt) : null;
   const notStartedYet = Boolean(startsAt && startsAt.getTime() > now.getTime());
 
-  function run(action: () => Promise<{ ok: boolean; error?: string }>) {
+  function run(
+    action: () => Promise<{ ok: boolean; error?: string; closed?: boolean }>,
+  ) {
     setError(null);
     startTransition(async () => {
       const result = await action();
       if (!result.ok) setError(result.error ?? "Something went wrong");
-      else setPicker(null);
+      else {
+        setPicker(null);
+        if (result.closed) onClockedOut?.();
+      }
     });
   }
 

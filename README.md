@@ -38,6 +38,14 @@ the client-facing report, the full job archive, and the weekly pay journal.
   job, or on the job afterwards
 - Reimbursements for materials, parking, tolls and hotels with receipts
 - Signature capture for the MOD and the tech
+- A paying company's own sign-off sheet, filled in from the job and checked
+  box by box before it is attached
+- Their WorkMarket work order signed as the sign-off when they have no sheet:
+  the check-in and check-out, the work performed and the customer's name,
+  signature and date found on it and drawn onto its first copy, checked on
+  the page before it is saved beside the original as `<name>-Signed.pdf`.
+  Offered at the last clock-out, and kept in the Sign-off block for later —
+  never before the job is closed
 - Guided checkout: missing-work review, outcome, release code, signatures,
   final review and the clock-out picker — plus a prepare mode that collects
   everything while the manager is still on site
@@ -257,6 +265,7 @@ npm run dev
 | `npm run verify:forms` | Fills a company's sign-off sheet, no database or browser needed |
 | `npm run verify:images` | Reads the pixels of a stamped photo |
 | `npm run verify:form-pages` | Drives form mapping and the sign-off review in a real browser |
+| `npm run verify:wo` | Finds the sign-off places on WorkMarket-shaped work orders, writes on them, and drives signing one in a real browser |
 | `npm run db:studio` | Prisma Studio |
 
 The seed never rewrites a permission the database already knows about, so a
@@ -286,6 +295,7 @@ QUICKTEC_ALLOW_DESTRUCTIVE_VERIFY=1 npm run fixtures
 npm run build && npm run serve &
 npm run verify:ui && npm run verify:pay && npm run verify:approvals && npm run verify:form-pages
 QUICKTEC_ALLOW_DESTRUCTIVE_VERIFY=1 npm run verify:jobs
+QUICKTEC_ALLOW_DESTRUCTIVE_VERIFY=1 npm run verify:wo
 ```
 
 `npm run serve` rather than `npm start`: the build is `output: "standalone"`,

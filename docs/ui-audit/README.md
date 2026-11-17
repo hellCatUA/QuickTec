@@ -265,6 +265,42 @@ Raised by the owner on 11 November 2026:
   a leading `www.` dropped), opening in a new tab. Migration
   `20261115120000_dispatch_contact_link` adds the column.
 
+### Their work order as the sign-off — done
+
+Asked for on 16 November 2026, from two real WorkMarket work orders (kept out
+of the repository: they carry customers' names, numbers and addresses). Some
+paying companies send no sign-off sheet; the WO they issued is signed instead.
+
+- **Where.** A **Use WM WO as a Sign-Off** button in the Sign-off block, always
+  there. Before the job is closed it says why not and the page and the server
+  refuse; the last clock-out — through the checkout, a prepared checkout's
+  summary, or the plain clock — offers it above the clock (and the company's
+  own blank beside it when one is on the job and still empty). Not a prepared
+  checkout: nothing closes then.
+- **What goes on it.** Check-in and check-out on the site's clock, the work
+  performed, the customer's printed name, signature and the date they signed.
+  Blank `ARRIVAL TIME` lines take `9:05 AM` (with dates when the job ran over
+  more than one day); WorkMarket's printed `Check-In:` /
+  `Check-Out:` are painted over and replaced with date and time (the owner:
+  ours replace theirs; AM/PM as text). The notes sit on the ruled lines, the
+  part with more lines where the box is split over a page; too long, smaller;
+  past 6 pt, cut with a pointer to the report.
+- **Checked before it is kept.** The page is drawn on the phone with the code
+  the server saves with; three boxes to drag, nudge a point at a time or
+  stretch, each ticked as read, any value typed over. Only the first copy is
+  written on; the whole WO is kept (the owner's answer). Positions per job,
+  by hand when they are not found (the owner's answer) — kept with the copy, so
+  signing again starts there.
+- **Kept.** With the work orders, as `<their name>-Signed.pdf`, the original
+  beside it; the export's WO folder; signing again replaces it. It counts as
+  the signed sheet in a review. Migration `20261116120000_signed_work_order`
+  adds `Attachment.signedFromId` and `Attachment.overlay`.
+- **Found on the way.** One of the two real work orders has a broken
+  cross-reference that readers forgive; saved as found, pdf-lib wrote a file
+  neither pdf.js nor Poppler would open. The pages are copied into a new
+  document instead, which also mends it. `npm run verify:wo` covers both
+  layouts, drawn to the real ones' measurements.
+
 ## Independent review (11 November 2026)
 
 Two agents read everything from `d31dca7` on — one the server side (who sees

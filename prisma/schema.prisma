@@ -2025,6 +2025,17 @@ model Attachment {
   /// piling up beside it.
   generated Boolean @default(false)
 
+  /// On the paying company's work order signed as the job's sign-off: the work
+  /// order it was made from, which stays on the job beside it. Signing it again
+  /// replaces this copy. Kept when the original is removed — it is what the
+  /// customer signed.
+  signedFromId String?
+  signedFrom   Attachment?  @relation("SignedWorkOrders", fields: [signedFromId], references: [id], onDelete: SetNull)
+  signedCopies Attachment[] @relation("SignedWorkOrders")
+  /// Where the sign-off was put on it and what was typed in, as confirmed, so
+  /// signing it again starts from there rather than from a fresh guess.
+  overlay      Json?
+
   signature         Signature?
   mileageStartEntry MileageEntry? @relation("MileageStartPhoto")
   mileageEndEntry   MileageEntry? @relation("MileageEndPhoto")

@@ -77,6 +77,7 @@ export function CheckoutWizard({
   canOverrideMissing,
   positions,
   onClose,
+  onClockedOut,
 }: {
   jobId: string;
   mode: "checkout" | "prepare";
@@ -97,6 +98,8 @@ export function CheckoutWizard({
   /** The configured list of what a site contact might do. */
   positions: string[];
   onClose: () => void;
+  /** The checkout closed the job: called instead of onClose. */
+  onClockedOut?: () => void;
 }) {
   const steps: Step[] = [
     "review",
@@ -347,7 +350,9 @@ export function CheckoutWizard({
       setError(result.error ?? "Could not complete checkout.");
       return;
     }
-    onClose();
+    // The last one out closed the job: its paperwork is offered next.
+    if (result.closed && onClockedOut) onClockedOut();
+    else onClose();
   }
 
   // Going on from a signature step with nothing in the box is a decision, and

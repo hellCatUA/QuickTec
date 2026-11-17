@@ -17,6 +17,7 @@ import {
   formSource,
   type FormFillContext,
 } from "@/lib/forms/catalogue";
+import { toWinAnsi, wrapText } from "@/lib/forms/text-fit";
 import { absolutePath } from "@/lib/storage";
 
 /**
@@ -70,78 +71,10 @@ export type FillResult = {
   empty: string[];
 };
 
-/**
- * Drops what a standard PDF font cannot draw.
- *
- * The fonts built into every PDF reader cover WinAnsi and nothing else, and
- * pdf-lib throws rather than substituting. Real data arrives with curly quotes
- * and en dashes from Word, and a form that fails to generate because somebody
- * pasted a smart apostrophe is not a form.
- */
-export function toWinAnsi(text: string): string {
-  return (
-    text
-      .replace(/[‘’‛]/g, "'")
-      .replace(/[“”]/g, '"')
-      .replace(/[–—]/g, "-")
-      .replace(/…/g, "...")
-      .replace(/ /g, " ")
-      .replace(/[•●]/g, "-")
-      // Anything left outside Latin-1 would throw on draw. A character we
-      // cannot render is better shown as a gap somebody can see than as a
-      // failure to produce the form at all.
-      .replace(/[^\x09\x0A\x0D\x20-\xFF]/g, "")
-  );
-}
-
-/** Greedy wrap, breaking inside a word only when the word alone will not fit. */
-function wrap(
-  text: string,
-  font: PDFFont,
-  size: number,
-  maxWidth: number,
-): string[] {
-  const lines: string[] = [];
-
-  for (const paragraph of text.split(/\r?\n/)) {
-    if (paragraph.trim() === "") {
-      lines.push("");
-      continue;
-    }
-
-    let current = "";
-    for (const word of paragraph.split(/\s+/)) {
-      const candidate = current ? `${current} ${word}` : word;
-      if (font.widthOfTextAtSize(candidate, size) <= maxWidth) {
-        current = candidate;
-        continue;
-      }
-
-      if (current) lines.push(current);
-
-      if (font.widthOfTextAtSize(word, size) <= maxWidth) {
-        current = word;
-        continue;
-      }
-
-      // A single word wider than the box — a long URL or a tracking number.
-      let chunk = "";
-      for (const character of word) {
-        if (font.widthOfTextAtSize(chunk + character, size) > maxWidth) {
-          lines.push(chunk);
-          chunk = character;
-        } else {
-          chunk += character;
-        }
-      }
-      current = chunk;
-    }
-
-    lines.push(current);
-  }
-
-  return lines;
-}
+// Moved out so the work-order overlay can draw the same way in the browser;
+// re-exported because the suites and other callers know them from here.
+export { toWinAnsi };
+const wrap = wrapText;
 
 /**
  * How the text should sit in its box.

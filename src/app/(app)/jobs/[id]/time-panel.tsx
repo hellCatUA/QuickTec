@@ -12,7 +12,9 @@ import {
   type PreparedCheckout,
 } from "./checkout-summary";
 import type { Terms } from "@/lib/budget";
+import { hasPaperworkToOffer, type CheckoutPaperwork } from "@/lib/wo-sign-off";
 import { TimeClock } from "./time-clock";
+import { AfterCheckout } from "./wo-sign-off-offers";
 
 /**
  * Holds the clock and the checkout together.
@@ -43,6 +45,7 @@ export function TimePanel({
   checkout,
   prepared,
   openPrepare,
+  paperwork,
 }: {
   jobId: string;
   timeZone: string;
@@ -76,10 +79,16 @@ export function TimePanel({
   prepared: PreparedCheckout | null;
   /** The "..." menu asked for the prepare run, by way of the URL. */
   openPrepare: boolean;
+  /** What to offer once a clock-out here closes the job; null for nothing. */
+  paperwork: CheckoutPaperwork | null;
 }) {
   const router = useRouter();
   const [ownWizard, setOwnWizard] = React.useState<"checkout" | null>(null);
   const [summary, setSummary] = React.useState(false);
+  // Only after a clock-out that closed the job, and only on this screen: a
+  // prepared checkout keeps the crew on site, and somebody opening the job
+  // tomorrow has the Sign-off block for it.
+  const [offer, setOffer] = React.useState(false);
 
   // Derived rather than seeded into state: the "..." menu asks for the prepare
   // run by navigating, and navigating to the same page does not remount this
@@ -96,6 +105,12 @@ export function TimePanel({
     setOwnWizard(null);
     setSummary(false);
     if (openPrepare) router.replace(`/jobs/${jobId}`, { scroll: false });
+  }
+
+  /** The last one out: the clock closes, and the paperwork is offered. */
+  function closedJob() {
+    close();
+    if (hasPaperworkToOffer(paperwork)) setOffer(true);
   }
 
   if (summary && prepared) {
@@ -119,6 +134,7 @@ export function TimePanel({
           setOwnWizard("checkout");
         }}
         onCancel={close}
+        onClockedOut={closedJob}
       />
     );
   }
@@ -142,12 +158,19 @@ export function TimePanel({
         canOverrideMissing={checkout.canOverrideMissing}
         positions={checkout.positions}
         onClose={close}
+        // Only a real checkout closes the job; preparing one never clocks out.
+        onClockedOut={wizard === "checkout" ? closedJob : undefined}
       />
     );
   }
 
   return (
     <div className="flex flex-col gap-2">
+      {/* Above the clock rather than instead of it: the day's hours are what
+          a tech looks for straight after clocking out. */}
+      {offer && paperwork ? (
+        <AfterCheckout jobId={jobId} paperwork={paperwork} onDone={() => setOffer(false)} />
+      ) : null}
       <TimeClock
         jobId={jobId}
         timeZone={timeZone}
@@ -165,6 +188,7 @@ export function TimePanel({
             ? () => (prepared ? setSummary(true) : setOwnWizard("checkout"))
             : undefined
         }
+        onClockedOut={closedJob}
       />
 
       {/* Said on the clock itself, because it changes what the red button

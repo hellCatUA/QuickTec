@@ -152,3 +152,55 @@ captured signature is fitted into it, never stretched.
 
 `static` puts the same words on every copy — a licence number, a standing note.
 The words themselves are typed into the mapping screen, not into the PDF.
+
+## When a company has no sheet: their work order as the sign-off
+
+Some paying companies never send a sign-off sheet, and the job still has to
+come back with something the customer signed. What every WorkMarket job does
+have is its work order, and that already has the places: an arrival and a
+departure time, a box for notes, and a row for the customer's printed name,
+signature and date. **Use WM WO as a Sign-Off** writes the job onto those.
+
+Nothing here needs setting up per company. The work order is read when it is
+signed, on that job:
+
+- **Which pages.** WorkMarket prints it three times — the resource copy the
+  customer signs, the customer's copy, the instructions. Only the first copy is
+  written on, up to the page before `CUSTOMER COPY`; the whole file is kept.
+- **The times.** Either `ARRIVAL TIME` / `DEPARTURE TIME` over blank lines
+  ending in `AM/PM` — written on the lines as `9:05 AM`, with the dates as
+  well when the job ran over more than one day — or `Check-In:` /
+  `Check-Out:` with WorkMarket's own times printed after them. Those are
+  painted over in white and ours written in their place with the date,
+  `09-29-2026 9:05 AM`, because the date is the half WorkMarket most often has
+  wrong. Painted, not removed: the old text is still inside the file under the
+  white, where a reader's select-all would find it.
+- **The notes.** The ruled lines under `Notes`, one line of writing per rule.
+  Where the box starts at the foot of a page and carries on over the page, the
+  part with more lines is used. A note too long for the lines is set smaller
+  and closer together; past 6 pt it is cut, ending `... (continued in the job
+  report)`.
+- **The signature row.** On the line above `Customer Name (Printed)`,
+  `Customer Signature` and `Date`: the name of whoever signed for the customer
+  at checkout, their signature, and the day they signed.
+
+What it cannot find is still offered as a box, parked where that part usually
+sits, to be dragged into place — a work order that is not WorkMarket's works
+too, by hand. Every box is checked on the page before anything is saved, and
+any value can be typed over there.
+
+Only once the job is closed — the last clock-out, or later. The work order
+carries the departure time and the customer's word that the work is done, so
+before that it is refused, on the job page and on the server. The checkout
+offers it the moment the last person clocks out (the company's own sheet
+beside it when one is on the job and still empty), and the Sign-off block keeps
+it for afterwards.
+
+The result is saved with the work orders as `<their file name>-Signed.pdf`,
+the original beside it, and goes in the company's WO folder of the export.
+Signing again replaces it. Where it was put on the page and what was typed are
+kept with it, so signing again starts from there.
+
+`npm run verify:wo` checks all of this against work orders drawn to the
+measurements of two real ones, which stay out of the repository because they
+carry customers' details.

@@ -86,6 +86,14 @@ import { ExportsPanel } from "./exports-panel";
 import { Reimbursements } from "./reimbursements";
 import { TimePanel } from "./time-panel";
 import { WorkPerformed } from "./work-performed";
+import { WoSignOffEntry } from "./wo-sign-off-offers";
+import {
+  isSignedWorkOrder,
+  signableWorkOrder,
+  workIsDone,
+  type CheckoutPaperwork,
+  type WorkOrderSignOff,
+} from "@/lib/wo-sign-off";
 
 export async function generateMetadata({
   params,
@@ -176,9 +184,11 @@ export default async function JobPage({
           id: true,
           originalName: true,
           sizeBytes: true,
+          mimeType: true,
           jobDocumentKind: true,
           generated: true,
           sourceTemplateId: true,
+          signedFromId: true,
           // A blank whose boxes somebody mapped is one the job can fill in
           // itself. Counted here so the page knows whether to offer it.
           sourceTemplate: {
@@ -567,6 +577,53 @@ export default async function JobPage({
     (total, item) => total + item.attachments.length,
     0,
   );
+
+  // Their work order signed as the sign-off: offered in the Sign-off block,
+  // and once the last clock-out closes the job. Newest work order first — a
+  // revised one sent the morning of the job is the one that counts.
+  const signableWorkOrders = job.documents.filter(signableWorkOrder).reverse();
+  const signedWorkOrders = job.documents.filter(isSignedWorkOrder);
+  const woSignOff: WorkOrderSignOff = {
+    done: workIsDone(job.lifecycle),
+    workOrders: signableWorkOrders.map((doc) => ({ id: doc.id, name: doc.originalName })),
+    signed: signedWorkOrders.map((doc) => ({
+      id: doc.id,
+      name: doc.originalName,
+      fromId: doc.signedFromId,
+    })),
+  };
+  const latestWorkOrder = signableWorkOrders[0] ?? null;
+  // Their own blank, still to be filled: on the job, mapped, and not done.
+  const emptySheet = job.documents.find(
+    (doc) =>
+      doc.jobDocumentKind === "SIGN_OFF" &&
+      !doc.generated &&
+      doc.sourceTemplateId &&
+      (doc.sourceTemplate?._count.placements ?? 0) > 0 &&
+      !job.documents.some(
+        (other) => other.generated && other.sourceTemplateId === doc.sourceTemplateId,
+      ),
+  );
+  const paperwork: CheckoutPaperwork | null = canUpload
+    ? {
+        workOrder: latestWorkOrder
+          ? {
+              id: latestWorkOrder.id,
+              name: latestWorkOrder.originalName,
+              signed: signedWorkOrders.some((doc) => doc.signedFromId === latestWorkOrder.id),
+            }
+          : null,
+        sheet:
+          emptySheet?.sourceTemplateId
+            ? { templateId: emptySheet.sourceTemplateId, name: emptySheet.originalName }
+            : null,
+        // A filled sheet, or one somebody attached already signed.
+        signOffOnJob: job.documents.some(
+          (doc) =>
+            doc.jobDocumentKind === "SIGN_OFF" && (doc.generated || !doc.sourceTemplateId),
+        ),
+      }
+    : null;
 
   /** Read-only, editable, fill-in or suggest — decided per field. */
   function actionFor(field: JobFieldName, value: string) {
@@ -1038,6 +1095,7 @@ export default async function JobPage({
               : null
           }
           openPrepare={query.checkout === "prepare"}
+          paperwork={paperwork}
         />
       ) : null}
 
@@ -1576,6 +1634,9 @@ export default async function JobPage({
                   only="SIGN_OFF"
                   canUpload={canUpload}
                   keepsDirectory={can(user, "client.manage")}
+                  signOffExtra={
+                    canUpload ? <WoSignOffEntry jobId={job.id} state={woSignOff} /> : null
+                  }
                   documents={job.documents
                     .filter((doc) => doc.jobDocumentKind !== null)
                     .map((doc) => ({

@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { loadPdfjs } from "@/components/pdfjs";
 
 /**
  * One page of a PDF, rendered to a canvas.
@@ -37,21 +38,8 @@ export function PdfPage({ url, page, width, className }: PdfPageProps) {
       setLoading(true);
       setError(null);
       try {
-        // The legacy build, deliberately. The default one is compiled for the
-        // newest engines and reaches for proposals most browsers do not have
-        // yet — it dies on `getOrInsertComputed is not a function` in anything
-        // but a current Chrome, and node_modules are not down-levelled by the
-        // app's own build. This is an office screen used a few times a year;
-        // the extra bytes cost nothing next to it not working.
-        const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-
-        // The worker is emitted as an asset of this bundle rather than pulled
-        // from a CDN: the app runs behind the company VPN on a server with no
-        // outbound path to one.
-        pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-          "pdfjs-dist/legacy/build/pdf.worker.min.mjs",
-          import.meta.url,
-        ).toString();
+        // The legacy build, and its worker from this bundle — see loadPdfjs.
+        const pdfjs = await loadPdfjs();
 
         const response = await fetch(url);
         if (!response.ok) throw new Error(`${response.status}`);

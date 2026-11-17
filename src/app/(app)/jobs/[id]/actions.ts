@@ -79,6 +79,13 @@ export type ActionResult =
       ok: true;
       /** What was made, where the caller goes on to refer to it. */
       id?: string;
+      /**
+       * On a clock-out: it was the last one, and the job is closed. That is
+       * the moment its paperwork is offered — the work order signed as the
+       * sign-off among it — and not a clock-out earlier, with the crew still
+       * on site and the day's end time not yet known.
+       */
+      closed?: boolean;
     }
   | {
       ok: false;
@@ -386,7 +393,7 @@ async function performClockOut(
   // it can tell the truth about the day.
   syncJobInBackground(jobId);
   touch(jobId);
-  return ok;
+  return { ok: true, closed: lastOut };
 }
 
 const checkoutSchema = z.object({

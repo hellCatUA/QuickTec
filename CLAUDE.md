@@ -107,4 +107,5 @@ again: docs/ui-audit/README.md.
   guide in the owner's Claude Docs:
   https://claude.ai/artifact/XSZNHktCDotuVejvAPNpj5
 - docs/FORM-BLANKS.md — preparing a paying company's blank so it fills itself
-  (naming its PDF fields after the catalogue).
+  (naming its PDF fields after the catalogue), and signing their WorkMarket
+  work order instead when they have no sheet (src/lib/forms/wo-*.ts).

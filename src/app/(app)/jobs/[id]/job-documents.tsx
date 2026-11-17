@@ -44,9 +44,15 @@ export function JobDocuments({
   only,
   heading = true,
   keepsDirectory = false,
+  signOffExtra,
 }: {
   jobId: string;
   documents: JobDocument[];
+  /**
+   * More in the sign-off section, under its documents: the paying company's
+   * work order, signed as the sign-off when they have no sheet of their own.
+   */
+  signOffExtra?: React.ReactNode;
   /**
    * Which of the two to render, when they are wanted in different places.
    *
@@ -146,6 +152,7 @@ export function JobDocuments({
           pending={pending}
           onUpload={upload}
           onRemove={remove}
+          extra={signOffExtra}
         />
       )}
     </div>
@@ -198,6 +205,7 @@ function Section({
   pending,
   onUpload,
   onRemove,
+  extra,
 }: {
   jobId: string;
   title: string;
@@ -210,6 +218,7 @@ function Section({
   pending: boolean;
   onUpload: (kind: JobDocumentKind, files: File[]) => void;
   onRemove: (id: string) => void;
+  extra?: React.ReactNode;
 }) {
   const inputRef = React.useRef<HTMLInputElement>(null);
 
@@ -294,6 +303,8 @@ function Section({
           </div>
         ))
       )}
+
+      {extra}
 
       {canUpload ? (
         <div className="flex flex-wrap items-center gap-2">

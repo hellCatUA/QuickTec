@@ -66,6 +66,7 @@ export function CheckoutSummary({
   onEdit,
   onCleared,
   onCancel,
+  onClockedOut,
 }: {
   jobId: string;
   timeZone: string;
@@ -76,6 +77,8 @@ export function CheckoutSummary({
   onEdit: () => void;
   onCleared: () => void;
   onCancel: () => void;
+  /** The clock-out closed the job: called instead of onCancel. */
+  onClockedOut?: () => void;
 }) {
   const [error, setError] = React.useState<string | null>(null);
   const [pending, setPending] = React.useState(false);
@@ -101,6 +104,7 @@ export function CheckoutSummary({
 
       const result = await completeCheckout(null, formData);
       if (!result.ok) setError(result.error ?? "Could not complete checkout.");
+      else if (result.closed && onClockedOut) onClockedOut();
       else onCancel();
     } finally {
       setPending(false);
