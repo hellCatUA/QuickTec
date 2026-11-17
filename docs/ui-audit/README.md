@@ -300,6 +300,13 @@ paying companies send no sign-off sheet; the WO they issued is signed instead.
   neither pdf.js nor Poppler would open. The pages are copied into a new
   document instead, which also mends it. `npm run verify:wo` covers both
   layouts, drawn to the real ones' measurements.
+- **Did not open on an iPhone** (reported by the owner the next morning: fine
+  on a computer, "undefined is not a function (near '...t of e...')" in Safari
+  and in the app saved to the home screen). pdf.js reads a page's text with
+  `for await` over a ReadableStream, which WebKit cannot walk, and the legacy
+  build does not make up for it. `loadPdfjs` now adds that one ability where it
+  is missing; the suite plays an iPhone by taking it away from Chromium. The
+  preview canvas is also kept under Safari's 16.7-million-pixel ceiling.
 
 ## Independent review (11 November 2026)
 

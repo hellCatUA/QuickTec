@@ -802,6 +802,33 @@ async function online(browser: Browser) {
   }
   await page.setViewportSize({ width: 390, height: 844 });
 
+  // --- an iPhone's browser ----------------------------------------------------
+  // Every browser on an iPhone is WebKit, and WebKit cannot walk a
+  // ReadableStream with `for await`, which is how pdf.js reads a page's text.
+  // The screen worked on a desktop and on the owner's phone said "undefined is
+  // not a function (near '...t of e...')". Only Chromium is installed here, so
+  // the phone is played by Chromium with that one ability taken away.
+  const iphone = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  await iphone.addCookies([{ name: "authjs.session-token", value: tech.token, url: BASE }]);
+  await iphone.addInitScript(() => {
+    const stream = ReadableStream.prototype as unknown as Record<PropertyKey, unknown>;
+    delete stream[Symbol.asyncIterator];
+    delete stream.values;
+  });
+  const onIphone = await iphone.newPage();
+  await onIphone.goto(`${BASE}/jobs/${closedJob.id}/wo-sign-off`, { waitUntil: "domcontentloaded" });
+  check(
+    "reads the work order where streams cannot be walked, as on an iPhone",
+    await soon(onIphone.getByText("This is the page as it will be saved"), 45_000),
+    true,
+  );
+  check(
+    "and does not say it could not",
+    await onIphone.getByText("could not be read here").count(),
+    0,
+  );
+  await iphone.close();
+
   // --- offered at the last clock-out ------------------------------------------
   await page.goto(`${BASE}/jobs/${checkoutJob.id}`, { waitUntil: "domcontentloaded" });
   await page.getByRole("button", { name: "Clock out", exact: true }).click();

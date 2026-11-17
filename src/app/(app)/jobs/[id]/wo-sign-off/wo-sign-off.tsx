@@ -75,6 +75,8 @@ const VALUE_BOX: Record<keyof WoValues, BoxKey> = {
 
 const MAX_WIDTH = 640;
 const ZOOMS = [1, 1.5, 2, 3];
+/** Safari's ceiling for one canvas, with a little room under it. */
+const MAX_CANVAS_PIXELS = 16_000_000;
 /** How long the preview waits for the next change before drawing. */
 const PREVIEW_DELAY = 220;
 
@@ -149,6 +151,7 @@ export function WoSignOff({
   const frameRef = React.useRef<HTMLDivElement>(null);
   const scrollerRef = React.useRef<HTMLDivElement>(null);
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
+  const scratchRef = React.useRef<HTMLCanvasElement | null>(null);
   const dragRef = React.useRef<Drag | null>(null);
   const focusRef = React.useRef<BoxKey | null>(null);
 
@@ -293,13 +296,23 @@ export function WoSignOff({
         if (cancelled) return;
         const base = rendered.getViewport({ scale: 1 });
         const viewport = rendered.getViewport({ scale: cssWidth / base.width });
-        const ratio = Math.min(window.devicePixelRatio || 1, 2);
-        const scratch = window.document.createElement("canvas");
+        // Sharp on a phone's screen, but never past what an iPhone will draw:
+        // Safari leaves a canvas over about 16.7 million pixels blank, and a
+        // page at 300% on a wide screen is past that at full density.
+        const ratio = Math.min(
+          window.devicePixelRatio || 1,
+          2,
+          Math.sqrt(MAX_CANVAS_PIXELS / Math.max(1, viewport.width * viewport.height)),
+        );
+        // One scratch canvas, reused: iOS also caps the memory all canvases
+        // hold together, and a new one per redraw piles up until it is
+        // collected.
+        const scratch = (scratchRef.current ??= window.document.createElement("canvas"));
         scratch.width = Math.floor(viewport.width * ratio);
         scratch.height = Math.floor(viewport.height * ratio);
         const context = scratch.getContext("2d");
         if (!context) return;
-        context.scale(ratio, ratio);
+        context.setTransform(ratio, 0, 0, ratio, 0, 0);
         const rendering = rendered.render({ canvas: scratch, canvasContext: context, viewport });
         task = rendering;
         await rendering.promise;
@@ -309,6 +322,9 @@ export function WoSignOff({
         canvas.style.width = `${viewport.width}px`;
         canvas.style.height = `${viewport.height}px`;
         canvas.getContext("2d")?.drawImage(scratch, 0, 0);
+        // Its pixels are on the page now; it need not hold a copy until next time.
+        scratch.width = 0;
+        scratch.height = 0;
       } catch (caught) {
         if (!cancelled && !(caught instanceof Error && caught.name === "RenderingCancelledException")) {
           console.error("[work order] showing the page failed", caught);
