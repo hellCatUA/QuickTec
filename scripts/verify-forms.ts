@@ -584,7 +584,10 @@ async function main() {
   check("curly quotes", toWinAnsi("Marshall’s"), "Marshall's");
   check("en dash", toWinAnsi("9–10 am"), "9-10 am");
   check("an ellipsis", toWinAnsi("wait…"), "wait...");
-  check("a character with no Latin-1 form", toWinAnsi("Ivan Є"), "Ivan ");
+  // Spelled in Latin letters rather than dropped: "Ivan " left a gap where
+  // the rest of somebody's name had been.
+  check("a letter the font has not got, spelled out", toWinAnsi("Ivan Є"), "Ivan Ye");
+  check("a character nothing can draw, left out", toWinAnsi("ok \u{1F600}"), "ok ");
 
   const awkward = await fillForm(
     await flatBlank(),

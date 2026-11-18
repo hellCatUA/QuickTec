@@ -389,6 +389,63 @@ browser's back keeps the search); and two sites in different zones with the
 same date share a heading, which can read "Today" for one of them around
 midnight.
 
+## Independent review of the signed work order (17–18 November 2026)
+
+Two agents read the work-order sign-off at `6ad8ac0` — one the screen, one
+what lands on the paper — damaging files 220 ways, replaying the save, and
+drawing on variants of the suite's work orders. Fixed in the commit after
+`fae946b` (the screen's own findings went into `fae946b`):
+
+- **The signature was a white patch, seven millimetres long.** The pad keeps
+  the whole pad in white; drawn as it was, the ink shrank to fit and the white
+  blanked out the sentence over the row as soon as the row was made taller.
+  The server now takes the white away and cuts the picture to the ink, and the
+  screen's preview gets the same picture from the server — a damaged signature
+  file had frozen the preview, which drew the stored file itself.
+- **The first copy could end at a sentence.** "CUSTOMER COPY stays with…" or
+  "Customer signature required…" at the start of a line cut it to page 1, with
+  the notes and signature out of reach. The heading must now be those words
+  alone at the top of the page, the signature row needs the name beside it,
+  and **Use every page** opens the rest where the copies are told apart wrong.
+- **A damaged file read as different pages.** pdf.js showed every page where
+  pdf-lib, which writes on it, saw fewer — once putting the name onto the
+  customer's copy. The counts are compared when the file is opened and again
+  on saving, and a file pdf-lib cannot open says so in words.
+- **The white patches reached too far.** A second column on the same lines, and
+  a "Total" line under Check-Out, were painted out. They are now held to the
+  box the labels sit in and to the time after each label; they are outlined on
+  the screen and can be switched off.
+- **Two saves at once left two copies.** One signed copy per work order is now
+  a unique index, replaced inside a transaction (migration
+  `20261118120000_one_signed_copy`, which also unlinks any extra copies already
+  there and gives deleting an attachment the index it lacked).
+- **Letters.** "Łukasz Żółć" printed "ukasz ó", Cyrillic printed nothing, and
+  one pasted control character failed the whole save. Accents the font has
+  not got are taken off, Ukrainian is spelled in Latin letters, and the screen
+  says what will print. A one-line value too long even at 5 pt is cut with
+  "..." instead of running into the signature.
+- **Notes.** Every "Notes" heading is tried for lines, not just the first;
+  ruled lines drawn as one path are read line by line; the spacing can be set
+  where there are no lines to measure.
+- **Labels set with wide spaces** were never found — pdf.js hands such words
+  over one at a time. They are put back together before they are looked for.
+- **Scanned work orders** had every picture decoded to look for lines: about a
+  gigabyte for a 23 MB scan. Only pages with something to find are read now.
+- Smaller: filled blanks counted as signed work orders once their blank was
+  deleted (a signed copy is now the one that kept its overlay); the server took
+  the page list and the patches as sent (pages must run from the first, patches
+  are times-sized); the copy said pdf-lib had made it today; a page saved
+  turned showed its boxes in the wrong place; boxes parked on a one-page
+  document sat on top of each other; the screen and the server picked the
+  manager's signature by different rules.
+
+The owner's changes the same days: **Show me** is **Show** and **Looks right**
+is **Apply** everywhere; saving goes straight back to the job, which says what
+was saved; and on a phone the screen goes one place at a time — the page as
+large as the screen allows, Back / Edit / Next under it, nothing on the page
+moving until Edit, and Approve for the whole document after the third. A
+computer keeps the three beside the page (the owner's choice).
+
 ## Other open threads (outside this audit)
 
 Parked by the owner, not forgotten. None has been started.
@@ -408,6 +465,10 @@ Parked by the owner, not forgotten. None has been started.
   Group" placeholders. Offered, not approved.
 - **A separate security log** for account operations (linking, password resets).
   Mentioned, not started.
+- **Signature pictures outlive their job.** Found by the work-order review:
+  deleting a job leaves the attachment rows (and files) of its captured
+  signatures behind, since a signature holds its picture rather than the other
+  way round. Older than the sign-off work; not changed.
 
 ## Running it again
 

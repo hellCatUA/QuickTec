@@ -100,6 +100,17 @@ export type WoFound = {
 
 export type WoLayout = { overlay: WoOverlay; found: WoFound };
 
+export type WoDetectOptions = {
+  /**
+   * Every page rather than the first copy's. Somebody chooses this on the
+   * screen when the copies were told apart wrongly — a work order whose
+   * description says "customer copy" somewhere it should not used to end the
+   * first copy on page 1, with the signature row out of reach and no way to
+   * bring it back.
+   */
+  everyPage?: boolean;
+};
+
 /** How the two time lines sit inside their box, as fractions of the size. */
 export const TIMES_ASCENT = 0.8;
 export const TIMES_DESCENT = 0.25;
@@ -113,12 +124,124 @@ const LETTER: WoScanPage["view"] = [0, 0, 612, 792];
 const LABEL_IN = /^Check[- ]?In:/i;
 const LABEL_OUT = /^Check[- ]?Out:/i;
 const LABEL_EITHER = /^Check[- ]?(?:In|Out):/i;
+const ARRIVAL = /^ARRIVAL TIME\b/i;
+const DEPARTURE = /^DEPARTURE TIME\b/i;
+const NOTES = /^Notes:?$/i;
+const SIGNATURE = /^Customer Signature\b/i;
+const NAME = /^Customer Name\b/i;
+/** Whatever is on a page this reads anything near: the pages worth reading the lines of. */
+const ANY_LABEL = [ARRIVAL, DEPARTURE, LABEL_EITHER, NOTES, SIGNATURE, NAME];
+
+/**
+ * Words pdf.js handed over one at a time, put back into the runs they were
+ * set in.
+ *
+ * pdf.js starts a new run of text wherever the gap between two words is wider
+ * than a space, and some work orders are set with wide spacing: "ARRIVAL
+ * TIME", "Customer Signature" and "CUSTOMER COPY" each arrived as two runs and
+ * none of them was ever found. Joined here — only words close enough to be the
+ * same phrase, and only from the start of such a phrase, since a label starts
+ * one — they are found like any other.
+ */
+const MERGED = new WeakMap<WoScanPage, WoTextItem[]>();
+
+function mergedRuns(page: WoScanPage): WoTextItem[] {
+  const cached = MERGED.get(page);
+  if (cached) return cached;
+
+  const lines: WoTextItem[][] = [];
+  for (const item of [...page.items].sort((a, b) => b.y - a.y || a.x - b.x)) {
+    const line = lines.find((candidate) => Math.abs(candidate[0].y - item.y) < 1);
+    if (line) line.push(item);
+    else lines.push([item]);
+  }
+
+  const merged: WoTextItem[] = [];
+  for (const line of lines) {
+    line.sort((a, b) => a.x - b.x);
+    let phrase: WoTextItem[] = [];
+    const close = () => {
+      for (let length = 2; length <= Math.min(6, phrase.length); length++) {
+        const run = phrase.slice(0, length);
+        const last = run[run.length - 1];
+        merged.push({
+          text: run.map((item) => item.text).join(" "),
+          x: run[0].x,
+          y: run[0].y,
+          width: last.x + last.width - run[0].x,
+          height: Math.max(...run.map((item) => item.height)),
+        });
+      }
+      phrase = [];
+    };
+    for (const item of line) {
+      const previous = phrase[phrase.length - 1];
+      if (previous) {
+        const gap = item.x - (previous.x + previous.width);
+        // Wider than a word space, narrower than the gap between two columns.
+        if (gap < -1 || gap > 1.2 * Math.max(previous.height, item.height, 6)) close();
+      }
+      phrase.push(item);
+    }
+    close();
+  }
+
+  MERGED.set(page, merged);
+  return merged;
+}
+
+/** Every run on the page, and then the phrases made of several. */
+function labelsOn(page: WoScanPage | undefined): WoTextItem[] {
+  return page ? [...page.items, ...mergedRuns(page)] : [];
+}
 
 const find = (page: WoScanPage | undefined, pattern: RegExp) =>
-  page?.items.find((item) => pattern.test(item.text));
+  labelsOn(page).find((item) => pattern.test(item.text));
 
 const isRule = (rule: WoRule, minWidth: number) =>
   rule.x1 - rule.x0 >= minWidth && rule.y1 - rule.y0 <= 1.6;
+
+/**
+ * "Customer Name (Printed)", "Customer Signature" and "Date", side by side.
+ *
+ * The name on the same line is what makes it the row. A description line that
+ * begins "Customer signature required…" used to be taken for it, and ended the
+ * first copy of a one-copy work order a page early.
+ */
+function approvalLabels(page: WoScanPage | undefined) {
+  const all = labelsOn(page);
+  for (const signature of all.filter((item) => SIGNATURE.test(item.text))) {
+    const name = all.find(
+      (item) =>
+        NAME.test(item.text) &&
+        Math.abs(item.y - signature.y) <= 2 &&
+        item.x < signature.x,
+    );
+    if (!name) continue;
+    const date =
+      all.find(
+        (item) =>
+          /^Date:?$/i.test(item.text) &&
+          Math.abs(item.y - signature.y) <= 2 &&
+          item.x > signature.x,
+      ) ?? null;
+    return { name, signature, date };
+  }
+  return null;
+}
+
+/**
+ * A copy's own heading: the exact words, in the top quarter of the page.
+ *
+ * Anything looser ends the first copy at a sentence. "CUSTOMER COPY stays
+ * with the store manager", at the start of a line of instructions inside the
+ * first copy, cut it to page 1, and the notes and the signature row beyond it
+ * could not be reached.
+ */
+function copyHeading(page: WoScanPage, pattern: RegExp): boolean {
+  const top = page.view[3] - 0.25 * (page.view[3] - page.view[1]);
+  return labelsOn(page).some((item) => pattern.test(item.text) && item.y >= top);
+}
 
 /**
  * Which pages are the first copy.
@@ -129,14 +252,16 @@ const isRule = (rule: WoRule, minWidth: number) =>
  * to the first page with a signature row. A document with neither is not one
  * of theirs, and every page is fair game.
  */
-function firstCopy(scan: WoScan): { pages: number[]; copies: boolean } {
+function firstCopy(
+  scan: WoScan,
+  options: WoDetectOptions = {},
+): { pages: number[]; copies: boolean } {
   const count = scan.pages.length;
-  const startOf = (pattern: RegExp) =>
-    scan.pages.findIndex((page) => page.items.some((item) => pattern.test(item.text)));
-
-  const customerCopy = startOf(/^CUSTOMER COPY\b/i);
-  const signatureRow = startOf(/^Customer Signature\b/i);
-  const instructions = startOf(/^RESOURCE INSTRUCTIONS\b/i);
+  const customerCopy = scan.pages.findIndex((page) => copyHeading(page, /^CUSTOMER COPY$/i));
+  const signatureRow = scan.pages.findIndex((page) => approvalLabels(page) !== null);
+  const instructions = scan.pages.findIndex((page) =>
+    copyHeading(page, /^RESOURCE INSTRUCTIONS$/i),
+  );
 
   let last = count - 1;
   let copies = false;
@@ -150,11 +275,37 @@ function firstCopy(scan: WoScan): { pages: number[]; copies: boolean } {
     last = instructions - 1;
     copies = true;
   }
+  if (options.everyPage) last = count - 1;
 
   return {
     pages: Array.from({ length: Math.max(1, last + 1) }, (_, index) => index),
     copies,
   };
+}
+
+/**
+ * The pages whose drawing is worth reading: those with something on them this
+ * looks for, and the page after a notes heading, where its lines carry on.
+ *
+ * Reading a page's drawing decodes every picture on it. A scanned work order
+ * is nothing but pictures, and reading all of them to look for ruled lines
+ * took a second and a gigabyte for a 23 MB scan, which a phone does not have.
+ * Every line this uses is found next to a label, so a page with none has
+ * nothing to give.
+ */
+export function pagesToRead(scan: WoScan, options: WoDetectOptions = {}): number[] {
+  const { pages } = firstCopy(scan, options);
+  const wanted = new Set<number>();
+  for (const index of pages) {
+    const all = labelsOn(scan.pages[index]);
+    if (all.some((item) => ANY_LABEL.some((pattern) => pattern.test(item.text)))) {
+      wanted.add(index);
+    }
+    if (all.some((item) => NOTES.test(item.text)) && pages.includes(index + 1)) {
+      wanted.add(index + 1);
+    }
+  }
+  return [...wanted].sort((a, b) => a - b);
 }
 
 /** A box spanning two baselines, the way the filler reads it back. */
@@ -209,8 +360,8 @@ function findTimes(
 ): { box: WoTimesBox; covers: WoRect[]; found: WoFound["times"] } | null {
   for (const index of pages) {
     const page = scan.pages[index];
-    const arrival = find(page, /^ARRIVAL TIME\b/i);
-    const departure = find(page, /^DEPARTURE TIME\b/i);
+    const arrival = find(page, ARRIVAL);
+    const departure = find(page, DEPARTURE);
     if (arrival && departure && departure.y < arrival.y) {
       const lines = [arrival, departure].map((label) => {
         const rule = lineUnder(page, label);
@@ -252,49 +403,75 @@ function findTimes(
         return item.x + item.width * (label.length / Math.max(1, item.text.length));
       };
 
-      const value = (label: WoTextItem, after: number): WoTextItem[] => {
-        const own =
+      // The box the two labels sit in, by its own lines: the rule under its
+      // heading, above Check-In, and its border under Check-Out. Its right
+      // edge is as far as WorkMarket's times can reach. Without one the reach
+      // used to be a flat 220 points, which painted out a second column on
+      // the same lines — a site contact, a phone number, a ticket — and left
+      // a time set further out than that beside ours.
+      const spans = (rule: WoRule, label: WoTextItem) =>
+        rule.x0 <= label.x + 10 && rule.x1 >= label.x + 40;
+      const above = page.rules
+        .filter(
+          (rule) => spans(rule, checkIn) && rule.y0 > checkIn.y + 2 && rule.y0 < checkIn.y + 30,
+        )
+        .sort((a, b) => a.y0 - b.y0)[0];
+      const below = page.rules
+        .filter((rule) => spans(rule, checkOut) && rule.y1 < checkOut.y - 2)
+        .sort((a, b) => b.y1 - a.y1)[0];
+      const border = below?.y1 ?? -Infinity;
+      const pageRight = page.view[2] - 36;
+      const reach = above?.x1 ?? below?.x1 ?? pageRight;
+
+      // The value after a label: its first run anywhere in the column, then
+      // only the runs that carry straight on from it. A gap wider than a few
+      // spaces is the next thing on the line, not more of the time.
+      const value = (label: WoTextItem): WoTextItem[] => {
+        const start = labelEnd(label);
+        const kept: WoTextItem[] =
           label.text.replace(LABEL_EITHER, "").trim() !== ""
-            ? [{ ...label, x: labelEnd(label), width: label.x + label.width - labelEnd(label) }]
+            ? [{ ...label, x: start, width: label.x + label.width - start }]
             : [];
-        return [
-          ...own,
-          ...page.items.filter(
+        let end = kept.length > 0 ? label.x + label.width : null;
+        const runs = page.items
+          .filter(
             (item) =>
               item !== label &&
               Math.abs(item.y - label.y) < 1.5 &&
-              item.x >= after - 1 &&
-              item.x < label.x + 220,
-          ),
-        ];
+              item.x >= start - 1 &&
+              item.x < reach,
+          )
+          .sort((a, b) => a.x - b.x);
+        for (const item of runs) {
+          if (end !== null && item.x - end > Math.max(12, 1.5 * (item.height || 9))) break;
+          kept.push(item);
+          end = Math.max(end ?? item.x, item.x + item.width);
+        }
+        return kept;
       };
 
-      const inValue = value(checkIn, labelEnd(checkIn));
-      const outValue = value(checkOut, labelEnd(checkOut));
-      // A value too long for the column wraps under the label — "PDT" on a
-      // line of its own. Only directly under, only one line's worth, and never
-      // past the box's own border: on a work order set tighter the next
-      // heading could sit that close, and it is not ours to paint out.
-      const border = Math.max(
-        -Infinity,
-        ...page.rules
-          .filter(
-            (rule) =>
-              rule.y1 < checkOut.y - 2 &&
-              rule.x0 <= checkOut.x + 10 &&
-              rule.x1 >= checkOut.x + 40,
-          )
-          .map((rule) => rule.y1),
+      const inValue = value(checkIn);
+      const outValue = value(checkOut);
+      const outEnd = Math.max(
+        labelEnd(checkOut),
+        ...outValue.map((item) => item.x + item.width),
       );
+      // A value too long for the column wraps under the label — "PDT" on a
+      // line of its own. Only directly under the label, only one line's
+      // worth, never past the box's own border, never a label of its own, and
+      // only what could not have fitted on the line it continues: a third line
+      // reading "Total: 4.30 hrs" was painted out as the end of a time.
+      const space = 0.28 * (checkOut.height || 9);
       const wrapped = page.items.filter(
         (item) =>
           item.y > border &&
           item.y < checkOut.y - gap * 0.5 &&
           item.y > checkOut.y - gap * 1.6 &&
-          item.x >= checkOut.x - 3 &&
-          item.x < checkOut.x + 220 &&
+          Math.abs(item.x - checkOut.x) <= 3 &&
           item.text.length <= 24 &&
-          !/:$/.test(item.text),
+          !/^[A-Za-z][A-Za-z .]*:/.test(item.text) &&
+          !/:$/.test(item.text) &&
+          outEnd + space + item.width > reach,
       );
 
       const covered = [...inValue, ...outValue, ...wrapped];
@@ -311,10 +488,13 @@ function findTimes(
 
       const size = Math.round(Math.min(11, Math.max(7, checkIn.height || 9)) * 2) / 2;
       const x = Math.max(labelEnd(checkIn), labelEnd(checkOut)) + 4;
-      const right = Math.max(x + 90, ...covered.map((item) => item.x + item.width));
-      const pageRight = page.view[2] - 36;
+      const right = Math.min(
+        Math.max(x + 90, ...covered.map((item) => item.x + item.width)),
+        reach + 4,
+        pageRight,
+      );
       return {
-        box: timesBox(index, x, Math.max(60, Math.min(right, pageRight) - x), checkIn.y, checkOut.y, size),
+        box: timesBox(index, x, Math.max(60, right - x), checkIn.y, checkOut.y, size),
         covers,
         found: "printed",
       };
@@ -384,73 +564,93 @@ function notesFromRun(page: number, run: WoRule[]): WoNotesBox {
  * On a long work order it begins at the foot of a page with room for three
  * lines and carries on at the top of the next; the part with more lines is
  * used, since a box split over two pages is two places to read one note.
+ *
+ * Every "Notes" in the first copy is tried, in order, for one with lines under
+ * it. Only the first used to be, and a "Notes" line in the job's description
+ * won: the note was printed over the description while the real box stayed
+ * empty, and the screen said it had been found.
  */
 function findNotes(
   scan: WoScan,
   pages: number[],
 ): { box: WoNotesBox; found: WoFound["notes"] } | null {
-  for (const index of pages) {
-    const page = scan.pages[index];
-    const heading = find(page, /^Notes:?$/i);
-    if (!heading) continue;
+  const headings = pages.flatMap((index) =>
+    labelsOn(scan.pages[index])
+      .filter((item) => NOTES.test(item.text))
+      .sort((a, b) => b.y - a.y)
+      .map((heading) => ({ index, heading })),
+  );
 
-    const below = page.rules.filter(
-      (rule) =>
-        isRule(rule, 150) &&
-        rule.y1 < heading.y - 2 &&
-        // Lines under the bottom margin were cut off by the page and never
-        // printed; one Trison work order drew a fifth that nobody can see.
-        rule.y0 >= page.view[1] + 30,
-    );
-    let here = ruledRun(below);
-    // Its own lines start right under its heading; a ruled table further down
-    // the page is something else.
-    if (here.length > 0 && heading.y - here[0].y1 > 40) here = [];
-
-    const nextIndex = index + 1;
-    const next = pages.includes(nextIndex) ? scan.pages[nextIndex] : undefined;
-    let there: WoRule[] = [];
-    if (next) {
-      const top = next.rules.filter(
-        (rule) => isRule(rule, 150) && rule.y1 <= next.view[3] - 30,
-      );
-      const run = ruledRun(top, here[0]);
-      // Only a continuation: empty lines in the top half of the page, not a
-      // table with writing in it somewhere further down.
-      const empty =
-        run.length > 0 &&
-        !next.items.some(
-          (item) => item.y > run[run.length - 1].y1 - 0.5 && item.y < run[0].y1 + 6,
-        );
-      const high = run.length > 0 && run[0].y1 > (next.view[1] + next.view[3]) / 2;
-      if (empty && high) there = run;
-    }
-
-    if (here.length > 0 || there.length > 0) {
-      return there.length > here.length
-        ? { box: notesFromRun(nextIndex, there), found: "lines" }
-        : { box: notesFromRun(index, here), found: "lines" };
-    }
-
-    // The heading and no lines: the box is taken to start under its bar.
-    const top = heading.y - 8;
-    const pitch = 11;
-    const lines = Math.max(3, Math.min(10, Math.floor((top - page.view[1] - 50) / pitch)));
-    const x = heading.x + 6;
-    return {
-      box: {
-        page: index,
-        x,
-        y: top - lines * pitch,
-        width: Math.min(510, page.view[2] - x - 40),
-        height: lines * pitch,
-        size: 9,
-        pitch,
-      },
-      found: "heading",
-    };
+  for (const { index, heading } of headings) {
+    const box = notesUnder(scan, pages, index, heading);
+    if (box) return { box, found: "lines" };
   }
-  return null;
+
+  // No lines under any of them: the box is taken to start under the one set
+  // largest, which is the section's heading rather than a word in a sentence.
+  const chosen = [...headings].sort((a, b) => b.heading.height - a.heading.height)[0];
+  if (!chosen) return null;
+  const page = scan.pages[chosen.index];
+  const top = chosen.heading.y - 8;
+  const pitch = 11;
+  const lines = Math.max(3, Math.min(10, Math.floor((top - page.view[1] - 50) / pitch)));
+  const x = chosen.heading.x + 6;
+  return {
+    box: {
+      page: chosen.index,
+      x,
+      y: top - lines * pitch,
+      width: Math.min(510, page.view[2] - x - 40),
+      height: lines * pitch,
+      size: 9,
+      pitch,
+    },
+    found: "heading",
+  };
+}
+
+/** The ruled lines under one notes heading, on its page or carried on to the next. */
+function notesUnder(
+  scan: WoScan,
+  pages: number[],
+  index: number,
+  heading: WoTextItem,
+): WoNotesBox | null {
+  const page = scan.pages[index];
+  const below = page.rules.filter(
+    (rule) =>
+      isRule(rule, 150) &&
+      rule.y1 < heading.y - 2 &&
+      // Lines under the bottom margin were cut off by the page and never
+      // printed; one Trison work order drew a fifth that nobody can see.
+      rule.y0 >= page.view[1] + 30,
+  );
+  let here = ruledRun(below);
+  // Its own lines start right under its heading; a ruled table further down
+  // the page is something else.
+  if (here.length > 0 && heading.y - here[0].y1 > 40) here = [];
+
+  const nextIndex = index + 1;
+  const next = pages.includes(nextIndex) ? scan.pages[nextIndex] : undefined;
+  let there: WoRule[] = [];
+  if (next) {
+    const top = next.rules.filter(
+      (rule) => isRule(rule, 150) && rule.y1 <= next.view[3] - 30,
+    );
+    const run = ruledRun(top, here[0]);
+    // Only a continuation: empty lines in the top half of the page, not a
+    // table with writing in it somewhere further down.
+    const empty =
+      run.length > 0 &&
+      !next.items.some(
+        (item) => item.y > run[run.length - 1].y1 - 0.5 && item.y < run[0].y1 + 6,
+      );
+    const high = run.length > 0 && run[0].y1 > (next.view[1] + next.view[3]) / 2;
+    if (empty && high) there = run;
+  }
+
+  if (here.length === 0 && there.length === 0) return null;
+  return there.length > here.length ? notesFromRun(nextIndex, there) : notesFromRun(index, here);
 }
 
 /**
@@ -463,55 +663,71 @@ function findApproval(
 ): WoApprovalBox | null {
   for (const index of pages) {
     const page = scan.pages[index];
-    for (const signature of page.items.filter((item) => /^Customer Signature\b/i.test(item.text))) {
-      const name = page.items.find(
-        (item) =>
-          /^Customer Name\b/i.test(item.text) &&
-          Math.abs(item.y - signature.y) <= 2 &&
-          item.x < signature.x,
-      );
-      if (!name) continue;
-      const date = page.items.find(
-        (item) =>
-          /^Date:?$/i.test(item.text) &&
-          Math.abs(item.y - signature.y) <= 2 &&
-          item.x > signature.x,
-      );
+    const row = approvalLabels(page);
+    if (!row) continue;
+    const { name, signature, date } = row;
 
-      const lineOver = (label: WoTextItem) =>
-        page.rules.find(
-          (rule) =>
-            isRule(rule, 40) &&
-            Math.abs(rule.x0 - label.x) <= 4 &&
-            rule.y0 >= label.y + 3 &&
-            rule.y0 <= label.y + 16,
-        ) ?? null;
+    const lineOver = (label: WoTextItem) =>
+      page.rules.find(
+        (rule) =>
+          isRule(rule, 40) &&
+          Math.abs(rule.x0 - label.x) <= 4 &&
+          rule.y0 >= label.y + 3 &&
+          rule.y0 <= label.y + 16,
+      ) ?? null;
 
-      const lines = [name, signature, date].map((label) => (label ? lineOver(label) : null));
-      const drawn = lines.filter((line): line is WoRule => line !== null);
-      const y = drawn.length > 0 ? Math.max(...drawn.map((line) => line.y1)) : name.y + 9;
+    const lines = [name, signature, date].map((label) => (label ? lineOver(label) : null));
+    const drawn = lines.filter((line): line is WoRule => line !== null);
+    const y = drawn.length > 0 ? Math.max(...drawn.map((line) => line.y1)) : name.y + 9;
 
-      const signatureAt = signature.x - name.x;
-      const dateAt = date ? date.x - name.x : signatureAt * 2;
-      const right = lines[2]?.x1 ?? (date ? date.x + 140 : name.x + dateAt + 140);
-      return {
-        page: index,
-        x: name.x,
-        y,
-        width: Math.min(right, page.view[2] - 20) - name.x,
-        height: APPROVAL_HEIGHT,
-        size: 10,
-        signatureAt,
-        dateAt,
-      };
-    }
+    const signatureAt = signature.x - name.x;
+    const dateAt = date ? date.x - name.x : signatureAt * 2;
+    const right = lines[2]?.x1 ?? (date ? date.x + 140 : name.x + dateAt + 140);
+    return {
+      page: index,
+      x: name.x,
+      y,
+      width: Math.min(right, page.view[2] - 20) - name.x,
+      height: APPROVAL_HEIGHT,
+      size: 10,
+      signatureAt,
+      dateAt,
+    };
   }
   return null;
 }
 
+const overlaps = (a: WoRect, b: WoRect, margin = 4) =>
+  a.page === b.page &&
+  a.x < b.x + b.width + margin &&
+  b.x < a.x + a.width + margin &&
+  a.y < b.y + b.height + margin &&
+  b.y < a.y + a.height + margin;
+
+/**
+ * A parked box moved clear of the others on its page: down a line at a time,
+ * then up. On a one-page document the notes and the signature row were both
+ * parked low on page 1, one on top of the other, and the one underneath could
+ * not be got at to drag it away.
+ */
+function clearOf<T extends WoRect>(box: T, others: WoRect[], view: WoScanPage["view"]): T {
+  if (!others.some((other) => overlaps(box, other))) return box;
+  const step = 12;
+  const lowest = view[1] + 10;
+  const highest = view[3] - box.height - 10;
+  const tries: number[] = [];
+  for (let y = box.y - step; y >= lowest; y -= step) tries.push(y);
+  for (let y = box.y + step; y <= highest; y += step) tries.push(y);
+  for (const y of tries) {
+    const moved = { ...box, y };
+    if (!others.some((other) => overlaps(moved, other))) return moved;
+  }
+  return box;
+}
+
 /** Reads the three places out of a work order, and parks whatever it cannot. */
-export function detectWoLayout(scan: WoScan): WoLayout {
-  const { pages, copies } = firstCopy(scan);
+export function detectWoLayout(scan: WoScan, options: WoDetectOptions = {}): WoLayout {
+  const { pages, copies } = firstCopy(scan, options);
   const lastPage = pages[pages.length - 1];
   const view = (index: number) => scan.pages[index]?.view ?? LETTER;
 
@@ -551,12 +767,24 @@ export function detectWoLayout(scan: WoScan): WoLayout {
     dateAt: 328,
   };
 
+  // What was found stays where it was found; what was parked moves out of
+  // its way, the times first, then the notes, then the signature row.
+  const placed: WoRect[] = [times?.box, notes?.box, approval].filter(
+    (box): box is NonNullable<typeof box> => Boolean(box),
+  );
+  const park = <T extends WoRect>(found: T | null | undefined, fallback: T): T => {
+    if (found) return found;
+    const parked = clearOf(fallback, placed, view(fallback.page));
+    placed.push(parked);
+    return parked;
+  };
+
   return {
     overlay: {
       pages,
-      times: times?.box ?? timesBoxDefault,
-      notes: notes?.box ?? notesDefault,
-      approval: approval ?? approvalDefault,
+      times: park(times?.box, timesBoxDefault),
+      notes: park(notes?.box, notesDefault),
+      approval: park(approval, approvalDefault),
       covers: times?.covers ?? [],
     },
     found: {

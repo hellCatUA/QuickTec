@@ -93,7 +93,13 @@ export default async function WoSignOffPage({
       // A non-breaking hyphen: at 320 px the title broke as "Sign-" / "Off".
       title="Use WM WO as a Sign‑Off"
       backHref={`/jobs/${id}`}
-      description={`${job.client.name} · ${job.intWoId} — their work order, signed where the customer signs it.`}
+      description={
+        <>
+          {job.client.name} · {job.intWoId}
+          {/* On a phone the page under it wants the room. */}
+          <span className="max-lg:hidden"> — their work order, signed where the customer signs it.</span>
+        </>
+      }
     />
   );
 

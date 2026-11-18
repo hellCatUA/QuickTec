@@ -58,18 +58,24 @@ export function signableWorkOrder(document: {
 }
 
 /**
- * A signed work order: one we made from theirs. A filled copy of a work-order
- * blank from the directory is generated too, but carries its template.
+ * A signed work order: one we made from theirs, which is the one that keeps
+ * where its sign-off went.
+ *
+ * A filled copy of a work-order blank from the directory is generated too.
+ * It used to be told apart by carrying its template — until the template was
+ * deleted, which empties that on its copies, and from then on they counted as
+ * work orders the customer had signed.
  */
 export function isSignedWorkOrder(document: {
   jobDocumentKind: string | null;
   generated: boolean;
-  sourceTemplateId: string | null;
+  overlay: unknown;
 }): boolean {
   return (
     document.jobDocumentKind === "CLIENT_WORK_ORDER" &&
     document.generated &&
-    !document.sourceTemplateId
+    document.overlay !== null &&
+    document.overlay !== undefined
   );
 }
 

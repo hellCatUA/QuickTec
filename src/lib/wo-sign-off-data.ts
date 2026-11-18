@@ -4,6 +4,35 @@ import { workSummary } from "@/lib/exports/text-report";
 import type { WorkOrderDefaults } from "@/lib/wo-sign-off";
 
 /**
+ * Which of the manager's signatures goes on the work order: one with a
+ * picture, the latest signed, the same one every time it is asked.
+ *
+ * The screen and the server used to take the first from a list in no
+ * particular order, by two different rules, so a job signed twice could show
+ * one signature on the screen and save the other.
+ */
+export function modSignatureOf<
+  T extends {
+    id: string;
+    kind: string;
+    skipped: boolean;
+    signedAt: Date | null;
+    attachment: unknown;
+  },
+>(signatures: T[]): T | null {
+  return (
+    signatures
+      .filter((entry) => entry.kind === "MOD" && !entry.skipped)
+      .sort(
+        (a, b) =>
+          Number(Boolean(b.attachment)) - Number(Boolean(a.attachment)) ||
+          (b.signedAt?.getTime() ?? 0) - (a.signedAt?.getTime() ?? 0) ||
+          (a.id < b.id ? 1 : a.id > b.id ? -1 : 0),
+      )[0] ?? null
+  );
+}
+
+/**
  * What the job says goes on its work order: the first check-in and the last
  * check-out on the site's clock, the work performed as the report words it,
  * and who signed for the customer, when, and with what.
@@ -16,9 +45,7 @@ export function workOrderDefaults(data: JobExportData): WorkOrderDefaults {
   const moment = (at: Date | null) =>
     at ? { time: usTimeInZone(at, zone), date: usDateInZone(at, zone) } : null;
 
-  const signature = data.job.signatures.find(
-    (entry) => entry.kind === "MOD" && !entry.skipped,
-  );
+  const signature = modSignatureOf(data.job.signatures);
   // Whoever signed, else whoever the job lists as the manager on duty: on a
   // job where the MOD did not sign, the name is still the one to print.
   const mod = data.job.pointsOfContact.find((contact) => contact.type === "MOD");
@@ -42,8 +69,5 @@ export function workOrderDefaults(data: JobExportData): WorkOrderDefaults {
 
 /** The signature file behind the defaults, for the server to draw itself. */
 export function signatureStoragePath(data: JobExportData): string | null {
-  const signature = data.job.signatures.find(
-    (entry) => entry.kind === "MOD" && !entry.skipped && entry.attachment,
-  );
-  return signature?.attachment?.storagePath ?? null;
+  return modSignatureOf(data.job.signatures)?.attachment?.storagePath ?? null;
 }

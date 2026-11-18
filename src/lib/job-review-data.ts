@@ -182,7 +182,7 @@ export async function loadReview(jobId: string): Promise<LoadedReview | null> {
       projectId: true,
       site: { select: { timeZone: true } },
       documents: {
-        select: { jobDocumentKind: true, generated: true, sourceTemplateId: true },
+        select: { jobDocumentKind: true, generated: true, overlay: true },
       },
       deliverableRules: {
         where: { projectId: null },

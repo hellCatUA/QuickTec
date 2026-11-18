@@ -43,9 +43,10 @@ the client-facing report, the full job archive, and the weekly pay journal.
 - Their WorkMarket work order signed as the sign-off when they have no sheet:
   the check-in and check-out, the work performed and the customer's name,
   signature and date found on it and drawn onto its first copy, checked on
-  the page before it is saved beside the original as `<name>-Signed.pdf`.
-  Offered at the last clock-out, and kept in the Sign-off block for later —
-  never before the job is closed
+  the page before it is saved beside the original as `<name>-Signed.pdf` —
+  on a phone one place at a time (Back, Edit, Next, then Approve), on a
+  computer the three beside the page. Offered at the last clock-out, and kept
+  in the Sign-off block for later — never before the job is closed
 - Guided checkout: missing-work review, outcome, release code, signatures,
   final review and the clock-out picker — plus a prepare mode that collects
   everything while the manager is still on site

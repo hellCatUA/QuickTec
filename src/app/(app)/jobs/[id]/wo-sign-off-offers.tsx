@@ -1,7 +1,8 @@
 "use client";
 
-import { CircleCheck, FileSignature, Wand2 } from "lucide-react";
+import { CircleCheck, ExternalLink, FileSignature, Wand2, X } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -178,6 +179,73 @@ export function WoSignOffEntry({
           {why}
         </p>
       ) : null}
+    </div>
+  );
+}
+
+/** What the job page is told about a signed work order just saved. */
+export const SAVED_NOTES: Record<string, string> = {
+  unsigned: "It went without a customer signature: none was captured on this job.",
+  unreadable:
+    "It went without the customer's signature: the one captured on this job could not be read.",
+  "notes-cut": "The notes were cut short to fit; the whole of them is in the job report.",
+  cut: "A line too long for its place even at the smallest size was cut short.",
+};
+
+/**
+ * Said at the top of the job once a signed work order is saved.
+ *
+ * The owner's flow: approved, and straight back to the job, which says it was
+ * saved and where — rather than a "Saved" line at the foot of the signing
+ * screen and a second button to leave it by. Put away by its cross, which
+ * takes it off the address too, so a reload does not say it again.
+ */
+export function SignedWorkOrderSaved({
+  jobId,
+  id,
+  name,
+  notes,
+}: {
+  jobId: string;
+  id: string;
+  name: string;
+  notes: string[];
+}) {
+  const router = useRouter();
+  return (
+    <div
+      role="status"
+      className="flex items-start gap-3 rounded-xl border border-success/40 bg-success/10 p-3 text-sm"
+    >
+      <CircleCheck className="mt-0.5 size-5 shrink-0 text-success" aria-hidden />
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <p className="font-medium">Signed work order saved</p>
+        <p className="text-muted-foreground [overflow-wrap:anywhere]">
+          {name}, with the work orders.
+        </p>
+        {notes.map((note) => (
+          <p key={note} className="text-warning">
+            {note}
+          </p>
+        ))}
+        <a
+          href={`/api/files/${id}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex min-h-11 w-fit items-center gap-2 rounded-lg border border-border bg-surface px-3 font-medium hover:bg-muted"
+        >
+          <ExternalLink className="size-4" aria-hidden /> Open
+        </a>
+      </div>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        aria-label="Put this away"
+        onClick={() => router.replace(`/jobs/${jobId}`, { scroll: false })}
+      >
+        <X />
+      </Button>
     </div>
   );
 }

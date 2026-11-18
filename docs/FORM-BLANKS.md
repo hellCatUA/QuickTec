@@ -166,7 +166,10 @@ signed, on that job:
 
 - **Which pages.** WorkMarket prints it three times — the resource copy the
   customer signs, the customer's copy, the instructions. Only the first copy is
-  written on, up to the page before `CUSTOMER COPY`; the whole file is kept.
+  written on, up to the page before the one headed exactly `CUSTOMER COPY`
+  (in the top quarter of the page: a sentence starting with those words is
+  not a heading); the whole file is kept. Where the copies were told apart
+  wrongly, **Use every page** opens the rest of the document to the boxes.
 - **The times.** Either `ARRIVAL TIME` / `DEPARTURE TIME` over blank lines
   ending in `AM/PM` — written on the lines as `9:05 AM`, with the dates as
   well when the job ran over more than one day — or `Check-In:` /
@@ -174,20 +177,51 @@ signed, on that job:
   painted over in white and ours written in their place with the date,
   `09-29-2026 9:05 AM`, because the date is the half WorkMarket most often has
   wrong. Painted, not removed: the old text is still inside the file under the
-  white, where a reader's select-all would find it.
-- **The notes.** The ruled lines under `Notes`, one line of writing per rule.
-  Where the box starts at the foot of a page and carries on over the page, the
-  part with more lines is used. A note too long for the lines is set smaller
-  and closer together; past 6 pt it is cut, ending `... (continued in the job
-  report)`.
+  white, where a reader's select-all would find it. What is painted is
+  outlined in red on the screen and can be switched off: only the time after
+  each label, within the box the labels sit in, and a wrapped last word
+  directly under `Check-Out:` — never a second column on the same lines or a
+  line of its own such as `Total: 4.30 hrs`.
+- **The notes.** The ruled lines under `Notes`, one line of writing per rule
+  — under the first `Notes` with lines, so a "Notes" in the description is
+  passed over. Where the box starts at the foot of a page and carries on over
+  the page, the part with more lines is used. Lines drawn as one path are read
+  line by line. Where there are no lines to measure, the spacing is a guess
+  that can be set a tenth of a point at a time. A note too long for the lines
+  is set smaller and closer together; past 6 pt it is cut, ending `...
+  (continued in the job report)`.
 - **The signature row.** On the line above `Customer Name (Printed)`,
   `Customer Signature` and `Date`: the name of whoever signed for the customer
-  at checkout, their signature, and the day they signed.
+  at checkout, their signature, and the day they signed. The signature is the
+  ink alone — the pad's white taken away and the picture cut to the strokes —
+  so it is drawn at a readable size and covers nothing printed under it.
+- **Words set wide.** A label whose words arrive from the file one at a time —
+  `ARRIVAL` and `TIME`, `Customer` and `Signature` — is put back together
+  before it is looked for.
+- **Letters.** The standard PDF font has no Ł, Ż or Cyrillic. Accents it has
+  not got are taken off (`Łukasz Żółć` prints `Lukasz Zólc`) and Ukrainian is
+  spelled in Latin letters by the national system (`Олександр` prints
+  `Oleksandr`); the screen says what will print. A one-line value too long
+  even at 5 pt is cut short with `...`, and the screen says so.
 
 What it cannot find is still offered as a box, parked where that part usually
-sits, to be dragged into place — a work order that is not WorkMarket's works
-too, by hand. Every box is checked on the page before anything is saved, and
-any value can be typed over there.
+sits and clear of the others, to be dragged into place — a work order that is
+not WorkMarket's works too, by hand. Every box is checked on the page before
+anything is saved, and any value can be typed over there.
+
+On a phone it goes one place at a time: the page fills the screen, turned and
+zoomed to the place in front, with **Back**, **Edit** and **Next** under it.
+Nothing on the page moves until Edit is pressed. Next applies the place and
+moves on, and waits on a place that was not found until its box has been
+moved; after the third, **Approve** saves the whole document. On a computer
+the three sit beside the page, each with **Show** and **Apply**, and the file
+is saved once all three are applied. Either way, saving goes straight back to
+the job, which says what was saved and anything worth knowing about it — no
+signature, notes cut short.
+
+A file pdf.js and pdf-lib read differently (damaged, so that they count its
+pages differently) is refused before anything is placed on it, and again on
+the server: a box placed on one page could be written on another.
 
 Only once the job is closed — the last clock-out, or later. The work order
 carries the departure time and the customer's word that the work is done, so
@@ -198,8 +232,10 @@ it for afterwards.
 
 The result is saved with the work orders as `<their file name>-Signed.pdf`,
 the original beside it, and goes in the company's WO folder of the export.
-Signing again replaces it. Where it was put on the page and what was typed are
-kept with it, so signing again starts from there.
+Signing again replaces it — one signed copy per work order, held by the
+database, so two saves at the same moment still leave one. Where it was put on
+the page and what was typed are kept with it, so signing again starts from
+there.
 
 `npm run verify:wo` checks all of this against work orders drawn to the
 measurements of two real ones, which stay out of the repository because they

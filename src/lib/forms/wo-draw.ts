@@ -115,7 +115,15 @@ export function fitNotes(raw: string, font: PDFFont, box: WoNotesBox): NotesFit 
 
 const INK = rgb(0, 0, 0);
 
-/** One line of text, made smaller rather than allowed past its width. */
+/** What is written after a line cut short. */
+export const LINE_CUT = "...";
+
+/**
+ * One line of text, made smaller rather than allowed past its width, and cut
+ * short only when even the smallest size will not fit. Uncut at the floor, a
+ * 120-character name ran on into the signature, which then covered half of
+ * it, and a long time ran past "AM/PM" and off the page. Says whether it cut.
+ */
 function writeLine(
   page: PDFPage,
   font: PDFFont,
@@ -124,25 +132,39 @@ function writeLine(
   baseline: number,
   size: number,
   width: number,
-) {
+): boolean {
   const text = toWinAnsi(raw).replace(/\s+/g, " ").trim();
-  if (!text) return;
-  page.drawText(text, {
-    x,
-    y: baseline,
-    size: sizeToFit(text, font, size, Math.max(10, width)),
-    font,
-    color: INK,
-  });
+  if (!text) return false;
+  const room = Math.max(10, width);
+  const fitted = sizeToFit(text, font, size, room);
+  let shown = text;
+  let cut = false;
+  if (font.widthOfTextAtSize(shown, fitted) > room) {
+    cut = true;
+    while (shown && font.widthOfTextAtSize(`${shown}${LINE_CUT}`, fitted) > room) {
+      shown = shown.slice(0, -1).trimEnd();
+    }
+    shown = `${shown}${LINE_CUT}`;
+  }
+  page.drawText(shown, { x, y: baseline, size: fitted, font, color: INK });
+  return cut;
 }
 
-export type WoDrawResult = { notes: NotesFit; signed: boolean };
+export type WoDrawResult = {
+  notes: NotesFit;
+  signed: boolean;
+  /** The one-line values too long for their place even at the smallest size. */
+  cut: (keyof WoValues)[];
+};
 
 /**
  * Draws the overlay onto an opened work order. The caller saves it.
  *
  * `signature` is the customer's signature as PNG bytes, or nothing; a work
- * order is still filled without one, and the screen says so before saving.
+ * order is still filled without one, and the screen says so before saving. It
+ * is the ink alone, cut to its edges on a clear ground (wo-signature.ts): the
+ * pad's own picture is the whole pad in white, which shrank the ink to a few
+ * millimetres and blanked out the printed words under the row.
  */
 export async function drawWorkOrder(
   pdf: PDFDocument,
@@ -165,13 +187,18 @@ export async function drawWorkOrder(
     });
   }
 
+  const cut: (keyof WoValues)[] = [];
   const times = overlay.times;
   const timesPage = pageAt(times.page);
   if (timesPage) {
     const top = times.y + times.height - TIMES_ASCENT * times.size;
     const bottom = times.y + TIMES_DESCENT * times.size;
-    writeLine(timesPage, font, values.checkIn, times.x, top, times.size, times.width);
-    writeLine(timesPage, font, values.checkOut, times.x, bottom, times.size, times.width);
+    if (writeLine(timesPage, font, values.checkIn, times.x, top, times.size, times.width)) {
+      cut.push("checkIn");
+    }
+    if (writeLine(timesPage, font, values.checkOut, times.x, bottom, times.size, times.width)) {
+      cut.push("checkOut");
+    }
   }
 
   const box = overlay.notes;
@@ -195,16 +222,22 @@ export async function drawWorkOrder(
   let signed = false;
   if (rowPage) {
     const baseline = row.y + RULE_LIFT + 0.5;
-    writeLine(rowPage, font, values.name, row.x + 2, baseline, row.size, row.signatureAt - 10);
-    writeLine(
-      rowPage,
-      font,
-      values.date,
-      row.x + row.dateAt + 2,
-      baseline,
-      row.size,
-      row.width - row.dateAt - 4,
-    );
+    if (writeLine(rowPage, font, values.name, row.x + 2, baseline, row.size, row.signatureAt - 10)) {
+      cut.push("name");
+    }
+    if (
+      writeLine(
+        rowPage,
+        font,
+        values.date,
+        row.x + row.dateAt + 2,
+        baseline,
+        row.size,
+        row.width - row.dateAt - 4,
+      )
+    ) {
+      cut.push("date");
+    }
 
     if (signature) {
       try {
@@ -231,10 +264,35 @@ export async function drawWorkOrder(
     }
   }
 
-  return { notes, signed };
+  return { notes, signed, cut };
 }
 
 export { LOCKED_WORK_ORDER };
+
+/** Loaded the way every reader manages to: leniently, except about a lock. */
+async function loadLeniently(bytes: Uint8Array | ArrayBuffer): Promise<PDFDocument> {
+  const source = await PDFDocument.load(bytes, {
+    ignoreEncryption: true,
+    updateMetadata: false,
+    throwOnInvalidObject: false,
+  });
+  if (source.isEncrypted) throw new Error(LOCKED_WORK_ORDER);
+  return source;
+}
+
+/**
+ * How many pages the work order has as it will be written on.
+ *
+ * pdf.js, which shows it, and pdf-lib, which writes on it, read a damaged file
+ * differently. Seventeen of 220 damaged work orders showed every page and
+ * saved with some missing, and in one the name and date went onto a customer
+ * copy page because the pages had shifted under them. The screen asks this
+ * before anything is placed, and the server asks again before anything is
+ * written.
+ */
+export async function workOrderPageCount(bytes: Uint8Array | ArrayBuffer): Promise<number> {
+  return (await loadLeniently(bytes)).getPageCount();
+}
 
 /**
  * A work order, opened for drawing, as a new document holding its pages.
@@ -249,6 +307,9 @@ export { LOCKED_WORK_ORDER };
  * Lenient on the way in, because strict parsing refuses files that open
  * everywhere else; but not about encryption: a locked file loads, and then
  * saves into one no reader can open.
+ *
+ * What the file says about itself comes across too — who made it, with what,
+ * and when. The copy used to say pdf-lib had made it, today.
  */
 export async function openWorkOrder(
   bytes: Uint8Array | ArrayBuffer,
@@ -258,12 +319,7 @@ export async function openWorkOrder(
    */
   through?: number,
 ): Promise<PDFDocument> {
-  const source = await PDFDocument.load(bytes, {
-    ignoreEncryption: true,
-    updateMetadata: false,
-    throwOnInvalidObject: false,
-  });
-  if (source.isEncrypted) throw new Error(LOCKED_WORK_ORDER);
+  const source = await loadLeniently(bytes);
 
   const indices = source
     .getPageIndices()
@@ -272,7 +328,21 @@ export async function openWorkOrder(
   for (const page of await pdf.copyPages(source, indices)) {
     pdf.addPage(page);
   }
+
   const title = source.getTitle();
+  const author = source.getAuthor();
+  const subject = source.getSubject();
+  const keywords = source.getKeywords();
+  const creator = source.getCreator();
+  const producer = source.getProducer();
+  const created = source.getCreationDate();
   if (title) pdf.setTitle(title);
+  if (author) pdf.setAuthor(author);
+  if (subject) pdf.setSubject(subject);
+  if (keywords) pdf.setKeywords([keywords]);
+  if (creator) pdf.setCreator(creator);
+  if (producer) pdf.setProducer(producer);
+  if (created) pdf.setCreationDate(created);
+  pdf.setModificationDate(new Date());
   return pdf;
 }

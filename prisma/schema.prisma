@@ -2029,9 +2029,15 @@ model Attachment {
   /// order it was made from, which stays on the job beside it. Signing it again
   /// replaces this copy. Kept when the original is removed — it is what the
   /// customer signed.
-  signedFromId String?
+  ///
+  /// Unique: one signed copy per work order, held by the database. Two saves
+  /// pressed at once each found no copy to replace and each added one, and
+  /// five at once left five. The index is also what deleting any attachment
+  /// needs — every photo is one — to find the copies pointing at it; without
+  /// it each delete read the whole table.
+  signedFromId String?      @unique
   signedFrom   Attachment?  @relation("SignedWorkOrders", fields: [signedFromId], references: [id], onDelete: SetNull)
-  signedCopies Attachment[] @relation("SignedWorkOrders")
+  signedCopy   Attachment?  @relation("SignedWorkOrders")
   /// Where the sign-off was put on it and what was typed in, as confirmed, so
   /// signing it again starts from there rather than from a fresh guess.
   overlay      Json?
