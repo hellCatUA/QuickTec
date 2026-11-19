@@ -813,6 +813,44 @@ async function dragAcross(page: Page, key: string, dx: number, dy: number) {
   await page.mouse.up();
 }
 
+/** Two taps on a button's place, 120 ms apart, as a hurried thumb gives them. */
+async function doubleTap(page: Page, label: string) {
+  await enabled(page, label);
+  const box = await page.getByRole("button", { name: label, exact: true }).boundingBox();
+  if (!box) throw new Error(`No ${label} button`);
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  await page.mouse.click(x, y);
+  await page.waitForTimeout(120);
+  await page.mouse.click(x, y);
+  await page.waitForTimeout(300);
+}
+
+type Captured = { url: string; headers: Record<string, string>; body: string };
+
+/** The captured save sent again from the page, changed or not; its answer as text. */
+async function resend(page: Page, sent: Captured, copies = 1, change?: (body: string) => string) {
+  return page.evaluate(
+    async ({ request, body, times }) =>
+      Promise.all(
+        Array.from({ length: times }, async () => {
+          const response = await fetch(request.url, {
+            method: "POST",
+            headers: {
+              accept: request.headers.accept ?? "text/x-component",
+              "content-type": request.headers["content-type"],
+              "next-action": request.headers["next-action"],
+              "next-router-state-tree": request.headers["next-router-state-tree"] ?? "",
+            },
+            body,
+          });
+          return { status: response.status, text: await response.text() };
+        }),
+      ),
+    { request: sent, body: change ? change(sent.body) : sent.body, times: copies },
+  );
+}
+
 /** On a computer, every place applied in turn. */
 async function applyAll(page: Page) {
   for (let index = 0; index < 3; index++) {
@@ -938,7 +976,7 @@ async function online(browser: Browser) {
       lifecycle: "IN_PROGRESS" | "PENDING_REVIEW";
       workOrder?: "lines" | "printed";
       open?: boolean;
-      signed?: boolean;
+      signed?: boolean | "unreadable";
       /** The company's own sign-off blank on the job, mapped and still empty. */
       blank?: boolean;
       /** A sign-off sheet attached already signed, by hand. */
@@ -984,7 +1022,11 @@ async function online(browser: Browser) {
       data: { jobId: created.id, type: "MOD", name: "Dana Reyes" },
     });
     if (options.signed) {
-      const stored = await storeFile(created.id, await signaturePng(), "image/png");
+      const stored = await storeFile(
+        created.id,
+        options.signed === "unreadable" ? Buffer.from("not a picture at all") : await signaturePng(),
+        "image/png",
+      );
       const file = await db.attachment.create({
         data: {
           storagePath: stored.storagePath,
@@ -1091,6 +1133,11 @@ async function online(browser: Browser) {
 
   const openJob = await job("WOSO Still on site", { lifecycle: "IN_PROGRESS", workOrder: "printed", open: true });
   const closedJob = await job("WOSO Closed", { lifecycle: "PENDING_REVIEW", workOrder: "printed", signed: true });
+  const unreadableJob = await job("WOSO Unreadable signature", {
+    lifecycle: "PENDING_REVIEW",
+    workOrder: "lines",
+    signed: "unreadable",
+  });
   const checkoutJob = await job("WOSO Checkout", { lifecycle: "IN_PROGRESS", workOrder: "lines", open: true });
   const checkoutBoth = await job("WOSO Checkout both", {
     lifecycle: "IN_PROGRESS",
@@ -1143,7 +1190,7 @@ async function online(browser: Browser) {
   check("one place at a time, the times first", await caption(page), "Current · 1 of 3");
   check(
     "it says WorkMarket's own times are painted over",
-    await page.getByText("WorkMarket printed its own check-in").isVisible(),
+    await page.getByText("WorkMarket's own times are painted over").isVisible(),
     true,
   );
   check(
@@ -1175,10 +1222,13 @@ async function online(browser: Browser) {
   await page.getByRole("button", { name: "Up a point" }).click();
   check("and with Edit the box moves", (await boxAt(page, "times")) !== where, true);
   await shot(page, "wo-phone-edit");
-  await page.getByRole("button", { name: "Apply", exact: true }).click();
-  check("Apply puts the editing away", await page.locator("#wo-check-in").count(), 0);
+  await page.getByRole("button", { name: "Done", exact: true }).click();
+  check("Done puts the editing away", await page.locator("#wo-check-in").count(), 0);
 
-  await pressNext(page);
+  // Two taps on Next in quick succession: the second used to go straight
+  // through the notes, unseen.
+  await doubleTap(page, "Next");
+  check("a double tap on Next moves on one place, not two", await caption(page), "Current · 2 of 3");
   check("Next moves on to the notes", await caption(page), "Current · 2 of 3");
   check("the page with it, the notes shown whole across", await zoomShown(page), "100%");
   check("and the times are applied", (await page.locator("ol[aria-label='The three places'] li").first().textContent())?.includes("applied"), true);
@@ -1186,14 +1236,22 @@ async function online(browser: Browser) {
   await page.getByRole("button", { name: "Edit", exact: true }).click();
   check("the work performed", await page.locator("#wo-notes").inputValue(), NOTE);
   check("its line spacing can be set", await page.getByRole("button", { name: "Lines further apart" }).count(), 1);
-  await page.getByRole("button", { name: "Apply", exact: true }).click();
+  await page.getByRole("button", { name: "Done", exact: true }).click();
   await pressNext(page);
   check("then the signature row", await caption(page), "Current · 3 of 3");
   await page.getByRole("button", { name: "Edit", exact: true }).click();
   check("who signed", await page.locator("#wo-name").inputValue(), "Dana Reyes");
   check("the day they signed", await page.locator("#wo-date").inputValue(), date);
-  await page.getByRole("button", { name: "Apply", exact: true }).click();
-  await pressNext(page);
+  await page.getByRole("button", { name: "Done", exact: true }).click();
+  // On the last place the second tap used to land on Approve and save.
+  await doubleTap(page, "Next");
+  await page.waitForTimeout(800);
+  check("a double tap on the last Next does not save", page.url().includes("/wo-sign-off"), true);
+  check(
+    "nothing was saved by it",
+    await db.attachment.count({ where: { jobDocumentId: closedJob.id, signedFromId: closedJob.workOrderId } }),
+    0,
+  );
   check("after the last place, Approve", await soon(page.getByRole("button", { name: "Approve", exact: true })), true);
   check("and only then", await caption(page), "All three checked");
   await shot(page, "wo-phone-approve");
@@ -1271,38 +1329,70 @@ async function online(browser: Browser) {
     1,
   );
 
+  if (copies[0]) {
+    await page.goto(`${BASE}/jobs/${closedJob.id}?signed=${copies[0].id}&note=unsigned,notes-cut`, {
+      waitUntil: "domcontentloaded",
+    });
+    check(
+      "the notice says when it went without a signature",
+      await soon(page.getByText("It went without a customer signature")),
+      true,
+    );
+    check("and when the notes were cut", await page.getByText("The notes were cut short to fit").isVisible(), true);
+  }
+  for (const odd of ["note=a&note=b", "signed=x&signed=y", "note=toString,constructor,__proto__"]) {
+    const response = await page.goto(`${BASE}/jobs/${closedJob.id}?${odd}`, { waitUntil: "domcontentloaded" });
+    check(`an address with ${odd} still opens the job`, response?.status(), 200);
+  }
+
   // Two saves at the same moment — a double tap, two phones — each used to
   // find no copy to replace and leave one of its own.
-  const request = captured as { url: string; headers: Record<string, string>; body: string } | null;
+  const request = captured as Captured | null;
   if (request) {
-    const statuses = await page.evaluate(
-      async (sent) =>
-        Promise.all(
-          [0, 1].map(async () => {
-            const response = await fetch(sent.url, {
-              method: "POST",
-              headers: {
-                accept: sent.headers.accept ?? "text/x-component",
-                "content-type": sent.headers["content-type"],
-                "next-action": sent.headers["next-action"],
-                "next-router-state-tree": sent.headers["next-router-state-tree"] ?? "",
-              },
-              body: sent.body,
-            });
-            return response.status;
-          }),
-        ),
-      request,
+    const answers = await resend(page, request, 2);
+    // Answered, each of them, and each answer one of the two a person can be
+    // given: saved, or told a save of the same work order was running.
+    check(
+      "two saves at the same moment are both answered",
+      answers.every(
+        (answer) =>
+          answer.status === 200 &&
+          (answer.text.includes('"ok":true') || answer.text.includes("being saved more than once")),
+      ),
+      true,
     );
-    check("two saves at the same moment are both answered", statuses.join(","), "200,200");
     check(
       "and leave one signed copy",
+      await db.attachment.count({ where: { jobDocumentId: closedJob.id, signedFromId: closedJob.workOrderId } }),
+      1,
+    );
+
+    // What the server holds the page to, whatever the page sends.
+    const [fewer] = await resend(page, request, 1, (body) => body.replace('"pageCount":10', '"pageCount":9'));
+    check("a page count that differs from the file is refused as damaged", fewer.text.includes("damaged"), true);
+    const [gap] = await resend(page, request, 1, (body) => body.replace('"pages":[0,1,2]', '"pages":[0,2]'));
+    check("pages with a gap are refused", gap.text.includes("could not be read"), true);
+    const [spread] = await resend(page, request, 1, (body) =>
+      body.replace(
+        '"covers":[',
+        '"covers":[{"page":0,"x":36,"y":300,"width":300,"height":30},{"page":0,"x":36,"y":500,"width":300,"height":30},',
+      ),
+    );
+    check("white patches spread over the page are refused", spread.text.includes("could not be read"), true);
+    check(
+      "and none of those saved anything",
       await db.attachment.count({ where: { jobDocumentId: closedJob.id, signedFromId: closedJob.workOrderId } }),
       1,
     );
   } else {
     check("the save was seen on its way", false, true);
   }
+
+  // The preview's signature: the ink alone, to whoever may sign it off.
+  const ink = await page.request.get(`${BASE}/api/jobs/${closedJob.id}/wo-signature`);
+  check("the preview's signature comes as a picture", `${ink.status()} ${ink.headers()["content-type"]}`, "200 image/png");
+  const none = await page.request.get(`${BASE}/api/jobs/${checkoutJob.id}/wo-signature`);
+  check("and as nothing where none was captured", none.status(), 404);
   let duplicate: string | null = null;
   try {
     await db.attachment.create({
@@ -1322,6 +1412,20 @@ async function online(browser: Browser) {
     duplicate = (error as { code?: string }).code ?? "error";
   }
   check("the database holds one signed copy per work order", duplicate, "P2002");
+
+  // --- a signature that cannot be read ---------------------------------------
+  const unreadable = await page.request.get(`${BASE}/api/jobs/${unreadableJob.id}/wo-signature`);
+  check("a damaged signature file is said to be unreadable, not served", unreadable.status(), 422);
+  await page.goto(`${BASE}/jobs/${unreadableJob.id}/wo-sign-off`, { waitUntil: "domcontentloaded" });
+  await readyPhone(page);
+  await pressNext(page);
+  await pressNext(page);
+  check(
+    "the signature row says the one on the job could not be read",
+    await page.getByText("The signature captured on this job could not be read").isVisible(),
+    true,
+  );
+  check("and its summary says so too", await page.getByText("Could not be read", { exact: true }).isVisible(), true);
 
   // --- again: replaced, not added, and what was typed is remembered ----------
   await page.goto(`${BASE}/jobs/${closedJob.id}/wo-sign-off`, { waitUntil: "domcontentloaded" });
@@ -1362,7 +1466,7 @@ async function online(browser: Browser) {
   await page.getByRole("button", { name: "Edit", exact: true }).click();
   check("what was typed comes back", await page.locator("#wo-check-in").inputValue(), `${date} 9:06 AM`);
   check("what was not follows the job", await page.locator("#wo-check-out").inputValue(), `${date} 1:40 PM`);
-  await page.getByRole("button", { name: "Apply", exact: true }).click();
+  await page.getByRole("button", { name: "Done", exact: true }).click();
 
   // --- refused on saving once the job is open again ---------------------------
   await db.job.update({ where: { id: closedJob.id }, data: { lifecycle: "IN_PROGRESS" } });
@@ -1400,8 +1504,28 @@ async function online(browser: Browser) {
   );
   check("Back, Edit and Next side by side", new Set(tops).size === 1 && tops[0] >= 0, true);
   await shot(page, "wo-page-320");
+  for (const [width, height] of [[320, 568], [390, 667]]) {
+    await page.setViewportSize({ width, height });
+    await page.waitForTimeout(400);
+    const next = await page.getByRole("button", { name: "Next", exact: true }).boundingBox();
+    const bar = await page.locator("nav.fixed").first().boundingBox();
+    check(
+      `on a ${width}×${height} phone Next stays above the tab bar`,
+      Boolean(next && bar && next.y + next.height <= bar.y + 1 && next.y >= 0),
+      true,
+    );
+  }
 
   // --- a computer: the page and the three beside it ---------------------------
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await page.goto(`${BASE}/jobs/${closedJob.id}/wo-sign-off`, { waitUntil: "domcontentloaded" });
+  await readyDesktop(page);
+  check(
+    "at 1024 px the page and the three beside it fit, with no sideways scroll",
+    await page.evaluate(() => document.documentElement.scrollWidth <= 1024),
+    true,
+  );
+  await shot(page, "wo-page-1024");
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto(`${BASE}/jobs/${closedJob.id}/wo-sign-off`, { waitUntil: "domcontentloaded" });
   await readyDesktop(page);
@@ -1550,7 +1674,7 @@ async function online(browser: Browser) {
   await readyPhone(page);
   check(
     "blank lines found on that one",
-    await page.getByText("Written on the blank Arrival time and Departure time lines.").isVisible(),
+    await page.getByText("On the blank Arrival and Departure lines.").isVisible(),
     true,
   );
   await page.getByRole("button", { name: "Edit", exact: true }).click();

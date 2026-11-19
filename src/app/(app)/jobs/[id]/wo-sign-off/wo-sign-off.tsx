@@ -110,7 +110,13 @@ const LETTER_VIEW: [number, number, number, number] = [0, 0, 612, 792];
  */
 const STEPS_QUERY = "(max-width: 1023.98px)";
 /** The least of the page a phone shows while a place is being changed under it. */
-const MIN_PREVIEW = 220;
+const MIN_PREVIEW = 180;
+/**
+ * How long a new step waits before Next or Approve can be pressed on it. Two
+ * taps 120 ms apart went straight through a place nobody had looked at, and on
+ * the last place the second tap landed on Approve and saved the document.
+ */
+const SETTLE_MS = 700;
 /** The step after the last place: the whole document, to approve. */
 const ALL_DONE = BOXES.length;
 
@@ -218,6 +224,21 @@ export function WoSignOff({
   // The phone's steps: which place is in front, and whether it is being changed.
   const [step, setStep] = React.useState(0);
   const [editing, setEditing] = React.useState(false);
+  // A new step, not yet long enough in front to have been looked at.
+  const [settling, setSettling] = React.useState(false);
+  // The page and width the canvas last finished drawing, so a step's Next
+  // waits for its own page rather than the one before it.
+  const [painted, setPainted] = React.useState<string | null>(null);
+  // Which boxes somebody has put in place by hand. By position, a parked box
+  // moved away and back again counted as never moved; and a box put in place
+  // by hand was thrown away when every page was read.
+  const [moved, setMoved] = React.useState<Record<BoxKey, boolean>>({
+    times: false,
+    notes: false,
+    approval: false,
+  });
+  // What reading every page, or going back to the first copy, did to the boxes.
+  const [notice, setNotice] = React.useState<string | null>(null);
   const [previewHeight, setPreviewHeight] = React.useState<number | null>(null);
 
   const [preview, setPreview] = React.useState<PdfDocument | null>(null);
@@ -254,6 +275,11 @@ export function WoSignOff({
   const dragRef = React.useRef<Drag | null>(null);
   const focusRef = React.useRef<BoxKey | null>(null);
   const placedRef = React.useRef(false);
+  // Whether the page has ever been drawn with the sign-off on it.
+  const everDrawnRef = React.useRef(false);
+  const settleRef = React.useRef<number | null>(null);
+  const headingRef = React.useRef<HTMLHeadingElement>(null);
+  const focusHeadingRef = React.useRef(false);
 
   // -------------------------------------------------------------------------
   // Reading the work order once: its text and lines, then the three places.
@@ -357,6 +383,8 @@ export function WoSignOff({
         setEveryPage(wide);
         setOverlay(start?.overlay ?? layout.overlay);
         setFound(startFound);
+        // Last time's boxes were looked at and saved: in place, not parked.
+        if (start) setMoved({ times: true, notes: true, approval: true });
         setValues(kept);
         setTyped(start?.typed ?? {});
         setPage((start?.overlay ?? layout.overlay).times.page);
@@ -388,6 +416,7 @@ export function WoSignOff({
       scanDocumentRef.current = null;
       workerRef.current?.destroy();
       workerRef.current = null;
+      if (settleRef.current !== null) window.clearTimeout(settleRef.current);
     },
     [],
   );
@@ -418,6 +447,7 @@ export function WoSignOff({
         void previous?.destroy();
         setDrawn(result);
         setPreviewError(null);
+        everDrawnRef.current = true;
       } catch (caught) {
         if (cancelled) return;
         // pdf.js reads a locked file happily; only writing on it fails. That
@@ -430,7 +460,18 @@ export function WoSignOff({
           return;
         }
         console.error("[work order] drawing the preview failed", caught);
-        setPreviewError(caught instanceof Error ? caught.message : "Unknown error");
+        // Never drawn at all: the file is damaged where pdf-lib has to write,
+        // and the same failure waits on the server. Said in words, and with
+        // nothing to place boxes on — it used to say "Expected instance of
+        // PDFDict, but got instance of PDFInvalidObject" under the page.
+        if (!everDrawnRef.current) {
+          setFailure({ message: DAMAGED_WORK_ORDER, final: true });
+          setPhase("failed");
+          return;
+        }
+        setPreviewError(
+          "the work order's file is damaged where this box is, so it cannot be written on there. Put the box back, or onto another page.",
+        );
       }
       if (!cancelled) setDrawnFor({ overlay, values });
     }, PREVIEW_DELAY);
@@ -519,13 +560,33 @@ export function WoSignOff({
   const cssWidth = Math.max(0, Math.floor(frame * zoom));
   const scale = pageWidth > 0 ? cssWidth / pageWidth : 1;
 
+  /** The page for the place in front is on the screen, drawn at its size. */
+  const pagePainted = painted === `${page}:${cssWidth}`;
+  /** Next on a phone: the place in front drawn, in front long enough, not a parked guess. */
+  const canNext = current !== null && canTick && !settling && pagePainted && !parked(current);
+  const canApprove = canTick && !settling && pagePainted && BOXES.every((key) => checked[key]);
+
   // On a phone, once the page has its size: brought up under the top of the
   // screen, so it is the page that fills it rather than the title over it.
   React.useEffect(() => {
-    if (!steps || phase !== "ready" || previewHeight === null || placedRef.current) return;
+    // Turned to the wide layout and back, the page is brought up again.
+    if (!steps) {
+      placedRef.current = false;
+      return;
+    }
+    if (phase !== "ready" || previewHeight === null || placedRef.current) return;
     placedRef.current = true;
     intoView(viewerRef.current);
   }, [steps, phase, previewHeight]);
+
+  // A new step's heading takes the focus, so a screen reader says where it
+  // is — and Enter pressed again does not go on to apply the next place
+  // unheard. Without a scroll: on a phone that would move the page.
+  React.useLayoutEffect(() => {
+    if (!focusHeadingRef.current) return;
+    focusHeadingRef.current = false;
+    headingRef.current?.focus({ preventScroll: true });
+  });
 
   // Drawn off screen and copied across, so the page never flashes blank
   // between one version and the next.
@@ -573,6 +634,7 @@ export function WoSignOff({
         // Its pixels are on the page now; it need not hold a copy until next time.
         scratch.width = 0;
         scratch.height = 0;
+        setPainted(`${page}:${cssWidth}`);
       } catch (caught) {
         if (!cancelled && !(caught instanceof Error && caught.name === "RenderingCancelledException")) {
           console.error("[work order] showing the page failed", caught);
@@ -631,6 +693,9 @@ export function WoSignOff({
       current ? { ...current, [key]: onPage({ ...current[key], ...next }) } : current,
     );
     setChecked((current) => ({ ...current, [key]: false }));
+    if (["x", "y", "width", "height", "page"].some((field) => field in next)) {
+      setMoved((current) => ({ ...current, [key]: true }));
+    }
   }
 
   function changeValue(key: keyof WoValues, value: string) {
@@ -675,6 +740,7 @@ export function WoSignOff({
     setFound(detected.found);
     timesFollow(detected.found.times);
     setChecked({ times: false, notes: false, approval: false });
+    setMoved({ times: false, notes: false, approval: false });
     setPage(detected.overlay.times.page);
   }
 
@@ -702,6 +768,7 @@ export function WoSignOff({
     );
     if (key === "times") timesFollow(detected.found.times);
     setChecked((current) => ({ ...current, [key]: false }));
+    setMoved((current) => ({ ...current, [key]: false }));
     setPage(detected.overlay[key].page);
     setZoom(null);
     focusRef.current = key;
@@ -719,10 +786,10 @@ export function WoSignOff({
    * guess applied unmoved puts the customer's signature wherever the guess was.
    */
   function parked(key: BoxKey): boolean {
-    if (!found || !detected || !overlay) return false;
+    if (!found) return false;
     const missing =
       key === "times" ? found.times === null : key === "notes" ? found.notes === null : !found.approval;
-    return missing && sameBox(overlay[key], detected.overlay[key]);
+    return missing && !moved[key];
   }
 
   /**
@@ -755,6 +822,8 @@ export function WoSignOff({
    */
   async function chooseEveryPage(on: boolean) {
     if (!overlay || !found || locked || widening) return;
+    const names = (keys: BoxKey[]) =>
+      keys.map((key) => BOX_SHORT[key]).join(keys.length === 2 ? " and " : ", ");
     if (on) {
       const pdfjs = pdfjsRef.current;
       const document = scanDocumentRef.current;
@@ -764,17 +833,22 @@ export function WoSignOff({
         const { scanWorkOrder } = await import("@/lib/forms/wo-scan");
         const read = await scanWorkOrder(document, pdfjs.OPS, { everyPage: true });
         const layout = detectWoLayout(read, { everyPage: true });
+        // What was found, or put in place by hand, stays where it is; the
+        // rest is looked for again across every page.
         const keep = {
-          times: found.times !== null,
-          notes: found.notes !== null,
-          approval: found.approval,
+          times: found.times !== null || moved.times,
+          notes: found.notes !== null || moved.notes,
+          approval: found.approval || moved.approval,
         };
         const nextFound: WoFound = {
-          times: found.times ?? layout.found.times,
-          notes: found.notes ?? layout.found.notes,
-          approval: found.approval || layout.found.approval,
+          times: keep.times ? found.times : layout.found.times,
+          notes: keep.notes ? found.notes : layout.found.notes,
+          approval: keep.approval ? found.approval : layout.found.approval,
           copies: found.copies,
         };
+        const replaced = BOXES.filter(
+          (key) => !keep[key] && !sameBox(overlay[key], layout.overlay[key]),
+        );
         setScan(read);
         setDetected(layout);
         setOverlay({
@@ -788,11 +862,22 @@ export function WoSignOff({
         setFound(nextFound);
         if (!keep.times) timesFollow(nextFound.times);
         setChecked((current) => ({
-          times: keep.times && current.times,
-          notes: keep.notes && current.notes,
-          approval: keep.approval && current.approval,
+          times: !replaced.includes("times") && current.times,
+          notes: !replaced.includes("notes") && current.notes,
+          approval: !replaced.includes("approval") && current.approval,
         }));
         setEveryPage(true);
+        setNotice(
+          replaced.length > 0
+            ? `${names(replaced)} found on the other pages — ${replaced.length === 1 ? "it needs" : "they need"} checking again.`
+            : "Every page is open to the boxes now; nothing more was found on the other pages.",
+        );
+        if (steps && current) {
+          setZoom(null);
+          setPage((current === "times" ? (keep.times ? overlay.times : layout.overlay.times) : current === "notes" ? (keep.notes ? overlay.notes : layout.overlay.notes) : keep.approval ? overlay.approval : layout.overlay.approval).page);
+          focusRef.current = current;
+          setFocusTick((tick) => tick + 1);
+        }
       } catch (caught) {
         console.error("[work order] reading every page failed", caught);
         setError("The other pages could not be read. Try again, or put the boxes on the first copy.");
@@ -810,15 +895,17 @@ export function WoSignOff({
       notes: !inFirst(overlay.notes),
       approval: !inFirst(overlay.approval),
     };
-    setDetected(first);
-    setOverlay({
+    const returned = BOXES.filter((key) => back[key]);
+    const nextOverlay: WoOverlay = {
       ...overlay,
       pages: first.overlay.pages,
       times: back.times ? first.overlay.times : overlay.times,
       notes: back.notes ? first.overlay.notes : overlay.notes,
       approval: back.approval ? first.overlay.approval : overlay.approval,
       covers: back.times ? first.overlay.covers : overlay.covers.filter(inFirst),
-    });
+    };
+    setDetected(first);
+    setOverlay(nextOverlay);
     setFound({
       times: back.times ? first.found.times : found.times,
       notes: back.notes ? first.found.notes : found.notes,
@@ -831,8 +918,25 @@ export function WoSignOff({
       notes: !back.notes && current.notes,
       approval: !back.approval && current.approval,
     }));
-    if (!first.overlay.pages.includes(page)) setPage(first.overlay.pages[0] ?? 0);
+    setMoved((current) => ({
+      times: !back.times && current.times,
+      notes: !back.notes && current.notes,
+      approval: !back.approval && current.approval,
+    }));
     setEveryPage(false);
+    setNotice(
+      returned.length > 0
+        ? `${names(returned)} ${returned.length === 1 ? "was" : "were"} on later pages, so ${returned.length === 1 ? "it is" : "they are"} back where ${returned.length === 1 ? "it was" : "they were"} found on the first copy — check ${returned.length === 1 ? "it" : "them"} again.`
+        : "Back to the first copy only.",
+    );
+    if (steps && current) {
+      setZoom(null);
+      setPage(nextOverlay[current].page);
+      focusRef.current = current;
+      setFocusTick((tick) => tick + 1);
+    } else if (!first.overlay.pages.includes(page)) {
+      setPage(first.overlay.pages[0] ?? 0);
+    }
   }
 
   /** The computer's Show: the page turned to the box, zoomed to it, and brought into view. */
@@ -864,13 +968,24 @@ export function WoSignOff({
 
   function goTo(target: number) {
     setEditing(false);
+    dragRef.current = null;
     setStep(target);
+    // What went wrong on another place is not this one's to say.
+    setError(null);
+    setNotice(null);
     focusOn(target < ALL_DONE ? BOXES[target] : null);
+    focusHeadingRef.current = true;
+    setSettling(true);
+    if (settleRef.current !== null) window.clearTimeout(settleRef.current);
+    settleRef.current = window.setTimeout(() => {
+      settleRef.current = null;
+      setSettling(false);
+    }, SETTLE_MS);
   }
 
   /** Applies the place in front and moves on to the next. */
   function next() {
-    if (!current || !canTick || parked(current)) return;
+    if (!current || !canNext) return;
     setChecked((state) => ({ ...state, [current]: true }));
     goTo(step + 1);
   }
@@ -942,6 +1057,12 @@ export function WoSignOff({
   function onPointerMove(event: React.PointerEvent) {
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
+    // Edit closed under a finger still down: the drag ends there, rather than
+    // the box going on following it.
+    if (!movable(drag.key)) {
+      dragRef.current = null;
+      return;
+    }
     event.stopPropagation();
     const dx = (event.clientX - drag.startX) / scale;
     const dy = (event.clientY - drag.startY) / scale;
@@ -1126,17 +1247,28 @@ export function WoSignOff({
     };
   }
 
-  function notesFor(key: BoxKey): Note[] {
+  /**
+   * `brief`: the phone's wording. The page above it already shows what the
+   * longer sentences explain, and on a short phone every line of them came off
+   * the page.
+   */
+  function notesFor(key: BoxKey, brief = false): Note[] {
     if (!overlay || !values || !found) return [];
     const list: (Note | null)[] =
       key === "times"
         ? [
             found.times === "lines"
-              ? { text: "Written on the blank Arrival time and Departure time lines." }
+              ? {
+                  text: brief
+                    ? "On the blank Arrival and Departure lines."
+                    : "Written on the blank Arrival time and Departure time lines.",
+                }
               : found.times === "printed"
                 ? overlay.covers.length > 0
                   ? {
-                      text: "WorkMarket printed its own check-in and check-out here. They are painted over — outlined in red on the page — and these written in their place.",
+                      text: brief
+                        ? "WorkMarket's own times are painted over (outlined in red) and these written instead."
+                        : "WorkMarket printed its own check-in and check-out here. They are painted over — outlined in red on the page — and these written in their place.",
                     }
                   : {
                       text: "WorkMarket printed its own check-in and check-out here. They are left as printed, and these written beside them.",
@@ -1173,7 +1305,11 @@ export function WoSignOff({
             ]
           : [
               found.approval
-                ? { text: "On the Customer Name, Customer Signature and Date line." }
+                ? {
+                    text: brief
+                      ? "On the Customer Name, Signature and Date line."
+                      : "On the Customer Name, Customer Signature and Date line.",
+                  }
                 : notFound(
                     "approval",
                     `low on the last page${allPages ? "" : " of the first copy"}`,
@@ -1190,7 +1326,9 @@ export function WoSignOff({
                     }
                   : drawn && !drawn.signed
                     ? { text: "The signature on this job could not be drawn.", warn: true }
-                    : { text: "The customer's signature from the checkout goes on the line." },
+                    : brief
+                      ? null
+                      : { text: "The customer's signature from the checkout goes on the line." },
               cutNote(Boolean(drawn?.cut.includes("name") || drawn?.cut.includes("date"))),
               lettersNote(true, values.name),
             ];
@@ -1541,9 +1679,16 @@ export function WoSignOff({
   // A phone: one place at a time.
 
   if (steps) {
-    const notes = current ? notesFor(current) : [];
+    const notes = current ? notesFor(current, true) : [];
+    const unchecked = BOXES.findIndex((key) => !checked[key]);
+    // Kept above the tab bar however long the block above it grows: on a short
+    // phone the row sat under the bar, and Next took a scroll to reach.
+    const actionRow =
+      "sticky bottom-[calc(env(safe-area-inset-bottom)+3.75rem)] z-10 -mx-3 -mb-3 mt-auto rounded-b-xl border-t border-border bg-surface px-3 pb-3 pt-2 md:bottom-3";
     return (
-      <div className="flex flex-col gap-3">
+      // No double-tap zoom: two quick taps are two presses here, and the guard
+      // on Next is for those, not for a browser zooming the page.
+      <div className="flex touch-manipulation flex-col gap-3">
         <div
           ref={viewerRef}
           className="flex min-w-0 scroll-mt-[calc(env(safe-area-inset-top)+0.75rem)] flex-col gap-2"
@@ -1620,6 +1765,9 @@ export function WoSignOff({
           <div className="relative">
             <div
               ref={scrollerRef}
+              role="region"
+              aria-label="The work order page"
+              tabIndex={0}
               className="relative overflow-auto overscroll-contain rounded-xl border border-border bg-white [scrollbar-gutter:stable]"
               style={{ height: previewHeight ?? "55dvh" }}
             >
@@ -1636,11 +1784,15 @@ export function WoSignOff({
         <section
           ref={currentRef}
           aria-label={current ? `Current: ${BOX_NAME[current]}` : "Approve"}
-          className="@container flex flex-col gap-3 rounded-xl border border-border bg-surface p-3"
+          className="@container flex flex-col gap-2 rounded-xl border border-border bg-surface p-3"
         >
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              {current ? `Current · ${step + 1} of ${BOXES.length}` : "All three checked"}
+            <span id="wo-step" className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              {current
+                ? `Current · ${step + 1} of ${BOXES.length}`
+                : unchecked < 0
+                  ? "All three checked"
+                  : `${BOXES.filter((key) => !checked[key]).length} still to check`}
             </span>
             <StepDots step={step} checked={checked} />
           </div>
@@ -1649,7 +1801,19 @@ export function WoSignOff({
             savedStatus
           ) : current ? (
             <>
-              <h2 className="text-base font-semibold">{BOX_NAME[current]}</h2>
+              <h2
+                ref={headingRef}
+                tabIndex={-1}
+                aria-describedby="wo-step"
+                className="text-base font-semibold outline-none"
+              >
+                {BOX_NAME[current]}
+              </h2>
+              {notice ? (
+                <p role="status" className="text-sm text-warning">
+                  {notice}
+                </p>
+              ) : null}
               {/* While editing, only what needs doing: the rest was read
                   before Edit was pressed, and on a phone every line of it
                   came off the page above. */}
@@ -1695,7 +1859,7 @@ export function WoSignOff({
                   {error}
                 </p>
               ) : null}
-              <div className="grid grid-cols-3 gap-2">
+              <div className={cn("grid grid-cols-3 gap-2", actionRow)}>
                 <Button
                   type="button"
                   variant="secondary"
@@ -1705,17 +1869,23 @@ export function WoSignOff({
                 >
                   <ArrowLeft /> Back
                 </Button>
+                {/* Done, not Apply: here it only puts the editing away, and
+                    Apply on a computer means the place is checked — the
+                    same word for two things. Next is what applies. */}
                 <Button
                   type="button"
                   variant="secondary"
                   className="px-2"
                   disabled={locked}
                   aria-expanded={editing}
-                  onClick={() => setEditing((state) => !state)}
+                  onClick={() => {
+                    dragRef.current = null;
+                    setEditing((state) => !state);
+                  }}
                 >
                   {editing ? (
                     <>
-                      <Check /> Apply
+                      <Check /> Done
                     </>
                   ) : (
                     <>
@@ -1723,19 +1893,26 @@ export function WoSignOff({
                     </>
                   )}
                 </Button>
-                <Button
-                  type="button"
-                  className="px-2"
-                  disabled={!canTick || parked(current)}
-                  onClick={next}
-                >
+                <Button type="button" className="px-2" disabled={!canNext} onClick={next}>
                   Next <ArrowRight />
                 </Button>
               </div>
             </>
           ) : (
             <>
-              <h2 className="text-base font-semibold">Ready to approve</h2>
+              <h2
+                ref={headingRef}
+                tabIndex={-1}
+                aria-describedby="wo-step"
+                className="text-base font-semibold outline-none"
+              >
+                {unchecked < 0 ? "Ready to approve" : "Not ready yet"}
+              </h2>
+              {notice ? (
+                <p role="status" className="text-sm text-warning">
+                  {notice}
+                </p>
+              ) : null}
               <p className="text-sm text-muted-foreground">
                 Saved with the work orders as{" "}
                 <strong className="text-foreground [overflow-wrap:anywhere]">{signedName}</strong>.{" "}
@@ -1744,25 +1921,29 @@ export function WoSignOff({
                 </span>
                 {signedCopy ? " The signed copy already on the job is replaced." : null}
               </p>
-              {ticked < BOXES.length ? (
-                <p className="text-sm text-warning">
-                  {BOXES.length - ticked} of the three still to check — go back to it.
-                </p>
+              {unchecked >= 0 ? (
+                // Taken straight to it, rather than told to find it by Back:
+                // reading every page late on can send an earlier place back.
+                <Button type="button" variant="secondary" disabled={locked} onClick={() => goTo(unchecked)}>
+                  Check {BOX_SHORT[BOXES[unchecked]].toLowerCase()} again
+                </Button>
               ) : null}
               {error ? (
                 <p role="alert" className="text-sm text-danger">
                   {error}
                 </p>
               ) : null}
-              <div className="grid grid-cols-[auto_1fr] gap-2">
+              <div className={cn("grid grid-cols-[auto_1fr] gap-2", actionRow)}>
                 <Button type="button" variant="secondary" className="px-3" disabled={locked} onClick={back}>
                   <ArrowLeft /> Back
                 </Button>
                 <Button
                   type="button"
                   size="lg"
-                  disabled={ticked < BOXES.length || !canTick}
-                  onClick={save}
+                  disabled={!canApprove}
+                  onClick={() => {
+                    if (canApprove) save();
+                  }}
                 >
                   {saving ? <Loader2 className="animate-spin" /> : <Check />}
                   Approve
@@ -1788,7 +1969,9 @@ export function WoSignOff({
           when the app is opened from the home screen. */}
       <div
         ref={viewerRef}
-        className="flex min-w-0 scroll-mt-[calc(env(safe-area-inset-top)+0.75rem)] flex-col gap-2 lg:sticky lg:top-4 lg:w-[640px] lg:shrink-0"
+        // At most 640 px, and never so wide that the three beside it lose their
+        // room: at 1024 px they were left 80 px and the page scrolled sideways.
+        className="flex min-w-0 scroll-mt-[calc(env(safe-area-inset-top)+0.75rem)] flex-col gap-2 lg:sticky lg:top-4 lg:w-[min(640px,calc(100%_-_24rem))] lg:shrink-0"
       >
         <div className="flex flex-wrap items-center gap-2">
           {overlay.pages.length > 1 ? (
@@ -1836,6 +2019,9 @@ export function WoSignOff({
         <div className="w-full">
           <div
             ref={scrollerRef}
+            role="region"
+            aria-label="The work order page"
+            tabIndex={0}
             className="relative max-h-[75vh] overflow-auto rounded-xl border border-border bg-white [scrollbar-gutter:stable]"
           >
             {pageContent}
@@ -1874,6 +2060,11 @@ export function WoSignOff({
           </Button>
         </div>
         {pagesChoice}
+        {notice ? (
+          <p role="status" className="text-sm text-warning">
+            {notice}
+          </p>
+        ) : null}
 
         {BOXES.map((key) => (
           <Section

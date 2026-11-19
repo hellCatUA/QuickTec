@@ -198,6 +198,24 @@ function labelsOn(page: WoScanPage | undefined): WoTextItem[] {
 const find = (page: WoScanPage | undefined, pattern: RegExp) =>
   labelsOn(page).find((item) => pattern.test(item.text));
 
+/**
+ * Helvetica's widths for printable ASCII, in thousandths of the size: enough
+ * to share out a run's width between a label and the value set in the same
+ * run. Shared out by counting characters, a narrow value such as
+ * "1/1/26 1:11" took the label's colon and the "t" of "Check-Out" with it
+ * under the white patch.
+ */
+const HELVETICA =
+  "278,278,355,556,556,889,667,191,333,333,389,584,278,333,278,278,556,556,556,556,556,556,556,556,556,556,278,278,584,584,584,556,1015,667,667,722,722,667,611,778,722,278,500,667,556,833,722,778,667,778,722,667,611,722,667,944,667,667,611,278,278,278,469,556,333,556,556,500,556,556,278,556,556,222,222,500,222,833,556,556,556,556,333,500,278,556,500,722,500,500,500,334,260,334,584"
+    .split(",")
+    .map(Number);
+
+const textWidth = (text: string) =>
+  Array.from(text).reduce((total, character) => {
+    const code = character.charCodeAt(0);
+    return total + (code >= 32 && code <= 126 ? HELVETICA[code - 32] : 556);
+  }, 0);
+
 const isRule = (rule: WoRule, minWidth: number) =>
   rule.x1 - rule.x0 >= minWidth && rule.y1 - rule.y0 <= 1.6;
 
@@ -400,7 +418,7 @@ function findTimes(
       // in the same run, the label's share of it by characters.
       const labelEnd = (item: WoTextItem) => {
         const label = LABEL_EITHER.exec(item.text)?.[0] ?? item.text;
-        return item.x + item.width * (label.length / Math.max(1, item.text.length));
+        return item.x + item.width * (textWidth(label) / Math.max(1, textWidth(item.text)));
       };
 
       // The box the two labels sit in, by its own lines: the rule under its
@@ -422,6 +440,11 @@ function findTimes(
       const border = below?.y1 ?? -Infinity;
       const pageRight = page.view[2] - 36;
       const reach = above?.x1 ?? below?.x1 ?? pageRight;
+      // Without a rule, the column's edge is not known: the page's margin is
+      // no stand-in for it, and measured against the margin a wrapped "PDT"
+      // looked as if it would have fitted on the line, and stayed on the
+      // paper under our time.
+      const bounded = above !== undefined || below !== undefined;
 
       // The value after a label: its first run anywhere in the column, then
       // only the runs that carry straight on from it. A gap wider than a few
@@ -471,7 +494,7 @@ function findTimes(
           item.text.length <= 24 &&
           !/^[A-Za-z][A-Za-z .]*:/.test(item.text) &&
           !/:$/.test(item.text) &&
-          outEnd + space + item.width > reach,
+          (!bounded || outEnd + space + item.width > reach),
       );
 
       const covered = [...inValue, ...outValue, ...wrapped];
@@ -508,7 +531,12 @@ function findTimes(
  * notes box. A box's own border is two rules of the same length too, but a
  * hundred points apart rather than ten, so it never makes a run.
  */
-function ruledRun(rules: WoRule[], like?: { x0: number; x1: number }): WoRule[] {
+function ruledRun(
+  rules: WoRule[],
+  like?: { x0: number; x1: number },
+  /** The lowest the run's first rule may be, where it has to start near something. */
+  from?: number,
+): WoRule[] {
   const groups = new Map<string, WoRule[]>();
   for (const rule of rules) {
     if (like && (Math.abs(rule.x0 - like.x0) > 3 || Math.abs(rule.x1 - like.x1) > 3)) {
@@ -522,6 +550,7 @@ function ruledRun(rules: WoRule[], like?: { x0: number; x1: number }): WoRule[] 
   for (const group of groups.values()) {
     const sorted = [...group].sort((a, b) => b.y1 - a.y1);
     for (let start = 0; start < sorted.length; start++) {
+      if (from !== undefined && sorted[start].y1 < from) break;
       const run = [sorted[start]];
       let pitch: number | null = null;
       for (let next = start + 1; next < sorted.length; next++) {
@@ -625,9 +654,12 @@ function notesUnder(
       // printed; one Trison work order drew a fifth that nobody can see.
       rule.y0 >= page.view[1] + 30,
   );
-  let here = ruledRun(below);
   // Its own lines start right under its heading; a ruled table further down
-  // the page is something else.
+  // the page is something else. Only runs starting there are looked at: the
+  // longest run anywhere below used to win and then be thrown away, and a
+  // table drawn as one path — seen now that paths are read piece by piece —
+  // hid the box's own three lines under it.
+  let here = ruledRun(below, undefined, heading.y - 40);
   if (here.length > 0 && heading.y - here[0].y1 > 40) here = [];
 
   const nextIndex = index + 1;

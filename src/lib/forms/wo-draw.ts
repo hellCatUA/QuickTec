@@ -1,12 +1,20 @@
 import {
+  decodePDFRawStream,
+  drawObject,
+  PDFContentStream,
+  PDFDict,
   PDFDocument,
+  PDFName,
+  PDFRawStream,
+  popGraphicsState,
+  pushGraphicsState,
   StandardFonts,
   rgb,
   type PDFFont,
   type PDFPage,
 } from "pdf-lib";
 import { sizeToFit, toWinAnsi, wrapText } from "@/lib/forms/text-fit";
-import { LOCKED_WORK_ORDER } from "@/lib/forms/wo-errors";
+import { DAMAGED_WORK_ORDER, LOCKED_WORK_ORDER } from "@/lib/forms/wo-errors";
 import {
   RULE_LIFT,
   TIMES_ASCENT,
@@ -105,11 +113,14 @@ export function fitNotes(raw: string, font: PDFFont, box: WoNotesBox): NotesFit 
   const size = NOTES_MIN_SIZE;
   const pitch = Math.min(box.pitch, size * 1.18);
   const kept = wrapText(text, font, size, width).slice(0, room(pitch));
+  // The long ending where it fits; in a box narrowed past it, "..." — the
+  // long one ran 80 points out of a box 20 wide.
+  const ending = font.widthOfTextAtSize(NOTES_CUT, size) <= width ? NOTES_CUT : LINE_CUT;
   let last = kept[kept.length - 1] ?? "";
-  while (last && font.widthOfTextAtSize(`${last} ${NOTES_CUT}`, size) > width) {
+  while (last && font.widthOfTextAtSize(`${last} ${ending}`, size) > width) {
     last = last.replace(/\s*\S+$/, "");
   }
-  kept[kept.length - 1] = last ? `${last} ${NOTES_CUT}` : NOTES_CUT;
+  kept[kept.length - 1] = last ? `${last} ${ending}` : ending;
   return { size, pitch, lines: kept, onRules: false, cut: true };
 }
 
@@ -150,6 +161,82 @@ function writeLine(
   return cut;
 }
 
+/**
+ * Their drawing of a page, set apart from ours.
+ *
+ * A page's content streams are read as one, so a damaged stream of theirs —
+ * one that decodes to garbage ending inside an unclosed string — swallowed
+ * everything after it, and everything after it was our times, our note and
+ * the customer's signature. A damaged work order that opened and counted its
+ * pages the same in both readers saved as "signed" with part of the sign-off
+ * missing, and the preview showed the same gap: about a third of the damaged
+ * files the second review made. Moved into a form of its own, their drawing
+ * ends where its stream ends, whatever is in it, and ours is read after it.
+ *
+ * A single stream goes across exactly as it was, still compressed, so a
+ * reader decodes it as forgivingly as it did before; several are decoded and
+ * joined, as pdf-lib embeds a page. Where they cannot be decoded the file is
+ * damaged past writing on safely, and it is refused as that: drawn on as it
+ * was instead, one such work order still lost its printed name.
+ */
+function setTheirDrawingApart(pdf: PDFDocument, page: PDFPage): void {
+  const context = pdf.context;
+  const { Contents, Resources } = page.node.normalizedEntries();
+  if (!Contents || Contents.size() === 0) return;
+
+  // The form keeps its own copy of the resources: ours are added to the
+  // page's, and the form would otherwise list itself among its own.
+  const resources = Resources.clone(context);
+  const xObjects = resources.lookupMaybe(PDFName.of("XObject"), PDFDict);
+  if (xObjects) resources.set(PDFName.of("XObject"), xObjects.clone(context));
+
+  const box = page.getMediaBox();
+  const form = {
+    Type: "XObject",
+    Subtype: "Form",
+    FormType: 1,
+    BBox: [box.x, box.y, box.x + box.width, box.y + box.height],
+    // The page's own coordinates: nothing in it moves.
+    Matrix: [1, 0, 0, 1, 0, 0],
+    Resources: resources,
+  };
+
+  const only = Contents.size() === 1 ? Contents.lookup(0) : null;
+  let stream;
+  if (only instanceof PDFRawStream) {
+    const filter = only.dict.get(PDFName.of("Filter"));
+    const parameters = only.dict.get(PDFName.of("DecodeParms"));
+    stream = PDFRawStream.of(
+      context.obj({
+        ...form,
+        ...(filter ? { Filter: filter } : {}),
+        ...(parameters ? { DecodeParms: parameters } : {}),
+      }),
+      only.contents,
+    );
+  } else {
+    const parts: Uint8Array[] = [];
+    for (let index = 0; index < Contents.size(); index++) {
+      const part = Contents.lookup(index);
+      if (part instanceof PDFRawStream) parts.push(decodePDFRawStream(part).decode());
+      else if (part instanceof PDFContentStream) parts.push(part.getUnencodedContents());
+      else throw new Error("A content stream of a kind pdf-lib cannot read");
+      parts.push(Uint8Array.of(10));
+    }
+    const joined = new Uint8Array(parts.reduce((total, part) => total + part.length, 0));
+    let at = 0;
+    for (const part of parts) {
+      joined.set(part, at);
+      at += part.length;
+    }
+    stream = context.flateStream(joined, form);
+  }
+
+  const name = page.node.newXObject("TheirPage", context.register(stream));
+  page.node.set(PDFName.of("Contents"), context.obj([]));
+  page.pushOperators(pushGraphicsState(), drawObject(name), popGraphicsState());
+}
+
 export type WoDrawResult = {
   notes: NotesFit;
   signed: boolean;
@@ -176,6 +263,21 @@ export async function drawWorkOrder(
   const pages = pdf.getPages();
   const writable = new Set(overlay.pages);
   const pageAt = (index: number) => (writable.has(index) ? (pages[index] ?? null) : null);
+
+  // Before anything of ours goes on a page, theirs is set apart from it.
+  const drawnOn = new Set(
+    [overlay.times.page, overlay.notes.page, overlay.approval.page, ...overlay.covers.map((cover) => cover.page)],
+  );
+  for (const index of drawnOn) {
+    const page = pageAt(index);
+    if (!page) continue;
+    try {
+      setTheirDrawingApart(pdf, page);
+    } catch (error) {
+      console.error("[work order] a page's own drawing could not be set apart", error);
+      throw new Error(DAMAGED_WORK_ORDER);
+    }
+  }
 
   for (const cover of overlay.covers) {
     pageAt(cover.page)?.drawRectangle({

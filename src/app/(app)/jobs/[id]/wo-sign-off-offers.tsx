@@ -183,15 +183,6 @@ export function WoSignOffEntry({
   );
 }
 
-/** What the job page is told about a signed work order just saved. */
-export const SAVED_NOTES: Record<string, string> = {
-  unsigned: "It went without a customer signature: none was captured on this job.",
-  unreadable:
-    "It went without the customer's signature: the one captured on this job could not be read.",
-  "notes-cut": "The notes were cut short to fit; the whole of them is in the job report.",
-  cut: "A line too long for its place even at the smallest size was cut short.",
-};
-
 /**
  * Said at the top of the job once a signed work order is saved.
  *

@@ -86,9 +86,10 @@ import { ExportsPanel } from "./exports-panel";
 import { Reimbursements } from "./reimbursements";
 import { TimePanel } from "./time-panel";
 import { WorkPerformed } from "./work-performed";
-import { SAVED_NOTES, SignedWorkOrderSaved, WoSignOffEntry } from "./wo-sign-off-offers";
+import { SignedWorkOrderSaved, WoSignOffEntry } from "./wo-sign-off-offers";
 import {
   isSignedWorkOrder,
+  savedNotesFrom,
   signableWorkOrder,
   workIsDone,
   type CheckoutPaperwork,
@@ -113,7 +114,11 @@ export default async function JobPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ checkout?: string; signed?: string; note?: string }>;
+  searchParams: Promise<{
+    checkout?: string | string[];
+    signed?: string | string[];
+    note?: string | string[];
+  }>;
 }) {
   const user = await getSessionUser();
   if (!user) redirect("/signin");
@@ -597,13 +602,11 @@ export default async function JobPage({
   // Back from signing their work order: which copy was saved, and what to
   // know about it. Only a signed copy of this job's says so — an address
   // edited by hand names nothing else.
-  const savedCopy = query.signed
-    ? (signedWorkOrders.find((doc) => doc.id === query.signed) ?? null)
-    : null;
-  const savedNotes = (query.note ?? "")
-    .split(",")
-    .map((code) => SAVED_NOTES[code])
-    .filter((note): note is string => Boolean(note));
+  const savedCopy =
+    typeof query.signed === "string"
+      ? (signedWorkOrders.find((doc) => doc.id === query.signed) ?? null)
+      : null;
+  const savedNotes = savedNotesFrom(query.note);
   // Their own blank, still to be filled: on the job, mapped, and not done.
   const emptySheet = job.documents.find(
     (doc) =>

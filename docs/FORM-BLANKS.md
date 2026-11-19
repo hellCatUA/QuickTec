@@ -210,10 +210,13 @@ not WorkMarket's works too, by hand. Every box is checked on the page before
 anything is saved, and any value can be typed over there.
 
 On a phone it goes one place at a time: the page fills the screen, turned and
-zoomed to the place in front, with **Back**, **Edit** and **Next** under it.
-Nothing on the page moves until Edit is pressed. Next applies the place and
-moves on, and waits on a place that was not found until its box has been
-moved; after the third, **Approve** saves the whole document. On a computer
+zoomed to the place in front, with **Back**, **Edit** and **Next** under it,
+kept above the tab bar. Nothing on the page moves until Edit is pressed;
+**Done** puts the editing away. Next applies the place and moves on — not
+before the place's page is drawn and has been in front for a moment, so a
+double tap cannot pass one unseen — and waits on a place that was not found
+until its box has been moved by hand; after the third, **Approve** saves the
+whole document. On a computer
 the three sit beside the page, each with **Show** and **Apply**, and the file
 is saved once all three are applied. Either way, saving goes straight back to
 the job, which says what was saved and anything worth knowing about it — no
@@ -221,7 +224,10 @@ signature, notes cut short.
 
 A file pdf.js and pdf-lib read differently (damaged, so that they count its
 pages differently) is refused before anything is placed on it, and again on
-the server: a box placed on one page could be written on another.
+the server: a box placed on one page could be written on another. On the pages
+written on, their drawing is moved into a form of its own first, so a damaged
+stream of theirs cannot swallow the sign-off drawn after it; a page whose
+drawing cannot be read for that is refused as damaged.
 
 Only once the job is closed — the last clock-out, or later. The work order
 carries the departure time and the customer's word that the work is done, so

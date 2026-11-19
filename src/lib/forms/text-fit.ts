@@ -13,12 +13,17 @@ import type { PDFFont } from "pdf-lib";
  * font could draw most of it; straight is what the rest of the form uses.
  */
 const TYPOGRAPHIC: [RegExp, string][] = [
-  [/[‘’‛‚]/g, "'"],
-  [/[“”„]/g, '"'],
-  [/[–—]/g, "-"],
-  [/…/g, "..."],
-  [/[  ]/g, " "],
-  [/[•●]/g, "-"],
+  [/[\u2018\u2019\u201B\u201A\u2032]/g, "'"],
+  [/[\u201C\u201D\u201E\u2033]/g, '"'],
+  // Dashes, hyphens and the minus sign: "−42 dBm" printed "42 dBm".
+  [/[\u2010\u2011\u2012\u2013\u2014\u2212]/g, "-"],
+  [/\u2026/g, "..."],
+  // Every width of space, the narrow one a phone puts before "AM" among them:
+  // dropped, it ran the time into it.
+  [/[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g, " "],
+  // A soft hyphen marks where a word may break, and printed as a hyphen.
+  [/\u00AD/g, ""],
+  [/[\u2022\u25CF]/g, "-"],
   [/\t/g, " "],
 ];
 
@@ -41,11 +46,24 @@ const SPELLED: Record<string, string> = {
   О: "O", П: "P", Р: "R", С: "S", Т: "T", У: "U", Ф: "F", Х: "Kh", Ц: "Ts",
   Ч: "Ch", Ш: "Sh", Щ: "Shch", Ь: "", Ю: "Iu", Я: "Ia", Ё: "Io", Ы: "Y",
   Э: "E", Ъ: "",
+  // Serbian, Macedonian and Belarusian: "Јован Ђорђевић" lost its J and its
+  // Đs and printed "ovan orevy".
+  Ј: "J", Ђ: "Dj", Ћ: "C", Љ: "Lj", Њ: "Nj", Џ: "Dz", Ѓ: "Gj", Ќ: "Kj", Ѕ: "Dz", Ў: "U",
+  ј: "j", ђ: "dj", ћ: "c", љ: "lj", њ: "nj", џ: "dz", ѓ: "gj", ќ: "kj", ѕ: "dz", ў: "u",
   а: "a", б: "b", в: "v", г: "h", ґ: "g", д: "d", е: "e", є: "ie", ж: "zh",
   з: "z", и: "y", і: "i", ї: "i", й: "i", к: "k", л: "l", м: "m", н: "n",
   о: "o", п: "p", р: "r", с: "s", т: "t", у: "u", ф: "f", х: "kh", ц: "ts",
   ч: "ch", ш: "sh", щ: "shch", ь: "", ю: "iu", я: "ia", ё: "io", ы: "y",
   э: "e", ъ: "",
+};
+
+/**
+ * Superscripts the font has not got (it has ¹ ² ³), written after a caret:
+ * "10⁻⁶" printed "106", a different number.
+ */
+const SUPERSCRIPT: Record<string, string> = {
+  "⁰": "0", "⁴": "4", "⁵": "5", "⁶": "6", "⁷": "7", "⁸": "8", "⁹": "9",
+  "⁺": "+", "⁻": "-", "⁼": "=", "⁽": "(", "⁾": ")", "ⁿ": "n",
 };
 
 /** At the start of a word these five are spelled with a Y: "Yevhen", not "Ievhen". */
@@ -76,7 +94,17 @@ const isUpper = (character: string | undefined) =>
  * the old filter and make pdf-lib throw, and the form failed to generate.
  */
 export function toWinAnsi(text: string): string {
-  let typed = text.normalize("NFC");
+  let typed = text
+    .normalize("NFC")
+    // An apostrophe inside a Ukrainian word is not spelled, and the letter
+    // after it is spelled as inside a word: "Мар’яна" is "Mariana". A group,
+    // not a look-behind: Safari before 16.4 cannot parse one, and the whole
+    // screen would fail to load on an older iPhone.
+    .replace(/(\p{Script=Cyrillic})['\u2019\u02BC](?=\p{Script=Cyrillic})/gu, "$1")
+    // The national system's one pair: "Згурський" is "Zghurskyi".
+    .replace(/([Зз])([Гг])/g, (_, z: string, g: string) =>
+      `${z === "З" ? "Z" : "z"}${g === "Г" ? (z === "З" ? "GH" : "Gh") : "gh"}`,
+    );
   for (const [pattern, replacement] of TYPOGRAPHIC) typed = typed.replace(pattern, replacement);
 
   const characters = Array.from(typed);
@@ -84,6 +112,11 @@ export function toWinAnsi(text: string): string {
   characters.forEach((character, index) => {
     if (drawable(character)) {
       out += character;
+      return;
+    }
+    const raised = SUPERSCRIPT[character];
+    if (raised !== undefined) {
+      out += (SUPERSCRIPT[characters[index - 1]] !== undefined ? "" : "^") + raised;
       return;
     }
     const first = !isLetter(characters[index - 1]);
@@ -95,7 +128,14 @@ export function toWinAnsi(text: string): string {
       out += shouting ? spelled.toUpperCase() : spelled;
       return;
     }
-    out += Array.from(character.normalize("NFKD").replace(/\p{M}/gu, ""))
+    // Whatever is left loses its accents. A fraction comes apart round a
+    // fraction slash, which is kept as a slash: "⅜" printed "38".
+    out += Array.from(
+      character
+        .normalize("NFKD")
+        .replace(/\p{M}/gu, "")
+        .replace(/[\u2044\u2215]/g, "/"),
+    )
       .filter(drawable)
       .join("");
   });

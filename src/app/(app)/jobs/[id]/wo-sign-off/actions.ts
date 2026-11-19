@@ -128,12 +128,20 @@ async function signatureFor(
 
 /** Largest a patch of WorkMarket's own print painted out may be: a time, not a paragraph. */
 const COVER_MAX = { width: 320, height: 40 };
+/**
+ * And all of them together: a few lines' worth in one place. Held to their
+ * size alone, fourteen patches tiled over the job description saved, and the
+ * description was gone from the signed copy.
+ */
+const COVERS_MOST = 12;
+const COVERS_SPREAD = { width: 420, height: 90 };
 
 /**
  * What the page sent, held to what the screen could have sent.
  *
  * The pages run from the first one on without a gap — the first copy, or all
- * of them — and the white patches are the size of a time, on those pages. A
+ * of them — and the white patches are the size of a time, a dozen at most in
+ * one place, on those pages. A
  * crafted request once put the signature on the customer's copy and another
  * painted out the whole job description, and both were saved. Not held to the
  * times' own page: the times can be moved to another page by hand, and
@@ -144,11 +152,28 @@ function plausible(overlay: z.infer<typeof payloadSchema>["overlay"]): boolean {
   if (pages.length !== overlay.pages.length || pages.some((page, index) => page !== index)) {
     return false;
   }
-  return overlay.covers.every(
-    (cover) =>
-      pages.includes(cover.page) &&
-      cover.width <= COVER_MAX.width &&
-      cover.height <= COVER_MAX.height,
+  const covers = overlay.covers;
+  if (covers.length === 0) return true;
+  if (covers.length > COVERS_MOST || covers.some((cover) => cover.page !== covers[0].page)) {
+    return false;
+  }
+  const spread = {
+    width:
+      Math.max(...covers.map((cover) => cover.x + cover.width)) -
+      Math.min(...covers.map((cover) => cover.x)),
+    height:
+      Math.max(...covers.map((cover) => cover.y + cover.height)) -
+      Math.min(...covers.map((cover) => cover.y)),
+  };
+  return (
+    spread.width <= COVERS_SPREAD.width &&
+    spread.height <= COVERS_SPREAD.height &&
+    covers.every(
+      (cover) =>
+        pages.includes(cover.page) &&
+        cover.width <= COVER_MAX.width &&
+        cover.height <= COVER_MAX.height,
+    )
   );
 }
 

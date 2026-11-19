@@ -446,6 +446,51 @@ large as the screen allows, Back / Edit / Next under it, nothing on the page
 moving until Edit, and Approve for the whole document after the third. A
 computer keeps the three beside the page (the owner's choice).
 
+## Independent review of the step screen (19 November 2026)
+
+Two agents read `08ba256` again — one the screen against the owner's six
+points for the phone, one what reaches the paper, damaging files hundreds of
+ways and replaying the save. The phone flow matched the six points; the
+computer layout was unchanged apart from the renames. Fixed in the commit
+after `08ba256`:
+
+- **A double tap on Next went through a place unseen**, and on the last place
+  the second tap landed on Approve and saved. Next and Approve now wait for
+  the new place's page to be drawn and for 0.7 s.
+- **The saved notice on the job never said "no signature".** The job page,
+  rendered on the server, took the notes from a client file and got nothing;
+  odd addresses (`?note=a&note=b`) also gave a 500. The notes live in a
+  shared module now and the address is read defensively.
+- **On short phones the Back / Edit / Next row sat under the tab bar.** It is
+  held above the bar now, and the phone's explanations are shorter.
+- **"Use every page" late on undid an earlier place** and threw away a box
+  put in place by hand. A box moved by hand is kept, the block says which
+  places changed, and the last step offers to go straight to one left to
+  check.
+- **At exactly 1024 px** (older) the computer layout left the three 80 px and
+  scrolled sideways; the page column gives way now.
+- **Damaged work orders lost part of the sign-off.** A page's content streams
+  are read as one, and a damaged one of theirs swallowed ours that followed
+  it — about a third of the damaged files that opened, on both real work
+  orders. Their drawing now goes into a form of its own before ours is added;
+  a page whose drawing cannot be set apart is refused as damaged. Rerun: none
+  lost on either real work order (212 and 219 saved whole).
+- **White patches** were bounded in size but not in number or spread; a
+  dozen at most, all within a few lines.
+- **"PDT" stayed under our time** where WorkMarket's box has no rules
+  (a regression), and a ruled table under the notes box hid its own lines;
+  both fixed.
+- **Letters:** fractions printed as wrong numbers ("⅜" as "38"), "−42" lost
+  its minus, a phone's narrow space ran "9:05AM" together, Serbian letters
+  vanished, "Мар’яна" and "Згурський" were spelled off the national system.
+- Smaller: "Apply" on the phone's editor meant something else than on a
+  computer (now **Done**); the step's heading takes the focus; an error no
+  longer follows to another place; the label's share of a run is measured by
+  Helvetica's widths; the notes' long ending gives way in a narrow box;
+  initials and a stray tap no longer come out as heavy blots; the server
+  refuses signature pictures far larger than a pad's; a damaged file says so
+  in words rather than in pdf-lib's.
+
 ## Other open threads (outside this audit)
 
 Parked by the owner, not forgotten. None has been started.

@@ -152,6 +152,36 @@ export function defaultValues(
   };
 }
 
+/**
+ * What the job page is told about a signed work order just saved, by the codes
+ * the signing screen puts on the address it goes back to.
+ *
+ * Here, in a module both sides import as plain code. It used to sit in the
+ * client file that shows the notice, and the job page — rendered on the
+ * server — got a reference to it rather than the words: every note came out
+ * empty, and "it went without a signature" was never said.
+ */
+export const SAVED_NOTES: Record<string, string> = {
+  unsigned: "It went without a customer signature: none was captured on this job.",
+  unreadable:
+    "It went without the customer's signature: the one captured on this job could not be read.",
+  "notes-cut": "The notes were cut short to fit; the whole of them is in the job report.",
+  cut: "A line too long for its place even at the smallest size was cut short.",
+};
+
+/**
+ * The notes named on the job page's address, as words. Only a single value
+ * and only codes of its own: `?note=a&note=b` arrives as a list, and a code
+ * such as "constructor" used to find something on every object.
+ */
+export function savedNotesFrom(raw: unknown): string[] {
+  if (typeof raw !== "string") return [];
+  return raw
+    .split(",")
+    .filter((code) => Object.hasOwn(SAVED_NOTES, code))
+    .map((code) => SAVED_NOTES[code]);
+}
+
 /** What is kept on a signed copy, so signing it again starts from there. */
 export type SavedSignOff = {
   overlay: WoOverlay;
