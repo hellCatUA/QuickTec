@@ -82,22 +82,46 @@ export function BrandAssetField({
   const current = shown ? shown.src : src;
 
   const [busy, startTransition] = React.useTransition();
+  const [doing, setDoing] = React.useState<"Uploading…" | "Removing…">("Uploading…");
   const [message, setMessage] = React.useState<
     { tone: "error" | "notice"; text: string } | null
   >(null);
   const picker = React.useRef<HTMLInputElement>(null);
   const pickerId = `brand-${asset}-file`;
   const buttonId = `brand-${asset}-upload`;
+  const titleId = `brand-${asset}-title`;
+  const what = label.toLowerCase();
 
-  function run(work: () => Promise<BrandAssetResult>) {
+  // The button pressed is disabled while it works, and Remove is gone once it
+  // has, and either drops the keyboard's place to the top of the page. Put
+  // back on the upload button — but only when it was lost, not taken from
+  // whatever somebody moved on to meanwhile.
+  const refocus = React.useRef(false);
+  React.useEffect(() => {
+    if (busy || !refocus.current) return;
+    refocus.current = false;
+    const active = document.activeElement;
+    // By id: the shared Button takes no ref.
+    if (!active || active === document.body) document.getElementById(buttonId)?.focus();
+  }, [busy, buttonId]);
+
+  function run(
+    work: () => Promise<BrandAssetResult>,
+    doingNow: "Uploading…" | "Removing…",
+    done: string,
+  ) {
     setMessage(null);
+    setDoing(doingNow);
+    refocus.current = true;
     startTransition(async () => {
       let answer: BrandAssetResult;
       try {
         answer = await work();
       } catch {
-        // A thrown action — a lost connection, a session that ended — reaches
-        // the browser as a bare rejection. Said plainly instead.
+        // A thrown action — a lost connection, a server that fell over —
+        // reaches the browser as a bare rejection. Said plainly instead.
+        // (Signed out and not allowed are answers, not throws: see
+        // brand-actions.ts.)
         answer = {
           ok: false,
           error: "That did not reach the server. Check the connection and try again.",
@@ -105,7 +129,9 @@ export function BrandAssetField({
       }
       if (answer.ok) {
         setShown({ src: answer.src });
-        setMessage(answer.notice ? { tone: "notice", text: answer.notice } : null);
+        // Always something, so a screen reader hears that it worked: the
+        // previews are pictures with nothing to say.
+        setMessage({ tone: "notice", text: answer.notice ?? done });
       } else {
         setMessage({ tone: "error", text: answer.error });
       }
@@ -119,11 +145,29 @@ export function BrandAssetField({
       setMessage({ tone: "error", text: "That file is too large. Pick one under 10 MB." });
       return;
     }
-    run(() => {
-      const formData = new FormData();
-      formData.set("file", file);
-      return uploadBrandAsset(asset, formData);
-    });
+    run(
+      () => {
+        const formData = new FormData();
+        formData.set("file", file);
+        return uploadBrandAsset(asset, formData);
+      },
+      "Uploading…",
+      "Uploaded.",
+    );
+  }
+
+  function remove() {
+    // Asked, like every other button here that deletes a stored file: it comes
+    // off every page at once, it sits a thumb's width from Replace, and the
+    // only way back is the original file, which may not be on this phone.
+    if (
+      !window.confirm(
+        `Remove the ${what}? It comes off every page, and the file is deleted.`,
+      )
+    ) {
+      return;
+    }
+    run(() => removeBrandAsset(asset), "Removing…", "Removed.");
   }
 
   const previewPx = brandSize(surfaces[0].base, scale);
@@ -132,8 +176,17 @@ export function BrandAssetField({
   return (
     <div className="flex flex-col gap-3 sm:col-span-2">
       <div className="flex flex-col gap-1.5">
-        <Label htmlFor={buttonId}>{label}</Label>
-        <div className="flex flex-wrap items-center gap-2">
+        {/* Not a <label for> the button: a button takes its name from a label
+            pointed at it, over its own words, so a screen reader said
+            "Company logo, button" and never "Upload file" or "Replace file".
+            The title names the group instead, and each button says what it
+            does to which asset. */}
+        <Label id={titleId}>{label}</Label>
+        <div
+          role="group"
+          aria-labelledby={titleId}
+          className="flex flex-wrap items-center gap-2"
+        >
           {/* No name: the file never rides along with the company form. */}
           <input
             ref={picker}
@@ -141,7 +194,7 @@ export function BrandAssetField({
             type="file"
             accept={BRAND_ASSET_ACCEPT}
             className="hidden"
-            aria-label={`Choose a file for the ${label.toLowerCase()}`}
+            aria-label={`Choose a file for the ${what}`}
             onChange={(event) => {
               const chosen = event.target.files?.[0];
               // Cleared at once, so picking the same file again — after fixing
@@ -155,6 +208,7 @@ export function BrandAssetField({
             type="button"
             variant="secondary"
             disabled={busy}
+            aria-label={`${current ? "Replace file" : "Upload file"} for the ${what}`}
             onClick={() => picker.current?.click()}
           >
             {busy ? <Loader2 className="animate-spin" /> : <Upload />}
@@ -165,7 +219,8 @@ export function BrandAssetField({
               type="button"
               variant="ghost"
               disabled={busy}
-              onClick={() => run(() => removeBrandAsset(asset))}
+              aria-label={`Remove the ${what}`}
+              onClick={remove}
               className="text-danger"
             >
               <Trash2 />
@@ -175,7 +230,7 @@ export function BrandAssetField({
         </div>
         <p role="status" aria-live="polite" className="text-xs">
           {busy ? (
-            <span className="text-muted-foreground">Saving…</span>
+            <span className="text-muted-foreground">{doing}</span>
           ) : message ? (
             <span
               className={message.tone === "error" ? "text-danger" : "text-muted-foreground"}

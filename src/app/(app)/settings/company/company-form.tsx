@@ -116,15 +116,15 @@ export function CompanyForm({
           <CardTitle>Brand assets</CardTitle>
           <CardDescription>
             Upload each file here — PNG, JPEG, WebP or SVG, up to 10 MB. A file
-            is live as soon as it is uploaded; the scales are saved with the
-            rest of the form. Each one is previewed at the size it is actually
-            drawn, on both themes. The company logo is inverted on the light
-            theme, which is what makes a mark cut for dark backgrounds readable
-            there; the wordmark and the app icon are shown exactly as supplied,
-            because inverting a two-colour lockup turns its accent into the
-            opposite colour. The scale is there for artwork that carries its
-            own padding — the same file can read a size smaller than another at
-            100%.
+            is put up as soon as it is uploaded, with nothing to save; the
+            scales are saved with the rest of the form. Each one is previewed at
+            the size it is actually drawn, on both themes. The company logo is
+            inverted on the light theme, which is what makes a mark cut for dark
+            backgrounds readable there; the wordmark and the app icon are shown
+            exactly as supplied, because inverting a two-colour lockup turns its
+            accent into the opposite colour. The scale is there for artwork that
+            carries its own padding — the same file can read a size smaller than
+            another at 100%.
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-6 sm:grid-cols-2">
@@ -145,7 +145,7 @@ export function CompanyForm({
           <BrandAssetField
             asset="wordmark"
             label="Header wordmark"
-            hint="Stands in for the QuickTec text in the header. A wide lockup — leave it empty for the text."
+            hint="Stands in for the QuickTec text in the header. A wide lockup — without one, the header spells out QuickTec."
             src={brand.wordmark}
             scale={{
               name: "headerLogoScale",
@@ -161,7 +161,7 @@ export function CompanyForm({
           <BrandAssetField
             asset="icon"
             label="App icon"
-            hint="The browser tab and the home-screen icon. Square, 512×512 or larger, and legible at 16px — a wordmark shrunk this far is a smudge, so use the mark alone."
+            hint="The browser tab and the home-screen icon. Square, 512×512 or larger, and legible at 16px — a wordmark shrunk this far is a smudge, so use the mark alone. A tab can take a few minutes to show a new one, and an app already on a home screen keeps its old icon until the phone looks again."
             src={brand.icon}
             surfaces={[
               { base: 64, where: "on a home screen" },

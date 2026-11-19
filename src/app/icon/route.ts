@@ -1,4 +1,3 @@
-import { NextResponse } from "next/server";
 import { brandAssetPath } from "@/lib/brand-assets";
 import { fileVersion } from "@/lib/storage";
 
@@ -20,7 +19,7 @@ export const dynamic = "force-dynamic";
 
 const BUNDLED = "/icons/icon.svg";
 
-export async function GET(request: Request) {
+export async function GET() {
   let uploaded: string | null = null;
   try {
     uploaded = await brandAssetPath("icon");
@@ -37,10 +36,20 @@ export async function GET(request: Request) {
     ? `/app-icon/192.png?v=${fileVersion(uploaded)}`
     : BUNDLED;
 
-  return NextResponse.redirect(new URL(target, request.url), {
+  // A relative Location, which a browser resolves against the address it
+  // asked. It was resolved here, against request.url — and under the
+  // standalone server that is the address the server listens on, never the
+  // one anybody typed (src/auth.ts has the same story for sign-in). Behind the
+  // proxy every tab and every iPhone's Add to Home Screen was sent to
+  // https://localhost:3000 and drew nothing. A linked icon on another host
+  // hid it, being absolute already; an upload is always on this one.
+  return new Response(null, {
     status: 307,
-    // Short, because the point of the setting is that it can be changed. Long
-    // enough that a tab full of pages does not ask thirty times.
-    headers: { "Cache-Control": "public, max-age=300" },
+    headers: {
+      Location: target,
+      // Short, because the point of the setting is that it can be changed.
+      // Long enough that a tab full of pages does not ask thirty times.
+      "Cache-Control": "public, max-age=300",
+    },
   });
 }
