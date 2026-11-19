@@ -55,7 +55,7 @@ export async function GET(request: Request) {
       ? null
       : scope === "OWN"
         ? [user.id]
-        : [user.id, ...(await reportIds(user.id))];
+        : [user.id, ...(await reportIds(user))];
 
   const requested = params.get("user");
   let userIds: string[];

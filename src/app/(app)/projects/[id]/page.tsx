@@ -27,7 +27,7 @@ import {
 import { formatRate } from "@/lib/money";
 import { canOnProject, jobScopeWhere } from "@/lib/scope";
 import { isGuest } from "@/lib/permissions";
-import { can, getSessionUser } from "@/lib/session";
+import { can, getSessionUser, type SessionUser } from "@/lib/session";
 import { loadTimeline } from "@/lib/timeline-data";
 import { ProjectJobs } from "./project-jobs";
 
@@ -37,11 +37,47 @@ export async function generateMetadata({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  // Named only for somebody the page itself lets in: the tab used to carry
+  // the project's name on the way to being sent back to the list.
+  const user = await getSessionUser();
+  if (!user || !(canOnProject(user, "project.manage", id) || (await worksOn(user, id)))) {
+    return { title: "Project" };
+  }
   const project = await db.project.findUnique({
     where: { id },
     select: { name: true },
   });
   return { title: project?.name ?? "Project" };
+}
+
+/**
+ * Whether somebody who does not run the project may still read its page:
+ * they are on it, or on one of its jobs.
+ *
+ * Asked as the Projects list asks it. A guest can be added to a project by
+ * anybody who manages it — the member picker offers every active account —
+ * and membership alone would then have shown them the crew by name and the
+ * coordinator's phone, which a guest is not given anywhere else.
+ */
+async function worksOn(user: SessionUser, id: string): Promise<boolean> {
+  if (isGuest(user) || !can(user, "job.view")) return false;
+  const jobWhere = await jobScopeWhere(user, "job.view");
+  const [onIt, jobsHere] = await Promise.all([
+    // The rule the Projects page lists by, asked of the database: the
+    // session only carries the projects somebody runs or supervises, so a
+    // tech added to one was on its list and still sent away from its page.
+    db.project.count({
+      where: {
+        id,
+        OR: [{ managerId: user.id }, { members: { some: { userId: user.id } } }],
+      },
+    }),
+    // Somebody sent to one job of a project they were never added to still
+    // reads its scope and contacts on that job; the page they are from is
+    // not more than that.
+    jobWhere ? db.job.count({ where: { AND: [jobWhere, { projectId: id }] } }) : 0,
+  ]);
+  return onIt > 0 || jobsHere > 0;
 }
 
 /** A membership as a word on a badge, written the way every other badge is. */
@@ -94,33 +130,8 @@ export default async function ProjectPage({
   const canManage = canOnProject(user, "project.manage", id);
   const jobWhere = await jobScopeWhere(user, "job.view");
   if (!canManage) {
-    // Asked as the Projects list asks it. A guest can be added to a project
-    // by anybody who manages it — the member picker offers every active
-    // account — and membership alone would then have shown them the crew by
-    // name and the coordinator's phone, which a guest is not given anywhere
-    // else.
     if (isGuest(user) || !can(user, "job.view")) redirect("/dashboard");
-    const [onIt, jobsHere] = await Promise.all([
-      // The rule the Projects page lists by, asked of the database: the
-      // session only carries the projects somebody runs or supervises, so a
-      // tech added to one was on its list and still sent away from its page.
-      db.project.count({
-        where: {
-          id,
-          OR: [
-            { managerId: user.id },
-            { members: { some: { userId: user.id } } },
-          ],
-        },
-      }),
-      // Somebody sent to one job of a project they were never added to
-      // still reads its scope and contacts on that job; the page they are
-      // from is not more than that.
-      jobWhere
-        ? db.job.count({ where: { AND: [jobWhere, { projectId: id }] } })
-        : 0,
-    ]);
-    if (onIt === 0 && jobsHere === 0) redirect("/projects");
+    if (!(await worksOn(user, id))) redirect("/projects");
   }
   // What the project pays is for whoever sets pay, not for everybody who
   // runs the work.

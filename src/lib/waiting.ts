@@ -1,10 +1,9 @@
 import { cache } from "react";
 import { db } from "@/lib/db";
 import { isGuest } from "@/lib/permissions";
-import { managesProfiles } from "@/lib/profile";
+import { profileQueueWhere } from "@/lib/profile";
 import { jobScopeWhere, reportIds } from "@/lib/scope";
 import { permissionScope, type SessionUser } from "@/lib/session";
-import { canSupervise } from "@/lib/supervisors";
 
 /**
  * What is waiting on somebody, counted.
@@ -74,7 +73,7 @@ export const waitingOnYou = cache(
           if (!payrollScope) return 0;
           // Payroll follows the direct-supervisor link, not job scope.
           const ids =
-            payrollScope === "ALL" ? null : [...(await reportIds(user.id))];
+            payrollScope === "ALL" ? null : [...(await reportIds(user))];
           if (ids !== null && ids.length === 0) return 0;
           return db.payrollPeriod.count({
             where: { status: "DRAFT", ...(ids ? { userId: { in: ids } } : {}) },
@@ -88,20 +87,7 @@ export const waitingOnYou = cache(
         }),
         // The same queue Approvals shows: what their reports asked for, or
         // every request for whoever manages users.
-        isGuest(user)
-          ? 0
-          : db.profileRequest.count({
-              where: {
-                status: "PENDING",
-                // Somebody whose role no longer supervises keeps the link on
-                // their old reports' records, but not the queue.
-                ...(managesProfiles(user)
-                  ? {}
-                  : canSupervise(user.baseRole)
-                    ? { user: { directSupervisorId: user.id } }
-                    : { id: "" }),
-              },
-            }),
+        isGuest(user) ? 0 : db.profileRequest.count({ where: profileQueueWhere(user) }),
       ]);
 
     return { changes, adHoc, reviews, payroll, profileRequests, notices, mine };

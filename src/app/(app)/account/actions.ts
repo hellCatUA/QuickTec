@@ -26,11 +26,12 @@ import {
 import { LEVEL_INFO, levelFor, PHONE_LABEL, whyNotPreferable } from "@/lib/profile-privacy";
 import {
   fileProfileRequest,
+  nobodyToAsk,
   withdrawProfileRequest,
 } from "@/lib/profile-requests";
 import { getSessionUser } from "@/lib/session";
 import { deleteFile } from "@/lib/storage";
-import { timeZoneForZip, US_STATES, US_TIME_ZONES } from "@/lib/us-regions";
+import { isOfferedTimeZone, timeZoneForZip, US_STATES } from "@/lib/us-regions";
 
 export type ProfileResult = { ok: true; message?: string } | { ok: false; error: string };
 
@@ -99,21 +100,23 @@ export async function saveOwnProfile(
     return { ok: false, error: "Write your preferred name in full — first and last." };
   }
 
-  // The phones and the preferred one go together: which may be preferred
-  // depends on which phones there are.
-  const phonesTouched =
-    touched("phone", data.phone, samePhone) ||
-    touched("workPhone", data.workPhone, samePhone) ||
-    touched("voipPhone", data.voipPhone, samePhone) ||
-    touched("preferredPhone", data.preferredPhone);
-  const phone = phonesTouched ? data.phone : before.phone;
-  const workPhone = phonesTouched ? data.workPhone : before.workPhone;
-  const voipPhone = phonesTouched ? data.voipPhone : before.voipPhone;
+  // Each phone on its own. They used to be taken together whenever any one
+  // of them was touched, so saving a new personal number put back the work
+  // phone the page was opened with — removing the one their supervisor had
+  // just set, in their history as their own doing.
+  const phone = pick("phone", data.phone, data.phone, before.phone, samePhone);
+  const workPhone = pick("workPhone", data.workPhone, data.workPhone, before.workPhone, samePhone);
+  const voipPhone = pick("voipPhone", data.voipPhone, data.voipPhone, before.voipPhone, samePhone);
   const phones = { personal: phone, work: workPhone, voip: voipPhone };
-  const preferredPhone = phonesTouched
+  // The page sends the phone clients get as it reads with the phones it
+  // shows, so a choice is checked when it was made. One stored that the
+  // phones no longer allow is read past wherever it is shown, as it always
+  // has been, rather than refusing a save that never touched it.
+  const preferredTouched = touched("preferredPhone", data.preferredPhone);
+  const preferredPhone = preferredTouched
     ? (data.preferredPhone as "PERSONAL" | "WORK" | "VOIP" | null)
     : before.preferredPhone;
-  if (phonesTouched && preferredPhone) {
+  if (preferredTouched && preferredPhone) {
     const why = whyNotPreferable(preferredPhone, phones);
     if (why) return { ok: false, error: `${PHONE_LABEL[preferredPhone]} can't be your preferred phone: ${why.toLowerCase()}.` };
   }
@@ -144,7 +147,7 @@ export async function saveOwnProfile(
       timeZoneManual = false;
       timeZone = timeZoneForZip(postalCode) ?? before.timeZone;
     } else if (data.timeZone) {
-      if (!US_TIME_ZONES.some((zone) => zone.value === data.timeZone)) {
+      if (!isOfferedTimeZone(data.timeZone)) {
         return { ok: false, error: "That is not a time zone." };
       }
       timeZone = data.timeZone;
@@ -515,6 +518,24 @@ export async function requestOwnLegalName(
     });
     revalidatePath("/account");
     return { ok: true, message: "Saved." };
+  }
+
+  // The one manager there is has nobody to ask: their request went to
+  // themselves, where it could only ever be withdrawn.
+  if (await nobodyToAsk(subject, user.id)) {
+    const given = await db.user.updateMany({
+      where: { id: user.id, legalName: subject.legalName },
+      data: { legalName: value, legalNameSetAt: new Date() },
+    });
+    if (given.count === 0) return { ok: false, error: "Your legal name changed meanwhile. Reload and try again." };
+    await recordProfileEvents({
+      actorId: user.id,
+      userId: user.id,
+      changes: [{ field: "legalName", from: subject.legalName, to: value }],
+      approval: { bySystem: true },
+    });
+    revalidatePath("/account");
+    return { ok: true, message: "Saved. There is nobody else here to approve it." };
   }
 
   const sent = await fileProfileRequest({ subject, requesterId: user.id, field: "LEGAL_NAME", value });

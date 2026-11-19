@@ -54,7 +54,7 @@ export default async function PayrollPage({
   const thisWeekStart = startOfWeekMonday(now, zone);
 
   const visibleIds =
-    scope === "ALL" ? null : [viewer.id, ...(await reportIds(viewer.id))];
+    scope === "ALL" ? null : [viewer.id, ...(await reportIds(viewer))];
 
   const week = await loadPayrollWeek({
     visibleIds,

@@ -37,6 +37,11 @@ export const PICTURE_SOURCE = {
  * Makes a stored picture somebody's picture, and keeps it in their archive so
  * it can be put back after it has been replaced or taken down. The picture it
  * replaces stays in the archive too: nothing approved is thrown away.
+ *
+ * Given `over`, only over that picture — the one the caller was looking at —
+ * and false when it had changed meanwhile. Two managers setting a picture at
+ * the same moment both succeeded, both entries said "added", and neither was
+ * told about the other.
  */
 export async function putUpPicture(input: {
   userId: string;
@@ -44,9 +49,18 @@ export async function putUpPicture(input: {
   source: string;
   addedById: string | null;
   approval?: Approval | null;
-}): Promise<void> {
-  await db.$transaction([
-    db.profilePicture.create({
+  over?: string | null;
+}): Promise<boolean> {
+  return db.$transaction(async (tx) => {
+    const swapped = await tx.user.updateMany({
+      where: {
+        id: input.userId,
+        ...(input.over !== undefined ? { avatarPath: input.over } : {}),
+      },
+      data: { avatarPath: input.path, pictureSetAt: new Date() },
+    });
+    if (swapped.count === 0) return false;
+    await tx.profilePicture.create({
       data: {
         userId: input.userId,
         path: input.path,
@@ -56,12 +70,9 @@ export async function putUpPicture(input: {
           input.approval && "byId" in input.approval ? input.approval.byId : null,
         approvedBySystem: Boolean(input.approval && "bySystem" in input.approval),
       },
-    }),
-    db.user.update({
-      where: { id: input.userId },
-      data: { avatarPath: input.path, pictureSetAt: new Date() },
-    }),
-  ]);
+    });
+    return true;
+  });
 }
 
 /**

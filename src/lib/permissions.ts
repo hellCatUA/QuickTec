@@ -30,7 +30,7 @@ export const PERMISSIONS = {
     group: "Jobs",
     label: "Create jobs",
     description:
-      "Create a work order. Techs may create ad-hoc jobs, which land in PENDING_APPROVAL and are approved retroactively.",
+      "Create a work order. Techs may create ad-hoc jobs, which land in Pending approval and are approved retroactively.",
   },
   "job.assign": {
     group: "Jobs",
@@ -78,7 +78,7 @@ export const PERMISSIONS = {
   "job.set_outcome_status": {
     group: "Jobs",
     label: "Set outcome status",
-    description: "COMPLETED / INCOMPLETE / FAIL / CANCEL at checkout.",
+    description: "Completed, Incomplete, Fail or Cancel at checkout.",
   },
   "job.set_internal_status": {
     group: "Jobs",
@@ -207,7 +207,7 @@ export const PERMISSIONS = {
   "roles.manage": {
     group: "Administration",
     label: "Manage roles",
-    description: "Edit this permission matrix and per-user overrides.",
+    description: "Edit this permission matrix.",
   },
   "settings.company": {
     group: "Administration",

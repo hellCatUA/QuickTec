@@ -90,14 +90,16 @@ export default async function PeoplePage({
                       name={person.name}
                       size={40}
                     />
+                    {/* Wrapped, not cut: at 320 px "Oleksandr Kovalenko-Wh…"
+                        was all anybody could read of who this was. */}
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-medium">
+                      <span className="block text-sm font-medium [overflow-wrap:anywhere]">
                         {person.name}
                         {person.id === viewer.id ? (
                           <span className="font-normal text-muted-foreground"> · you</span>
                         ) : null}
                       </span>
-                      <span className="block truncate text-xs text-muted-foreground">
+                      <span className="block text-xs text-muted-foreground [overflow-wrap:anywhere]">
                         {[show("role") ? ROLE_LABEL[person.baseRole] : null, place]
                           .filter(Boolean)
                           .join(" · ")}

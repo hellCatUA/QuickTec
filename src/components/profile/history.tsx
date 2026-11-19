@@ -6,7 +6,7 @@ import {
   loadFieldHistory,
   type FieldHistoryEntry,
 } from "@/app/(app)/people/history-actions";
-import type { HistoryField } from "@/lib/profile-history";
+import type { HistoryField } from "@/lib/profile-history-fields";
 import { cn } from "@/lib/utils";
 
 /**
@@ -58,10 +58,10 @@ export function HistoryButton({
       type="button"
       onClick={onToggle}
       aria-expanded={open}
-      aria-label={`History of ${label.toLowerCase()}`}
+      aria-label={`History: ${label}`}
       title="History"
       className={cn(
-        "flex size-10 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground sm:size-8",
+        "flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground",
         open && "bg-muted text-foreground",
         className,
       )}
@@ -133,7 +133,7 @@ export function HistoryPanel({
         <button
           type="button"
           onClick={() => setAll((was) => !was)}
-          className="mt-1 inline-flex min-h-10 items-center text-xs font-medium text-primary hover:underline"
+          className="mt-1 inline-flex min-h-11 items-center text-xs font-medium text-primary hover:underline"
         >
           {all ? "Show fewer" : `Show all ${entries.length} changes`}
         </button>

@@ -60,6 +60,9 @@ import { ManagerPanel } from "./manager-panel";
 
 export const metadata = { title: "Profile" };
 
+/** Lines only an employee has. */
+const EMPLOYEE_ONLY: ProfileField[] = ["directSupervisor", "yearsOfService", "defaultPayRate"];
+
 /**
  * Somebody's profile, as the person looking may see it.
  *
@@ -89,10 +92,14 @@ export default async function PersonPage({
     seesPayOf(viewer, profile.id),
   ]);
   const levels = levelsFor(profile, settings);
+  // A guest is nobody's employee: no supervisor, no service to count, no pay
+  // — as their own profile already said, while this page showed all three
+  // and offered to set their start date.
+  const applies = (field: ProfileField) => !(isGuest(profile) && EMPLOYEE_ONLY.includes(field));
   // The pay rate answers to the permission matrix as well as to its level:
   // somebody "View pay rates" was taken from does not read it here instead.
   const show = (field: ProfileField) =>
-    shows(levels, audience, field) && (field !== "defaultPayRate" || payVisible);
+    applies(field) && shows(levels, audience, field) && (field !== "defaultPayRate" || payVisible);
 
   const editable = mayEditProfileOf(viewer, profile);
   const history = seesHistory(audience);
@@ -137,6 +144,7 @@ export default async function PersonPage({
 
   const hidden = (Object.keys(PROFILE_FIELDS) as ProfileField[]).filter(
     (field) =>
+      applies(field) &&
       !show(field) &&
       // Only what there is to hide: an empty street is not a secret.
       hasValue(profile, field),
@@ -260,6 +268,11 @@ export default async function PersonPage({
               {show("directSupervisor") ? (
                 <Line label="Direct supervisor" level={levels.directSupervisor} field="directSupervisor">
                   {profile.directSupervisor?.name ?? <span className="text-muted-foreground">Not set</span>}
+                  {/* Still on their record, and no longer able to approve
+                      anything: it read as if all was well. */}
+                  {profile.directSupervisor && !actingSupervisor(profile) ? (
+                    <span className="ml-2 text-xs text-warning">can no longer approve their week</span>
+                  ) : null}
                 </Line>
               ) : null}
               {show("yearsOfService") ? (
@@ -354,6 +367,7 @@ export default async function PersonPage({
                 primaryRegion: profile.primaryRegion,
                 statesOfOperation: profile.statesOfOperation,
                 hasPicture: Boolean(profile.avatarPath),
+                guest: isGuest(profile),
               }}
               directSupervisor={actingSupervisor(profile)?.name ?? null}
               notTheirEmployee={notTheirEmployee(viewer, profile)}

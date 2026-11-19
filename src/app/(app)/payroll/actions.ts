@@ -38,7 +38,7 @@ async function reachable(
   if (!scope) return null;
   if (scope === "ALL") return { all: true, ids: [] };
   if (scope === "OWN") return { all: false, ids: [user.id] };
-  return { all: false, ids: [user.id, ...(await reportIds(user.id))] };
+  return { all: false, ids: [user.id, ...(await reportIds(user))] };
 }
 
 /**

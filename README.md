@@ -135,7 +135,9 @@ Three layers combine into an answer:
 2. **Relationships** — `User.directSupervisorId` (who approves and pays this
    tech, on every project) and `ProjectMember.role` (who runs this project).
 3. **Permission + scope** — the editable matrix at `/settings/roles`, plus
-   per-user `PermissionOverride` rows for exceptions.
+   per-user `PermissionOverride` rows for exceptions. No screen sets those
+   rows yet; they are read wherever a permission is, and written only in the
+   database.
 
 Two rules worth knowing:
 

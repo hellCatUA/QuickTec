@@ -4,7 +4,7 @@ import type { PrivacyLevel } from "@prisma-client";
 import * as React from "react";
 import { HistoryButton, HistoryPanel, useHistoryOf } from "@/components/profile/history";
 import { LevelBadge } from "@/components/profile/parts";
-import type { HistoryField } from "@/lib/profile-history";
+import { HISTORY_FIELDS, type HistoryField } from "@/lib/profile-history-fields";
 
 /**
  * A line of somebody else's profile, read rather than edited: what it is, its
@@ -40,7 +40,7 @@ export function Line({
         <div className="col-start-2 row-span-2 row-start-1 flex items-center justify-end gap-1 self-center sm:col-start-3 sm:row-span-1">
           <LevelBadge level={level} iconOnly className="hidden sm:inline-flex" />
           {userId && field ? (
-            <HistoryButton label={label} open={open} onToggle={() => setOpen((was) => !was)} />
+            <HistoryButton label={HISTORY_FIELDS[field]} open={open} onToggle={() => setOpen((was) => !was)} />
           ) : null}
         </div>
         <dd className="col-start-1 row-start-2 min-w-0 break-words sm:col-start-2 sm:row-start-1">

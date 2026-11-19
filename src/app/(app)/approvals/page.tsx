@@ -33,8 +33,13 @@ import { db } from "@/lib/db";
 import { OUTCOME_META } from "@/lib/job-status";
 import { formatMoney } from "@/lib/money";
 import { isGuest } from "@/lib/permissions";
-import { canSupervise } from "@/lib/supervisors";
-import { loadPrivacySettings, managesProfiles, PICTURE_SELECT, pictureFor } from "@/lib/profile";
+import {
+  actingSupervisor,
+  loadPrivacySettings,
+  PICTURE_SELECT,
+  pictureFor,
+  profileQueueWhere,
+} from "@/lib/profile";
 import { jobScopeWhere, reportIds } from "@/lib/scope";
 import { getSessionUser, permissionScope } from "@/lib/session";
 import { DecidedList, type DecidedRow } from "./decided";
@@ -175,7 +180,7 @@ export default async function ApprovalsPage({
         // Payroll follows the direct-supervisor link, not job scope: a manager
         // sees every week, a supervisor only their own reports'.
         const ids =
-          scope === "ALL" ? null : [...(await reportIds(user.id))];
+          scope === "ALL" ? null : [...(await reportIds(user))];
         if (ids !== null && ids.length === 0) return [];
 
         return db.payrollPeriod.findMany({
@@ -200,16 +205,7 @@ export default async function ApprovalsPage({
       isGuest(user)
         ? []
         : db.profileRequest.findMany({
-            where: {
-              status: "PENDING",
-              // Somebody whose role no longer supervises keeps the link on
-              // their old reports' records, but not the queue.
-              ...(managesProfiles(user)
-                ? {}
-                : canSupervise(user.baseRole)
-                  ? { user: { directSupervisorId: user.id } }
-                  : { id: "" }),
-            },
+            where: profileQueueWhere(user),
             orderBy: { createdAt: "asc" },
             take: 50,
             select: {
@@ -217,7 +213,14 @@ export default async function ApprovalsPage({
               field: true,
               value: true,
               createdAt: true,
-              user: { select: { ...PICTURE_SELECT, name: true, legalName: true } },
+              user: {
+                select: {
+                  ...PICTURE_SELECT,
+                  name: true,
+                  legalName: true,
+                  directSupervisor: { select: { id: true, name: true, baseRole: true, active: true } },
+                },
+              },
             },
           }),
     ]);
@@ -582,6 +585,16 @@ export default async function ApprovalsPage({
                     · {usDateTimeInZone(request.createdAt, zone)}
                   </span>
                 </div>
+                {/* A manager sees everybody's; the person was told it waits
+                    on their own supervisor, and so is the manager now. */}
+                {(() => {
+                  const theirs = actingSupervisor(request.user);
+                  return theirs && theirs.id !== user.id ? (
+                    <p className="text-xs text-muted-foreground">
+                      Waiting on {theirs.name}. You can answer it too, past a warning.
+                    </p>
+                  ) : null;
+                })()}
               </Link>
             ))}
           </CardContent>

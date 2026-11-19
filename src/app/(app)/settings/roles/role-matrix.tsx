@@ -3,6 +3,7 @@
 import { AlertCircle, Loader2 } from "lucide-react";
 import * as React from "react";
 import type { BaseRole, PermissionScope } from "@prisma-client";
+import { ROLE_LABEL } from "@/lib/profile-format";
 import { updateRoleGrant } from "../actions";
 
 const SCOPE_OPTIONS: { value: PermissionScope | ""; label: string }[] = [
@@ -13,14 +14,19 @@ const SCOPE_OPTIONS: { value: PermissionScope | ""; label: string }[] = [
   { value: "ALL", label: "All" },
 ];
 
-const ROLE_LABEL: Record<BaseRole, string> = {
-  TECH: "Tech",
-  SUPERVISOR: "Supervisor",
-  MANAGER: "Manager",
-  ADMINISTRATOR: "Admin",
-  ACCOUNTANT: "Accountant",
-  GUEST: "Guest",
-};
+/**
+ * Permissions the app only ever asks for across the whole company. Own,
+ * Reports and Project were offered for them and granted nothing at all.
+ */
+const ALL_OR_NOTHING = new Set(["users.manage", "roles.manage"]);
+
+/** The choices for one cell — and whatever it holds now, so it never reads "—" while granting. */
+function scopeOptions(permission: string, current: PermissionScope | undefined) {
+  if (!ALL_OR_NOTHING.has(permission)) return SCOPE_OPTIONS;
+  return SCOPE_OPTIONS.filter(
+    (option) => option.value === "" || option.value === "ALL" || option.value === current,
+  );
+}
 
 type Group = {
   group: string;
@@ -121,9 +127,6 @@ export function RoleMatrix({
                       <div className="text-xs text-muted-foreground">
                         {permission.description}
                       </div>
-                      <code className="text-[10px] text-muted-foreground/70">
-                        {permission.key}
-                      </code>
                     </td>
                     {roles.map((role) => {
                       const cellKey = `${role}:${permission.key}`;
@@ -140,9 +143,9 @@ export function RoleMatrix({
                                   event.target.value as PermissionScope | "",
                                 )
                               }
-                              className="min-h-9 w-full rounded-md border border-border bg-input px-2 text-xs"
+                              className="min-h-11 w-full rounded-md border border-border bg-input px-2 text-xs"
                             >
-                              {SCOPE_OPTIONS.map((option) => (
+                              {scopeOptions(permission.key, values[cellKey]).map((option) => (
                                 <option key={option.value} value={option.value}>
                                   {option.label}
                                 </option>

@@ -35,6 +35,9 @@ export async function generateMetadata({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  // Named only for whoever may open it, as the page itself decides.
+  const user = await getSessionUser();
+  if (!user || !canOnProject(user, "project.manage", id)) return { title: "Project settings" };
   const project = await db.project.findUnique({
     where: { id },
     select: { name: true },

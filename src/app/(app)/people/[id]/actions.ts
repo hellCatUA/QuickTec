@@ -54,8 +54,15 @@ const managerSchema = z.object({
   confirmed: optionalText,
 });
 
+/**
+ * What the warning says under its title, which already says who is not the
+ * viewer's employee: the body used to open with the same sentence again.
+ */
 function warning(subjectName: string, supervisorName: string | null, what: string): string {
-  return `${subjectName} isn't your employee. ${supervisorName ?? "Their direct supervisor"} is their direct supervisor, and ${what} is theirs to change. If you go ahead, ${subjectName}'s history shows the change under your name with this warning, and ${supervisorName ?? "their supervisor"} is told.`;
+  // "The years of service are", and "the legal name and the years of service
+  // are": it said "is" for both.
+  const verb = what === "the years of service" || what.includes(" and ") ? "are" : "is";
+  return `${supervisorName ?? "Somebody else"} is their direct supervisor, and ${what} ${verb} theirs to change. If you go ahead, ${subjectName}'s history shows the change under your name with this warning, and ${supervisorName ?? "their supervisor"} is told.`;
 }
 
 async function tellSupervisor(input: {
@@ -113,7 +120,12 @@ export async function saveProfileAsManager(formData: FormData): Promise<ManagerR
     ? data.serviceStartDate
     : isoDate(before.serviceStartDate) || null;
   const start = startText ? new Date(`${startText}T00:00:00Z`) : null;
-  if (start && (Number.isNaN(start.getTime()) || start.getTime() > Date.now())) {
+  // Read back as it was written, or it was not a date: "2019-02-31" was taken
+  // and stored as the 3rd of March.
+  if (start && (Number.isNaN(start.getTime()) || isoDate(start) !== startText)) {
+    return { ok: false, error: "That is not a date." };
+  }
+  if (start && start.getTime() > Date.now()) {
     return { ok: false, error: "The start date cannot be in the future." };
   }
 
@@ -271,11 +283,22 @@ export async function setPictureAsManager(formData: FormData): Promise<ManagerRe
   // the archive, to be put back.
   const source =
     formData.get("source") === "photo-id" ? PICTURE_SOURCE.photoId : PICTURE_SOURCE.manual(actor.name);
+  let put: boolean;
   try {
-    await putUpPicture({ userId: subject.id, path: stored.path, source, addedById: actor.id });
+    put = await putUpPicture({
+      userId: subject.id,
+      path: stored.path,
+      source,
+      addedById: actor.id,
+      over: subject.avatarPath,
+    });
   } catch (error) {
     await deleteFile(stored.path);
     throw error;
+  }
+  if (!put) {
+    await deleteFile(stored.path);
+    return { ok: false, error: "Their picture changed meanwhile. Reload and try again." };
   }
 
   await recordProfileEvents({

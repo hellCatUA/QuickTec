@@ -226,7 +226,7 @@ export function PictureCard({
         <fieldset className="flex w-full flex-col gap-1 rounded-lg border border-border p-3 text-left">
           <legend className="px-1 text-xs font-medium text-muted-foreground">Why a picture now?</legend>
           {PICTURE_REASONS.map((option) => (
-            <label key={option} className="flex min-h-10 items-center gap-2 text-sm">
+            <label key={option} className="flex min-h-11 items-center gap-2 text-sm">
               <input
                 type="radio"
                 name="picture-reason"
@@ -239,10 +239,10 @@ export function PictureCard({
             </label>
           ))}
           <div className="mt-1 flex gap-2">
-            <Button type="button" size="sm" disabled={!reason || busy} onClick={() => file.current?.click()}>
+            <Button type="button" disabled={!reason || busy} onClick={() => file.current?.click()}>
               <Camera /> Choose a photo
             </Button>
-            <Button type="button" size="sm" variant="ghost" onClick={() => setPanel(null)}>
+            <Button type="button" variant="ghost" onClick={() => setPanel(null)}>
               Cancel
             </Button>
           </div>
@@ -253,10 +253,10 @@ export function PictureCard({
         <div className="flex w-full flex-col gap-2 rounded-lg border border-danger/40 bg-danger/10 p-3 text-left text-sm">
           <p>Take your picture down? It stays among your earlier pictures, to put back.</p>
           <div className="flex gap-2">
-            <Button type="button" size="sm" variant="danger" disabled={busy} onClick={() => run(removeOwnPicture)}>
+            <Button type="button" variant="danger" disabled={busy} onClick={() => run(removeOwnPicture)}>
               Take it down
             </Button>
-            <Button type="button" size="sm" variant="ghost" onClick={() => setPanel(null)}>
+            <Button type="button" variant="ghost" onClick={() => setPanel(null)}>
               Cancel
             </Button>
           </div>
@@ -276,7 +276,6 @@ export function PictureCard({
                 </span>
                 <Button
                   type="button"
-                  size="sm"
                   variant="secondary"
                   disabled={busy}
                   onClick={() => run(() => restoreOwnPicture(picture.id))}

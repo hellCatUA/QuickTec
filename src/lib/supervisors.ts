@@ -21,17 +21,6 @@ export function canSupervise(role: BaseRole): boolean {
   return SUPERVISOR_ROLES.includes(role);
 }
 
-/** Everyone who may be picked as a Direct Supervisor. */
-export async function eligibleSupervisors(): Promise<
-  { id: string; name: string; baseRole: BaseRole }[]
-> {
-  return db.user.findMany({
-    where: { active: true, baseRole: { in: SUPERVISOR_ROLES } },
-    orderBy: { name: "asc" },
-    select: { id: true, name: true, baseRole: true },
-  });
-}
-
 /**
  * People whose Direct Supervisor no longer qualifies.
  *
@@ -43,20 +32,25 @@ export async function supervisionsToFix(): Promise<
   {
     id: string;
     name: string;
-    supervisor: { id: string; name: string; baseRole: BaseRole };
+    supervisor: { id: string; name: string; baseRole: BaseRole; active: boolean };
   }[]
 > {
+  // A supervisor deactivated is one who can no longer approve anything too.
+  // Checked by role alone, their people were never listed here, and every
+  // save of their row was refused for naming somebody deactivated.
   const rows = await db.user.findMany({
     where: {
       active: true,
       directSupervisorId: { not: null },
-      directSupervisor: { baseRole: { notIn: SUPERVISOR_ROLES } },
+      directSupervisor: {
+        OR: [{ baseRole: { notIn: SUPERVISOR_ROLES } }, { active: false }],
+      },
     },
     orderBy: { name: "asc" },
     select: {
       id: true,
       name: true,
-      directSupervisor: { select: { id: true, name: true, baseRole: true } },
+      directSupervisor: { select: { id: true, name: true, baseRole: true, active: true } },
     },
   });
 

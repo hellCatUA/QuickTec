@@ -1,7 +1,8 @@
 import { db } from "@/lib/db";
 import type { Permission } from "@/lib/permissions";
-import { permissionScope, type SessionUser } from "@/lib/session";
-import type { Prisma } from "@prisma-client";
+import { getSessionUser, permissionScope, type SessionUser } from "@/lib/session";
+import { canSupervise } from "@/lib/supervisors";
+import type { BaseRole, Prisma } from "@prisma-client";
 
 /**
  * Turns a permission's scope into a Prisma filter.
@@ -12,9 +13,14 @@ import type { Prisma } from "@prisma-client";
  * empty filter, which would show everything.
  */
 
-export async function reportIds(userId: string): Promise<string[]> {
+export async function reportIds(user: { id: string; baseRole: BaseRole }): Promise<string[]> {
+  // Only while their role still supervises. The link stays on their old
+  // reports' records after a demotion, and a Supervisor with one left over
+  // still opened those techs' jobs, mileage and pay — though the profile
+  // code, which asked the same question, already refused them.
+  if (!canSupervise(user.baseRole)) return [];
   const reports = await db.user.findMany({
-    where: { directSupervisorId: userId },
+    where: { directSupervisorId: user.id },
     select: { id: true },
   });
   return reports.map((report) => report.id);
@@ -36,7 +42,7 @@ export async function jobScopeWhere(
   ];
 
   if (scope === "REPORTS" || scope === "PROJECT") {
-    const ids = await reportIds(user.id);
+    const ids = await reportIds(user);
     if (ids.length > 0) {
       clauses.push({ assignments: { some: { userId: { in: ids } } } });
       // A tech cannot assign anyone, so the ad-hoc job they just raised has no
@@ -72,7 +78,7 @@ export async function canOnJob(
   }
 
   if (scope === "REPORTS" || scope === "PROJECT") {
-    const ids = await reportIds(user.id);
+    const ids = await reportIds(user);
     if (job.assigneeIds.some((assignee) => ids.includes(assignee))) return true;
     if (ids.includes(job.createdById)) return true;
   }
@@ -109,27 +115,34 @@ export function canOnProject(
   return scope === "PROJECT" && user.scopedProjectIds.includes(projectId);
 }
 
-/** Same shape, for records owned by a single user (mileage, payroll). */
-export async function userScopeWhere(
-  user: SessionUser,
-  permission: Permission,
-): Promise<{ userId: string | { in: string[] } } | Record<string, never> | null> {
-  const scope = permissionScope(user, permission);
-  if (!scope) return null;
-  if (scope === "ALL") return {};
-  if (scope === "OWN") return { userId: user.id };
-
-  const ids = new Set([user.id, ...(await reportIds(user.id))]);
-
-  if (scope === "PROJECT" && user.scopedProjectIds.length > 0) {
-    const members = await db.projectMember.findMany({
-      where: { projectId: { in: user.scopedProjectIds } },
-      select: { userId: true },
-    });
-    for (const member of members) ids.add(member.userId);
-  }
-
-  return { userId: { in: Array.from(ids) } };
+/**
+ * A job's title and number for the browser tab, only for somebody who may
+ * open the job. The tab's title is worked out apart from the page, and read
+ * the job with no check at all: the "not found" page somebody got for a job
+ * that was not theirs still carried its title and number in the tab.
+ */
+export async function viewableJobTitle(
+  id: string,
+): Promise<{ title: string; intWoId: string } | null> {
+  const user = await getSessionUser();
+  if (!user) return null;
+  const job = await db.job.findUnique({
+    where: { id },
+    select: {
+      title: true,
+      intWoId: true,
+      projectId: true,
+      createdById: true,
+      assignments: { select: { userId: true } },
+    },
+  });
+  if (!job) return null;
+  const allowed = await canOnJob(user, "job.view", {
+    projectId: job.projectId,
+    assigneeIds: job.assignments.map((assignment) => assignment.userId),
+    createdById: job.createdById,
+  });
+  return allowed ? { title: job.title, intWoId: job.intWoId } : null;
 }
 
 /**

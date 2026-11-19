@@ -3,8 +3,8 @@ import { notFound, redirect } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/ui/page-header";
 import { WoId } from "@/components/wo-id";
-import { db } from "@/lib/db";
 import { loadPortal } from "@/lib/job-portal";
+import { viewableJobTitle } from "@/lib/scope";
 import { getSessionUser } from "@/lib/session";
 
 import { PortalGrid } from "./portal-grid";
@@ -15,10 +15,7 @@ export async function generateMetadata({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const job = await db.job.findUnique({
-    where: { id },
-    select: { title: true },
-  });
+  const job = await viewableJobTitle(id);
   return { title: job ? `${job.title} — Manager Portal` : "Manager Portal" };
 }
 

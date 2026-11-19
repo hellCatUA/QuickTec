@@ -342,6 +342,9 @@ model ProfileRequest {
 
   createdAt DateTime @default(now())
 
+  /// One waiting per person per field, enforced by a partial unique index on
+  /// (userId, field) where the status is PENDING, which Prisma cannot express,
+  /// so it lives in the migration.
   @@index([userId, status])
   @@index([status])
 }

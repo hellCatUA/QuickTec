@@ -63,7 +63,7 @@ export default async function PayrollPersonPage({
   const query = await searchParams;
 
   const visibleIds =
-    scope === "ALL" ? null : [viewer.id, ...(await reportIds(viewer.id))];
+    scope === "ALL" ? null : [viewer.id, ...(await reportIds(viewer))];
   if (visibleIds !== null && !visibleIds.includes(userId)) notFound();
 
   const company = await getCompanySettings();
