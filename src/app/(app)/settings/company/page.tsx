@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { brandAssetSrc } from "@/lib/brand-assets";
 import { getCompanySettings } from "@/lib/company";
 import { db } from "@/lib/db";
 import { can, getSessionUser } from "@/lib/session";
@@ -39,6 +40,11 @@ export default async function CompanySettingsPage() {
         company={{
           ...company,
           mileageRate: company.mileageRate.toString(),
+        }}
+        brand={{
+          logo: brandAssetSrc("logo", company.logoPath),
+          wordmark: brandAssetSrc("wordmark", company.headerLogoPath),
+          icon: brandAssetSrc("icon", company.appIconPath),
         }}
       />
 

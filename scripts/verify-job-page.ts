@@ -1,12 +1,13 @@
 import "dotenv/config";
 import { chromium, type Page } from "playwright";
 import { encode } from "next-auth/jwt";
+import { existsSync } from "node:fs";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { db } from "@/lib/db";
 import { loadJobForExport } from "@/lib/exports/job-data";
 import { buildLegacyWmForm as buildTextReport } from "@/lib/exports/text-report";
-import { absolutePath } from "@/lib/storage";
+import { absolutePath, fileExists } from "@/lib/storage";
 
 /**
  * Drives the job page in a real browser: clock in, take a break, end it, clock
@@ -1024,11 +1025,11 @@ async function main() {
     // something it never touched.
     data: {
       name: "417 Group",
-      logoUrl: null,
+      logoPath: null,
       logoScale: 100,
-      headerLogoUrl: null,
+      headerLogoPath: null,
       headerLogoScale: 100,
-      appIconUrl: null,
+      appIconPath: null,
     },
   });
   await page.goto(`${BASE}/dashboard`, { waitUntil: "domcontentloaded" });
@@ -3730,29 +3731,153 @@ async function main() {
       data: { showCompanyNameInHeader: true },
     });
 
-    // --- the brand assets, which are three jobs and so three settings ------
+    // --- the brand assets, which are three jobs and so three files ---------
     // A wordmark in the header, an icon in the tab, and the company's own logo
     // beside them. Conflating any two is how a wide lockup ends up as a
     // favicon, so the point of the checks is that they stay apart.
-    const mark =
-      "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='28'%3E%3Crect width='120' height='28' fill='%231e8cff'/%3E%3C/svg%3E";
-    // A real path rather than a data: URI: /icon has to be able to send a
-    // browser somewhere, and a data: URI is not a Location.
-    const icon = "/icons/icon-192.png";
+    //
+    // Each is a file uploaded on the settings page now. They were addresses,
+    // and a logo living somewhere else showed only when that somewhere else
+    // answered; the app icon was fetched back over the app's own public name
+    // from inside the container, and quietly fell back to the placeholder
+    // whenever that missed. So everything here goes through the real file
+    // picker and is read back off the volume and through the app.
+    const sharp = (await import("sharp")).default;
+    const COLUMN = {
+      logo: "logoPath",
+      wordmark: "headerLogoPath",
+      icon: "appIconPath",
+    } as const;
+    const brandRow = () =>
+      db.companySettings.findUniqueOrThrow({
+        where: { id: "singleton" },
+        select: { logoPath: true, headerLogoPath: true, appIconPath: true },
+      });
+    const png = (width: number, height: number, colour: string) =>
+      sharp({ create: { width, height, channels: 4, background: colour } })
+        .png()
+        .toBuffer();
+    /** Picks a file in the asset's field and waits for the row to move. */
+    const upload = async (
+      asset: keyof typeof COLUMN,
+      file: { name: string; mimeType: string; buffer: Buffer },
+    ) => {
+      const before = (await brandRow())[COLUMN[asset]];
+      await planner.locator(`#brand-${asset}-file`).setInputFiles(file);
+      for (let i = 0; i < 80; i++) {
+        const now = (await brandRow())[COLUMN[asset]];
+        if (now !== before) {
+          // The answer reaches the page a moment after the row moves.
+          await planner
+            .locator(`#brand-${asset}-upload:not([disabled])`)
+            .waitFor({ timeout: 15_000 });
+          return now;
+        }
+        await planner.waitForTimeout(250);
+      }
+      return before;
+    };
 
-    await db.companySettings.update({
-      where: { id: "singleton" },
-      data: { headerLogoUrl: mark, appIconUrl: icon },
+    await planner.goto(`${BASE}/settings/company`, { waitUntil: "load" });
+    await planner.waitForTimeout(600);
+
+    // An SVG with script in it: what is kept and served is the PNG drawn from
+    // it, so the script is never anything a browser could run as the app.
+    const wordmarkPath = await upload("wordmark", {
+      name: "wordmark.svg",
+      mimeType: "image/svg+xml",
+      buffer: Buffer.from(
+        "<svg xmlns='http://www.w3.org/2000/svg' width='120' height='28'>" +
+          "<rect width='120' height='28' fill='#1e8cff'/>" +
+          "<script>document.title = 'not the app'</script></svg>",
+      ),
     });
-    await planner.reload({ waitUntil: "load" });
-
     check(
-      "a header wordmark stands in for the app's name",
-      await planner
-        .locator(`header img[src="${mark}"]`)
-        .isVisible(),
+      "an uploaded wordmark is kept on the uploads volume",
+      Boolean(wordmarkPath?.startsWith("brand/wordmark/")) &&
+        (await fileExists(wordmarkPath!)),
       true,
     );
+    check(
+      "and the page previews the file that was kept, on both themes",
+      await planner.locator('main img[src^="/api/brand/wordmark?v="]').count(),
+      2,
+    );
+    // Live from the upload: the header on the very page it was made on
+    // already carries it, with nothing saved and nothing reloaded.
+    check(
+      "and the header already shows it",
+      await planner.locator('header img[src^="/api/brand/wordmark?v="]').isVisible(),
+      true,
+    );
+
+    const iconPath = await upload("icon", {
+      name: "icon.png",
+      mimeType: "image/png",
+      buffer: await png(192, 192, "#22aa55"),
+    });
+    check(
+      "an app icon is kept beside it",
+      Boolean(iconPath?.startsWith("brand/icon/")) && (await fileExists(iconPath!)),
+      true,
+    );
+    // Taken rather than refused — a soft icon is still the right icon — but
+    // said, because it will be drawn at 512 on a home screen.
+    check(
+      "a small icon is taken, with a word about how it will look",
+      await planner.getByText(/only 192×192px/).isVisible(),
+      true,
+    );
+
+    const markSrc = (await planner
+      .locator('main img[src^="/api/brand/wordmark?v="]')
+      .first()
+      .getAttribute("src"))!;
+    const servedMark = await planner.request.get(`${BASE}${markSrc}`);
+    const servedMarkBody = await servedMark.body();
+    const servedMarkMeta = await sharp(servedMarkBody).metadata();
+    check(
+      "an SVG is served as the PNG drawn from it",
+      `${servedMark.headers()["content-type"]} ${servedMarkMeta.format}`,
+      "image/png png",
+    );
+    // Drawn at the size it is kept at. At its own declared 120px it would be
+    // enlarged into a blur by the first sharp screen.
+    check(
+      "drawn at the size it is kept at, not at its own 120px",
+      `${servedMarkMeta.width}x${servedMarkMeta.height}`,
+      "2048x478",
+    );
+    check(
+      "with nothing of the document in it",
+      servedMarkBody.includes("not the app"),
+      false,
+    );
+    // Every upload is a new name, so a page asking for the current version
+    // can keep the answer for good and still see the next upload at once.
+    check(
+      "asked for by its current version, it can be cached for good",
+      servedMark.headers()["cache-control"],
+      "public, max-age=31536000, immutable",
+    );
+
+    // The sign-in page shows the logo before anybody has signed in, so these
+    // are the one set of files served without a session.
+    const outsider = await browser.newContext();
+    check(
+      "the brand files are served to somebody not signed in",
+      (await outsider.request.get(`${BASE}${markSrc}`)).status(),
+      200,
+    );
+    check(
+      "by name only — nothing else on the volume is reachable through it",
+      (await outsider.request.get(`${BASE}/api/brand/..%2Fjobs`)).status(),
+      404,
+    );
+
+    await planner.goto(`${BASE}/dashboard`, { waitUntil: "load" });
+    const markImg = planner.locator('header img[src^="/api/brand/wordmark?v="]');
+    check("a header wordmark stands in for the app's name", await markImg.isVisible(), true);
     check(
       "which is then not also spelled out",
       await planner
@@ -3771,9 +3896,7 @@ async function main() {
     // the opposite colour, which is how a blue logo goes orange on light.
     check(
       "and the artwork is shown as supplied",
-      await planner
-        .locator(`header img[src="${mark}"]`)
-        .evaluate((el) => el.className.includes("invert")),
+      await markImg.evaluate((el) => el.className.includes("invert")),
       false,
     );
 
@@ -3792,7 +3915,7 @@ async function main() {
     // uploaded, and one that is too small, not square or gone costs the site
     // its install offer outright.
     check(
-      "the manifest points at rendered icons, never at the configured file",
+      "the manifest points at rendered icons, never at the uploaded file",
       body.icons.every((one) => one.src.startsWith("/app-icon/")),
       true,
     );
@@ -3801,10 +3924,10 @@ async function main() {
       body.icons.map((one) => `${one.sizes}/${one.purpose}`).join(" "),
       "192x192/any 512x512/any 512x512/maskable",
     );
-    // Stamped with the setting, so changing the icon changes the address and
-    // an installed app is not left waiting for a cache to expire.
+    // Stamped with the upload, so a new icon is a new address and an installed
+    // app is not left waiting for a cache to expire.
     check(
-      "the addresses carry the setting",
+      "the addresses carry the upload",
       new Set(body.icons.map((one) => new URL(one.src, BASE).searchParams.get("v")))
         .size,
       1,
@@ -3812,13 +3935,22 @@ async function main() {
 
     // And the promise is kept. This is the whole reason the route exists: a
     // manifest that declares 192x192 and serves something else costs the site
-    // its install offer, and the configured file is 192 square, so the 512
+    // its install offer, and the uploaded file is 192 square, so the 512
     // entry is only true because it is rendered rather than linked.
-    const sharp = (await import("sharp")).default;
     const drawn = async (name: string) => {
       const response = await planner.request.get(`${BASE}/app-icon/${name}`);
       const meta = await sharp(await response.body()).metadata();
       return `${response.status()} ${meta.format} ${meta.width}x${meta.height}`;
+    };
+    const centre = async (name: string) => {
+      const response = await planner.request.get(`${BASE}/app-icon/${name}`);
+      const { data, info } = await sharp(await response.body())
+        .raw()
+        .toBuffer({ resolveWithObject: true });
+      const at =
+        (Math.floor(info.height / 2) * info.width + Math.floor(info.width / 2)) *
+        info.channels;
+      return `${data[at]},${data[at + 1]},${data[at + 2]}`;
     };
 
     check("the 192 icon is 192 square", await drawn("192.png"), "200 png 192x192");
@@ -3828,48 +3960,57 @@ async function main() {
       await drawn("maskable.png"),
       "200 png 512x512",
     );
+    // The failure that started this: the right size, the wrong picture. The
+    // fetch behind it missed and the placeholder stood in, and every check
+    // above would still have passed.
+    check(
+      "and what is drawn is the uploaded icon, not the placeholder",
+      await centre("512.png"),
+      "34,170,85",
+    );
     check(
       "an address nobody promised is not served",
       (await planner.request.get(`${BASE}/app-icon/999.png`)).status(),
       404,
     );
 
-    // The case that took the install button away: a configured icon that is
-    // simply not there. The bundled artwork has to stand in at the declared
+    // A row pointing at a file the volume no longer has — a database restored
+    // without its uploads. The bundled artwork has to stand in at the declared
     // size rather than the route failing and the manifest lying.
-    await db.companySettings.update({
-      where: { id: "singleton" },
-      data: { appIconUrl: "/icons/nothing-is-here.png" },
-    });
+    await rename(absolutePath(iconPath!), `${absolutePath(iconPath!)}.hidden`);
     check(
-      "a configured icon that 404s falls back at full size",
+      "an uploaded icon gone from the volume falls back at full size",
       await drawn("512.png"),
       "200 png 512x512",
     );
-    await db.companySettings.update({
-      where: { id: "singleton" },
-      data: { appIconUrl: icon },
-    });
+    check(
+      "to the bundled artwork",
+      (await centre("512.png")) !== "34,170,85",
+      true,
+    );
+    await rename(`${absolutePath(iconPath!)}.hidden`, absolutePath(iconPath!));
 
     // The tab icon sits behind a fixed address so the root layout's metadata
     // can stay static — a query there runs during prerender, and the container
-    // builds with no database.
+    // builds with no database. It sends the tab to the square rendering, not
+    // to the upload, which may be 1024 wide and not square at all.
     const tabIcon = await planner.request.get(`${BASE}/icon`, {
       maxRedirects: 0,
     });
     check("the tab icon redirects", tabIcon.status(), 307);
+    const tabTarget = new URL(tabIcon.headers()["location"], BASE);
+    check("to the uploaded icon, rendered square", tabTarget.pathname, "/app-icon/192.png");
     check(
-      "to the configured one",
-      new URL(tabIcon.headers()["location"], BASE).pathname,
-      icon,
+      "stamped as the manifest stamps it",
+      tabTarget.searchParams.get("v"),
+      new URL(body.icons[0].src, BASE).searchParams.get("v"),
     );
 
     // --- the size knob ----------------------------------------------------
     // A supplied logo carries its own padding, so the same file can read a
     // size smaller than another at 100%. The setting is what cancels that out,
     // and the only thing worth proving is that the number reaches the pixels.
-    const wordmarkBox = async () =>
-      (await planner.locator(`header img[src="${mark}"]`).boundingBox())!;
+    const wordmarkBox = async () => (await markImg.boundingBox())!;
 
     check("a wordmark is 28px tall at 100%", Math.round((await wordmarkBox()).height), 28);
 
@@ -3887,14 +4028,75 @@ async function main() {
     );
 
     // The company logo is the other knob, and the two do not touch.
-    await db.companySettings.update({
-      where: { id: "singleton" },
-      data: { logoUrl: "/icons/icon-192.png", logoScale: 100 },
+    await planner.goto(`${BASE}/settings/company`, { waitUntil: "load" });
+    await planner.waitForTimeout(600);
+    const firstLogo = await upload("logo", {
+      name: "logo.png",
+      mimeType: "image/png",
+      buffer: await png(256, 256, "#ffffff"),
     });
-    await planner.reload({ waitUntil: "load" });
+    check(
+      "a company logo uploads",
+      Boolean(firstLogo?.startsWith("brand/logo/")),
+      true,
+    );
+
+    // Judged by its bytes, not its name or the type the browser claims.
+    await planner.locator("#brand-logo-file").setInputFiles({
+      name: "notes.png",
+      mimeType: "image/png",
+      buffer: Buffer.from("these are notes, not a logo"),
+    });
+    await planner
+      .getByText("That file is not a picture")
+      .waitFor({ timeout: 15_000 })
+      .catch(() => undefined);
+    check(
+      "a file that is not a picture is refused, and says so",
+      await planner.getByText("That file is not a picture").isVisible(),
+      true,
+    );
+    check(
+      "leaving the logo that was there",
+      (await brandRow()).logoPath,
+      firstLogo,
+    );
+
+    const secondLogo = await upload("logo", {
+      name: "logo-2.png",
+      mimeType: "image/png",
+      buffer: await png(300, 300, "#ff0000"),
+    });
+    check(
+      "replacing the logo puts up the new file",
+      Boolean(secondLogo) && secondLogo !== firstLogo,
+      true,
+    );
+    check(
+      "and takes the one it replaced off the volume",
+      await fileExists(firstLogo!),
+      false,
+    );
+    const audit = await db.auditEvent.findFirst({
+      where: { entityType: "CompanySettings", entityId: "singleton" },
+      orderBy: { createdAt: "desc" },
+      select: { detail: true },
+    });
+    // Field by field: the column is jsonb, which keeps keys in an order of
+    // its own rather than the order they were written in.
+    const logged = (audit?.detail ?? {}) as {
+      logoPath?: { from: string | null; to: string | null };
+    };
+    check(
+      "and the change is on the record",
+      `${logged.logoPath?.from} -> ${logged.logoPath?.to}`,
+      `${firstLogo} -> ${secondLogo}`,
+    );
+
+    await planner.goto(`${BASE}/dashboard`, { waitUntil: "load" });
     const markBox = async () =>
       (await planner
-        .locator('header img[src="/icons/icon-192.png"]')
+        .locator('header img[src^="/api/brand/logo?v="]')
         .boundingBox())!;
     check("the company logo is 40px in the header", Math.round((await markBox()).height), 40);
 
@@ -3923,6 +4125,22 @@ async function main() {
       80,
     );
 
+    // Signed out, on the one page everybody sees first.
+    const outsiderPage = await outsider.newPage();
+    await outsiderPage.goto(`${BASE}/signin`, { waitUntil: "load" });
+    const signInLogo = outsiderPage.locator('img[src^="/api/brand/logo?v="]');
+    check(
+      "the sign-in page shows the logo to somebody not yet signed in",
+      await signInLogo.isVisible(),
+      true,
+    );
+    check(
+      "and it loads",
+      await signInLogo.evaluate((img) => (img as HTMLImageElement).naturalWidth),
+      300,
+    );
+    await outsider.close();
+
     // And the knob is reachable from the settings page, which is the only
     // place anyone will ever turn it. A slider posts a string; the column is an
     // integer, and the gap between the two is exactly where a setting quietly
@@ -3932,7 +4150,10 @@ async function main() {
     await planner.locator("#logoScale").fill("125");
     await planner.locator("#headerLogoScale").fill("90");
     await planner.getByRole("button", { name: "Save changes" }).click();
-    await planner.getByText("Saved").waitFor({ timeout: 15_000 });
+    // Exactly: the brand card says the scales "are saved with the rest of the
+    // form", and a substring match found that at once and read the row
+    // before the save had landed.
+    await planner.getByText("Saved", { exact: true }).waitFor({ timeout: 15_000 });
 
     const saved = await db.companySettings.findUniqueOrThrow({
       where: { id: "singleton" },
@@ -3943,16 +4164,51 @@ async function main() {
       `${saved.logoScale}/${saved.headerLogoScale}`,
       "125/90",
     );
+    // The files are not part of that form, and saving it does not touch them.
+    check(
+      "and leaves the uploaded files where they were",
+      JSON.stringify(await brandRow()),
+      JSON.stringify({
+        logoPath: secondLogo,
+        headerLogoPath: wordmarkPath,
+        appIconPath: iconPath,
+      }),
+    );
+
+    // Taking each one down, from the page.
+    const removeIn = async (asset: keyof typeof COLUMN) => {
+      await planner
+        .locator(`#brand-${asset}-upload`)
+        .locator("xpath=..")
+        .getByRole("button", { name: "Remove" })
+        .click();
+      for (let i = 0; i < 80; i++) {
+        if ((await brandRow())[COLUMN[asset]] === null) return;
+        await planner.waitForTimeout(250);
+      }
+    };
+    await removeIn("logo");
+    await removeIn("wordmark");
+    await removeIn("icon");
+    check(
+      "all three can be removed",
+      JSON.stringify(await brandRow()),
+      JSON.stringify({ logoPath: null, headerLogoPath: null, appIconPath: null }),
+    );
+    check(
+      "and their files go with them",
+      [secondLogo, wordmarkPath, iconPath].map((one) => existsSync(absolutePath(one!))).join(" "),
+      "false false false",
+    );
+    check(
+      "and are no longer served",
+      (await planner.request.get(`${BASE}/api/brand/logo`)).status(),
+      404,
+    );
 
     await db.companySettings.update({
       where: { id: "singleton" },
-      data: {
-        headerLogoUrl: null,
-        appIconUrl: null,
-        logoUrl: null,
-        logoScale: 100,
-        headerLogoScale: 100,
-      },
+      data: { logoScale: 100, headerLogoScale: 100 },
     });
     const fallbackIcon = await planner.request.get(`${BASE}/icon`, {
       maxRedirects: 0,
@@ -3969,19 +4225,24 @@ async function main() {
       icons: { src: string; purpose?: string }[];
     };
     check(
-      "the manifest keeps the same three addresses with nothing configured",
+      "the manifest keeps the same three addresses with nothing uploaded",
       fallbackBody.icons.every((one) => one.src.startsWith("/app-icon/")),
       true,
     );
-    // The addresses are fixed; what is behind them is not. A different setting
-    // has to produce a different URL or an installed app keeps the old icon.
+    // The addresses are fixed; what is behind them is not. A different icon
+    // has to produce a different URL or an installed app keeps the old one.
     check(
       "but not the same stamp",
       new URL(fallbackBody.icons[0].src, BASE).searchParams.get("v") ===
         new URL(body.icons[0].src, BASE).searchParams.get("v"),
       false,
     );
-    await planner.reload({ waitUntil: "load" });
+    await planner.goto(`${BASE}/dashboard`, { waitUntil: "load" });
+    check(
+      "with no logo the header draws the letter tile again",
+      await planner.locator('header img[src^="/api/brand/logo"]').count(),
+      0,
+    );
     check(
       "with no wordmark set the name comes back",
       await planner

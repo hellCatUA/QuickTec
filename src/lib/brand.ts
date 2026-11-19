@@ -13,27 +13,32 @@
  *
  * The app icon has no scale: a favicon is drawn by the browser and a home
  * screen icon by the OS, and neither takes our opinion on the matter.
+ *
+ * The artwork itself is uploaded, stored and served by src/lib/brand-assets.ts;
+ * this file is only what the browser needs to know about it as well.
  */
 
-/**
- * A configured icon URL that something can actually be pointed at.
- *
- * The settings field takes free text. A data: URI renders fine in an `<img>`
- * and is a reasonable thing to paste, but it is neither a Location a redirect
- * can carry nor a manifest icon a browser will fetch, so it falls back to the
- * bundled artwork rather than producing a broken icon.
- */
-export function usableIconUrl(
-  configured: string | null | undefined,
-): string | null {
-  const url = configured?.trim();
-  if (!url) return null;
-  return url.startsWith("http://") ||
-    url.startsWith("https://") ||
-    url.startsWith("/")
-    ? url
-    : null;
+/** The three brand assets, by the name each is uploaded and served under. */
+export const BRAND_ASSETS = ["logo", "wordmark", "icon"] as const;
+export type BrandAsset = (typeof BRAND_ASSETS)[number];
+
+export function isBrandAsset(value: unknown): value is BrandAsset {
+  return (BRAND_ASSETS as readonly unknown[]).includes(value);
 }
+
+/**
+ * Generous for a logo: the server keeps at most 2048px of it as a PNG, so
+ * anything bigger than this is bytes sent to be thrown away.
+ */
+export const BRAND_ASSET_MAX_BYTES = 10 * 1024 * 1024;
+
+/**
+ * What the file picker offers. A hint only — the server judges the bytes, not
+ * the name — but it greys out the files that would only be refused. `.svg` is
+ * spelled out because some pickers do not map image/svg+xml to it.
+ */
+export const BRAND_ASSET_ACCEPT =
+  "image/png,image/jpeg,image/webp,image/gif,image/avif,image/svg+xml,.svg";
 
 export const BRAND_SCALE_DEFAULT = 100;
 export const BRAND_SCALE_MIN = 50;

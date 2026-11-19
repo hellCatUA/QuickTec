@@ -15,20 +15,21 @@ import { cn } from "@/lib/utils";
  * number is only known at runtime.
  */
 export function CompanyMark({
-  logoUrl,
+  src,
   name,
   size,
   scale,
   className,
 }: {
-  logoUrl: string | null | undefined;
+  /** Where the uploaded logo is served (brandAssetSrc), or nothing. */
+  src: string | null | undefined;
   name: string | null | undefined;
   /** The square's side in CSS pixels at 100%. */
   size: number;
   scale?: number | null;
   className?: string;
 }) {
-  if (!logoUrl) {
+  if (!src) {
     // Deliberately unscaled. The knob exists to cancel out the padding baked
     // into a supplied file, and this tile is not a supplied file — scaling it
     // would only move the header around for a deployment that set no logo.
@@ -51,7 +52,7 @@ export function CompanyMark({
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img
-      src={logoUrl}
+      src={src}
       alt=""
       style={{ width: px, height: px }}
       className={cn("shrink-0 rounded object-contain light:invert", className)}

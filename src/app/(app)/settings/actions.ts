@@ -53,11 +53,10 @@ const brandScale = z.coerce
 
 const companySchema = z.object({
   name: z.string().trim().min(1, "Company name is required"),
-  logoUrl: optionalText,
+  // The brand assets themselves are files, uploaded on their own by
+  // ./company/brand-actions.ts; only their scales ride along with this form.
   logoScale: brandScale,
-  headerLogoUrl: optionalText,
   headerLogoScale: brandScale,
-  appIconUrl: optionalText,
   addressLine1: optionalText,
   addressLine2: optionalText,
   city: optionalText,

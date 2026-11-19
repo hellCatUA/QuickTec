@@ -54,8 +54,10 @@ const nextConfig: NextConfig = {
       },
       {
         // The one-time password link carries its secret in the query string,
-        // so this page must not hand that string to anything it loads. The
-        // company logo is operator-supplied and may well be somewhere else.
+        // so this page must not hand that string to anything it loads. Since
+        // the company logo became an upload everything on the page is the
+        // app's own, but that is a fact about today's page, and this header
+        // keeps the secret in the address bar whatever is added to it later.
         source: "/set-password",
         headers: [{ key: "Referrer-Policy", value: "no-referrer" }],
       },

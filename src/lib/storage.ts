@@ -111,6 +111,20 @@ export async function storeAvatar(userId: string, data: Buffer): Promise<string>
 }
 
 /**
+ * Writes one of the company's brand assets under brand/<asset>/ — always a
+ * PNG, because src/lib/brand-assets.ts has already redrawn it as one. A fresh
+ * name every time, so the address it is served at changes with the file and
+ * no browser holds on to the one it replaced.
+ */
+export async function storeBrandFile(asset: string, data: Buffer): Promise<string> {
+  const storagePath = path.join("brand", asset, `${randomUUID()}.png`);
+  const absolute = absolutePath(storagePath);
+  await mkdir(path.dirname(absolute), { recursive: true });
+  await writeFile(absolute, data);
+  return storagePath;
+}
+
+/**
  * Duplicates a stored file under another key.
  *
  * Used when a company's saved blank is put onto a job: the job keeps its own
