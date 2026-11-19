@@ -17,7 +17,7 @@ import { detailsEditable } from "@/lib/job-fields";
 import { formatRate, toCents } from "@/lib/money";
 import { jobRateNote } from "@/lib/pay-rates";
 import { loadPunchBlocks } from "@/lib/punch-blocks";
-import { canOnJob } from "@/lib/scope";
+import { canOnJob, viewableJobTitle } from "@/lib/scope";
 import { loadPrivacySettings, PICTURE_SELECT, pictureFor } from "@/lib/profile";
 import { getSessionUser } from "@/lib/session";
 import { CrewPanel } from "../../crew-panel";
@@ -32,10 +32,7 @@ export async function generateMetadata({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const job = await db.job.findUnique({
-    where: { id },
-    select: { title: true },
-  });
+  const job = await viewableJobTitle(id);
   return { title: job ? `${job.title} — Schedule & Budget` : "Schedule & Budget" };
 }
 

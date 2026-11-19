@@ -15,7 +15,7 @@ export default async function RatesPage() {
   if (!scope || scope === "OWN") redirect("/pay");
 
   const editableIds =
-    scope === "ALL" ? null : [viewer.id, ...(await reportIds(viewer.id))];
+    scope === "ALL" ? null : [viewer.id, ...(await reportIds(viewer))];
 
   const [users, projects, clients] = await Promise.all([
     db.user.findMany({

@@ -32,7 +32,12 @@ import {
   privacySettings,
   yearsLabel,
 } from "@/lib/profile-privacy";
-import { answerProfileRequest, fileProfileRequest } from "@/lib/profile-requests";
+import { answerProfileRequest, fileProfileRequest, nobodyToAsk } from "@/lib/profile-requests";
+import { putUpPicture } from "@/lib/avatar";
+import { profileQueueWhere } from "@/lib/profile";
+import { reportIds } from "@/lib/scope";
+import { supervisionsToFix } from "@/lib/supervisors";
+import type { Permission } from "@/lib/permissions";
 import type { SessionUser } from "@/lib/session";
 import { deleteFile } from "@/lib/storage";
 
@@ -116,6 +121,126 @@ async function sessionOf(email: string): Promise<SessionUser> {
       ]),
     ),
   };
+}
+
+/** The same, with what the person's role is granted in the matrix. */
+async function sessionWithGrants(email: string): Promise<SessionUser> {
+  const session = await sessionOf(email);
+  const grants = await db.roleGrant.findMany({
+    where: { role: session.baseRole },
+    select: { permission: true, scope: true },
+  });
+  return {
+    ...session,
+    grants: new Map(grants.map((grant) => [grant.permission as Permission, grant.scope])),
+  };
+}
+
+/**
+ * Who is waiting on whom, and what a demotion or a deactivation leaves
+ * behind: the queue never holds the asker's own request or a deactivated
+ * person's; a double tap files one request; a supervisor demoted reaches
+ * nobody's jobs through a leftover link; a deactivated supervisor is listed
+ * to be fixed; a picture is put up only over the one that was looked at.
+ */
+async function queuesAndLinks() {
+  console.log("\n— queues, links and races —");
+  const boss = await db.user.findUniqueOrThrow({ where: { email: "boss@417group.org" } });
+  const tech = await db.user.findUniqueOrThrow({ where: { email: "tech@417group.org" } });
+  const bossSession = await sessionWithGrants("boss@417group.org");
+  const adminSession = await sessionWithGrants("admin@417group.org");
+  await db.profileRequest.deleteMany({ where: { status: "PENDING" } });
+
+  // A manager's own request: to the other managers, never to themselves.
+  const since = new Date();
+  const own = await fileProfileRequest({
+    subject: { id: boss.id, name: boss.name, directSupervisorId: boss.directSupervisorId },
+    requesterId: boss.id,
+    field: "LEGAL_NAME",
+    value: "Bo Review Boss",
+  });
+  const queued = (session: SessionUser) =>
+    db.profileRequest.count({ where: { AND: [profileQueueWhere(session), { id: own.id }] } });
+  check("a manager's own request is not in their own queue", await queued(bossSession), 0);
+  check("it is in another manager's", await queued(adminSession), 1);
+  check(
+    "and they are not told about their own request",
+    await db.notification.count({
+      where: { userId: boss.id, kind: "profile_request", createdAt: { gte: since } },
+    }),
+    0,
+  );
+  check(
+    "with another manager there, there is somebody to ask",
+    await nobodyToAsk({ directSupervisorId: null }, boss.id),
+    false,
+  );
+  await db.profileRequest.deleteMany({ where: { id: own.id } });
+
+  // A double tap: one request waits, not two.
+  const subject = { id: tech.id, name: tech.name, directSupervisorId: tech.directSupervisorId };
+  await Promise.all(
+    ["Terrence First Tap", "Terrence Second Tap"].map((value) =>
+      fileProfileRequest({ subject, requesterId: tech.id, field: "LEGAL_NAME", value }),
+    ),
+  );
+  check(
+    "two requests sent at once leave one waiting",
+    await db.profileRequest.count({ where: { userId: tech.id, field: "LEGAL_NAME", status: "PENDING" } }),
+    1,
+  );
+
+  // Deactivated, their request leaves every queue.
+  await db.user.update({ where: { id: tech.id }, data: { active: false } });
+  check(
+    "a deactivated person's request is in nobody's queue",
+    await db.profileRequest.count({ where: { AND: [profileQueueWhere(adminSession), { userId: tech.id }] } }),
+    0,
+  );
+  await db.user.update({ where: { id: tech.id }, data: { active: true } });
+  await db.profileRequest.deleteMany({ where: { userId: tech.id, status: "PENDING" } });
+
+  // A leftover link reaches nothing once the role no longer supervises.
+  check(
+    "a supervisor's leftover link reaches no reports",
+    (await reportIds({ id: boss.id, baseRole: "SUPERVISOR" })).length,
+    0,
+  );
+  check(
+    "a manager's reaches theirs",
+    (await reportIds({ id: boss.id, baseRole: "MANAGER" })).includes(tech.id),
+    tech.directSupervisorId === boss.id,
+  );
+
+  // A supervisor deactivated is listed to be fixed, and says why.
+  await db.user.deleteMany({ where: { email: "gone-supervisor@example.com" } });
+  const gone = await db.user.create({
+    data: { name: "Gone Supervisor", email: "gone-supervisor@example.com", baseRole: "MANAGER", active: false },
+  });
+  const peer = await db.user.findUniqueOrThrow({ where: { email: "peer-profile@example.com" } });
+  await db.user.update({ where: { id: peer.id }, data: { active: true, directSupervisorId: gone.id } });
+  const toFix = (await supervisionsToFix()).find((entry) => entry.id === peer.id);
+  check("a deactivated supervisor's people are listed to fix", toFix?.supervisor.active, false);
+  await db.user.update({ where: { id: peer.id }, data: { directSupervisorId: null } });
+  await db.user.delete({ where: { id: gone.id } });
+
+  // Only over the picture that was looked at.
+  check(
+    "a picture is not put up over one that changed meanwhile",
+    await putUpPicture({
+      userId: peer.id,
+      path: "avatars/never-written.jpg",
+      source: "test",
+      addedById: boss.id,
+      over: "avatars/not-what-is-there.jpg",
+    }),
+    false,
+  );
+  check(
+    "and leaves nothing in their archive",
+    await db.profilePicture.count({ where: { userId: peer.id, path: "avatars/never-written.jpg" } }),
+    0,
+  );
 }
 
 async function jpeg(color: string): Promise<Buffer> {
@@ -663,7 +788,16 @@ async function pages() {
     await admin.getByRole("button", { name: "Save", exact: true }).click();
     const dialog = admin.getByRole("alertdialog");
     await dialog.waitFor({ timeout: 15_000 });
-    check("another manager is told this is not their employee", await dialog.getByText("Terry Tech isn't your employee").isVisible(), true);
+    // The title, with the space after the name the build used to drop
+    // ("Terry Techisn't"), and a body that does not say it again.
+    check(
+      "another manager is told this is not their employee",
+      await dialog.getByRole("heading", { name: "Terry Tech isn\u2019t your employee", exact: true }).isVisible(),
+      true,
+    );
+    const warningBody = (await dialog.locator("#not-yours-body").textContent()) ?? "";
+    check("and the body does not say it twice", /isn.t your employee/.test(warningBody), false);
+    check("but whose it is to change", /the legal name is theirs to change/.test(warningBody), true);
     check(
       "and nothing has changed yet",
       (await db.user.findUniqueOrThrow({ where: { id: tech.id } })).legalName,
@@ -771,13 +905,13 @@ async function pages() {
     check("but sees the home region", await colleague.getByText("Visalia, CA 93291").first().isVisible(), true);
     check(
       "and has no history to read",
-      await colleague.getByRole("button", { name: /^History of / }).count(),
+      await colleague.getByRole("button", { name: /^History: / }).count(),
       0,
     );
 
     // --- a line's history opens under the line --------------------------------
     await own.goto(`${BASE}/account`, { waitUntil: "load" });
-    await own.getByRole("button", { name: "History of legal name" }).first().click();
+    await own.getByRole("button", { name: "History: Legal name" }).first().click();
     await own.getByText("Legal name updated").first().waitFor({ timeout: 15_000 });
     check("a line's history opens under it", await own.getByText("Approved By:").first().isVisible(), true);
     const turnedDown = own.locator("li", { hasText: "Legal name update request denied" }).first();
@@ -1097,6 +1231,62 @@ async function lineEntries() {
     check("with nothing written about the zone", await newest("timeZone"), zone);
     await db.user.update({ where: { id: tech.id }, data: following });
 
+    // --- the row saves only what was changed on it -----------------------------
+    // Opened, then the person saves a phone and a street on their own
+    // profile; the row, saved with a new city, used to put both back.
+    await openUsers();
+    await db.user.update({
+      where: { id: tech.id },
+      data: { phone: "559-555-0177", addressLine1: "12 Meanwhile Ave" },
+    });
+    const regionAgain = await newest("homeRegion");
+    await adminPage.locator(`#city-${tech.id}`).fill("Visalia Test");
+    check("a city typed on the users page is saved", await saveRow(movedOn("homeRegion", regionAgain)), true);
+    const meanwhile = await stored();
+    check("a phone the person saved meanwhile is kept", meanwhile.phone, "559-555-0177");
+    check("and their street", meanwhile.addressLine1, "12 Meanwhile Ave");
+    check("while the city is the one typed", meanwhile.city, "Visalia Test");
+
+    // The name rule their own profile has.
+    const nameBefore = (await stored()).name;
+    await openUsers();
+    await adminPage.locator(`#name-${tech.id}`).fill("Terry");
+    await row().getByRole("button", { name: "Save", exact: true }).click();
+    await row().getByText("Write their name in full — first and last.").waitFor({ timeout: 15_000 });
+    check("a one-word name is refused there too", (await stored()).name, nameBefore);
+
+    // Your own account cannot be switched off from here.
+    await adminPage.goto(`${BASE}/settings/users`, { waitUntil: "load" });
+    const ownCard = adminPage.locator(`[data-user-row="${admin.id}"]`);
+    await ownCard.locator(":scope > button").click();
+    check(
+      "your own account cannot be switched off",
+      await ownCard.locator('input[name="active"][type="checkbox"]').isDisabled(),
+      true,
+    );
+
+    // Somebody else's can, saying what it does, and it is on their history.
+    const peer = await db.user.findUniqueOrThrow({ where: { email: "peer-profile@example.com" } });
+    await db.user.update({ where: { id: peer.id }, data: { active: true } });
+    await adminPage.goto(`${BASE}/settings/users`, { waitUntil: "load" });
+    const peerCard = adminPage.locator(`[data-user-row="${peer.id}"]`);
+    await peerCard.locator(":scope > button").click();
+    await peerCard.locator('input[name="active"][type="checkbox"]').uncheck();
+    check(
+      "switching somebody off says what it does",
+      await peerCard.getByText(/is signed out at once/).isVisible(),
+      true,
+    );
+    const roleLine = (await profileHistory(peer.id, "role"))[0]?.id ?? null;
+    await peerCard.getByRole("button", { name: "Save", exact: true }).click();
+    for (let attempt = 0; attempt < 60; attempt++) {
+      if (((await profileHistory(peer.id, "role"))[0]?.id ?? null) !== roleLine) break;
+      await adminPage.waitForTimeout(250);
+    }
+    const off = (await profileHistory(peer.id, "role"))[0];
+    check("a deactivation is on their history", `${off?.action} · ${off?.by}`, `Account deactivated · ${admin.name}`);
+    check("and they are switched off", (await db.user.findUniqueOrThrow({ where: { id: peer.id } })).active, false);
+
     // --- a new number for the preferred phone ----------------------------------
     const preferred = await newest("preferredPhone");
     const work = await newest("workPhone");
@@ -1113,7 +1303,7 @@ async function lineEntries() {
       changes: statesChange(["CA", "NV"], ["CA", "AZ"], stateName),
     });
     await own.goto(`${BASE}/account`, { waitUntil: "load" });
-    await own.getByRole("button", { name: "History of states of operation" }).first().click();
+    await own.getByRole("button", { name: "History: States of operation" }).first().click();
     const entry = own.locator("li", { hasText: "States of operation updated" }).first();
     await entry.waitFor({ timeout: 15_000 });
     check("the state taken off is struck through", await entry.locator("s").allTextContents(), "Nevada (removed)");
@@ -1135,6 +1325,7 @@ async function main() {
   await rules();
   await audienceAndCards();
   await requests();
+  await queuesAndLinks();
   await nextcloudPicture();
   if (process.env.SKIP_PAGES !== "1") {
     await pages();

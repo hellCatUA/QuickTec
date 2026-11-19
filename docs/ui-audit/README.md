@@ -491,6 +491,96 @@ after `08ba256`:
   refuses signature pictures far larger than a pad's; a damaged file says so
   in words rather than in pdf-lib's.
 
+## Users and People (19 November 2026)
+
+The owner asked for Users and People to be looked at as a whole: "migration
+after migration, change after change — the interface is torn". Two agents:
+one read the code and replayed every action against a running build, one
+walked 17 screens as seven roles at 320–1440 px in both themes (782 page
+loads, about 30 click-throughs) on the audit database with 35 extra
+accounts. Fixed:
+
+- **The Users row put back what the person saved meanwhile.** It wrote every
+  field it showed, touched or not, and the person's history called it the
+  manager's change. It now says what each field held when it was opened, as
+  the person's own profile does, and saves only what was changed.
+- **Saving one phone on /account took the other two from the page**, removing
+  a work phone a supervisor had just set. Each phone is taken on its own.
+- **An administrator could switch off their own account** with one tick, and
+  with it the last way in. Refused for your own row; switching anybody else
+  off says what it does before it is saved, and now goes on their history
+  (on the Role line: "Account deactivated", "Account reactivated").
+- **A supervisor deactivated left their people stuck**: not on the "to fix"
+  list, and every save of their rows refused for naming somebody
+  deactivated. Listed now, said beside the name on Users, the profile and
+  /account, and the supervisor is checked only when it is changed.
+- **A Supervisor with a leftover link still opened former reports' jobs,
+  mileage and pay** (`reportIds` had no role check).
+- **A manager's own legal-name request sat in their own queue**, counted on
+  their badge, answerable by nobody. The asker is never their own reviewer;
+  the one manager there is gets theirs set at once, approved by QuickTec. A
+  deactivated person's requests leave every queue.
+- **"They have SSO now" and "Issue a password link" acted on the first tap**;
+  both ask now. Buttons and roles the server would refuse are no longer
+  offered (a password for an account that manages roles, Manager and
+  Administrator on the outside-account form, a password for a deactivated
+  account). `switchToSso` had skipped the check its siblings make.
+- **Races**: two requests sent at once both stayed waiting (a partial unique
+  index now — migration `20261119120000_one_pending_profile_request`); two
+  managers setting a picture at once both succeeded; one password link sent
+  twice set two passwords. A request claimed and then not applied is put back.
+- **Rules that differed by screen**: any zone the formatter knew was taken on
+  Users (and any text as the company's zone); one-word names were taken on
+  Users and for outside accounts; clearing an outside account's name
+  recorded "reset to NextCloud".
+- **Times**: the history had its own stamp ("08:05 AM", in the reader's zone),
+  and Users' last sign-in the viewer's zone; both are on the company's clock
+  in the app's format now.
+- **Words**: "Terry Techisn't your employee" — the build drops the space
+  between an expression and text holding an HTML entity (also "417 Group|
+  QuickTec" on company settings); the warning said its title twice and "the
+  years of service is"; roles from the enum ("(supervisor)", "Admin");
+  statuses as enums in the permission matrix, which also promised per-user
+  overrides no screen sets and offered scopes that grant nothing for Manage
+  users and Manage roles; outside accounts told about NextCloud; managers told
+  "payroll needs one" about a supervisor nobody can give them; two history
+  buttons both called "History of work".
+- **A guest's page showed employee lines** (supervisor, years of service, pay)
+  and offered a start date; it shows what their own profile shows now.
+- **Tab titles named jobs, projects, sites and customers** to people the page
+  then refused.
+- Smaller: every button on Users, the profile panel and /account is 44 px;
+  names and emails wrap rather than being cut at 320 px; Users no longer shows
+  zone ids; the dashboard's "give every tech a supervisor" counts only active
+  techs and opens the first one; a start date like 02-31 is refused.
+
+### Open — for the owner
+
+- **One person page** (the review's main proposal): the person's own profile
+  and their page under People are the same lines, each fact once, with its
+  level and history, edited on the line by whoever may; Users becomes account
+  administration (list, filters, activation, sign-in, outside accounts' role
+  and email). Today six facts show twice to whoever may edit them, and six
+  others are only on Users, without levels or history.
+- **Where the direct supervisor is set** — Users (who pays) or the profile.
+- **"Direct supervisor" and the Supervisor role** now mean different people;
+  rename one?
+- **Outside accounts' email and role** cannot be changed after creation.
+- **A picture from somebody with no direct supervisor** is approved by QuickTec
+  at once — including a tech whose supervisor was deactivated. Keep, or send
+  it to the managers as a legal name is?
+- **Guests' pages** — none at all, or the trimmed page they have now; the back
+  arrow goes to People, which lists neither guests nor deactivated people.
+- **Profile requests in Approvals' "Your requests" and "Archive"**, which show
+  change requests only.
+- **Unused**: per-user permission overrides (read in three places, set
+  nowhere), `country` (edited only on Users, shown nowhere), the avatar URL
+  written at every sign-in, `audit.view` / `job.delete` /
+  `job.set_internal_status` in the matrix; the Supervisor role's default
+  "mileage: reports" now reaches nobody.
+- Not confirmed, worth a look: Restricted lines through a project's
+  Supervisor membership ignore the viewer's role and the matrix.
+
 ## Other open threads (outside this audit)
 
 Parked by the owner, not forgotten. None has been started.

@@ -11,6 +11,9 @@ export async function generateMetadata({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  // Named only for whoever may open it, as the page itself decides.
+  const user = await getSessionUser();
+  if (!user || !can(user, "client.manage")) return { title: "Customer" };
   const customer = await db.customer.findUnique({
     where: { id },
     select: { name: true },

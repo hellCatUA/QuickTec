@@ -231,16 +231,23 @@ export default async function DashboardPage() {
           detail: "Shown in the header and on the sign-in page.",
           href: "/settings/company",
         },
-        {
-          done:
-            (await db.user.count({
-              where: { directSupervisorId: null, baseRole: "TECH" },
-            })) === 0,
-          label: "Give every tech a direct supervisor",
-          detail:
-            "Payroll approval routes through this link. A tech without one cannot be paid.",
-          href: "/settings/users",
-        },
+        await (async () => {
+          // Active techs only: a deactivated one is paid nothing, and was
+          // counted all the same. The link opens the first of them on the
+          // Users page rather than leaving them to be found.
+          const first = await db.user.findFirst({
+            where: { directSupervisorId: null, baseRole: "TECH", active: true },
+            orderBy: { name: "asc" },
+            select: { id: true },
+          });
+          return {
+            done: first === null,
+            label: "Give every tech a direct supervisor",
+            detail:
+              "Payroll approval routes through this link. A tech without one cannot be paid.",
+            href: first ? `/settings/users#user-${first.id}` : "/settings/users",
+          };
+        })(),
         // Found here rather than by a tech on site with a photo to file: a
         // bind mount takes the host directory's ownership, so a volume the
         // container cannot write to looks entirely normal until it matters.

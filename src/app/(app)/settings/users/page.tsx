@@ -1,17 +1,31 @@
 import { TriangleAlert } from "lucide-react";
 import { redirect } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
+import { keysCheckFor } from "@/lib/account-keys";
 import { getCompanySettings } from "@/lib/company";
 import { usDateTimeInZone } from "@/lib/datetime";
 import { db } from "@/lib/db";
 import { loadPrivacySettings, pictureFor } from "@/lib/profile";
-import { zonePickedByHand } from "@/lib/profile-format";
+import { ROLE_LABEL, zonePickedByHand } from "@/lib/profile-format";
 import { can, getSessionUser } from "@/lib/session";
 import { canSupervise, supervisionsToFix } from "@/lib/supervisors";
 import { OutsideAccount } from "./outside-account";
 import { UserList } from "./user-list";
+import type { BaseRole } from "@prisma-client";
 
 export const metadata = { title: "Users" };
+
+/** The roles an outside account can be made with, in the order offered. */
+const OUTSIDE_ROLES = ["TECH", "SUPERVISOR", "MANAGER", "ACCOUNTANT", "ADMINISTRATOR", "GUEST"] as const;
+
+/** Why a supervisor can no longer approve anybody's week, when they cannot. */
+function supervisorGone(
+  supervisor: { active: boolean; baseRole: BaseRole } | undefined,
+): "deactivated" | "cannot approve" | null {
+  if (!supervisor) return null;
+  if (!supervisor.active) return "deactivated";
+  return canSupervise(supervisor.baseRole) ? null : "cannot approve";
+}
 
 export default async function UsersSettingsPage() {
   const viewer = await getSessionUser();
@@ -64,13 +78,16 @@ export default async function UsersSettingsPage() {
     .map((user) => ({ id: user.id, name: user.name }));
 
   const toFix = await supervisionsToFix();
+  const mayHoldKeys = await keysCheckFor(viewer);
 
-  // Written out here, in the viewer's own zone. Left to the browser it came
-  // out in a format nothing else in the app uses, and in whatever zone the
-  // device happened to be set to.
+  // Written out here, on the company's clock like every other time an office
+  // reads. Left to the browser it came out in a format nothing else in the
+  // app uses, and in whatever zone the device happened to be set to; then in
+  // the viewer's own zone, so two managers read two different times for the
+  // same sign-in.
   const company = await getCompanySettings();
-  const zone = viewer.timeZone || company.defaultTimeZone;
-  const nameOf = new Map(users.map((user) => [user.id, user.name]));
+  const zone = company.defaultTimeZone;
+  const byId = new Map(users.map((user) => [user.id, user]));
 
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-4">
@@ -95,19 +112,25 @@ export default async function UsersSettingsPage() {
                 : `${toFix.length} people have a supervisor who cannot approve payroll`}
             </div>
             <p className="text-xs text-muted-foreground">
-              Only managers and administrators can approve a week. Until these
-              are changed, their weeks have nobody who can sign them off.
+              Only an active manager or administrator can approve a week. Until
+              these are changed, their weeks have nobody who can sign them off.
               Nothing has been moved automatically: who approves somebody&rsquo;s
               money is a decision, not a default.
             </p>
             <ul className="flex flex-col gap-1 text-xs">
               {toFix.map((entry) => (
-                <li key={entry.id} className="tabular-nums">
+                <li key={entry.id}>
                   <span className="font-medium">{entry.name}</span>
                   <span className="text-muted-foreground">
                     {" "}
                     → {entry.supervisor.name} (
-                    {entry.supervisor.baseRole.toLowerCase()})
+                    {/* The role's word, not the enum lower-cased; and said
+                        when the account is switched off, which the role alone
+                        never showed. */}
+                    {entry.supervisor.active
+                      ? (ROLE_LABEL[entry.supervisor.baseRole] ?? entry.supervisor.baseRole)
+                      : "deactivated"}
+                    )
                   </span>
                 </li>
               ))}
@@ -116,7 +139,13 @@ export default async function UsersSettingsPage() {
         </Card>
       ) : null}
 
-      <OutsideAccount />
+      {/* Only the roles this viewer may hand out: Manager and Administrator
+          were offered to somebody who cannot, and refused once the whole
+          form was filled in. */}
+      <OutsideAccount
+        roles={OUTSIDE_ROLES.filter((role) => mayHoldKeys({ role }))}
+        defaultZone={company.defaultTimeZone}
+      />
 
       {users.length === 0 ? (
         <Card>
@@ -138,9 +167,14 @@ export default async function UsersSettingsPage() {
             }) => ({
               picture: pictures.get(user.id) ?? null,
               supervisorName: user.directSupervisorId
-                ? (nameOf.get(user.directSupervisorId) ?? null)
+                ? (byId.get(user.directSupervisorId)?.name ?? null)
                 : null,
+              supervisorGone: supervisorGone(
+                user.directSupervisorId ? byId.get(user.directSupervisorId) : undefined,
+              ),
               lastLogin: lastLoginAt ? usDateTimeInZone(lastLoginAt, zone) : null,
+              self: user.id === viewer.id,
+              keys: mayHoldKeys({ role: user.baseRole, userId: user.id }),
               user: {
                 ...user,
                 zoneByHand: zonePickedByHand({ ...user, timeZoneManual }),

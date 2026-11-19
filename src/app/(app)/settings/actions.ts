@@ -9,7 +9,8 @@ import {
   BRAND_SCALE_MIN,
 } from "@/lib/brand";
 import { db } from "@/lib/db";
-import { flag, optionalText, phoneText, samePhone } from "@/lib/form";
+import { KEYS_REFUSED, mayHoldKeysTo } from "@/lib/account-keys";
+import { changedSinceOpened, flag, optionalText, phoneText, samePhone } from "@/lib/form";
 import {
   canSignInWithPassword,
   hashPassword,
@@ -19,6 +20,7 @@ import {
 } from "@/lib/password";
 import { isLocationIcon } from "@/lib/location-icons";
 import { MAX_LOCATION_NAME } from "@/lib/deliverables";
+import { capitaliseName, isFullName } from "@/lib/names";
 import { PERMISSION_KEYS, type Permission } from "@/lib/permissions";
 import {
   homeRegion,
@@ -29,9 +31,9 @@ import {
   zonePickedByHand,
 } from "@/lib/profile-format";
 import { preferredPhoneChange, profileChanges, recordProfileEvents } from "@/lib/profile-history";
-import { can, requirePermission, type SessionUser } from "@/lib/session";
+import { requirePermission } from "@/lib/session";
 import { canSupervise } from "@/lib/supervisors";
-import { timeZoneForZip, US_STATES } from "@/lib/us-regions";
+import { isOfferedTimeZone, timeZoneForZip, US_STATES } from "@/lib/us-regions";
 import { BaseRole, PermissionScope } from "@prisma-client";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
@@ -67,7 +69,12 @@ const companySchema = z.object({
   email: optionalText,
   website: optionalText,
   intWoLabel: z.string().trim().min(1),
-  defaultTimeZone: z.string().trim().min(1),
+  // The list the form offers. Any text used to do, and every page that shows
+  // a time throws on a zone the formatter does not know.
+  defaultTimeZone: z
+    .string()
+    .trim()
+    .refine(isOfferedTimeZone, "That is not one of the time zones offered."),
   timeRoundingMinutes: z.coerce.number().int().min(1).max(60),
   techTimeAdjustLimit: z.coerce.number().int().min(0).max(480),
   showCompanyNameInHeader: flag,
@@ -131,23 +138,19 @@ export async function updateCompanySettings(
 
 // Fed straight to the date formatting on every page that shows the person —
 // to them and to whoever looks at their profile — which throws on a zone it
-// does not know.
-const timeZoneText = z
-  .string()
-  .trim()
-  .refine((zone) => {
-    try {
-      new Intl.DateTimeFormat("en-US", { timeZone: zone });
-      return true;
-    } catch {
-      return false;
-    }
-  }, "That is not a time zone.");
+// does not know. And held to the one list every screen offers: this page used
+// to take any zone the formatter knew, so an "Etc/GMT+12" set here read as
+// "From my ZIP" on the person's own profile, and moved to their ZIP's zone the
+// next time they saved their apartment number.
+const ZONE_REFUSED = "That is not one of the time zones offered.";
+const timeZoneText = z.string().trim().refine(isOfferedTimeZone, ZONE_REFUSED);
 
 const userSchema = z.object({
   userId: z.string().min(1),
   directSupervisorId: optionalText,
-  timeZone: timeZoneText,
+  // Checked against the list below, and only when it was changed: a zone
+  // stored before the list was enforced must not stop every other save.
+  timeZone: optionalText,
   /** What the app calls them. Blank means "go back to what NextCloud says". */
   name: optionalText,
   // No legal name: it is the direct supervisor's, and is changed on the
@@ -156,15 +159,22 @@ const userSchema = z.object({
   addressLine1: optionalText,
   addressLine2: optionalText,
   city: optionalText,
-  state: optionalText.refine(
-    (value) => !value || US_STATES.some((entry) => entry.code === value),
-    "That is not a state.",
-  ),
+  state: optionalText,
   postalCode: optionalText,
   country: optionalText,
   active: flag,
 });
 
+/**
+ * One row of the Users page.
+ *
+ * Only what was changed on the row is saved. Everything it showed used to be
+ * written back, touched or not: a phone and a street the person saved on
+ * their own profile while this page sat open went back to the old ones, and
+ * their history said this manager had done it. The row now says what each
+ * field held when it was opened, as the person's own profile does, and a
+ * field left alone keeps whatever is stored by the time it is saved.
+ */
 export async function updateUser(
   _prev: ActionResult | null,
   formData: FormData,
@@ -178,18 +188,59 @@ export async function updateUser(
   if (!parsed.success) {
     return { ok: false, error: z.prettifyError(parsed.error) };
   }
-
   const { userId, ...data } = parsed.data;
 
-  if (data.directSupervisorId === userId) {
-    return { ok: false, error: "A user cannot be their own supervisor." };
+  const before = await db.user.findUnique({ where: { id: userId } });
+  if (!before) return { ok: false, error: "User not found." };
+
+  const touched = changedSinceOpened(formData);
+
+  // A name typed here is a decision, and has to be marked as one: NextCloud
+  // rewrites the name on every sign-in, so without the flag the correction
+  // would survive until that person next signed in and then vanish. Clearing
+  // the field hands the name back to NextCloud, which is how somebody undoes
+  // a correction they no longer want. The box capitalises as it is typed, so
+  // a name NextCloud sent in lower case is not a change until it is edited.
+  const typedName = data.name ? capitaliseName(data.name) : null;
+  let nameChange: { name?: string; nameOverridden?: boolean } = {};
+  let nameReset = false;
+  if (touched("name", typedName, (a, b) => a === capitaliseName(b))) {
+    if (!typedName) {
+      // An outside account has no NextCloud to hand its name back to.
+      // Cleared, it kept the name it had and its history said "reset to
+      // NextCloud".
+      if (before.signInMethod === "LOCAL") {
+        return { ok: false, error: "Write their name — first and last." };
+      }
+      if (before.nameOverridden) {
+        nameChange = { nameOverridden: false };
+        nameReset = true;
+      }
+    } else if (typedName !== capitaliseName(before.name)) {
+      // The rule their own profile has always had: this page took "Pat",
+      // which the profile then refused to save back.
+      if (!isFullName(typedName)) {
+        return { ok: false, error: "Write their name in full — first and last." };
+      }
+      nameChange = { name: typedName, nameOverridden: true };
+    }
   }
 
-  // Enforced here and not only in the picker: this is the rule that keeps a
-  // week from sitting forever on somebody who can never approve it.
-  if (data.directSupervisorId) {
+  // Checked only when it was changed, and enforced here and not only in the
+  // picker: this is the rule that keeps a week from sitting forever on
+  // somebody who can never approve it. Checked on every save, a supervisor
+  // deactivated since made every save of their people's rows fail — even the
+  // one that would have given them somebody else — because the picker sent
+  // the old name back.
+  const directSupervisorId = touched("directSupervisorId", data.directSupervisorId)
+    ? data.directSupervisorId
+    : before.directSupervisorId;
+  if (directSupervisorId && directSupervisorId !== before.directSupervisorId) {
+    if (directSupervisorId === userId) {
+      return { ok: false, error: "A user cannot be their own supervisor." };
+    }
     const candidate = await db.user.findUnique({
-      where: { id: data.directSupervisorId },
+      where: { id: directSupervisorId },
       select: { name: true, baseRole: true, active: true },
     });
     if (!candidate) {
@@ -207,42 +258,50 @@ export async function updateUser(
         error: `${candidate.name} cannot approve payroll, so they cannot be a direct supervisor. Pick a manager or an administrator.`,
       };
     }
-  }
 
-  // A supervisor cycle would make payroll routing loop forever, so walk the
-  // chain upwards before committing.
-  let cursor = data.directSupervisorId;
-  const seen = new Set<string>([userId]);
-  while (cursor) {
-    if (seen.has(cursor)) {
-      return { ok: false, error: "That would create a supervisor loop." };
+    // A supervisor cycle would make payroll routing loop forever, so walk the
+    // chain upwards before committing.
+    let cursor: string | null = directSupervisorId;
+    const seen = new Set<string>([userId]);
+    while (cursor) {
+      if (seen.has(cursor)) {
+        return { ok: false, error: "That would create a supervisor loop." };
+      }
+      seen.add(cursor);
+      const next: { directSupervisorId: string | null } | null =
+        await db.user.findUnique({
+          where: { id: cursor },
+          select: { directSupervisorId: true },
+        });
+      cursor = next?.directSupervisorId ?? null;
     }
-    seen.add(cursor);
-    const next: { directSupervisorId: string | null } | null =
-      await db.user.findUnique({
-        where: { id: cursor },
-        select: { directSupervisorId: true },
-      });
-    cursor = next?.directSupervisorId ?? null;
   }
 
-  const before = await db.user.findUnique({ where: { id: userId } });
-  if (!before) return { ok: false, error: "User not found." };
+  const phone = touched("phone", data.phone, samePhone) ? data.phone : before.phone;
+  // The street is its two lines together, as on their own profile.
+  const streetTouched =
+    touched("addressLine1", data.addressLine1) || touched("addressLine2", data.addressLine2);
+  const addressLine1 = streetTouched ? data.addressLine1 : before.addressLine1;
+  const addressLine2 = streetTouched ? data.addressLine2 : before.addressLine2;
+  const city = touched("city", data.city) ? data.city : before.city;
+  const stateTouched = touched("state", data.state);
+  if (stateTouched && data.state && !US_STATES.some((entry) => entry.code === data.state)) {
+    return { ok: false, error: "That is not a state." };
+  }
+  const state = stateTouched ? data.state : before.state;
+  const postalCode = touched("postalCode", data.postalCode) ? data.postalCode : before.postalCode;
+  const country = touched("country", data.country) ? data.country : before.country;
 
-  // A name typed here is a decision, and has to be marked as one: NextCloud
-  // rewrites the name on every sign-in, so without the flag the correction
-  // would survive until that person next signed in and then vanish. Clearing
-  // the field hands the name back to NextCloud, which is how somebody undoes
-  // a correction they no longer want.
-  const { name, ...rest } = data;
-  const nameChange =
-    name && name !== before.name
-      ? { name, nameOverridden: true }
-      : name
-        ? {}
-        : before.nameOverridden
-          ? { nameOverridden: false }
-          : {};
+  // Unticked on your own row, the next page was the sign-in screen — and on
+  // the last account that manages users, nobody was left to tick it again
+  // without the database.
+  const active = touched("active", data.active ? "on" : "") ? data.active : before.active;
+  if (!active && before.active && userId === actor.id) {
+    return {
+      ok: false,
+      error: "You cannot deactivate your own account. Another manager can, if it should be.",
+    };
+  }
 
   // A zone set here is a choice, and a later change of address must not
   // quietly replace it with the one its ZIP is in — unless it is the ZIP's
@@ -250,57 +309,80 @@ export async function updateUser(
   // while the ZIP moved, it follows the ZIP — as it would on their own
   // profile — unless it was a choice already; a zone that is not its ZIP's
   // was one even when nobody flagged it, and is flagged from now on.
-  const zipZone = timeZoneForZip(rest.postalCode);
+  const zoneTyped =
+    data.timeZone !== null &&
+    touched("timeZone", data.timeZone) &&
+    data.timeZone !== before.timeZone;
+  if (zoneTyped && !isOfferedTimeZone(data.timeZone!)) {
+    return { ok: false, error: ZONE_REFUSED };
+  }
+  const zipZone = timeZoneForZip(postalCode);
   const byHandBefore = zonePickedByHand(before);
-  const zoneTyped = rest.timeZone !== before.timeZone;
-  const byHandAfter = zoneTyped ? rest.timeZone !== zipZone : byHandBefore;
-  const zoneChange = zoneTyped
-    ? { timeZoneManual: byHandAfter }
-    : rest.postalCode !== before.postalCode
+  const byHandAfter = zoneTyped ? data.timeZone !== zipZone : byHandBefore;
+  const zoneChange: { timeZone?: string; timeZoneManual?: boolean } = zoneTyped
+    ? { timeZone: data.timeZone!, timeZoneManual: byHandAfter }
+    : postalCode !== before.postalCode
       ? byHandBefore
         ? { timeZoneManual: true }
         : zipZone
           ? { timeZone: zipZone }
           : {}
       : {};
+  const timeZone = zoneChange.timeZone ?? before.timeZone;
 
   // A personal phone somebody picked as the one clients call is theirs to
   // pick: replaced by a manager, it stops being the preferred one, rather than
   // a number they never chose going out on the paperwork.
   const preferredChange =
-    !samePhone(rest.phone ?? "", before.phone ?? "") && before.preferredPhone === "PERSONAL"
+    !samePhone(phone ?? "", before.phone ?? "") && before.preferredPhone === "PERSONAL"
       ? { preferredPhone: null }
       : {};
 
-  await db.user.update({
-    where: { id: userId },
-    data: { ...rest, ...nameChange, ...zoneChange, ...preferredChange },
-  });
-
-  const diff = diffFields(
-    before as unknown as Record<string, unknown>,
-    { ...rest, ...nameChange, ...zoneChange, ...preferredChange } as unknown as Record<string, unknown>,
+  // Only what differs from what is stored is written, so a field nobody
+  // changed is not put back over a change made a moment ago.
+  const next: Record<string, unknown> = {
+    ...nameChange,
+    directSupervisorId,
+    phone,
+    addressLine1,
+    addressLine2,
+    city,
+    state,
+    postalCode,
+    country,
+    active,
+    ...zoneChange,
+    ...preferredChange,
+  };
+  const stored = before as unknown as Record<string, unknown>;
+  const writes = Object.fromEntries(
+    Object.entries(next).filter(([key, value]) => stored[key] !== value),
   );
-  if (Object.keys(diff).length > 0) {
-    await recordAudit({
-      actorId: actor.id,
-      entityType: "User",
-      entityId: userId,
-      action: "updated",
-      // Marked: the person's own history is written below, line by line, and
-      // reading this diff there as well would say everything twice.
-      detail: { ...diff, _profile: true },
-    });
-  }
+  if (Object.keys(writes).length === 0) return { ok: true };
+
+  await db.user.update({ where: { id: userId }, data: writes });
+
+  await recordAudit({
+    actorId: actor.id,
+    entityType: "User",
+    entityId: userId,
+    action: "updated",
+    // Marked: the person's own history is written below, line by line, and
+    // reading this diff there as well would say everything twice.
+    detail: { ...diffFields(stored, writes), _profile: true },
+  });
 
   // Their profile's history, as the profile itself writes it.
   const supervisors = await db.user.findMany({
-    where: { id: { in: [before.directSupervisorId, rest.directSupervisorId].filter((id): id is string => Boolean(id)) } },
+    where: {
+      id: {
+        in: [before.directSupervisorId, directSupervisorId].filter((id): id is string => Boolean(id)),
+      },
+    },
     select: { id: true, name: true },
   });
   const supervisorName = (id: string | null) =>
     id ? (supervisors.find((one) => one.id === id)?.name ?? null) : null;
-  const finalZone = "timeZone" in zoneChange && zoneChange.timeZone ? zoneChange.timeZone : rest.timeZone;
   // Picked here, or handed back to the ZIP, it is the administrator's doing;
   // moved to the ZIP's zone when it followed the ZIP anyway, it is QuickTec's.
   const zoneByThem = zoneTyped && (byHandBefore || byHandAfter);
@@ -317,26 +399,38 @@ export async function updateUser(
           directSupervisor: supervisorName(before.directSupervisorId),
         },
         {
-          name: "name" in nameChange && nameChange.name ? nameChange.name : before.name,
-          personalPhone: phoneDisplay(rest.phone),
-          street: streetText(rest.addressLine1, rest.addressLine2),
-          homeRegion: homeRegion({ city: rest.city, state: rest.state, zip: rest.postalCode }),
-          directSupervisor: supervisorName(rest.directSupervisorId),
+          name: nameChange.name ?? before.name,
+          personalPhone: phoneDisplay(phone),
+          street: streetText(addressLine1, addressLine2),
+          homeRegion: homeRegion({ city, state, zip: postalCode }),
+          directSupervisor: supervisorName(directSupervisorId),
         },
       ),
       // Cleared here, the name is NextCloud's again from the next sign-in.
-      ...(!name && before.nameOverridden
+      ...(nameReset
         ? [{ field: "name" as const, verb: "reset" as const, from: before.name, to: null }]
         : []),
       ...(zoneByThem
         ? profileChanges(
             { timeZone: zoneLine(before.timeZone, byHandBefore, before.postalCode) },
-            { timeZone: zoneLine(rest.timeZone, byHandAfter, rest.postalCode) },
+            { timeZone: zoneLine(timeZone, byHandAfter, postalCode) },
           )
+        : []),
+      // Switched off and on again. Only the diff above used to hold it, and
+      // nothing reads that, so a deactivation left no trace on the person.
+      ...(active !== before.active
+        ? [
+            {
+              field: "role" as const,
+              verb: active ? ("reactivated" as const) : ("deactivated" as const),
+              from: null,
+              to: null,
+            },
+          ]
         : []),
     ],
   });
-  if (!zoneByThem && finalZone !== before.timeZone) {
+  if (!zoneByThem && timeZone !== before.timeZone) {
     await recordProfileEvents({
       actorId: null,
       userId,
@@ -344,10 +438,10 @@ export async function updateUser(
         {
           field: "timeZone",
           from: zoneLine(before.timeZone, false, before.postalCode),
-          to: zoneLine(finalZone, false, rest.postalCode),
+          to: zoneLine(timeZone, false, postalCode),
         },
       ],
-      source: `Auto: ZIP ${rest.postalCode ?? ""}`.trim(),
+      source: `Auto: ZIP ${postalCode ?? ""}`.trim(),
     });
   }
   // The phone clients get, when the change moved it to another phone — and
@@ -357,7 +451,7 @@ export async function updateUser(
     { chosen: before.preferredPhone, personal: before.phone, work: before.workPhone, voip: before.voipPhone },
     {
       chosen: "preferredPhone" in preferredChange ? null : before.preferredPhone,
-      personal: rest.phone,
+      personal: phone,
       work: before.workPhone,
       voip: before.voipPhone,
     },
@@ -367,11 +461,12 @@ export async function updateUser(
       actorId: actor.id,
       userId,
       changes: moved,
-      reason: rest.phone ? "Personal phone changed" : "Personal phone removed",
+      reason: phone ? "Personal phone changed" : "Personal phone removed",
     });
   }
 
   revalidatePath("/settings/users");
+  revalidatePath(`/people/${userId}`);
   return { ok: true };
 }
 
@@ -441,7 +536,14 @@ export type LinkResult =
   | { ok: false; error: string };
 
 const outsideUserSchema = z.object({
-  name: z.string().trim().min(1, "Name is required"),
+  // First and last, as every other screen that takes a person's name asks:
+  // this one took a single word their own profile then refused to save.
+  name: z
+    .string()
+    .trim()
+    .min(1, "Write their name — first and last.")
+    .transform(capitaliseName)
+    .refine(isFullName, "Write their name in full — first and last."),
   email: z
     .string()
     .trim()
@@ -458,47 +560,6 @@ function setupLink(token: string): string {
   const base = (process.env.AUTH_URL ?? "").trim().replace(/\/+$/, "");
   return `${base}/set-password?token=${token}`;
 }
-
-/**
- * Whether the actor may hold the keys to an account with this role: create
- * it with a password they chose, or be handed the link that sets one.
- *
- * Managing users is not managing roles. Without this an administrator — who
- * manages users but not the permission matrix — could make a manager's
- * account, sign in to it, and edit the matrix; or take a manager's own
- * account over through a reset link. The roles that can change what
- * everybody else may do are handed out only by somebody who already can.
- */
-async function mayHoldKeysTo(
-  actor: SessionUser,
-  target: { role: BaseRole; userId?: string },
-): Promise<boolean> {
-  if (can(actor, "roles.manage", { minScope: "ALL" })) return true;
-  if (target.role === "MANAGER" || target.role === "ADMINISTRATOR") return false;
-  // Nor anybody else who can change the matrix — by what their role is
-  // granted as it stands, or what they were granted themselves — rather than
-  // by which roles happen to hold it today.
-  const byRole = await db.roleGrant.count({
-    where: { role: target.role, permission: "roles.manage", scope: "ALL" },
-  });
-  if (byRole > 0) return false;
-  if (target.userId) {
-    const byOverride = await db.permissionOverride.count({
-      where: {
-        userId: target.userId,
-        permission: "roles.manage",
-        granted: true,
-        scope: "ALL",
-        projectId: null,
-      },
-    });
-    if (byOverride > 0) return false;
-  }
-  return true;
-}
-
-const KEYS_REFUSED =
-  "Only somebody who manages roles can open a password way into an account that manages roles — a manager's, an administrator's, or anybody else's who can change the matrix.";
 
 async function issueToken(userId: string, actorId: string): Promise<string> {
   // Anything outstanding stops working: two live links means two people can
@@ -623,9 +684,15 @@ export async function switchToSso(formData: FormData): Promise<LinkResult> {
 
   const user = await db.user.findUnique({
     where: { id: userId },
-    select: { id: true, name: true, email: true, signInMethod: true },
+    select: { id: true, name: true, email: true, signInMethod: true, baseRole: true },
   });
   if (!user) return { ok: false, error: "No such account." };
+  // The same rule as resetting its password: handing an account to NextCloud
+  // hands it to whoever signs in there first with that email. An administrator
+  // refused a manager's password could still do this, until it was asked.
+  if (!(await mayHoldKeysTo(actor, { role: user.baseRole, userId: user.id }))) {
+    return { ok: false, error: KEYS_REFUSED };
+  }
   if (user.signInMethod === "SSO") return { ok: true };
 
   await db.user.update({

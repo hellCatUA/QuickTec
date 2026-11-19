@@ -50,7 +50,7 @@ import {
 } from "@/lib/job-review";
 import { assignmentTerms, describeTerms } from "@/lib/budget";
 import { formatRate } from "@/lib/money";
-import { canOnJob } from "@/lib/scope";
+import { canOnJob, viewableJobTitle } from "@/lib/scope";
 import { loadTimeline } from "@/lib/timeline-data";
 import { loadPrivacySettings, pictureFor, reachableContact } from "@/lib/profile";
 import { can, getSessionUser, permissionScope } from "@/lib/session";
@@ -102,10 +102,7 @@ export async function generateMetadata({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const job = await db.job.findUnique({
-    where: { id },
-    select: { title: true, intWoId: true },
-  });
+  const job = await viewableJobTitle(id);
   return { title: job ? `${job.title} · ${job.intWoId}` : "Job" };
 }
 

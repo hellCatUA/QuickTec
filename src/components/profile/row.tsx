@@ -5,7 +5,7 @@ import { Cloud } from "lucide-react";
 import * as React from "react";
 import { HistoryButton, HistoryPanel, useHistoryOf } from "@/components/profile/history";
 import { LevelBadge } from "@/components/profile/parts";
-import type { HistoryField } from "@/lib/profile-history";
+import { HISTORY_FIELDS, type HistoryField } from "@/lib/profile-history-fields";
 import { cn } from "@/lib/utils";
 
 /**
@@ -66,7 +66,7 @@ export function ProfileRow({
               <span className="text-xs text-muted-foreground">{note}</span>
             ) : null}
           </div>
-          <LevelControls level={level} history={history} label={label} className="@2xl:hidden" />
+          <LevelControls level={level} history={history} label={field ? HISTORY_FIELDS[field] : label} className="@2xl:hidden" />
         </div>
         <div className="@container min-w-0">
           {children}
@@ -75,7 +75,7 @@ export function ProfileRow({
         <LevelControls
           level={level}
           history={history}
-          label={label}
+          label={field ? HISTORY_FIELDS[field] : label}
           className="hidden @2xl:flex @2xl:self-start @2xl:pt-1.5"
         />
       </div>
@@ -105,7 +105,7 @@ function LevelControls({
       ) : (
         // Holds the place, so a line without a history ends where the
         // others do.
-        <span aria-hidden className="size-10 sm:size-8" />
+        <span aria-hidden className="size-11" />
       )}
     </div>
   );

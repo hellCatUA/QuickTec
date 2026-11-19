@@ -28,20 +28,28 @@ export function PasswordFallback({
   userId,
   granted,
   hasPassword,
+  active,
+  keys,
 }: {
   userId: string;
   granted: boolean;
   /** Granted and chosen, as against granted and still to be set. */
   hasPassword: boolean;
+  /** A deactivated account is given nothing until it is reactivated. */
+  active: boolean;
+  /** The viewer may give this account a password. */
+  keys: boolean;
 }) {
   const [result, setResult] = React.useState<LinkResult | null>(null);
   const [copied, setCopied] = React.useState(false);
-  const [confirming, setConfirming] = React.useState(false);
+  // Removing asked first; issuing a new link, which cuts off the password
+  // they have, did not.
+  const [confirming, setConfirming] = React.useState<"remove" | "link" | null>(null);
   const [pending, startTransition] = React.useTransition();
 
   function run(action: (formData: FormData) => Promise<LinkResult>) {
     setCopied(false);
-    setConfirming(false);
+    setConfirming(null);
     startTransition(async () => {
       const formData = new FormData();
       formData.set("userId", userId);
@@ -59,7 +67,6 @@ export function PasswordFallback({
         <code className="break-all text-xs">{result.link}</code>
         <Button
           type="button"
-          size="sm"
           className="self-start"
           onClick={() => {
             void navigator.clipboard.writeText(result.link!);
@@ -75,7 +82,9 @@ export function PasswordFallback({
   return (
     <div className="flex flex-col gap-1.5 rounded-lg border border-border bg-surface-raised p-2">
       {result && !result.ok ? (
-        <p className="text-xs text-danger">{result.error}</p>
+        <p className="text-sm text-danger" role="alert">
+          {result.error}
+        </p>
       ) : null}
 
       {granted ? (
@@ -89,61 +98,98 @@ export function PasswordFallback({
               : "They have not chosen one yet, so the link below is the only way to set it."}
           </p>
 
-          {confirming ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs">
+          {confirming === "remove" ? (
+            <div className="flex flex-col gap-2">
+              <span className="text-sm">
                 Remove it? Their password stops working now, and so does any
                 session opened with it.
               </span>
-              <Button
-                type="button"
-                size="sm"
-                variant="danger"
-                disabled={pending}
-                onClick={() => run(revokePasswordFallback)}
-              >
-                {pending ? <Loader2 className="animate-spin" /> : null}
-                Remove
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                disabled={pending}
-                onClick={() => setConfirming(false)}
-              >
-                Keep
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="danger"
+                  disabled={pending}
+                  onClick={() => run(revokePasswordFallback)}
+                >
+                  {pending ? <Loader2 className="animate-spin" /> : null}
+                  Remove
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={pending}
+                  onClick={() => setConfirming(null)}
+                >
+                  Keep
+                </Button>
+              </div>
+            </div>
+          ) : confirming === "link" ? (
+            <div className="flex flex-col gap-2">
+              <span className="text-sm">
+                {hasPassword
+                  ? "The password they have stops working now, and so does any session opened with it. They choose a new one through the link."
+                  : "Any link issued before stops working. They choose a password through the new one."}
+              </span>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  disabled={pending}
+                  onClick={() => run(resetOutsidePassword)}
+                >
+                  {pending ? <Loader2 className="animate-spin" /> : <KeyRound />}
+                  Issue the link
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={pending}
+                  onClick={() => setConfirming(null)}
+                >
+                  Keep it as it is
+                </Button>
+              </div>
             </div>
           ) : (
             <div className="flex flex-wrap gap-2">
+              {keys ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={pending}
+                  onClick={() => setConfirming("link")}
+                >
+                  {pending ? <Loader2 className="animate-spin" /> : <KeyRound />}
+                  Issue a new link
+                </Button>
+              ) : null}
               <Button
                 type="button"
-                size="sm"
-                variant="secondary"
-                disabled={pending}
-                onClick={() => run(resetOutsidePassword)}
-              >
-                {pending ? <Loader2 className="animate-spin" /> : <KeyRound />}
-                Issue a new link
-              </Button>
-              <Button
-                type="button"
-                size="sm"
                 variant="ghost"
                 disabled={pending}
-                onClick={() => setConfirming(true)}
+                onClick={() => setConfirming("remove")}
               >
                 <ShieldOff /> Remove the password
               </Button>
             </div>
           )}
         </>
+      ) : !keys ? (
+        // Said rather than offered and refused: the server answers anybody
+        // who cannot manage roles with a paragraph saying no.
+        <p className="text-xs text-muted-foreground">
+          Signs in through NextCloud only. Only somebody who manages roles can give
+          this account a QuickTec password as well.
+        </p>
+      ) : !active ? (
+        <p className="text-xs text-muted-foreground">
+          Signs in through NextCloud only. A deactivated account is given no password;
+          reactivate it first.
+        </p>
       ) : (
         <>
           <Button
             type="button"
-            size="sm"
             variant="secondary"
             className="self-start"
             disabled={pending}

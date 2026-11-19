@@ -100,7 +100,10 @@ export function CompanyForm({
             <span className="text-sm">
               Show the company name in the header
               <span className="block text-xs text-muted-foreground">
-                On: &ldquo;{company.name} | QuickTec&rdquo;. Off: the logo and
+                {/* One string: with the quotes written as entities, the
+                    build dropped the space after the name. */}
+                {`On: “${company.name} | QuickTec”.`}{" "}
+                Off: the logo and
                 QuickTec alone, which a long name is worth trading for on a
                 phone.
               </span>

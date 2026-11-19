@@ -30,6 +30,9 @@ export async function generateMetadata({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  // Named only for whoever may open it, as the page itself decides.
+  const user = await getSessionUser();
+  if (!user || !(await jobScopeWhere(user, "job.view"))) return { title: "Site" };
   const site = await db.site.findUnique({
     where: { id },
     select: {

@@ -23,32 +23,9 @@ import { LEVEL_INFO, PHONE_LABEL, effectivePreferred } from "@/lib/profile-priva
  * audience that sees Restricted lines anyway — so the values are not masked.
  */
 
-/** The lines a history is kept for. Street and Home region are one line each, as on the page. */
-export const HISTORY_FIELDS = {
-  picture: "Profile picture",
-  name: "Preferred name",
-  legalName: "Legal name",
-  role: "Role",
-  directSupervisor: "Direct supervisor",
-  yearsOfService: "Years of service",
-  preferredPhone: "Preferred phone",
-  personalPhone: "Personal phone",
-  workPhone: "Work phone",
-  voipPhone: "VoIP",
-  email: "Work email",
-  street: "Street address",
-  homeRegion: "Home region",
-  timeZone: "Time zone",
-  primaryRegion: "Primary region",
-  statesOfOperation: "States of operation",
-  defaultPayRate: "Default pay rate",
-} as const;
+import { HISTORY_FIELDS, isHistoryField, type HistoryField } from "@/lib/profile-history-fields";
 
-export type HistoryField = keyof typeof HISTORY_FIELDS;
-
-export function isHistoryField(value: unknown): value is HistoryField {
-  return typeof value === "string" && value in HISTORY_FIELDS;
-}
+export { HISTORY_FIELDS, isHistoryField, type HistoryField };
 
 /**
  * What happened to the line. Added, updated and removed follow from the
@@ -61,7 +38,11 @@ export type HistoryVerb =
   | "restored"
   | "visibility"
   | "reset"
-  | "denied";
+  | "denied"
+  // The account switched off and on, kept on the role's line: where they
+  // stand with the company, and the account has no line of its own.
+  | "deactivated"
+  | "reactivated";
 
 export type ProfileChange = {
   field: HistoryField;
@@ -215,6 +196,9 @@ function heading(field: HistoryField, verb: HistoryVerb, from: string | null): s
       return `${label} reset to NextCloud`;
     case "denied":
       return `${label} ${from ? "update" : "add"} request denied`;
+    case "deactivated":
+    case "reactivated":
+      return `Account ${verb}`;
     default:
       return `${label} ${verb}`;
   }

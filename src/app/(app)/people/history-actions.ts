@@ -1,13 +1,14 @@
 "use server";
 
-import { pad, zonedParts } from "@/lib/datetime";
+import { getCompanySettings } from "@/lib/company";
+import { usDateTimeInZone } from "@/lib/datetime";
 import { audienceFor, loadProfile, seesHistory, seesPayOf } from "@/lib/profile";
 import { isHistoryField, profileHistory, type HistoryEntry } from "@/lib/profile-history";
 import { getSessionUser } from "@/lib/session";
 
 export type FieldHistoryEntry = {
   id: string;
-  /** "10-19-2026 08:56 AM", in the reader's own zone. */
+  /** "10-19-2026 8:56 AM", on the company's clock. */
   at: string;
   action: string;
   from: string | null;
@@ -23,12 +24,6 @@ export type FieldHistoryEntry = {
 export type FieldHistoryResult =
   | { ok: true; entries: FieldHistoryEntry[] }
   | { ok: false; error: string };
-
-function stamp(at: Date, timeZone: string): string {
-  const parts = zonedParts(at, timeZone);
-  const hour = parts.hour % 12 || 12;
-  return `${pad(parts.month)}-${pad(parts.day)}-${parts.year} ${pad(hour)}:${pad(parts.minute)} ${parts.hour < 12 ? "AM" : "PM"}`;
-}
 
 /**
  * One line's history, for whoever may read it: the person, their direct
@@ -49,9 +44,15 @@ export async function loadFieldHistory(userId: string, field: string): Promise<F
     return { ok: false, error: "Their pay rate is not yours to read." };
   }
 
-  const entries = await profileHistory(userId, field);
+  // On the company's clock, written as every other time in the app is. It
+  // had a stamp of its own — "08:58 AM", in whatever zone the reader was in —
+  // so two managers reading one change saw two different times.
+  const [entries, company] = await Promise.all([profileHistory(userId, field), getCompanySettings()]);
   return {
     ok: true,
-    entries: entries.map((entry) => ({ ...entry, at: stamp(entry.at, viewer.timeZone) })),
+    entries: entries.map((entry) => ({
+      ...entry,
+      at: usDateTimeInZone(entry.at, company.defaultTimeZone),
+    })),
   };
 }

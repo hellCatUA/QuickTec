@@ -100,6 +100,16 @@ export const US_TIME_ZONES: { value: string; label: string }[] = [
   { value: "UTC", label: "UTC" },
 ];
 
+/**
+ * Whether a zone is one of those offered. Every screen that sets somebody's
+ * zone offers this list, and the server takes nothing else: one page that
+ * took any zone the formatter knew left a person's own profile unable to say
+ * which zone they were on.
+ */
+export function isOfferedTimeZone(zone: string): boolean {
+  return US_TIME_ZONES.some((entry) => entry.value === zone);
+}
+
 type ZipRange = { from: number; to: number; zone: string };
 
 /**

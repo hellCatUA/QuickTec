@@ -1,8 +1,14 @@
 "use client";
 
-import { Check, ChevronDown, Loader2 } from "lucide-react";
+import { Check, ChevronDown, Loader2, TriangleAlert } from "lucide-react";
 import Link from "next/link";
-import { useActionState, useState, useSyncExternalStore } from "react";
+import {
+  startTransition,
+  useActionState,
+  useState,
+  useSyncExternalStore,
+  type FormEvent,
+} from "react";
 import { Avatar } from "@/components/profile/parts";
 import { ReadOnlyValue } from "@/components/profile/parts";
 import { Badge } from "@/components/ui/badge";
@@ -10,10 +16,11 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Combobox } from "@/components/ui/combobox";
 import { Field, Input } from "@/components/ui/field";
+import { NameInput } from "@/components/ui/name-input";
 import { PhoneInput } from "@/components/ui/phone-input";
 import { StatePicker } from "@/components/ui/state-picker";
 import { ROLE_LABEL } from "@/lib/profile-format";
-import { US_TIME_ZONES, timeZoneForZip, timeZoneLabel } from "@/lib/us-regions";
+import { timeZoneForZip, timeZoneLabel, US_TIME_ZONES } from "@/lib/us-regions";
 import { cn } from "@/lib/utils";
 import { updateUser, type ActionResult } from "../actions";
 import { PasswordFallback } from "./password-fallback";
@@ -38,13 +45,59 @@ function subscribeToHash(onChange: () => void) {
   return () => window.removeEventListener("hashchange", onChange);
 }
 
+/**
+ * The fields that say what they held when the row was opened, as
+ * `was.<name>`: the server saves only those changed from it, so what the
+ * person saved on their own profile while this page sat open stays.
+ */
+const OPENED = [
+  "name",
+  "directSupervisorId",
+  "timeZone",
+  "phone",
+  "addressLine1",
+  "addressLine2",
+  "city",
+  "state",
+  "postalCode",
+  "country",
+  "active",
+] as const;
+type Opened = Record<(typeof OPENED)[number], string>;
+
+function openedFrom(formData: FormData): Opened {
+  return Object.fromEntries(
+    OPENED.map((key) => [
+      key,
+      key === "active"
+        ? formData.get("active") === "on"
+          ? "on"
+          : ""
+        : String(formData.get(key) ?? ""),
+    ]),
+  ) as Opened;
+}
+
 export type UserRowData = {
   /** Their picture, or null for their initials. */
   picture: string | null;
   /** Who approves and pays them, by name, for the closed row. */
   supervisorName: string | null;
-  /** When they last signed in, already written out in the viewer's zone. */
+  /**
+   * Their supervisor can no longer approve anything — deactivated, or moved
+   * to a role that cannot — said beside the name rather than left to read as
+   * if all was well.
+   */
+  supervisorGone: "deactivated" | "cannot approve" | null;
+  /** When they last signed in, already written out on the company's clock. */
   lastLogin: string | null;
+  /** The row is the viewer's own account. */
+  self: boolean;
+  /**
+   * Whether the viewer may give this account a password or hand it over.
+   * Buttons the server would refuse are not offered.
+   */
+  keys: boolean;
   user: {
     id: string;
     name: string;
@@ -86,7 +139,10 @@ export function UserRow({
   user,
   picture,
   supervisorName,
+  supervisorGone,
   lastLogin,
+  self,
+  keys,
   supervisorOptions,
 }: UserRowData) {
   // A link from elsewhere — "give every tech a supervisor" — can name the
@@ -101,16 +157,47 @@ export function UserRow({
   const [pressed, setPressed] = useState<boolean | null>(null);
   const open = pressed ?? named;
 
-  const [state, formAction, pending] = useActionState<
-    ActionResult | null,
-    FormData
-  >(updateUser, null);
-
   const [supervisorId, setSupervisorId] = useState(
     user.directSupervisorId ?? "",
   );
   const [region, setRegion] = useState((user.state ?? "").toUpperCase());
   const [zone, setZone] = useState(user.timeZone);
+  const [active, setActive] = useState(user.active);
+
+  // What each field showed when the row was opened, and after each save what
+  // was saved.
+  const [opened, setOpened] = useState<Opened>(() => ({
+    name: user.name,
+    directSupervisorId: user.directSupervisorId ?? "",
+    timeZone: user.timeZone,
+    phone: user.phone ?? "",
+    addressLine1: user.addressLine1 ?? "",
+    addressLine2: user.addressLine2 ?? "",
+    city: user.city ?? "",
+    state: (user.state ?? "").toUpperCase(),
+    postalCode: user.postalCode ?? "",
+    country: user.country ?? "",
+    active: user.active ? "on" : "",
+  }));
+
+  const [state, formAction, pending] = useActionState<
+    ActionResult | null,
+    FormData
+  >(async (previous, formData) => {
+    const result = await updateUser(previous, formData);
+    if (result.ok) setOpened(openedFrom(formData));
+    return result;
+  }, null);
+
+  // Sent by hand rather than as the form's action, as on the person's own
+  // profile: React empties a form its action has saved back to the values it
+  // was first drawn with, while the boxes that keep their own state — the
+  // supervisor, the zone, the state — went on showing what was picked.
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    startTransition(() => formAction(formData));
+  }
 
   // Their ZIP knows which clock they are on, and nobody wants to think about
   // it. Only ever offered — a typed zone is left alone, because the ZIP-to-zone
@@ -142,7 +229,9 @@ export function UserRow({
         <Avatar src={picture} name={user.name} size={36} />
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span className="truncate text-sm font-semibold">{user.name}</span>
+            <span className="min-w-0 text-sm font-semibold [overflow-wrap:anywhere]">
+              {user.name}
+            </span>
             <Badge variant={ROLE_VARIANT[user.baseRole] ?? "neutral"}>
               {ROLE_LABEL[user.baseRole] ?? user.baseRole}
             </Badge>
@@ -159,7 +248,9 @@ export function UserRow({
             ) : null}
             {user.active ? null : <Badge variant="neutral">Deactivated</Badge>}
           </span>
-          <span className="truncate text-xs text-muted-foreground">
+          {/* Wrapped, not cut: at 320 px "Oleksandr Kovalenko-Wh…" was all
+              anybody could read of who this was. */}
+          <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
             {user.email}
           </span>
           {/* Two facts side by side where there is room and one under the
@@ -170,11 +261,11 @@ export function UserRow({
             <span
               className={cn(
                 "min-w-0 [overflow-wrap:anywhere]",
-                !supervisorName && unsupervised && "text-warning",
+                ((!supervisorName && unsupervised) || supervisorGone) && "text-warning",
               )}
             >
               {supervisorName
-                ? `Reports to ${supervisorName}`
+                ? `Reports to ${supervisorName}${supervisorGone ? ` — ${supervisorGone}` : ""}`
                 : "No direct supervisor"}
             </span>
             <span className="whitespace-nowrap">
@@ -195,12 +286,15 @@ export function UserRow({
         hidden={!open}
         className={cn("border-t border-border p-3 sm:p-4", !open && "hidden")}
       >
-        <form action={formAction} className="flex flex-col gap-4">
+        <form onSubmit={submit} className="flex flex-col gap-4">
           <input type="hidden" name="userId" value={user.id} />
+          {OPENED.map((key) => (
+            <input key={key} type="hidden" name={`was.${key}`} value={opened[key]} />
+          ))}
 
           <Link
             href={`/people/${user.id}`}
-            className="inline-flex min-h-10 items-center self-start text-xs font-medium text-primary hover:underline"
+            className="inline-flex min-h-11 items-center self-start text-sm font-medium text-primary hover:underline"
           >
             Open their profile
           </Link>
@@ -210,12 +304,19 @@ export function UserRow({
               company account's is a spare key for the day NextCloud cannot be
               reached, so the question is "should this person have one". */}
           {user.signInMethod === "LOCAL" ? (
-            <ResetPassword userId={user.id} email={user.email} />
+            <ResetPassword
+              userId={user.id}
+              email={user.email}
+              hasPassword={user.hasPassword}
+              keys={keys}
+            />
           ) : (
             <PasswordFallback
               userId={user.id}
               granted={user.passwordFallback}
               hasPassword={user.hasPassword}
+              active={user.active}
+              keys={keys}
             />
           )}
 
@@ -225,17 +326,19 @@ export function UserRow({
               htmlFor={`name-${user.id}`}
               hint={
                 user.signInMethod === "LOCAL"
-                  ? "What the app calls them."
+                  ? "What the app calls them. First and last name."
                   : user.nameOverridden
                     ? "Set here, so NextCloud no longer changes it. Clear the box to hand it back."
                     : "Comes from NextCloud. Typing here takes it over."
               }
             >
-              <Input
+              {/* Capitalised as it is typed, as on their own profile, so the
+                  two screens agree on what a name looks like. */}
+              <NameInput
                 id={`name-${user.id}`}
                 name="name"
                 defaultValue={user.name}
-                autoComplete="off"
+                required={user.signInMethod === "LOCAL"}
               />
             </Field>
 
@@ -246,7 +349,7 @@ export function UserRow({
               <ReadOnlyValue empty="Not set">{user.legalName}</ReadOnlyValue>
               <Link
                 href={`/people/${user.id}`}
-                className="text-xs font-medium text-primary hover:underline"
+                className="inline-flex min-h-11 items-center self-start text-sm font-medium text-primary hover:underline"
               >
                 Change it on their profile
               </Link>
@@ -290,7 +393,6 @@ export function UserRow({
                 options={US_TIME_ZONES.map((entry) => ({
                   value: entry.value,
                   label: entry.label,
-                  hint: entry.value,
                   keywords: entry.value,
                 }))}
                 allowClear={false}
@@ -398,7 +500,6 @@ export function UserRow({
               <Button
                 type="button"
                 variant="secondary"
-                size="sm"
                 className="self-start"
                 onClick={() => setZone(suggested)}
               >
@@ -407,31 +508,53 @@ export function UserRow({
             ) : null}
           </fieldset>
 
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="flex items-center gap-2 text-sm">
+          <div className="flex flex-col gap-2">
+            {/* Your own is not yours to switch off: unticked and saved, the
+                next page was the sign-in screen, and nothing on any screen
+                could undo it. */}
+            <label
+              className={cn(
+                "flex min-h-11 items-center gap-3 self-start text-sm",
+                self && "text-muted-foreground",
+              )}
+            >
               <input
                 type="checkbox"
                 name="active"
-                defaultChecked={user.active}
+                checked={active}
+                disabled={self}
+                onChange={(event) => setActive(event.target.checked)}
                 className="size-5 accent-[var(--color-primary)]"
               />
               Active
+              {self ? <span className="text-xs">— your own account</span> : null}
             </label>
+            {/* A disabled box is not sent, which would read as "unticked". */}
+            {self && active ? <input type="hidden" name="active" value="on" /> : null}
+            {user.active && !active ? (
+              <p className="flex items-start gap-2 text-sm text-warning" role="status">
+                <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
+                Saved like this, {user.name} is signed out at once and cannot sign in again
+                until somebody ticks it back.
+              </p>
+            ) : null}
+          </div>
 
-            <div className="ml-auto flex items-center gap-2">
-              {state?.ok ? (
-                <span className="flex items-center gap-1 text-xs text-success">
-                  <Check className="size-3.5" /> Saved
-                </span>
-              ) : null}
-              {state && !state.ok ? (
-                <span className="text-xs text-danger">{state.error}</span>
-              ) : null}
-              <Button type="submit" size="sm" variant="secondary" disabled={pending}>
-                {pending ? <Loader2 className="animate-spin" /> : null}
-                Save
-              </Button>
-            </div>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {state?.ok ? (
+              <span className="flex items-center gap-1 text-sm text-success" role="status">
+                <Check className="size-4" /> Saved
+              </span>
+            ) : null}
+            {state && !state.ok ? (
+              <span className="text-sm text-danger" role="alert">
+                {state.error}
+              </span>
+            ) : null}
+            <Button type="submit" variant="secondary" disabled={pending}>
+              {pending ? <Loader2 className="animate-spin" /> : null}
+              Save
+            </Button>
           </div>
         </form>
       </div>

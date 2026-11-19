@@ -40,6 +40,13 @@ export type OwnProfile = {
   pendingLegalName: { id: string; value: string; reviewer: string | null } | null;
   role: string;
   supervisor: string | null;
+  /**
+   * The supervisor on their record can no longer approve anything —
+   * deactivated, or moved to a role that cannot. It read as if all was well.
+   */
+  supervisorGone: boolean;
+  /** A tech: paid through a direct supervisor, so one missing is a problem. */
+  needsSupervisor: boolean;
   /** Who answers what they ask: the direct supervisor while they still are one, else null for a manager. */
   reviewer: string | null;
   years: string | null;
@@ -220,13 +227,21 @@ export function ProfileForm({
           {profile.guest ? null : (
             <>
               <ProfileRow label="Direct supervisor" level={level("directSupervisor")} field="directSupervisor">
-                <ReadOnlyValue empty="Not set — payroll needs one">{profile.supervisor}</ReadOnlyValue>
+                {/* "Payroll needs one" only where payroll does: a manager was
+                    told to fix what nobody can. */}
+                <ReadOnlyValue empty={profile.needsSupervisor ? "Not set — payroll needs one" : "Not set"}>
+                  {profile.supervisor
+                    ? profile.supervisorGone
+                      ? `${profile.supervisor} — can no longer approve your week`
+                      : profile.supervisor
+                    : null}
+                </ReadOnlyValue>
               </ProfileRow>
               <ProfileRow
                 label="Years of service"
                 level={level("yearsOfService")}
                 field="yearsOfService"
-                hint="Set by your direct supervisor."
+                hint={profile.reviewer ? "Set by your direct supervisor." : "Set by a manager."}
               >
                 <ReadOnlyValue empty="Not set yet">{profile.years}</ReadOnlyValue>
               </ProfileRow>
@@ -323,7 +338,7 @@ export function ProfileForm({
             hint={
               profile.sso
                 ? "Your one email here: you sign in with it, and clients get it. Changed in NextCloud."
-                : "Your one email here: you sign in with it, and clients get it. An administrator changes it."
+                : "Your one email here: you sign in with it, and clients get it."
             }
           >
             <ReadOnlyValue>{profile.email}</ReadOnlyValue>
@@ -457,7 +472,7 @@ export function ProfileForm({
                   {states.map((code) => (
                     <li
                       key={code}
-                      className="inline-flex h-10 items-center gap-1 rounded-md border border-border bg-input pl-2.5 pr-1 text-sm sm:h-8"
+                      className="inline-flex min-h-11 items-center gap-1 rounded-md border border-border bg-input pl-2.5 text-sm"
                     >
                       {stateName(code) ?? code}
                       <input type="hidden" name="statesOfOperation" value={code} />
@@ -465,7 +480,7 @@ export function ProfileForm({
                         type="button"
                         aria-label={`Remove ${stateName(code) ?? code}`}
                         onClick={() => setStates((was) => was.filter((entry) => entry !== code))}
-                        className="flex size-8 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground sm:size-6"
+                        className="flex size-11 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
                       >
                         <X className="size-3.5" />
                       </button>
@@ -534,7 +549,7 @@ function LegalName({ profile }: { profile: OwnProfile }) {
           {profile.legalName}
         </ReadOnlyValue>
         {!asking && !pendingRequest ? (
-          <Button type="button" variant="ghost" size="sm" onClick={() => setAsking(true)}>
+          <Button type="button" variant="ghost" onClick={() => setAsking(true)}>
             Request a change
           </Button>
         ) : null}
@@ -549,7 +564,6 @@ function LegalName({ profile }: { profile: OwnProfile }) {
           <Button
             type="button"
             variant="ghost"
-            size="sm"
             disabled={busy}
             onClick={() =>
               startTransition(async () => {
@@ -625,11 +639,11 @@ function LegalAsk({
         >
           <NameInput id="own-legal-new" placeholder="First Middle Last" />
         </span>
-        <Button type="button" size="sm" disabled={busy} onClick={() => onSend(value)}>
+        <Button type="button" disabled={busy} onClick={() => onSend(value)}>
           {busy ? <Loader2 className="animate-spin" /> : null}
           {reviewer ? "Send to your supervisor" : "Send to a manager"}
         </Button>
-        <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={onCancel}>
+        <Button type="button" variant="ghost" disabled={busy} onClick={onCancel}>
           Cancel
         </Button>
       </div>

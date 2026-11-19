@@ -6,11 +6,9 @@ import { NameInput } from "@/components/ui/name-input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Field, Input, Select } from "@/components/ui/field";
+import { ROLE_LABEL } from "@/lib/profile-format";
 import { US_TIME_ZONES } from "@/lib/us-regions";
 import { createOutsideUser, type LinkResult } from "../actions";
-
-const ROLES = ["TECH", "SUPERVISOR", "MANAGER", "ACCOUNTANT", "ADMINISTRATOR", "GUEST"];
-
 
 /**
  * Adding somebody who does not work here.
@@ -20,7 +18,15 @@ const ROLES = ["TECH", "SUPERVISOR", "MANAGER", "ACCOUNTANT", "ADMINISTRATOR", "
  * call when the person is not going to manage a link. The second is marked as
  * needing changing at first sign-in, since somebody else already knows it.
  */
-export function OutsideAccount() {
+export function OutsideAccount({
+  roles,
+  defaultZone,
+}: {
+  /** The roles the viewer may give an account: the server refuses the rest. */
+  roles: readonly string[];
+  /** The company's own zone, rather than one written into this form. */
+  defaultZone: string;
+}) {
   const [open, setOpen] = React.useState(false);
   const [mode, setMode] = React.useState<"link" | "password">("link");
   const [result, setResult] = React.useState<LinkResult | null>(null);
@@ -117,7 +123,7 @@ export function OutsideAccount() {
             <p className="text-sm text-danger">{result.error}</p>
           ) : null}
 
-          <Field label="Name" htmlFor="outside-name">
+          <Field label="Name" htmlFor="outside-name" hint="First and last name.">
             <NameInput id="outside-name" name="name" required />
           </Field>
 
@@ -134,9 +140,9 @@ export function OutsideAccount() {
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Role" htmlFor="outside-role">
               <Select id="outside-role" name="baseRole" defaultValue="TECH">
-                {ROLES.map((role) => (
+                {roles.map((role) => (
                   <option key={role} value={role}>
-                    {role.charAt(0) + role.slice(1).toLowerCase()}
+                    {ROLE_LABEL[role] ?? role}
                   </option>
                 ))}
               </Select>
@@ -146,7 +152,11 @@ export function OutsideAccount() {
               <Select
                 id="outside-tz"
                 name="timeZone"
-                defaultValue="America/Los_Angeles"
+                defaultValue={
+                  US_TIME_ZONES.some((zone) => zone.value === defaultZone)
+                    ? defaultZone
+                    : "America/Los_Angeles"
+                }
               >
                 {US_TIME_ZONES.map((zone) => (
                   <option key={zone.value} value={zone.value}>

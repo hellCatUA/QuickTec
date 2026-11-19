@@ -342,6 +342,9 @@ model ProfileRequest {
 
   createdAt DateTime @default(now())
 
+  /// One waiting per person per field, enforced by a partial unique index on
+  /// (userId, field) where the status is PENDING, which Prisma cannot express,
+  /// so it lives in the migration.
   @@index([userId, status])
   @@index([status])
 }
@@ -412,7 +415,7 @@ model CompanySettings {
   ///
   /// The three brand assets are files uploaded in Settings and kept on the
   /// uploads volume (brand/<asset>/<uuid>.png), served by /api/brand/<asset>.
-  /// They were addresses typed into the form until 20261119120000: a logo
+  /// They were addresses typed into the form until 20261119130000: a logo
   /// living on somebody else's server shows only when that server answers,
   /// lets the browser in, and the address has not moved — and the app icon
   /// was fetched back from inside the container, through the app's own

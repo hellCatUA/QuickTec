@@ -1,4 +1,4 @@
-import type { BaseRole, PreferredPhone, PrivacyLevel } from "@prisma-client";
+import type { BaseRole, PreferredPhone, PrivacyLevel, Prisma } from "@prisma-client";
 import { avatarSrc } from "@/lib/avatar";
 import { db } from "@/lib/db";
 import { formatPhone } from "@/lib/phone";
@@ -127,6 +127,30 @@ export function seesHistory(audience: Audience): boolean {
  */
 export function managesProfiles(viewer: SessionUser): boolean {
   return can(viewer, "users.manage", { minScope: "ALL" });
+}
+
+/**
+ * The legal names and pictures waiting on this viewer, as a query: what their
+ * own people asked for, or everybody's for whoever manages users. Shared by
+ * Approvals and the count on its tab, so the two cannot disagree.
+ *
+ * Never their own: a manager asking for a new legal name found it in their
+ * own queue, counted on their badge, and could only withdraw it. And never a
+ * deactivated person's, which sat in every manager's queue with nobody left
+ * to tell the answer to.
+ */
+export function profileQueueWhere(viewer: SessionUser): Prisma.ProfileRequestWhereInput {
+  if (isGuest(viewer)) return { id: "" };
+  const own = { userId: { not: viewer.id }, user: { active: true } };
+  if (managesProfiles(viewer)) return { status: "PENDING", ...own };
+  // Somebody whose role no longer supervises keeps the link on their old
+  // reports' records, but not the queue.
+  if (!canSupervise(viewer.baseRole)) return { id: "" };
+  return {
+    status: "PENDING",
+    userId: { not: viewer.id },
+    user: { active: true, directSupervisorId: viewer.id },
+  };
 }
 
 export function mayEditProfileOf(

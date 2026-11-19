@@ -123,28 +123,44 @@ export async function setPasswordWithToken(
     };
   }
 
-  await db.$transaction([
-    db.user.update({
+  // Hashed before the link is claimed, so no transaction is held open while
+  // scrypt runs.
+  const passwordHash = await hashPassword(password);
+  const claimed = await db.$transaction(async (tx) => {
+    // Claimed, only while still unspent, before anything is written. Checked
+    // above and spent afterwards, one link sent twice at the same moment set
+    // two passwords, the second over the first.
+    const spent = await tx.passwordSetupToken.updateMany({
+      where: { id: record.id, usedAt: null, expiresAt: { gt: new Date() } },
+      data: { usedAt: new Date() },
+    });
+    if (spent.count === 0) return false;
+
+    await tx.user.update({
       where: { id: record.userId },
       data: {
-        passwordHash: await hashPassword(password),
+        passwordHash,
         mustChangePassword: false,
         failedSignIns: 0,
         lockedUntil: null,
         passwordChangedAt: new Date(),
       },
-    }),
-    db.passwordSetupToken.update({
-      where: { id: record.id },
-      data: { usedAt: new Date() },
-    }),
+    });
     // Any other link outstanding for this person stops working too. Two live
     // links means two people can take the account.
-    db.passwordSetupToken.updateMany({
+    await tx.passwordSetupToken.updateMany({
       where: { userId: record.userId, usedAt: null },
       data: { usedAt: new Date() },
-    }),
-  ]);
+    });
+    return true;
+  });
+  if (!claimed) {
+    return {
+      ok: false,
+      error:
+        "This link has been used already or has expired. Ask for a new one.",
+    };
+  }
 
   return { ok: true };
 }

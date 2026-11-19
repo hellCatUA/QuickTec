@@ -76,7 +76,12 @@ export default async function AccountPage() {
     <div className="mx-auto flex max-w-5xl flex-col gap-4">
       <PageHeader
         title="Your profile"
-        description="What NextCloud already knows comes from there. The icon on every line says who sees it — the company sets that; your picture is the one you choose."
+        description={
+          // An outside account has no NextCloud, and was told about it.
+          profile.signInMethod === "SSO"
+            ? "What NextCloud already knows comes from there. The icon on every line says who sees it — the company sets that; your picture is the one you choose."
+            : "The icon on every line says who sees it — the company sets that; your picture is the one you choose."
+        }
       />
       <EditableKey />
 
@@ -145,6 +150,8 @@ export default async function AccountPage() {
                   : null,
               role: ROLE_LABEL[profile.baseRole] ?? profile.baseRole,
               supervisor,
+              supervisorGone: supervisor !== null && reviewer === null,
+              needsSupervisor: profile.baseRole === "TECH",
               reviewer,
               years: years ? `${years}${since ? ` · since ${since}` : ""}` : null,
               phone: profile.phone,
@@ -205,8 +212,9 @@ export default async function AccountPage() {
             <CardHeader>
               <CardTitle>Sign out</CardTitle>
               <CardDescription>
-                Signing back in asks NextCloud for your password again, so a shared phone does not
-                stay signed in as you.
+                {profile.signInMethod === "SSO"
+                  ? "Signing back in asks NextCloud for your password again, so a shared phone does not stay signed in as you."
+                  : "Signing back in asks for your password again, so a shared phone does not stay signed in as you."}
               </CardDescription>
             </CardHeader>
             <CardContent>

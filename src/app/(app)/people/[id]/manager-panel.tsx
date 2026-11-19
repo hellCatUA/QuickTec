@@ -34,6 +34,8 @@ type Subject = {
   primaryRegion: string | null;
   statesOfOperation: string[];
   hasPicture: boolean;
+  /** A guest: nobody's employee, so there is no start date to set. */
+  guest: boolean;
 };
 
 type Request = {
@@ -132,7 +134,12 @@ export function ManagerPanel({
       {requests.length > 0 ? (
         <Card id="requests" className="scroll-mt-20 border-warning/40">
           <CardHeader>
-            <CardTitle>Waiting for you</CardTitle>
+            {/* Theirs first when they have a supervisor: a manager read
+                "Waiting for you" on a request its asker was told waited on
+                somebody else. */}
+            <CardTitle>
+              {notTheirEmployee ? `Waiting on ${directSupervisor}` : "Waiting for you"}
+            </CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
             {requests.map((request) => (
@@ -222,7 +229,6 @@ export function ManagerPanel({
             <Button
               type="button"
               variant="ghost"
-              size="sm"
               disabled={busy}
               aria-expanded={picturePanel === "restore"}
               onClick={() => togglePanel("restore")}
@@ -234,7 +240,6 @@ export function ManagerPanel({
             <Button
               type="button"
               variant="ghost"
-              size="sm"
               disabled={busy}
               aria-expanded={picturePanel === "remove"}
               onClick={() => togglePanel("remove")}
@@ -257,7 +262,6 @@ export function ManagerPanel({
             <div className="flex gap-2">
               <Button
                 type="button"
-                size="sm"
                 variant="danger"
                 disabled={busy || !removeReason.trim()}
                 onClick={() =>
@@ -271,7 +275,7 @@ export function ManagerPanel({
               >
                 Take it down
               </Button>
-              <Button type="button" size="sm" variant="ghost" onClick={() => setPicturePanel(null)}>
+              <Button type="button" variant="ghost" onClick={() => setPicturePanel(null)}>
                 Cancel
               </Button>
             </div>
@@ -291,7 +295,6 @@ export function ManagerPanel({
                 </span>
                 <Button
                   type="button"
-                  size="sm"
                   variant="secondary"
                   disabled={busy}
                   onClick={() =>
@@ -391,15 +394,20 @@ function ManagerFields({
           ) : null}
         </div>
       </ProfileRow>
-      <ProfileRow
-        label="Started"
-        htmlFor="m-start"
-        level={levels.yearsOfService}
-        field="yearsOfService"
-        hint="Years of service count from here."
-      >
-        <Input id="m-start" name="serviceStartDate" type="date" defaultValue={subject.serviceStartDate} />
-      </ProfileRow>
+      {subject.guest ? (
+        // Sent as it is, so leaving it off the form is not taking it off.
+        <input type="hidden" name="serviceStartDate" value={subject.serviceStartDate} />
+      ) : (
+        <ProfileRow
+          label="Started"
+          htmlFor="m-start"
+          level={levels.yearsOfService}
+          field="yearsOfService"
+          hint="Years of service count from here."
+        >
+          <Input id="m-start" name="serviceStartDate" type="date" defaultValue={subject.serviceStartDate} />
+        </ProfileRow>
+      )}
       <ProfileRow label="Work phone" htmlFor="m-work" level={levels.workPhone} field="workPhone">
         <PhoneInput id="m-work" name="workPhone" defaultValue={subject.workPhone} />
       </ProfileRow>
@@ -426,7 +434,7 @@ function ManagerFields({
               {states.map((code) => (
                 <li
                   key={code}
-                  className="inline-flex h-10 items-center gap-1 rounded-md border border-border bg-input pl-2.5 pr-1 text-sm sm:h-8"
+                  className="inline-flex min-h-11 items-center gap-1 rounded-md border border-border bg-input pl-2.5 text-sm"
                 >
                   {stateName(code) ?? code}
                   <input type="hidden" name="statesOfOperation" value={code} />
@@ -434,7 +442,7 @@ function ManagerFields({
                     type="button"
                     aria-label={`Remove ${stateName(code) ?? code}`}
                     onClick={() => setStates((was) => was.filter((entry) => entry !== code))}
-                    className="flex size-8 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground sm:size-6"
+                    className="flex size-11 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
                   >
                     <X className="size-3.5" />
                   </button>
@@ -453,7 +461,7 @@ function ManagerFields({
         </div>
       </ProfileRow>
       <div className="border-t border-border p-4">
-        <Button type="submit" size="sm" disabled={busy}>
+        <Button type="submit" disabled={busy}>
           {busy ? <Loader2 className="animate-spin" /> : null}
           Save
         </Button>
@@ -530,19 +538,19 @@ function RequestRow({
       <div className="flex flex-wrap gap-2">
         {denying ? (
           <>
-            <Button type="button" size="sm" variant="danger" disabled={busy || !note.trim()} onClick={() => answer("deny")}>
+            <Button type="button" variant="danger" disabled={busy || !note.trim()} onClick={() => answer("deny")}>
               Turn it down
             </Button>
-            <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => setDenying(false)}>
+            <Button type="button" variant="ghost" disabled={busy} onClick={() => setDenying(false)}>
               Cancel
             </Button>
           </>
         ) : (
           <>
-            <Button type="button" size="sm" disabled={busy} onClick={() => answer("approve")}>
+            <Button type="button" disabled={busy} onClick={() => answer("approve")}>
               <Check /> Approve
             </Button>
-            <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={() => setDenying(true)}>
+            <Button type="button" variant="secondary" disabled={busy} onClick={() => setDenying(true)}>
               <X /> Deny…
             </Button>
           </>
@@ -564,7 +572,7 @@ function PicturePicker({
   const input = React.useRef<HTMLInputElement>(null);
   return (
     <>
-      <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={() => input.current?.click()}>
+      <Button type="button" variant="secondary" disabled={busy} onClick={() => input.current?.click()}>
         <Camera /> {label}
       </Button>
       <input
@@ -620,7 +628,9 @@ function NotYourEmployee({
           </span>
           <div>
             <h2 id="not-yours-title" className="text-base font-semibold">
-              {name} isn&rsquo;t your employee
+              {/* One string: written as "{name} isn&rsquo;t", the build
+                  dropped the space after the name — "Terry Techisn't". */}
+              {`${name} isn’t your employee`}
             </h2>
             <p id="not-yours-body" className="mt-1 text-sm text-muted-foreground">
               {message}

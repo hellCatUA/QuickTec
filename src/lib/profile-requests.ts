@@ -42,9 +42,10 @@ const WHAT: Record<ProfileRequestField, string> = {
  * supervise, counts as none: they could not answer it, and a new legal name
  * is not theirs to read any more.
  */
-async function reviewersOf(subject: {
-  directSupervisorId: string | null;
-}): Promise<{ ids: string[]; name: string | null }> {
+async function reviewersOf(
+  subject: { directSupervisorId: string | null },
+  requesterId: string,
+): Promise<{ ids: string[]; name: string | null }> {
   if (subject.directSupervisorId) {
     const supervisor = await db.user.findFirst({
       where: { id: subject.directSupervisorId, active: true, baseRole: { in: SUPERVISOR_ROLES } },
@@ -71,11 +72,26 @@ async function reviewersOf(subject: {
         { baseRole: { in: roles.map((grant) => grant.role) } },
         { id: { in: overrides.map((grant) => grant.userId) } },
       ],
-      id: { notIn: revoked.map((grant) => grant.userId) },
+      // Never whoever asked: a manager's own request reached them as a
+      // notification and sat in their own queue, which they could not answer.
+      id: { notIn: [...revoked.map((grant) => grant.userId), requesterId] },
     },
     select: { id: true },
   });
   return { ids: managers.map((manager) => manager.id), name: null };
+}
+
+/**
+ * Whether there is nobody but the person asking who could answer a new legal
+ * name: no direct supervisor who still is one, and no other manager. Then it
+ * is answered by QuickTec at once, as nothing else would ever answer it — the
+ * one manager there is asked themselves, and could only withdraw it.
+ */
+export async function nobodyToAsk(
+  subject: { directSupervisorId: string | null },
+  requesterId: string,
+): Promise<boolean> {
+  return (await reviewersOf(subject, requesterId)).ids.length === 0;
 }
 
 /**
@@ -92,33 +108,48 @@ export async function fileProfileRequest(input: {
   /** Why a first picture: Pre-hire, Hire, Original pic unavailable. */
   reason?: string | null;
 }): Promise<{ id: string; reviewer: string | null }> {
-  const superseded = await db.profileRequest.findMany({
-    where: { userId: input.subject.id, field: input.field, status: "PENDING" },
-    select: { id: true, picturePath: true },
-  });
-  // One by one and only while still pending: a supervisor approving the old
-  // one at this very moment has just made its picture the one in use, and
-  // deleting the file underneath them would leave nobody with a picture.
-  for (const row of superseded) {
-    const gone = await db.profileRequest.deleteMany({
-      where: { id: row.id, status: "PENDING" },
+  let created: { id: string } | null = null;
+  for (let attempt = 0; created === null; attempt++) {
+    const superseded = await db.profileRequest.findMany({
+      where: { userId: input.subject.id, field: input.field, status: "PENDING" },
+      select: { id: true, picturePath: true },
     });
-    if (gone.count === 1 && row.picturePath) await deleteFile(row.picturePath);
+    // One by one and only while still pending: a supervisor approving the old
+    // one at this very moment has just made its picture the one in use, and
+    // deleting the file underneath them would leave nobody with a picture.
+    for (const row of superseded) {
+      const gone = await db.profileRequest.deleteMany({
+        where: { id: row.id, status: "PENDING" },
+      });
+      if (gone.count === 1 && row.picturePath) await deleteFile(row.picturePath);
+    }
+
+    try {
+      created = await db.profileRequest.create({
+        data: {
+          userId: input.subject.id,
+          field: input.field,
+          value: input.value ?? null,
+          picturePath: input.picturePath ?? null,
+          reason: input.reason ?? null,
+          requestedById: input.requesterId,
+        },
+        select: { id: true },
+      });
+    } catch (error) {
+      // Another ask for the same thing landed between the clearing-out and
+      // this one: a double tap, both of which used to stay waiting. Only one
+      // may wait now, and the newest is the one that stands, so it is cleared
+      // too and this one filed — once; a third would be somebody else's.
+      const code =
+        typeof error === "object" && error !== null && "code" in error
+          ? String((error as { code: unknown }).code)
+          : null;
+      if (code !== "P2002" || attempt > 0) throw error;
+    }
   }
 
-  const created = await db.profileRequest.create({
-    data: {
-      userId: input.subject.id,
-      field: input.field,
-      value: input.value ?? null,
-      picturePath: input.picturePath ?? null,
-      reason: input.reason ?? null,
-      requestedById: input.requesterId,
-    },
-    select: { id: true },
-  });
-
-  const reviewers = await reviewersOf(input.subject);
+  const reviewers = await reviewersOf(input.subject, input.requesterId);
   for (const reviewerId of reviewers.ids) {
     await notify({
       userId: reviewerId,
@@ -217,43 +248,54 @@ export async function answerProfileRequest(input: {
   let to: string | null = null;
   let source: string | null = null;
 
-  if (request.field === "LEGAL_NAME") {
-    from = subject.legalName;
-    to = request.value;
-    // Already what was asked for — set directly meanwhile: answered, but
-    // nothing changes and nothing is history.
-    if (input.approve && request.value === subject.legalName) {
-      return { ok: true };
-    }
-    if (input.approve) {
-      await db.user.update({
-        where: { id: subject.id },
-        data: { legalName: request.value, legalNameSetAt: new Date() },
+  // Put back as it was when applying it fails. Claimed and then not applied,
+  // it read Approved with nothing changed and no line in the history, and
+  // there was no way to answer it again.
+  try {
+    if (request.field === "LEGAL_NAME") {
+      from = subject.legalName;
+      to = request.value;
+      // Already what was asked for — set directly meanwhile: answered, but
+      // nothing changes and nothing is history.
+      if (input.approve && request.value === subject.legalName) {
+        return { ok: true };
+      }
+      if (input.approve) {
+        await db.user.update({
+          where: { id: subject.id },
+          data: { legalName: request.value, legalNameSetAt: new Date() },
+        });
+      }
+    } else {
+      // A picture has no value to show. Added or updated is what was asked
+      // for: a request with a reason was for a first picture.
+      from = request.reason ? null : subject.avatarPath ? "Picture" : null;
+      to = "Picture";
+      source = PICTURE_SOURCE.manual(request.requestedBy.name);
+      if (input.approve && request.picturePath) {
+        // The one it replaces stays in their archive, to be put back.
+        await putUpPicture({
+          userId: subject.id,
+          path: request.picturePath,
+          source,
+          addedById: request.requestedById,
+          approval: { byId: input.reviewerId },
+        });
+      } else if (request.picturePath) {
+        await deleteFile(request.picturePath);
+      }
+      // The file is either the picture now or gone; the row no longer owns it.
+      await db.profileRequest.update({
+        where: { id: request.id },
+        data: { picturePath: null },
       });
     }
-  } else {
-    // A picture has no value to show. Added or updated is what was asked
-    // for: a request with a reason was for a first picture.
-    from = request.reason ? null : subject.avatarPath ? "Picture" : null;
-    to = "Picture";
-    source = PICTURE_SOURCE.manual(request.requestedBy.name);
-    if (input.approve && request.picturePath) {
-      // The one it replaces stays in their archive, to be put back.
-      await putUpPicture({
-        userId: subject.id,
-        path: request.picturePath,
-        source,
-        addedById: request.requestedById,
-        approval: { byId: input.reviewerId },
-      });
-    } else if (request.picturePath) {
-      await deleteFile(request.picturePath);
-    }
-    // The file is either the picture now or gone; the row no longer owns it.
-    await db.profileRequest.update({
-      where: { id: request.id },
-      data: { picturePath: null },
+  } catch (error) {
+    await db.profileRequest.updateMany({
+      where: { id: request.id, status: input.approve ? "APPROVED" : "REJECTED" },
+      data: { status: "PENDING", reviewedById: null, reviewedAt: null, reviewNote: null },
     });
+    throw error;
   }
 
   // By whoever asked; approved — or turned down — by whoever answered.

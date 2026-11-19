@@ -490,6 +490,56 @@ async function main() {
   );
   await invited.close();
 
+  // --- one link sent twice at the same moment -------------------------------
+  // Checked and then spent, both used to pass the check and both set a
+  // password. Claimed first now, the second is refused.
+  const twice = await db.user.create({
+    data: {
+      name: "Tess Twice",
+      email: "tess@outside.test",
+      baseRole: "TECH",
+      signInMethod: "LOCAL",
+    },
+  });
+  const raced = newSetupToken();
+  await db.passwordSetupToken.create({
+    data: {
+      userId: twice.id,
+      tokenHash: raced.tokenHash,
+      createdById: outsider.id,
+      expiresAt: new Date(Date.now() + 3600_000),
+    },
+  });
+  const racers = await Promise.all(
+    [0, 1].map(async () => {
+      const racer = await (await browser.newContext()).newPage();
+      await racer.goto(`${BASE}/set-password?token=${raced.token}`, { waitUntil: "load" });
+      await racer.waitForTimeout(1000);
+      await racer.locator("#new-password").fill(PASSWORD);
+      await racer.locator("#confirm-password").fill(PASSWORD);
+      return racer;
+    }),
+  );
+  await Promise.all(
+    racers.map((racer) => racer.getByRole("button", { name: "Set password" }).click()),
+  );
+  await racers[0].waitForTimeout(3000);
+  const outcomes = await Promise.all(
+    racers.map(async (racer) =>
+      (await racer.getByText("Password set.").isVisible())
+        ? "set"
+        : (await racer.getByText(/used already or has expired/).isVisible())
+          ? "refused"
+          : "neither",
+    ),
+  );
+  check(
+    "one link sent twice at once sets a password once",
+    [...outcomes].sort().join(","),
+    "refused,set",
+  );
+  for (const racer of racers) await racer.context().close();
+
   // --- a password somebody else chose ---------------------------------------
   await db.user.update({
     where: { id: invitee.id },

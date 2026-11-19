@@ -35,7 +35,7 @@ export default async function MileagePage({
     viewScope === "ALL"
       ? null
       : viewScope
-        ? [viewer.id, ...(await reportIds(viewer.id))]
+        ? [viewer.id, ...(await reportIds(viewer))]
         : [viewer.id];
 
   const subjectId =
