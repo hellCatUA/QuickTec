@@ -225,9 +225,10 @@ export default async function DashboardPage() {
           href: "/settings/company",
         },
         {
-          done: Boolean(company.logoUrl),
+          done: Boolean(company.logoPath),
           label: "Add a company logo",
-          detail: "Appears on the internal PDF work order.",
+          // It said the internal PDF work order, which has never drawn it.
+          detail: "Shown in the header and on the sign-in page.",
           href: "/settings/company",
         },
         await (async () => {

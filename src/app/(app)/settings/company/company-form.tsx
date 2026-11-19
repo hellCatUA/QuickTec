@@ -13,7 +13,11 @@ import {
 import { Field, Input, Select } from "@/components/ui/field";
 import { PhoneInput } from "@/components/ui/phone-input";
 import { StateField } from "@/components/ui/state-picker";
-import { COMPANY_MARK_BASE, HEADER_WORDMARK_BASE } from "@/lib/brand";
+import {
+  COMPANY_MARK_BASE,
+  HEADER_WORDMARK_BASE,
+  type BrandAsset,
+} from "@/lib/brand";
 import { US_TIME_ZONES } from "@/lib/us-regions";
 import { updateCompanySettings, type ActionResult } from "../actions";
 import { BrandAssetField } from "./brand-asset-field";
@@ -22,11 +26,8 @@ const TIME_ZONES = US_TIME_ZONES.map((entry) => entry.value);
 
 type CompanyFormValues = {
   name: string;
-  logoUrl: string | null;
   logoScale: number;
-  headerLogoUrl: string | null;
   headerLogoScale: number;
-  appIconUrl: string | null;
   showCompanyNameInHeader: boolean;
   addressLine1: string | null;
   addressLine2: string | null;
@@ -48,7 +49,16 @@ type CompanyFormValues = {
   watermarkEnabled: boolean;
 };
 
-export function CompanyForm({ company }: { company: CompanyFormValues }) {
+/** Where each uploaded brand asset is served, or null when there is none. */
+type BrandSources = Record<BrandAsset, string | null>;
+
+export function CompanyForm({
+  company,
+  brand,
+}: {
+  company: CompanyFormValues;
+  brand: BrandSources;
+}) {
   const [state, formAction, pending] = useActionState<
     ActionResult | null,
     FormData
@@ -108,23 +118,25 @@ export function CompanyForm({ company }: { company: CompanyFormValues }) {
         <CardHeader>
           <CardTitle>Brand assets</CardTitle>
           <CardDescription>
-            Each one is previewed at the size it is actually drawn, on both
-            themes. The company logo is inverted on the light theme, which is
-            what makes a mark cut for dark backgrounds readable there; the
-            wordmark and the app icon are shown exactly as supplied, because
-            inverting a two-colour lockup turns its accent into the opposite
-            colour. The scale is there for artwork that carries its own padding
-            — the same file can read a size smaller than another at 100%.
+            Upload each file here — PNG, JPEG, WebP or SVG, up to 10 MB. A file
+            is live as soon as it is uploaded; the scales are saved with the
+            rest of the form. Each one is previewed at the size it is actually
+            drawn, on both themes. The company logo is inverted on the light
+            theme, which is what makes a mark cut for dark backgrounds readable
+            there; the wordmark and the app icon are shown exactly as supplied,
+            because inverting a two-colour lockup turns its accent into the
+            opposite colour. The scale is there for artwork that carries its
+            own padding — the same file can read a size smaller than another at
+            100%.
           </CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-2">
+        <CardContent className="grid gap-6 sm:grid-cols-2">
           <BrandAssetField
+            asset="logo"
             label="Company logo"
             hint="Whose deployment this is. Shown as a square beside the product, on the header, sign-in and password pages."
-            urlName="logoUrl"
-            urlDefault={company.logoUrl ?? ""}
-            scaleName="logoScale"
-            scaleDefault={company.logoScale}
+            src={brand.logo}
+            scale={{ name: "logoScale", defaultValue: company.logoScale }}
             surfaces={[
               { base: COMPANY_MARK_BASE.header, where: "in the header" },
               { base: COMPANY_MARK_BASE.auth, where: "on sign-in" },
@@ -134,12 +146,14 @@ export function CompanyForm({ company }: { company: CompanyFormValues }) {
           />
 
           <BrandAssetField
+            asset="wordmark"
             label="Header wordmark"
             hint="Stands in for the QuickTec text in the header. A wide lockup — leave it empty for the text."
-            urlName="headerLogoUrl"
-            urlDefault={company.headerLogoUrl ?? ""}
-            scaleName="headerLogoScale"
-            scaleDefault={company.headerLogoScale}
+            src={brand.wordmark}
+            scale={{
+              name: "headerLogoScale",
+              defaultValue: company.headerLogoScale,
+            }}
             surfaces={[
               { base: HEADER_WORDMARK_BASE, where: "tall in the header" },
             ]}
@@ -147,19 +161,18 @@ export function CompanyForm({ company }: { company: CompanyFormValues }) {
             invertsOnLight={false}
           />
 
-          <Field
+          <BrandAssetField
+            asset="icon"
             label="App icon"
-            htmlFor="appIconUrl"
-            hint="The browser tab and the home-screen icon. Square, and legible at 16px — a wordmark shrunk this far is a smudge, so use the mark alone."
-            className="sm:col-span-2"
-          >
-            <Input
-              id="appIconUrl"
-              name="appIconUrl"
-              defaultValue={company.appIconUrl ?? ""}
-              placeholder="https://…"
-            />
-          </Field>
+            hint="The browser tab and the home-screen icon. Square, 512×512 or larger, and legible at 16px — a wordmark shrunk this far is a smudge, so use the mark alone."
+            src={brand.icon}
+            surfaces={[
+              { base: 64, where: "on a home screen" },
+              { base: 16, where: "in a tab" },
+            ]}
+            shape="square"
+            invertsOnLight={false}
+          />
         </CardContent>
       </Card>
 

@@ -1,6 +1,6 @@
-import { createHash } from "node:crypto";
 import type { MetadataRoute } from "next";
 import { getCompanySettings } from "@/lib/company";
+import { fileVersion } from "@/lib/storage";
 
 /**
  * The home-screen manifest, built rather than shipped flat.
@@ -16,9 +16,9 @@ export default async function manifest(): Promise<MetadataRoute.Manifest> {
   // Never throws. force-dynamic keeps this out of the build, but the manifest
   // is also fetched on a cold start behind a database that may not be up yet,
   // and a home-screen icon is not worth failing the request over.
-  let company: { name: string; appIconUrl: string | null } = {
+  let company: { name: string; appIconPath: string | null } = {
     name: "QuickTec",
-    appIconUrl: null,
+    appIconPath: null,
   };
   try {
     company = await getCompanySettings();
@@ -26,13 +26,11 @@ export default async function manifest(): Promise<MetadataRoute.Manifest> {
     // Defaults above, and /app-icon falls back to the bundled artwork.
   }
 
-  // Changing the setting changes these addresses, so an installed app picks up
-  // a new icon instead of waiting out a cache. The value is hashed rather than
-  // used directly: it can be any length and ends up in a URL.
-  const stamp = createHash("sha1")
-    .update(company.appIconUrl ?? "bundled")
-    .digest("hex")
-    .slice(0, 8);
+  // A new upload changes these addresses — every upload is a new file name —
+  // so an installed app picks up a new icon instead of waiting out a cache.
+  // The same stamp /icon puts on the tab's copy, so the two are one cache
+  // entry rather than two.
+  const stamp = fileVersion(company.appIconPath ?? "bundled");
 
   return {
     name: company.name,

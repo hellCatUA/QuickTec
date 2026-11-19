@@ -409,31 +409,40 @@ model PermissionOverride {
 model CompanySettings {
   id String @id @default("singleton")
 
-  name    String  @default("QuickTec")
+  name     String  @default("QuickTec")
   /// The company that owns this deployment. Shown beside the product, never
   /// instead of it.
-  logoUrl String?
+  ///
+  /// The three brand assets are files uploaded in Settings and kept on the
+  /// uploads volume (brand/<asset>/<uuid>.png), served by /api/brand/<asset>.
+  /// They were addresses typed into the form until 20261119130000: a logo
+  /// living on somebody else's server shows only when that server answers,
+  /// lets the browser in, and the address has not moved — and the app icon
+  /// was fetched back from inside the container, through the app's own
+  /// Tailscale name, which the container cannot count on reaching. See
+  /// src/lib/brand-assets.ts.
+  logoPath String?
 
-  /// How big logoUrl is drawn, in percent of the box the code picks for it
+  /// How big the logo is drawn, in percent of the box the code picks for it
   /// (40px in the header, 64px on the sign-in pages). See src/lib/brand.ts.
   logoScale Int @default(100)
 
   /// The product's own wordmark, standing in for the "QuickTec" text in the
-  /// header. Separate from logoUrl because they are two different brands: one
+  /// header. Separate from the logo because they are two different brands: one
   /// says whose deployment this is, the other says what it is running.
   ///
   /// Shown as supplied on both themes — no inversion, which on a two-colour
   /// mark turns the accent into its opposite (a blue reads orange).
-  headerLogoUrl String?
+  headerLogoPath String?
 
-  /// How tall headerLogoUrl is drawn, in percent of 28px. Width follows the
+  /// How tall the wordmark is drawn, in percent of 28px. Width follows the
   /// artwork. See src/lib/brand.ts.
   headerLogoScale Int @default(100)
 
   /// The tab favicon and the home-screen icon. Its own field rather than
   /// reusing either logo: those are wide lockups, and this is a square asked
   /// to survive being 16px across and rounded off by an OS.
-  appIconUrl String?
+  appIconPath String?
 
   /// Whether the header reads "<Company> | QuickTec" or just the logo and
   /// QuickTec. A long company name eats the whole bar on a phone, and the logo

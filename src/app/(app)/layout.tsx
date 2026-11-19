@@ -12,6 +12,7 @@ import {
   COMPANY_MARK_BASE,
   HEADER_WORDMARK_BASE,
 } from "@/lib/brand";
+import { brandAssetSrc } from "@/lib/brand-assets";
 import { APP_NAME, brandLine } from "@/lib/company";
 import { avatarSrc } from "@/lib/avatar";
 import { db } from "@/lib/db";
@@ -46,9 +47,9 @@ export default async function AppLayout({
     where: { id: "singleton" },
     select: {
       name: true,
-      logoUrl: true,
+      logoPath: true,
       logoScale: true,
-      headerLogoUrl: true,
+      headerLogoPath: true,
       headerLogoScale: true,
       showCompanyNameInHeader: true,
     },
@@ -62,6 +63,8 @@ export default async function AppLayout({
     ownName.toLowerCase() === APP_NAME.toLowerCase()
       ? null
       : ownName;
+
+  const wordmarkSrc = brandAssetSrc("wordmark", company?.headerLogoPath);
 
   const items = buildNavItems(user);
   const canManageSettings = opensSettings(user);
@@ -78,7 +81,7 @@ export default async function AppLayout({
         <header className="flex items-center gap-3 border-b border-border bg-surface px-4 py-2">
           <Link href="/dashboard" className="flex min-w-0 items-center gap-2">
             <CompanyMark
-              logoUrl={company?.logoUrl}
+              src={brandAssetSrc("logo", company?.logoPath)}
               name={company?.name}
               size={COMPANY_MARK_BASE.header}
               scale={company?.logoScale}
@@ -93,7 +96,7 @@ export default async function AppLayout({
                 the artwork and only the company name stays as text — set as-is,
                 never inverted: flipping a two-colour mark turns its accent into
                 the opposite colour. */}
-            {company?.headerLogoUrl ? (
+            {wordmarkSrc ? (
               <span className="flex min-w-0 items-center gap-2">
                 {companyNameForHeader ? (
                   <span className="truncate text-lg font-semibold tracking-tight text-muted-foreground">
@@ -102,12 +105,12 @@ export default async function AppLayout({
                 ) : null}
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
-                  src={company.headerLogoUrl}
+                  src={wordmarkSrc}
                   alt={APP_NAME}
                   style={{
                     height: brandSize(
                       HEADER_WORDMARK_BASE,
-                      company.headerLogoScale,
+                      company?.headerLogoScale,
                     ),
                   }}
                   className="w-auto shrink-0 object-contain"

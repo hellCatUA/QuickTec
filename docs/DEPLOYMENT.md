@@ -406,8 +406,10 @@ created automatically with the role from its group.
 
 The dashboard shows a checklist until these are done:
 
-1. **`/settings/company`** — company name, logo, mileage rate, pay lag, time
-   rounding. The logo appears on the internal work order
+1. **`/settings/company`** — company name, mileage rate, pay lag, time
+   rounding, and the brand assets: the company logo, the header wordmark and
+   the app icon are uploaded there as files (PNG, JPEG, WebP or SVG) and kept
+   on the uploads volume
 2. **`/settings/users`** — give every tech a **direct supervisor**. This is the
    person who approves and pays their week, so payroll is stuck until it is set
 3. **`/settings/roles`** — the permission matrix, if the defaults do not fit
@@ -526,7 +528,7 @@ docker compose logs migrate | tail -20
 | Path | Contents |
 | --- | --- |
 | `<checkout>/data/postgres` | Database |
-| `/tank/data/quicktec/uploads` | Photos, signatures, receipts, generated exports |
+| `/tank/data/quicktec/uploads` | Photos, signatures, receipts, generated exports, the company logo, wordmark and app icon |
 | `/docker/apps/quicktec/.env` | Secrets — back this up somewhere else |
 
 Both data paths are bind mounts, so OMV's own snapshot and rsync jobs cover
@@ -571,7 +573,10 @@ half-restored behind it.
 Uploads are **not** served from the filesystem — every read goes through
 `/api/files/<id>`, which applies the same job-scope check as the page linking
 to it. Do not map that directory into Nginx as a static path; it would let
-anyone with a URL read another crew's site photos.
+anyone with a URL read another crew's site photos. The one exception is the
+brand assets under `brand/`: `/api/brand/<logo|wordmark|icon>` serves the
+current file of each to anyone, because the sign-in page shows the logo before
+anybody has signed in.
 
 ---
 

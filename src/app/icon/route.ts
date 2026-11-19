@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { usableIconUrl } from "@/lib/brand";
-import { db } from "@/lib/db";
+import { brandAssetPath } from "@/lib/brand-assets";
+import { fileVersion } from "@/lib/storage";
 
 /**
  * The tab and home-screen icon, behind one fixed address.
@@ -21,21 +21,21 @@ export const dynamic = "force-dynamic";
 const BUNDLED = "/icons/icon.svg";
 
 export async function GET(request: Request) {
-  let configured: string | null = null;
+  let uploaded: string | null = null;
   try {
-    const company = await db.companySettings.findUnique({
-      where: { id: "singleton" },
-      select: { appIconUrl: true },
-    });
-    configured = company?.appIconUrl?.trim() || null;
+    uploaded = await brandAssetPath("icon");
   } catch {
-    configured = null;
+    uploaded = null;
   }
 
-  // Only somewhere a browser can actually be sent — shared with the manifest,
-  // so the tab and the home screen can never disagree about whether a given
-  // setting is usable.
-  const target = usableIconUrl(configured) ?? BUNDLED;
+  // The uploaded icon as /app-icon renders it — square, a PNG, and 192 across
+  // whatever was uploaded — rather than the upload itself, which can be 1024
+  // wide and not square: a lot of bytes for a 16px tab, and squeezed out of
+  // shape by a browser that draws favicons into a square. Stamped like the
+  // manifest's, so a new upload is a new address.
+  const target = uploaded
+    ? `/app-icon/192.png?v=${fileVersion(uploaded)}`
+    : BUNDLED;
 
   return NextResponse.redirect(new URL(target, request.url), {
     status: 307,
