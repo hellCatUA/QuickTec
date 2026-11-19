@@ -110,9 +110,11 @@ export type PreparedBrandAsset =
  * would run as the app. Rasterised here, the script is never anything but
  * ignored markup, and only the pixels are kept. It is drawn at the size it is
  * kept at rather than at the 72 dpi its own width implies — a vector logo
- * declared 120 wide would otherwise be drawn at 120 and enlarged into a blur.
- * librsvg loads nothing the document points at: given bytes rather than a
- * file, it has no base to resolve a reference against.
+ * declared 120 wide would otherwise be drawn at 120 and enlarged into a blur
+ * (see svgDensity). librsvg loads nothing the document points at: given bytes
+ * rather than a file, it has no base to resolve a reference against. What it
+ * does decode is a picture carried inside the document as a data: address,
+ * which the pixel ceiling does not see — see embeddedPixels.
  */
 export async function prepareBrandAsset(
   asset: BrandAsset,
@@ -131,15 +133,10 @@ export async function prepareBrandAsset(
   try {
     let density: number | undefined;
     if (svg) {
-      // Unlimited for this one read: it parses the document for the size it
-      // declares and draws nothing, and a logo declared 100000 wide is a
-      // perfectly good vector that the pixel ceiling, measured at 72 dpi,
-      // would refuse. The drawing below is at the box's size and keeps the
-      // ceiling.
-      const declared = await sharp(upload, { limitInputPixels: false }).metadata();
-      if (!declared.width || !declared.height) throw new Error("svg has no size");
-      const fit = Math.min(box.width / declared.width, box.height / declared.height);
-      density = Math.min(MAX_DENSITY, Math.max(MIN_DENSITY, 72 * fit));
+      if ((await embeddedPixels(upload.toString("utf8"), 0)) > MAX_INPUT_PIXELS) {
+        return { ok: false, error: TOO_MANY_PIXELS };
+      }
+      density = await svgDensity(upload, box);
     }
 
     const { data, info } = await sharp(upload, {
@@ -169,10 +166,7 @@ export async function prepareBrandAsset(
     };
   } catch (error) {
     if (error instanceof Error && /pixel limit/i.test(error.message)) {
-      return {
-        ok: false,
-        error: "That picture is too large — over 40 million pixels. Export it at 2048px or less.",
-      };
+      return { ok: false, error: TOO_MANY_PIXELS };
     }
     console.error(`[brand] could not read an uploaded ${asset}:`, error);
     return {
@@ -180,6 +174,99 @@ export async function prepareBrandAsset(
       error: "That picture could not be read. Try saving it as a PNG.",
     };
   }
+}
+
+const TOO_MANY_PIXELS =
+  "That picture is too large — over 40 million pixels. Export it at 2048px or less.";
+
+/** The size an SVG comes out at when drawn at this density, drawing nothing. */
+async function svgSizeAt(svg: Buffer, density?: number) {
+  // Unlimited for these reads: they parse the document for the size it
+  // declares and draw nothing, and a logo declared 100000 wide is a perfectly
+  // good vector that the pixel ceiling, measured at 72 dpi, would refuse. The
+  // drawing itself is at the box's size and keeps the ceiling.
+  const meta = await sharp(svg, { density, limitInputPixels: false }).metadata();
+  if (!meta.width || !meta.height) throw new Error("svg has no size");
+  return { width: meta.width, height: meta.height };
+}
+
+/**
+ * The density that draws an SVG at the size it is kept at.
+ *
+ * Not simply 72 times the factor it has to grow by, which is what this was
+ * first. That holds for a document sized in px. One sized in mm, pt or in —
+ * Inkscape's default is mm — has its units turned into pixels at the density
+ * as well, so its size grows with the square of the density: a 50mm logo
+ * asked to grow sevenfold came out at fifty times, 7370px square, and was
+ * refused as "over 40 million pixels" for a 5 KB file. So the size is measured
+ * at a first guess, the power it grows by is read off that, and the density
+ * is worked out for the power it actually has. Both reads are of the
+ * document, not drawings of it.
+ */
+async function svgDensity(
+  svg: Buffer,
+  box: { width: number; height: number },
+): Promise<number> {
+  const clamp = (density: number) => Math.min(MAX_DENSITY, Math.max(MIN_DENSITY, density));
+  const declared = await svgSizeAt(svg);
+  const fit = Math.min(box.width / declared.width, box.height / declared.height);
+  const guess = clamp(72 * fit);
+  if (Math.abs(guess - 72) < 0.5) return guess;
+
+  const probed = await svgSizeAt(svg, guess);
+  const longest = (size: { width: number; height: number }) => Math.max(size.width, size.height);
+  const power = Math.log(longest(probed) / longest(declared)) / Math.log(guess / 72);
+  return Number.isFinite(power) && power > 0.5 ? clamp(72 * fit ** (1 / power)) : guess;
+}
+
+/** How deep a picture inside a picture inside an SVG is followed. */
+const MAX_NESTING = 3;
+
+/**
+ * Every pixel an SVG carries inside it as data: pictures, counted before it is
+ * drawn.
+ *
+ * librsvg decodes each such picture whole, on its own, before sharp sees a
+ * single pixel of the drawing — and the ceiling sharp applies is to the
+ * drawing, which is only the box's size. So an 8000px PNG that would be
+ * refused uploaded as itself went through wrapped in a 270 KB SVG, and took
+ * three quarters of a gigabyte to do it; a few one-colour 30000px ones, which
+ * compress to almost nothing, would take the container down. Here each is
+ * read for its size, without being decoded, and their total held to the same
+ * ceiling as any upload. One that cannot be read, or an SVG nested deeper than
+ * a logo has any reason to be, is refused rather than handed to librsvg to
+ * find out.
+ */
+async function embeddedPixels(text: string, depth: number): Promise<number> {
+  let total = 0;
+  // To the closing quote or bracket, whitespace and all: Inkscape wraps the
+  // base64 of an embedded picture over many lines.
+  const addresses = text.matchAll(
+    /(?<![\w-])data:([a-z0-9.+-]+\/[a-z0-9.+-]+)?((?:;[^,;"'\s]*)*),([^"')]*)/gi,
+  );
+  for (const [, type = "", parameters, payload] of addresses) {
+    if (!payload.trim()) continue;
+    const data = /;base64/i.test(parameters)
+      ? Buffer.from(payload.replace(/\s+/g, ""), "base64")
+      : Buffer.from(decodeURIComponent(payload.trim()), "utf8");
+
+    // A drawing inside the drawing: what it carries counts, not its own size,
+    // which is only ever drawn at the size of the box it is placed in.
+    if (looksLikeSvg(data)) {
+      if (depth >= MAX_NESTING) return Number.POSITIVE_INFINITY;
+      total += await embeddedPixels(data.toString("utf8"), depth + 1);
+      continue;
+    }
+    // A font, a stylesheet: not pixels.
+    if (!looksLikeImage(data) && !/^image\//i.test(type)) continue;
+
+    // Throws on a picture sharp cannot read, which refuses the upload as one
+    // that could not be read.
+    const meta = await sharp(data, { limitInputPixels: false }).metadata();
+    if (!meta.width || !meta.height) return Number.POSITIVE_INFINITY;
+    total += meta.width * meta.height;
+  }
+  return total;
 }
 
 /**

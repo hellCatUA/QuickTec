@@ -45,7 +45,11 @@ export async function GET(
   { params }: { params: Promise<{ file: string }> },
 ) {
   const { file } = await params;
-  const spec = SPECS[file as keyof typeof SPECS];
+  // Own keys only: /app-icon/constructor found Object's constructor on the
+  // lookup, took it for a spec, and failed with a 500 drawing it.
+  const spec = Object.hasOwn(SPECS, file)
+    ? SPECS[file as keyof typeof SPECS]
+    : undefined;
   if (!spec) return new Response("Not found", { status: 404 });
 
   let body: Buffer;

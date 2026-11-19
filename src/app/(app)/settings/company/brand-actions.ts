@@ -9,7 +9,7 @@ import {
   prepareBrandAsset,
   swapBrandAsset,
 } from "@/lib/brand-assets";
-import { PermissionError, requirePermission } from "@/lib/session";
+import { can, getSessionUser } from "@/lib/session";
 import { deleteFile, storageErrorMessage, storeBrandFile } from "@/lib/storage";
 
 export type BrandAssetResult =
@@ -30,7 +30,7 @@ export async function uploadBrandAsset(
   formData: FormData,
 ): Promise<BrandAssetResult> {
   const user = await allowed();
-  if (!user) return NOT_ALLOWED;
+  if ("error" in user) return user;
   // The argument comes from the browser like any other.
   if (!isBrandAsset(asset)) return { ok: false, error: "Unknown brand asset." };
 
@@ -71,7 +71,7 @@ export async function uploadBrandAsset(
 /** Takes a brand asset down, back to whatever stands in for it. */
 export async function removeBrandAsset(asset: BrandAsset): Promise<BrandAssetResult> {
   const user = await allowed();
-  if (!user) return NOT_ALLOWED;
+  if ("error" in user) return user;
   if (!isBrandAsset(asset)) return { ok: false, error: "Unknown brand asset." };
 
   let previous: string | null;
@@ -86,26 +86,31 @@ export async function removeBrandAsset(asset: BrandAsset): Promise<BrandAssetRes
   return { ok: true, src: null, notice: null };
 }
 
-const NOT_ALLOWED = {
-  ok: false,
-  error: "You may not change the company settings. Reload the page.",
-} as const;
-
 /**
- * The person, when they may change the company settings.
+ * The person, when they may change the company settings, or why not.
  *
- * Asked the same way as the rest of the page, but answered as a sentence: the
- * thrown PermissionError reaches the browser as a bare rejection, and the field
- * could only guess that the connection dropped. The likely case is somebody
- * whose role changed while the page sat open.
+ * The same question requirePermission asks, answered as a sentence rather
+ * than thrown: a throw reaches the browser as a bare rejection, and the field
+ * could only guess at a dropped connection. The two answers are told apart
+ * because their fixes are different. A settings page left open past the end
+ * of the session is the likely one, and it needs a sign-in, not an
+ * administrator.
  */
 async function allowed() {
-  try {
-    return await requirePermission("settings.company");
-  } catch (error) {
-    if (error instanceof PermissionError) return null;
-    throw error;
+  const user = await getSessionUser();
+  if (!user) {
+    return {
+      ok: false,
+      error: "You have been signed out. Reload the page to sign in again.",
+    } as const;
   }
+  if (!can(user, "settings.company")) {
+    return {
+      ok: false,
+      error: "You may not change the company settings any more. Reload the page.",
+    } as const;
+  }
+  return user;
 }
 
 /**

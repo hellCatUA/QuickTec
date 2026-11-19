@@ -3973,6 +3973,13 @@ async function main() {
       (await planner.request.get(`${BASE}/app-icon/999.png`)).status(),
       404,
     );
+    // Not even one every object has: the lookup used to find Object's own
+    // constructor, take it for a size, and fail with a 500.
+    check(
+      "nor a name every object answers to",
+      (await planner.request.get(`${BASE}/app-icon/constructor`)).status(),
+      404,
+    );
 
     // A row pointing at a file the volume no longer has — a database restored
     // without its uploads. The bundled artwork has to stand in at the declared
@@ -3998,6 +4005,16 @@ async function main() {
       maxRedirects: 0,
     });
     check("the tab icon redirects", tabIcon.status(), 307);
+    // Relative, for the browser to resolve. Resolved on the server it came out
+    // as http://localhost:3000 — the port the standalone server listens on —
+    // which behind the proxy sent every tab and every iPhone's Add to Home
+    // Screen somewhere that does not exist. Checking the path alone, as this
+    // did, could not see it: the suite runs on that very port.
+    check(
+      "to an address on whichever host the browser asked",
+      tabIcon.headers()["location"].startsWith("/app-icon/"),
+      true,
+    );
     const tabTarget = new URL(tabIcon.headers()["location"], BASE);
     check("to the uploaded icon, rendered square", tabTarget.pathname, "/app-icon/192.png");
     check(
@@ -4030,14 +4047,70 @@ async function main() {
     // The company logo is the other knob, and the two do not touch.
     await planner.goto(`${BASE}/settings/company`, { waitUntil: "load" });
     await planner.waitForTimeout(600);
+    check(
+      "each button says what it does to which asset",
+      await planner
+        .getByRole("button", { name: "Upload file for the company logo" })
+        .isVisible(),
+      true,
+    );
+
+    // Sized in millimetres, as Inkscape saves it. Units like these grow with
+    // the square of the density they are drawn at, and the first cut of this
+    // drew a 50mm logo at 7370px square and refused it as too large.
     const firstLogo = await upload("logo", {
-      name: "logo.png",
-      mimeType: "image/png",
-      buffer: await png(256, 256, "#ffffff"),
+      name: "logo.svg",
+      mimeType: "image/svg+xml",
+      buffer: Buffer.from(
+        "<svg xmlns='http://www.w3.org/2000/svg' width='50mm' height='50mm' viewBox='0 0 50 50'>" +
+          "<circle cx='25' cy='25' r='24' fill='#ffffff'/></svg>",
+      ),
     });
     check(
-      "a company logo uploads",
+      "a company logo uploads, sized in millimetres",
       Boolean(firstLogo?.startsWith("brand/logo/")),
+      true,
+    );
+    const firstLogoMeta = firstLogo
+      ? await sharp(absolutePath(firstLogo)).metadata()
+      : null;
+    check(
+      "and is kept at the size it is drawn at, not fifty times it",
+      Math.abs((firstLogoMeta?.width ?? 0) - 1024) <= 2 &&
+        firstLogoMeta?.width === firstLogoMeta?.height,
+      true,
+    );
+    check(
+      "and says it worked, for whoever cannot see the preview",
+      await planner.getByRole("status").getByText("Uploaded.").first().isVisible(),
+      true,
+    );
+
+    // A picture carried inside an SVG is decoded whole before anything sees
+    // the drawing, so it is held to the ceiling a picture uploaded as itself
+    // is. An 8000px one in a 270 KB SVG took three quarters of a gigabyte.
+    const hidden = (
+      await sharp({
+        create: { width: 8000, height: 8000, channels: 3, background: "#000000" },
+      })
+        .png()
+        .toBuffer()
+    ).toString("base64");
+    await planner.locator("#brand-logo-file").setInputFiles({
+      name: "wrapped.svg",
+      mimeType: "image/svg+xml",
+      buffer: Buffer.from(
+        "<svg xmlns='http://www.w3.org/2000/svg' width='64' height='64'>" +
+          `<image width='64' height='64' href='data:image/png;base64,${hidden}'/></svg>`,
+      ),
+    });
+    await planner
+      .getByText("That picture is too large")
+      .waitFor({ timeout: 15_000 })
+      .catch(() => undefined);
+    check(
+      "a picture too large to take is refused inside an SVG too",
+      await planner.getByText("That picture is too large").isVisible(),
       true,
     );
 
@@ -4175,12 +4248,22 @@ async function main() {
       }),
     );
 
-    // Taking each one down, from the page.
+    // Taking each one down, from the page — asked first, because it comes off
+    // every page at once and the file is deleted with it.
+    const NAMES = { logo: "company logo", wordmark: "header wordmark", icon: "app icon" };
+    planner.once("dialog", (dialog) => void dialog.dismiss());
+    await planner.getByRole("button", { name: "Remove the company logo" }).click();
+    await planner.waitForTimeout(800);
+    check(
+      "removing asks first, and a no leaves it up",
+      (await brandRow()).logoPath,
+      secondLogo,
+    );
+
     const removeIn = async (asset: keyof typeof COLUMN) => {
+      planner.once("dialog", (dialog) => void dialog.accept());
       await planner
-        .locator(`#brand-${asset}-upload`)
-        .locator("xpath=..")
-        .getByRole("button", { name: "Remove" })
+        .getByRole("button", { name: `Remove the ${NAMES[asset]}` })
         .click();
       for (let i = 0; i < 80; i++) {
         if ((await brandRow())[COLUMN[asset]] === null) return;
@@ -4215,7 +4298,7 @@ async function main() {
     });
     check(
       "and falls back to the bundled one when nothing is set",
-      new URL(fallbackIcon.headers()["location"], BASE).pathname,
+      fallbackIcon.headers()["location"],
       "/icons/icon.svg",
     );
     const fallbackManifest = await planner.request.get(
